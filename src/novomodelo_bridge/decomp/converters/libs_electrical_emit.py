@@ -70,6 +70,8 @@ from novomodelo_bridge.decomp.converters.constraints import (
     slots_from_record,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
+    _INEQUACAO_CARD,
+    _INEQUACAO_PERIOD_CARD,
     DISP_USIH_SUBSTITUTED,
     _effective_inequacao_sides,
     active_cells,
@@ -551,7 +553,6 @@ def _emit_restrictions(
 
 
 _RULE_CARD = "RESTRICAO-ELETRICA-REGRA-ATIVACAO"
-_PERIOD_ROW_CARD = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
 
 
 def _cell_text(cell: tuple[int, int]) -> str:
@@ -569,8 +570,8 @@ def _cell_card(
         return "RESTRICAO-ELETRICA-FORMULA"
     sides = _effective_inequacao_sides(restriction, stage_index, block_index + 1)
     if sides == (restriction.lhs, restriction.operator, restriction.rhs):
-        return "RESTRICAO-ELETRICA-INEQUACAO"
-    return _PERIOD_ROW_CARD
+        return _INEQUACAO_CARD
+    return _INEQUACAO_PERIOD_CARD
 
 
 def _emit_restriction(
@@ -628,7 +629,7 @@ def _emit_restriction(
                     f"its decision terms in {_cell_text(reference_cell)} differ "
                     f"from those in {_cell_text(cell)}; the conversion carries "
                     "one set of decision terms per restriction",
-                    field=_PERIOD_ROW_CARD,
+                    field=_INEQUACAO_PERIOD_CARD,
                 )
 
         expression = build_electrical_expression(

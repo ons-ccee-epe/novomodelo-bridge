@@ -27,7 +27,7 @@ from novomodelo_bridge.core.electrical_expression import (
     classify_terms,
     parse_linear_expression,
 )
-from novomodelo_bridge.core.errors import UnsupportedSourceError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -68,6 +68,8 @@ from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
+
+_LIBS = Path("deck/lib_restricao-eletrica-especial.csv")
 
 
 class _StubRestricoes:
@@ -233,7 +235,7 @@ def test_expressions_indexed_by_name() -> None:
             (2, "RNE", "ger_usih(10)"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     assert model.expressions["FNESE"].code == 1
     assert model.expressions["FNESE"].formula == "ener_interc(3,1) - ener_interc(1,3)"
@@ -249,7 +251,7 @@ def test_aliases_with_period_patamar_values_including_na_patamar() -> None:
             (1, 3, 3, float("nan"), 250.0),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     alias = model.aliases["MMGDSIN"]
     assert alias.code == 1
@@ -270,7 +272,7 @@ def test_formula_restriction_two_sided_limits_with_sentinel() -> None:
             (401, 1, 6, float("nan"), -1e31, 6300.0),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[401]
     assert restriction.is_formula is True
@@ -290,7 +292,7 @@ def test_inequacao_restriction_verbatim_lhs_operator_rhs() -> None:
             (402, "disp_usih(261) - ger_usih(261)", ">=", "0.05*(val_demanda(1))"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[402]
     assert restriction.is_formula is False
@@ -308,7 +310,7 @@ def test_inequacao_period_patamar_overrides_read_verbatim() -> None:
             (406, 1, 6, 1, "EXPNE", "<=", "14700"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[406]
     assert len(restriction.overrides) == 1
@@ -330,7 +332,7 @@ def test_restriction_habilita_rule_and_violation_joined() -> None:
         restricao_eletrica_regra_ativacao=_regra((10, "demanda(1) > 5000")),
         restricao_eletrica_tratamento_violacao=_tratamento_violacao((501, 1234.5)),
     )
-    model = read_libs_electrical(stub, _calendar(6))
+    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[501]
     assert restriction.habilita == 10
@@ -346,15 +348,75 @@ def test_horizonte_period_out_of_range_raises_value_error() -> None:
         restricao_eletrica_horizonte_periodo=_horizonte((99, 1, 7)),
     )
     with pytest.raises(ValueError) as exc_info:
-        read_libs_electrical(stub, _calendar(6))
+        read_libs_electrical(stub, _calendar(6), source=_LIBS)
     message = str(exc_info.value)
     assert "7" in message
     assert "6" in message
 
 
+@pytest.mark.parametrize("operator", [">=", "<=", "=="])
+def test_an_inequality_reads_the_operators_the_conversion_carries(
+    operator: str,
+) -> None:
+    stub = _StubRestricoes(
+        restricao_eletrica_inequacao=_re_inequacao((98, "ger_usih(1)", operator, "0")),
+        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+            (98, 1, 1, None, "ger_usih(1)", operator, "5"),
+        ),
+    )
+    model = read_libs_electrical(stub, _calendar(1), source=_LIBS)
+    assert model is not None
+    restriction = model.restrictions[98]
+    assert restriction.operator == operator
+    assert [row.operator for row in restriction.overrides] == [operator]
+
+
+@pytest.mark.parametrize(
+    ("inequacao", "per_pat", "card", "problem"),
+    [
+        (
+            [(97, "ger_usih(1)", "<", "0")],
+            [],
+            "RESTRICAO-ELETRICA-INEQUACAO",
+            "the unknown comparison operator '<'",
+        ),
+        (
+            [(97, "ger_usih(1)", None, "0")],
+            [],
+            "RESTRICAO-ELETRICA-INEQUACAO",
+            "no comparison operator",
+        ),
+        (
+            [(97, "ger_usih(1)", "<=", "0")],
+            [(97, 1, 1, None, "ger_usih(1)", "=", "5")],
+            "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+            "the unknown comparison operator '='",
+        ),
+    ],
+)
+def test_an_inequality_with_an_operator_the_conversion_cannot_read_is_refused(
+    inequacao: list[tuple],
+    per_pat: list[tuple],
+    card: str,
+    problem: str,
+) -> None:
+    stub = _StubRestricoes(
+        restricao_eletrica_inequacao=_re_inequacao(*inequacao),
+        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(*per_pat),
+    )
+    with pytest.raises(FieldParseError) as exc_info:
+        read_libs_electrical(stub, _calendar(1), source=_LIBS)
+    assert str(exc_info.value) == (
+        f"lib_restricao-eletrica-especial.csv: restriction 97 has {problem} in "
+        f"its {card} row; an inequality compares with >=, <=, =="
+    )
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == card
+
+
 def test_no_electrical_cards_returns_none() -> None:
     stub = _StubRestricoes()
-    assert read_libs_electrical(stub, _calendar(6)) is None
+    assert read_libs_electrical(stub, _calendar(6), source=_LIBS) is None
 
 
 # ---------------------------------------------------------------------------
@@ -1849,7 +1911,7 @@ def test_read_inequacao_declared_only_by_period_rows() -> None:
         restricao_eletrica_horizonte_periodo=_horizonte((449, 1, 7)),
         restricao_eletrica_habilita=_habilita((449, 524)),
     )
-    model = read_libs_electrical(stub, _calendar(7))
+    model = read_libs_electrical(stub, _calendar(7), source=_LIBS)
     assert model is not None
     restriction = model.restrictions[449]
     assert restriction.is_formula is False
@@ -1879,7 +1941,7 @@ def test_read_period_rows_not_matching_the_card_shape_are_reported() -> None:
         ),
     )
     with dx.collect() as sink:
-        model = read_libs_electrical(stub, _calendar(1))
+        model = read_libs_electrical(stub, _calendar(1), source=_LIBS)
     assert model is not None
     assert model.restrictions[401].overrides == ()
     [unused] = [d for d in sink if d.code == "decomp-electrical-period-rows-unused"]

@@ -423,9 +423,12 @@ def _libs_electrical_read(
     try:
         with collect() as found:
             restricoes = case.libs_restricao_eletrica
+            libs_file = case.files.libs_restricao_eletrica
             model = (
-                libs_electrical.read_libs_electrical(restricoes, calendar)
-                if restricoes is not None
+                libs_electrical.read_libs_electrical(
+                    restricoes, calendar, source=libs_file
+                )
+                if restricoes is not None and libs_file is not None
                 else None
             )
     except Exception as exc:

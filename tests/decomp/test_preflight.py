@@ -65,6 +65,7 @@ from tests.decomp.test_constraint_registers import (
 from tests.decomp.test_constraint_registers import _FakeDadger as _ConstraintFakeDadger
 from tests.decomp.test_libs_electrical import (
     _re_formula,
+    _re_inequacao,
     _re_inequacao_per_pat,
     _StubRestricoes,
 )
@@ -661,6 +662,28 @@ class TestLibsElectricalWarning:
         assert "decomp-libs-electrical-present" not in {
             d.code for d in result.diagnostics
         }
+
+    def test_an_inequality_operator_convert_cannot_read_fails_the_check(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        cards = _StubRestricoes(
+            restricao_eletrica_inequacao=_re_inequacao((7, "ger_usih(1)", "<", "0")),
+        )
+
+        result = self._run(decomp_mini_deck, tmp_path, cards)
+
+        [readable] = [
+            c
+            for c in result.checks
+            if c.label == "LIBS electrical restrictions readable"
+        ]
+        assert readable.passed is False
+        [failure] = [d for d in result.diagnostics if d.code == "source-field-parse"]
+        assert failure.notes == [
+            f"file: {tmp_path / 'deck' / self._LIBS_FILE}",
+            "field: RESTRICAO-ELETRICA-INEQUACAO",
+        ]
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
 
 
 class TestLoadFactorCheck:

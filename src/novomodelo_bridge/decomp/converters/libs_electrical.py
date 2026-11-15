@@ -90,7 +90,7 @@ from novomodelo_bridge.core.electrical_expression import (
     parse_linear_expression,
     term_text,
 )
-from novomodelo_bridge.core.errors import UnsupportedSourceError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.decomp.converters.anticipated import gnl_block_commitments
@@ -103,6 +103,7 @@ from novomodelo_bridge.decomp.load import _per_stage_block_loads
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from pathlib import Path
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
@@ -434,12 +435,47 @@ def _read_formula_limits(
     return limits
 
 
+_INEQUACAO_CARD = "RESTRICAO-ELETRICA-INEQUACAO"
+_INEQUACAO_PERIOD_CARD = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
+_INEQUACAO_OPERATORS = (">=", "<=", "==")
+
+
+def _inequacao_operator(value: object, code: int, card: str, source: Path) -> str:
+    """One inequality row's ``operador``.
+
+    Raises
+    ------
+    FieldParseError
+        When the row has no operator, or one other than
+        :data:`_INEQUACAO_OPERATORS`.
+    """
+    if pd.isna(value):
+        problem = "no comparison operator"
+    elif (operator := str(value)) in _INEQUACAO_OPERATORS:
+        return operator
+    else:
+        problem = f"the unknown comparison operator {operator!r}"
+    raise FieldParseError(
+        f"{source.name}: restriction {code} has {problem} in its {card} row; "
+        f"an inequality compares with {', '.join(_INEQUACAO_OPERATORS)}",
+        path=str(source),
+        field=card,
+    )
+
+
 def _read_inequacao_overrides(
     restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
+    source: Path,
 ) -> dict[int, tuple[PeriodPatamarOverride, ...]]:
     """Read ``RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`` into
-    ``{codigo_restricao: (PeriodPatamarOverride, ...)}``."""
+    ``{codigo_restricao: (PeriodPatamarOverride, ...)}``.
+
+    Raises
+    ------
+    FieldParseError
+        When a row's operator is missing or unknown.
+    """
     frame = _df(restricoes, "restricao_eletrica_inequacao_periodo_patamar")
     if frame is None:
         return {}
@@ -456,7 +492,9 @@ def _read_inequacao_overrides(
                 stage_end=end,
                 patamar=_opt_int(row["patamar"]),
                 lhs=str(row["formula"]),
-                operator=str(row["operador"]),
+                operator=_inequacao_operator(
+                    row["operador"], code, _INEQUACAO_PERIOD_CARD, source
+                ),
                 rhs=str(row["formula_limite"]),
             )
         )
@@ -506,6 +544,7 @@ def _read_violations(restricoes: _ElectricalCards) -> dict[int, ViolationTreatme
 def _read_restrictions(
     restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
+    source: Path,
 ) -> dict[int, ElectricalRestriction]:
     """Join the FORMULA and INEQUACAO restriction cards to their per-(period,
     patamar) limit/override rows, horizonte, habilita, and violation rows by
@@ -515,10 +554,15 @@ def _read_restrictions(
     FORMULA or INEQUACAO card is an INEQUACAO restriction declared by those
     rows alone. Period rows that cannot apply to any restriction (inequality
     rows on a FORMULA code, limit rows on a non-FORMULA code) are reported.
+
+    Raises
+    ------
+    FieldParseError
+        When an inequality row's operator is missing or unknown.
     """
     formula = _df(restricoes, "restricao_eletrica_formula")
     inequacao = _df(restricoes, "restricao_eletrica_inequacao")
-    overrides = _read_inequacao_overrides(restricoes, calendar)
+    overrides = _read_inequacao_overrides(restricoes, calendar, source)
     if formula is None and inequacao is None and not overrides:
         return {}
 
@@ -554,7 +598,9 @@ def _read_restrictions(
             restrictions[code] = ElectricalRestriction(
                 code=code,
                 lhs=str(row["formula"]),
-                operator=str(row["operador"]),
+                operator=_inequacao_operator(
+                    row["operador"], code, _INEQUACAO_CARD, source
+                ),
                 rhs=str(row["formula_limite"]),
                 is_formula=False,
                 limits={},
@@ -585,7 +631,7 @@ def _read_restrictions(
 
     _emit_unused_period_rows(
         [
-            ("RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", code)
+            (_INEQUACAO_PERIOD_CARD, code)
             for code in sorted(c for c in overrides if restrictions[c].is_formula)
         ]
         + [
@@ -631,6 +677,7 @@ def read_libs_electrical(
     restricoes: _ElectricalCards,
     calendar: Sequence[OperativeStage],
     *,
+    source: Path,
     gnl_thermal_codes: frozenset[int] = frozenset(),
 ) -> LibsElectricalModel | None:
     """Read every period-keyed long-form electrical card into a structured model.
@@ -644,10 +691,16 @@ def read_libs_electrical(
     Returns ``None`` when the deck carries no electrical long-form card at all
     (no expressions, aliases, restrictions, or rules), so callers can no-op
     cleanly instead of handling an empty-but-present model.
+
+    Raises
+    ------
+    FieldParseError
+        When an inequality row of *source*, the file *restricoes* was read
+        from, has a missing or unknown operator.
     """
     expressions = _read_expressions(restricoes)
     aliases = _read_aliases(restricoes, calendar)
-    restrictions = _read_restrictions(restricoes, calendar)
+    restrictions = _read_restrictions(restricoes, calendar, source)
     rules = _read_rules(restricoes)
 
     if not expressions and not aliases and not restrictions and not rules:
@@ -1533,9 +1586,9 @@ def assemble_bound(
     ValueError
         When an INEQUACAO restriction carries a bucket-C term but *a_h* is
         ``None``, or propagated from :func:`~novomodelo_bridge.core.
-        generic_constraint_format.sense_to_interval` on an unrecognized
-        INEQUACAO operator — none of these is the resolver-unresolvable case
-        this function otherwise catches.
+        generic_constraint_format.sense_to_interval` on an INEQUACAO operator
+        the reader would have refused — none of these is the
+        resolver-unresolvable case this function otherwise catches.
     """
     patamar = block_index + 1
     try:

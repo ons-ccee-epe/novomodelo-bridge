@@ -2281,6 +2281,7 @@ def _emit_and_write(
         libs_electrical_model = libs_electrical_conv.read_libs_electrical(
             restricoes,
             calendar,
+            source=libs_file,
             gnl_thermal_codes=_gnl_thermal_codes(artifacts.gnl_model, id_map),
         )
 
