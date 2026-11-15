@@ -13,7 +13,7 @@ the two.
 from __future__ import annotations
 
 P1 = (
-    "P1: mapcut record indices 4-17 emitted as zeros; WARNING logged; "
+    "P1: mapcut record indices 4-17 emitted as zeros, reported as a warning; "
     "physical hydro data deferred"
 )
 

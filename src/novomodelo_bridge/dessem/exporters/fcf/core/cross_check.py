@@ -420,13 +420,16 @@ def cross_check_pair(
     return mapcut_contents, cortdeco_contents
 
 
-def reject_pair(mapcut_path: Path, cortdeco_path: Path) -> None:
-    """Rename both files to .rejected suffix."""
+def reject_pair(mapcut_path: Path, cortdeco_path: Path) -> list[Path]:
+    """Rename both files to a .rejected suffix; return the ones that existed."""
+    renamed: list[Path] = []
     for path in (mapcut_path, cortdeco_path):
         rejected = path.with_name(path.name + ".rejected")
         try:
             os.replace(path, rejected)
-            sync_directory(path.parent)
-            _LOG.warning("rejected %s -> %s", path, rejected)
         except FileNotFoundError:
-            pass  # File not yet written
+            continue
+        sync_directory(path.parent)
+        _LOG.info("rejected %s -> %s", path, rejected)
+        renamed.append(path)
+    return renamed

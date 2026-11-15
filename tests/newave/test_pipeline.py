@@ -440,14 +440,22 @@ class TestPipelineInflowHistory:
 
 
 class TestConversionWarningCapture:
-    """``convert_newave_case`` surfaces converter warnings via ConversionReport."""
+    """``convert_newave_case`` surfaces converter findings via ConversionReport."""
 
-    def test_captures_and_dedupes_package_warnings(self, tmp_path: Path) -> None:
+    def test_reports_each_warning_once_and_no_log_line(self, tmp_path: Path) -> None:
+        from novomodelo_bridge.core import diagnostics as dx
         from novomodelo_bridge.core.conversion import ConversionReport
         from novomodelo_bridge.newave import pipeline
         from novomodelo_bridge.newave.pipeline import convert_newave_case
 
-        log = logging.getLogger("novomodelo_bridge.newave.converters.fake")
+        def _warning(code: str, summary: str) -> dx.Diagnostic:
+            return dx.Diagnostic(
+                code=code,
+                severity=dx.Severity.WARNING,
+                category="Test",
+                title=code,
+                summary=summary,
+            )
 
         def fake_impl(
             src: Path,
@@ -457,10 +465,10 @@ class TestConversionWarningCapture:
             dry_run: bool = False,
             float_digits: int | None = None,
         ) -> ConversionReport:
-            log.warning("vazpast.dat unreadable; using empty tendency")
-            log.warning("vazpast.dat unreadable; using empty tendency")  # duplicate
-            log.info("informational, not a degradation")  # below WARNING → ignored
-            log.warning("REE.DAT has no entries")
+            dx.emit(_warning("a", "vazpast.dat could not be read"))
+            dx.emit(_warning("a", "vazpast.dat could not be read"))
+            logging.getLogger("novomodelo_bridge.newave.fake").warning("log text")
+            dx.emit(_warning("b", "ree.dat has no entries"))
             return ConversionReport(hydro_count=3)
 
         with patch.object(pipeline, "_convert_newave_case_impl", side_effect=fake_impl):
@@ -468,8 +476,8 @@ class TestConversionWarningCapture:
 
         assert report.hydro_count == 3
         assert report.warnings == [
-            "vazpast.dat unreadable; using empty tendency",
-            "REE.DAT has no entries",
+            "vazpast.dat could not be read",
+            "ree.dat has no entries",
         ]
 
     def test_no_warnings_when_clean(self, tmp_path: Path) -> None:
@@ -486,30 +494,10 @@ class TestConversionWarningCapture:
 
         assert report.warnings == []
 
-    def test_collector_detached_even_on_exception(self, tmp_path: Path) -> None:
-        from novomodelo_bridge.newave import pipeline
-        from novomodelo_bridge.newave.pipeline import convert_newave_case
-
-        pkg_logger = logging.getLogger("novomodelo_bridge")
-        handlers_before = list(pkg_logger.handlers)
-        with (
-            patch.object(
-                pipeline,
-                "_convert_newave_case_impl",
-                side_effect=RuntimeError("boom"),
-            ),
-            pytest.raises(RuntimeError, match="boom"),
-        ):
-            convert_newave_case(tmp_path, tmp_path)
-
-        # The capture handler must be removed in the finally block, leaving the
-        # package logger's handler list exactly as it was.
-        assert pkg_logger.handlers == handlers_before
-
     def test_partial_outputs_cleared_on_failure(self, tmp_path: Path) -> None:
         """A failure partway through the write phase must not leave a partial,
-        valid-looking case behind: the known pipeline outputs are removed so a
-        plain (no --force) re-run is not refused as non-empty."""
+        valid-looking case behind: the known pipeline outputs, and the
+        directory the run created for them, are removed."""
         from novomodelo_bridge.newave import pipeline
         from novomodelo_bridge.newave.pipeline import convert_newave_case
 
@@ -536,11 +524,7 @@ class TestConversionWarningCapture:
         ):
             convert_newave_case(tmp_path, dst)
 
-        # No pipeline outputs survive — dst holds no half-written case.
-        assert not (dst / "config.json").exists()
-        assert not (dst / "system").exists()
-        # dst itself may remain but must be empty, so a no-force re-run proceeds.
-        assert not any(dst.iterdir())
+        assert not dst.exists()
 
     def test_failure_hands_earlier_diagnostics_to_the_callers_sink(
         self,
@@ -600,10 +584,28 @@ class TestConversionWarningCapture:
             patch.object(pipeline, "_convert_newave_case_impl", side_effect=fake_impl),
             pytest.raises(RuntimeError, match="boom"),
         ):
-            convert_newave_case(tmp_path, dst, dry_run=True)
+            convert_newave_case(tmp_path, dst, dry_run=True, force=True)
 
         assert (dst / "config.json").exists()
         assert (dst / "system").exists()
+
+    def test_real_run_against_populated_dst_refuses_without_clearing(
+        self, tmp_path: Path
+    ) -> None:
+        """Without ``force`` a populated ``dst`` is refused before the
+        conversion's failure rollback could delete the case it holds."""
+        from novomodelo_bridge.core.errors import OutputExistsError
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
+
+        dst = tmp_path / "case"
+        dst.mkdir()
+        existing = dst / "config.json"
+        existing.write_bytes(b"keep me")
+
+        with pytest.raises(OutputExistsError, match="already holds files"):
+            convert_newave_case(tmp_path / "src", dst)
+
+        assert existing.read_bytes() == b"keep me"
 
 
 def test_convert_newave_case_threads_on_phase(tmp_path: Path) -> None:

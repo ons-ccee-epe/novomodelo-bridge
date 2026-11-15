@@ -12,7 +12,6 @@ only: synthetic ``_FakeDadger``/``_StubDadger`` doubles and a synthetic
 
 from __future__ import annotations
 
-import logging
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -513,26 +512,16 @@ def test_no_override_is_byte_identical() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_all_zero_coeffs_plant_returns_zero_and_warns(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_all_zero_coeffs_plant_returns_zero() -> None:
     """A plant with no forebay curve at all (all-zero ``a0..a4_volume_cota``)
-    yields ``ρ_eq == 0.0`` and logs a WARNING, rather than the pre-shared-core
-    behaviour of silently evaluating a degenerate polynomial and clamping a
-    meaningless head to zero.
-    """
+    yields ``ρ_eq == 0.0``; ``convert_hydros`` reports the plant once."""
     hidr = _hidr_frame({1: _plant_row(cota=(0.0, 0.0, 0.0, 0.0, 0.0))})
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
     effective = EffectiveCadastro(base=hidr, n_stages=1, stage_varying={})
 
-    with caplog.at_level(logging.WARNING, logger="novomodelo_bridge.core.productivity"):
-        table = convert_energy_productivity(effective, id_map).to_pandas()
+    table = convert_energy_productivity(effective, id_map).to_pandas()
 
     assert table["equivalent_productivity_mw_per_m3s"].iloc[0] == 0.0
-    assert any(
-        record.levelno == logging.WARNING and "zero" in record.getMessage().lower()
-        for record in caplog.records
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import pyarrow as pa
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.diagnostics import Severity, finalize_diagnostics
+from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
@@ -566,10 +566,10 @@ class TestConvertVminopConstraintsEmission:
             "vminop-ree-not-expressible",
         }
         diag = by_code["vminop-ree-not-expressible"]
-        assert diag.severity is Severity.WARNING
+        assert diag.severity is Severity.INFO
         assert diag.category == "Special constraints"
         assert diag.table is not None
-        assert diag.table.columns == ["REE", "Name", "Reason"]
+        assert diag.table.columns == ["Code", "Name", "Reason"]
         assert len(diag.table.rows) == 1
         assert diag.table.rows[0][0] == 1
         assert diag.table.rows[0][1] == "SUDESTE"
@@ -623,7 +623,12 @@ class TestConvertVminopConstraintsEmission:
         assert diag.severity is Severity.WARNING
         assert diag.category == "Special constraints"
         assert diag.table is not None
-        assert diag.table.columns == ["REE", "Name", "Declared", "Applied"]
+        assert diag.table.columns == [
+            "Code",
+            "Name",
+            "Declared penalty",
+            "Applied penalty",
+        ]
         assert diag.table.rows == [[1, "SUDESTE", -5.0, 1000.0]]
 
         _assert_no_repo_internal_leaks(collected)
@@ -723,7 +728,7 @@ class TestParseFormula:
         assert len(skipped) == 1
         assert skipped[0].constraint_code == 7
         assert skipped[0].kind == "hydro-unmapped"
-        assert skipped[0].source == "formula"
+        assert skipped[0].source == "restricao-eletrica.csv"
         assert skipped[0].hydro_code == 9999
 
     def test_unknown_hydro_code_not_recorded_by_default(self) -> None:
@@ -1061,12 +1066,12 @@ class TestConvertElectricConstraintsEmission:
         assert result is not None
         by_code = {d.code: d for d in collected}
         diag = by_code["electric-constraint-hydro-unmapped"]
-        assert diag.severity is Severity.WARNING
+        assert diag.severity is Severity.INFO
         assert diag.category == "Special constraints"
         assert diag.table is not None
-        assert diag.table.columns == ["Constraint", "Hydro code", "Source"]
+        assert diag.table.columns == ["Constraint", "Plant code", "Source"]
         rows = {(r[1], r[2]) for r in diag.table.rows}
-        assert rows == {(9999, "formula"), (9998, "RE.DAT")}
+        assert rows == {(9999, "restricao-eletrica.csv"), (9998, "re.dat")}
 
         _assert_no_repo_internal_leaks(collected)
 
@@ -1107,7 +1112,8 @@ class TestConvertElectricConstraintsEmission:
         assert diag.table is not None
         assert diag.table.columns == ["Constraint", "From", "To"]
         assert diag.table.rows == [[1, 2, 3]]
-        assert diag.remediation is not None
+        assert diag.severity is Severity.INFO
+        assert diag.remediation is None
 
         _assert_no_repo_internal_leaks(collected)
 
@@ -1191,12 +1197,14 @@ class TestConvertElectricConstraintsEmission:
 
         assert result is None  # both codes dropped -> no surviving constraint
         by_code = {d.code: d for d in collected}
-        diag = by_code["electric-constraint-skipped"]
-        assert diag.table is not None
-        assert diag.table.columns == ["Constraint", "Reason"]
-        reasons = {r[0]: r[1] for r in diag.table.rows}
-        assert reasons[1] == "no valid terms in expression"
-        assert reasons[2] == "no bound data"
+        termless = by_code["electric-constraint-skipped"]
+        assert termless.severity is Severity.WARNING
+        assert termless.table is not None
+        assert termless.table.rows == [[1]]
+        unbounded = by_code["electric-constraint-unbounded"]
+        assert unbounded.severity is Severity.INFO
+        assert unbounded.table is not None
+        assert unbounded.table.rows == [[2]]
 
         _assert_no_repo_internal_leaks(collected)
 
@@ -1293,7 +1301,7 @@ class TestConvertElectricConstraintsEmission:
         by_code = {d.code: d for d in collected}
         diag = by_code["re-dat-unreadable"]
         assert diag.severity is Severity.WARNING
-        assert "skipped" in diag.summary
+        assert "none of its generation limits" in diag.summary
 
         _assert_no_repo_internal_leaks(collected)
 
@@ -1820,7 +1828,7 @@ class TestConvertAgrintConstraintsEmission:
         by_code = {d.code: d for d in collected}
 
         no_line = by_code["agrint-interchange-no-line"]
-        assert no_line.severity is Severity.WARNING
+        assert no_line.severity is Severity.INFO
         assert no_line.category == "Special constraints"
         assert no_line.table is not None
         assert no_line.table.columns == ["Group", "From", "To"]
@@ -2185,34 +2193,6 @@ class TestVminopReeCoupling:
             "pct_vminop_ree1",
             "pct_vminop_ree2",
         }
-
-
-class TestConstraintsNoLongerBridgesLegacyWarning:
-    """After the migration, constraints.py has no ``_LOG.warning(...)`` call
-    left to be swept into a generic ``legacy-warning`` panel (OQ3); the
-    residual bridge in :func:`finalize_diagnostics` still wraps an unrelated
-    captured legacy string, so that fallback path stays intact for any
-    not-yet-migrated module."""
-
-    def test_vminop_skip_under_collect_carries_no_legacy_warning(
-        self, tmp_path: Path
-    ) -> None:
-        case, id_map = _make_vminop_no_hydro_case(tmp_path)
-
-        with dx.collect() as collected:
-            convert_vminop_constraints(case, id_map)
-
-        assert not any(d.code == "legacy-warning" for d in collected)
-
-    def test_finalize_diagnostics_still_wraps_an_unrelated_legacy_string(
-        self,
-    ) -> None:
-        legacy_messages = ["some other warning"]
-        result = finalize_diagnostics([], legacy_messages)
-
-        assert len(result) == 1
-        assert result[0].code == "legacy-warning"
-        assert result[0].summary == "some other warning"
 
 
 # ---------------------------------------------------------------------------

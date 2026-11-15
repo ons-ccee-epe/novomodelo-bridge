@@ -263,11 +263,16 @@ class TestExportDessemCli:
                 str(synthetic_case_dir),
                 "--output",
                 str(output_dir),
+                "--json",
             ],
         )
 
         assert result.exit_code == 1
-        assert "force" in result.stdout.lower() or "force" in result.stderr.lower()
+        [diagnostic] = json.loads(result.stdout)["diagnostics"]
+        assert diagnostic["code"] == "output-exists"
+        assert diagnostic["summary"] == f"'{output_dir}' already holds mapcut.rv0."
+        assert "--force" in diagnostic["remediation"]
+        assert (output_dir / "mapcut.rv0").read_bytes() == b"\x00"
 
     def test_force_overwrites(
         self,

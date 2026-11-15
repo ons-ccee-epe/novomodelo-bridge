@@ -34,15 +34,67 @@ links are cobre-bridge's.
   reports the conversion and the boundary FCF import under one roll-up and
   ends on the command that runs the case, and its `conversion_manifest.json`
   now records the import's diagnostics too.
-- **`convert newave` and `convert decomp` warn only where the results will
-  differ from NEWAVE's or DECOMP's**: `fpha-spill-outside-tailrace`,
+- **`convert` and `check` warn only where the results will differ from
+  NEWAVE's or DECOMP's**: `fpha-spill-outside-tailrace`,
   `boundary-fcf-transit-water-priced` and
   `boundary-fcf-gnl-anticipated-deviation` are now warnings, while
-  `hydro-bounds-clamped-to-declared-capacity`, `decomp-re-generation-clamped`
-  and `decomp-qtur-turbined-clamped` are notes. A stage limit raised to a
+  `hydro-bounds-clamped-to-declared-capacity`, `decomp-re-generation-clamped`,
+  `decomp-qtur-turbined-clamped`, `modif-override-plant-uncadastred`,
+  `vminop-ree-not-expressible`, `electric-constraint-hydro-unmapped`,
+  `electric-constraint-interchange-no-line`, `agrint-interchange-no-line`,
+  `agrint-group-empty`, `artificial-gauge-data-ignored`, `libs-unindexed-file`
+  and `decomp-ac-out-of-horizon` are notes. A stage limit raised to a
   plant's minimum now warns as `hydro-bounds-raised-to-declared-minimum`, and
   DECOMP plants kept only for the NEWAVE coupling are listed in a
   `decomp-coupling-only-plants-excluded` note instead of a log warning.
+- **Every command reports each kind of finding once, with a table of the
+  plants, records or constraints it concerns**, where `convert decomp`,
+  `compare` and `dashboard` gave one panel and one `--json` entry per record;
+  update scripts that count `--json` entries. DECOMP tables number stages and
+  load blocks from 0, as the case files do. NEWAVE electric constraints with
+  no limit on any stage are listed in a new `electric-constraint-unbounded`
+  note instead of `electric-constraint-skipped`, and `check` lists the absent
+  optional inputs in one `optional-file-absent` note.
+- **Every command reports as notes and warnings the findings it only
+  logged**, so these now reach the console, `conversion_manifest.json` and
+  the `--json` output, each with a table of the plants, records or stages it
+  concerns. NEWAVE gains
+  `vazpast-unreadable`, `c-adic-unreadable`, `expt-unreadable`,
+  `manutt-unreadable` and `penalid-unreadable` for an optional file it cannot
+  read; `patamar-duration-missing`, `patamar-load-factors-missing`,
+  `cvar-file-absent`, `shist-start-years-empty`, `shist-range-collapsed`,
+  `par-annual-option-unknown`, `par-annual-variant-approximated` and
+  `cut-window-not-converted` for settings the case cannot follow;
+  `load-subsystem-undeclared`, `load-factor-subsystem-undeclared` and
+  `ncs-subsystem-undeclared` for data of a subsystem `sistema.dat` does not
+  declare; and `initial-storage-clamped`, `adterm-thermal-undeclared` and
+  `adterm-lag-beyond-horizon`. DECOMP gains `decomp-ac-topology-varies`,
+  `decomp-cascade-link-invalid`, `decomp-vi-travel-time-unused`,
+  `decomp-energy-chain-loop`, `decomp-ncs-zero-block-factor`,
+  `decomp-pee-generation-spread`, `decomp-gnl-lag-nonuniform` and
+  `decomp-dead-volume-filling-unconverted`. Both tracks gain
+  `anticipated-commitment-clamped`, `fpha-efficiency-capped` and
+  `hydro-forebay-curve-missing`, and DECOMP's `cadastro-topology-relinked`
+  also lists the plants relinked through a plant left out of the case.
+  `compare` and `dashboard` report a case, result or deck file they read but
+  cannot find as a `report-file-missing` note, and one they cannot read as a
+  `report-file-unreadable` warning saying what the report leaves out; they
+  gain `scenario-probabilities-missing`, `line-bus-unmapped`,
+  `line-bus-pair-ambiguous`, `productivity-accumulated-unavailable`,
+  `decomp-deficit-unpriced`, `decomp-export-contract-cost-convention` and
+  `dashboard-tab-failed`. `export dessem` gains
+  `dessem-fcf-cut-pools-unexpected`,
+  `dessem-fcf-inflow-lag-coefficients-dropped`,
+  `dessem-fcf-failure-manifest-unwritten` and a
+  `dessem-fcf-mapcut-fields-zero` warning on every export.
+- **`convert` reports a converted case that fails its own checks as
+  `case-self-check-failed`** instead of `unexpected-error`, with the panels of
+  each failed check.
+- **`convert newave`, `convert decomp` and `export dessem` refuse to write
+  over an earlier run as `output-exists`**, in one wording that names the
+  directory and says to pass `--force`; `convert newave` reported it as
+  `conversion-error`, `convert decomp` as `unexpected-error`. `export dessem`
+  names the files it would overwrite.
 - **`compare newave` and `compare decomp` judge each variable by its overall
   gap, and `--tolerance` defaults to 5%.** The console table labels each
   variable close, moderate or far (beyond four times the tolerance), leaves
@@ -88,8 +140,22 @@ links are cobre-bridge's.
   conversion, naming the plant. The converted cases need the paired novomodelo
   revision; convert a deck again to update it.
 
+### Removed
+
+- **`convert newave` and `convert decomp` no longer report `legacy-warning`**:
+  each finding it stood for has its own id; update scripts that filter on it.
+
 ### Fixed
 
+- **A failed `convert newave` or `convert decomp` left an empty case directory
+  behind.** The directories the run created are now removed with its partial
+  outputs.
+- **Error and warning panels cut a long path short with "…".** They now wrap
+  it onto the next line.
+- **`convert decomp` stopped on an `HV` constraint on the stored volume of a
+  plant in `hidr.dat` with no `UH` record.** It now leaves the constraint out
+  with a `decomp-rhv-varm-plant-uncadastred` warning, as for a plant missing
+  from `hidr.dat`.
 - **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
   Such a deck now converts.
 - **`dashboard` showed wrong costs**: the Costs tab listed `Hydro Violation`

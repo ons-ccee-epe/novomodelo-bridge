@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -672,34 +671,49 @@ class TestMaintenanceFileReading:
             **parsed,
         )
 
-    def test_file_without_records_is_no_maintenance(self, tmp_path, caplog) -> None:
+    def test_file_without_records_is_no_maintenance(self, tmp_path) -> None:
+        from novomodelo_bridge.core.diagnostics import collect
         from novomodelo_bridge.newave.converters.thermal import convert_thermal_bounds
 
         files = make_nw_files(tmp_path, manutt=tmp_path / "manutt.eas")
         empty = self._case(files, manutt=MagicMock(manutencoes=None))
         absent = self._case(tmp_path)
 
-        with caplog.at_level(logging.WARNING, logger="novomodelo_bridge"):
+        with collect() as found:
             got = convert_thermal_bounds(empty, self._ID_MAP)
 
         assert got is not None
         assert got.equals(convert_thermal_bounds(absent, self._ID_MAP))
-        assert "could not be parsed" not in caplog.text
+        assert "manutt-unreadable" not in {d.code for d in found}
 
-    def test_unreadable_file_is_reported_by_its_deck_name(
-        self, tmp_path, caplog
-    ) -> None:
+    def test_unreadable_file_is_reported_by_its_deck_name(self, tmp_path) -> None:
+        from novomodelo_bridge.core.diagnostics import collect
         from novomodelo_bridge.newave.converters.thermal import convert_thermal_bounds
 
         case = self._case(make_nw_files(tmp_path, manutt=tmp_path / "manutt.eas"))
 
         with (
             patch("novomodelo_bridge.newave.case.Manutt.read", side_effect=ValueError),
-            caplog.at_level(logging.WARNING, logger="novomodelo_bridge"),
+            collect() as found,
         ):
             convert_thermal_bounds(case, self._ID_MAP)
 
-        assert "manutt.eas could not be parsed" in caplog.text
+        [unreadable] = [d for d in found if d.code == "manutt-unreadable"]
+        assert unreadable.title == "manutt.eas could not be read"
+
+    def test_unreadable_expansion_file_is_reported(self, tmp_path) -> None:
+        from novomodelo_bridge.core.diagnostics import collect
+        from novomodelo_bridge.newave.converters.thermal import convert_thermal_bounds
+
+        case = self._case(make_nw_files(tmp_path, expt=tmp_path / "expt.dat"))
+
+        with (
+            patch("novomodelo_bridge.newave.case.Expt.read", side_effect=ValueError),
+            collect() as found,
+        ):
+            convert_thermal_bounds(case, self._ID_MAP)
+
+        assert "expt-unreadable" in {d.code for d in found}
 
 
 class TestThermalBoundStageSteps:
@@ -1006,8 +1020,8 @@ class TestGtminAboveCapacityDiagnostic:
 
         [diag] = collected
         assert diag.table is not None
-        assert diag.table.columns[-1] == "Excess MW"
-        assert diag.table.rows == [["TERMO_A", 10, "2-3", 478.03, 477.96, 0.07]]
+        assert diag.table.columns[-1] == "Excess (MW)"
+        assert diag.table.rows == [[10, "TERMO_A", "2-3", 478.03, 477.96, 0.07]]
 
 
 class TestThermalGenerationBounds:

@@ -16,6 +16,8 @@ import json
 import logging
 from pathlib import Path
 
+from novomodelo_bridge.core.diagnostics import emit, report_file_unreadable_diagnostic
+
 _LOG = logging.getLogger(__name__)
 
 
@@ -50,8 +52,18 @@ def productivity_from_energy_parquet(case_dir: Path) -> dict[int, float]:
         import pyarrow.parquet as pq
 
         table = pq.read_table(parquet_path)
-    except (OSError, ImportError):
-        _LOG.warning("Failed to read %s", parquet_path)
+    except (OSError, ImportError) as exc:
+        emit(
+            report_file_unreadable_diagnostic(
+                "system/hydro_energy_productivity.parquet",
+                parquet_path,
+                "the report takes the hydro plants' productivity from "
+                "system/hydro_production_models.json or system/hydros.json, "
+                "which only older cases fill, or shows none.",
+                exc,
+            ),
+            logger=_LOG,
+        )
         return {}
 
     cols = table.column_names
@@ -101,8 +113,17 @@ def productivity_from_production_models(case_dir: Path) -> dict[int, float]:
     try:
         with pm_path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        _LOG.warning("Failed to parse %s", pm_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        emit(
+            report_file_unreadable_diagnostic(
+                "system/hydro_production_models.json",
+                pm_path,
+                "the report shows no productivity for a hydro plant that "
+                "system/hydro_energy_productivity.parquet leaves out.",
+                exc,
+            ),
+            logger=_LOG,
+        )
         return {}
     result: dict[int, float] = {}
     for model in data.get("production_models", []):

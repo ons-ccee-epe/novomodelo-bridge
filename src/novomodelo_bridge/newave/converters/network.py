@@ -17,6 +17,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    unreadable_file_diagnostic,
 )
 from novomodelo_bridge.core.pandas_utils import is_na
 from novomodelo_bridge.core.penalties import PCORTEOL, PEXC, PINT, hydro_penalty_costs
@@ -273,7 +274,7 @@ def convert_buses(
                 load = reference_load_mw[bus_id]
                 depth_mw = depth_pu * load
                 scaled_rows.append(
-                    [info["name"], seg["patamar"], depth_pu, load, depth_mw]
+                    [code, info["name"], seg["patamar"], depth_pu, load, depth_mw]
                 )
             deficit_segments.append({"depth_mw": depth_mw, "cost": seg["cost"]})
 
@@ -295,21 +296,24 @@ def convert_buses(
                 category="Deficit",
                 title="Deficit segment depths fixed at the mean load",
                 summary=(
-                    "Deficit segment depths are a fraction of each stage's load in "
-                    "the source model but a fixed MW per bus in novomodelo; each "
-                    "depth is taken at the bus's hours-weighted mean load over the "
-                    "study period."
+                    "In NEWAVE a deficit segment's depth is a fraction of each "
+                    "stage's load, but Novomodelo takes one depth in MW per "
+                    "subsystem, so each depth is the fraction times the "
+                    "subsystem's hours-weighted mean load over the study. The "
+                    "deficit costs differ on stages whose load is far from that "
+                    "mean."
                 ),
                 table=DiagnosticTable(
                     columns=[
-                        "Bus",
+                        "Code",
+                        "Name",
                         "Segment",
-                        "Depth p.u.",
-                        "Mean load MW",
-                        "Depth MW",
+                        "Depth (p.u.)",
+                        "Mean load (MW)",
+                        "Depth (MW)",
                     ],
                     rows=scaled_rows,
-                    justify=["left", "right", "right", "right", "right"],
+                    justify=["right", "left", "right", "right", "right", "right"],
                 ),
             ),
             logger=_LOG,
@@ -547,7 +551,19 @@ def _read_penalid_costs(case: NewaveCase) -> dict[str, float]:
     try:
         penalid = case.penalid
     except (OSError, ValueError) as exc:
-        _LOG.warning("penalid.dat could not be parsed (%s); using defaults.", exc)
+        emit(
+            unreadable_file_diagnostic(
+                code="penalid-unreadable",
+                file_name="penalid.dat",
+                category="Penalties",
+                effect=(
+                    "the case prices the penalties it sets at the bridge's "
+                    "defaults, and the penalty costs differ from NEWAVE's."
+                ),
+                exc=exc,
+            ),
+            logger=_LOG,
+        )
         return {}
 
     pen_df = penalid.penalidades if penalid is not None else None
@@ -1177,9 +1193,9 @@ def convert_line_bounds(
                 y += 1
 
     _LOG.info(
-        "line_bounds: emitted %d per-block override row(s) folded from "
-        "patamar.dat exchange factors (novomodelo decision 10), alongside %d "
-        "stage-level base row(s).",
+        "line_bounds: per-block override rows folded from patamar.dat "
+        "exchange factors (novomodelo decision 10): %d; stage-level base "
+        "rows: %d.",
         rows.block_rows_emitted,
         len(rows.line_id) - rows.block_rows_emitted,
     )
@@ -1303,6 +1319,7 @@ def convert_non_controllable_sources(
     # Group by (codigo_submercado, indice_bloco) — each unique pair is one NCS.
     ncs_list: list[dict] = []
     ncs_id = 0
+    undeclared: list[list[object]] = []
 
     groups = df_filtered.groupby(["codigo_submercado", "indice_bloco"], sort=True)
 
@@ -1311,12 +1328,7 @@ def convert_non_controllable_sources(
         try:
             bus_id = id_map.bus_id(sub_code_int)
         except KeyError:
-            _LOG.warning(
-                "Subsystem code %d from geracao_usinas_nao_simuladas not in "
-                "id_map; skipping NCS (indice_bloco=%s)",
-                sub_code_int,
-                bloco,
-            )
+            undeclared.append([sub_code_int, bloco])
             continue
 
         # fonte: use the first non-null value in the group.
@@ -1347,6 +1359,32 @@ def convert_non_controllable_sources(
         )
         ncs_id += 1
 
+    if undeclared:
+        emit(
+            Diagnostic(
+                code="ncs-subsystem-undeclared",
+                severity=Severity.INFO,
+                category="Network",
+                title=(
+                    "Non-simulated generation of undeclared subsystems "
+                    f"({len(undeclared)})"
+                ),
+                summary=(
+                    "sistema.dat gives non-simulated generation for the listed "
+                    "subsystems but declares no such subsystem, so neither "
+                    "model has a bus for them and the case leaves that "
+                    "generation out."
+                ),
+                table=DiagnosticTable(
+                    columns=["Subsystem code", "Plant block"], rows=undeclared
+                ),
+                remediation=(
+                    "Declare each listed subsystem in sistema.dat, or remove its "
+                    "non-simulated generation."
+                ),
+            ),
+            logger=_LOG,
+        )
     return {
         "$schema": novomodelo_schemas.schema_url_for(
             "system/non_controllable_sources.json"

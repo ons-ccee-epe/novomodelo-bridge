@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 from novomodelo_bridge.core.source_text import tab_character_diagnostic
 
 if TYPE_CHECKING:
@@ -86,45 +86,39 @@ def _optional_file_fields(files: DataclassInstance) -> list[str]:
 def optional_input_advisory(  # noqa: UP047
     files: _FilesT,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
-    """Passing check + INFO advisory per absent optional input of *files*.
+    """A passing check per absent optional input of *files*, and one INFO
+    advisory listing them.
 
     Reflects over the ``Path | None`` fields of *files*'s dataclass (any
     files dataclass — the NEWAVE and DECOMP engines share this helper). Each
-    that resolved to ``None`` yields a passing :class:`CheckItem` plus a
-    ``Severity.INFO`` :class:`Diagnostic` (``code="optional-file-absent"``):
+    that resolved to ``None`` yields a passing :class:`CheckItem` and a row of
+    the ``Severity.INFO`` :class:`Diagnostic` (``code="optional-file-absent"``):
     an absent optional never blocks conversion and, being INFO not WARNING,
     never drives the ``WARNINGS`` verdict. Present optionals produce nothing.
     """
-    checks: list[CheckItem] = []
-    diagnostics: list[Diagnostic] = []
-    for name in _optional_file_fields(files):
-        if getattr(files, name) is not None:
-            continue
-        checks.append(
-            CheckItem(
-                label=f"Optional: {name}",
-                passed=True,
-                detail=_OPTIONAL_ABSENT_DETAIL,
-            )
+    absent = [
+        name for name in _optional_file_fields(files) if getattr(files, name) is None
+    ]
+    checks = [
+        CheckItem(
+            label=f"Optional: {name}", passed=True, detail=_OPTIONAL_ABSENT_DETAIL
         )
-        diagnostics.append(
-            Diagnostic(
-                code="optional-file-absent",
-                severity=Severity.INFO,
-                category="Preflight",
-                title="Optional input absent",
-                summary=(
-                    f"Optional input '{name}' was not found; "
-                    "the conversion proceeds without it."
-                ),
-                notes=[f"field: {name}"],
-                remediation=(
-                    "Provide the file if this case relies on it; "
-                    "otherwise this is informational."
-                ),
-            )
-        )
-    return checks, diagnostics
+        for name in absent
+    ]
+    if not absent:
+        return checks, []
+    advisory = Diagnostic(
+        code="optional-file-absent",
+        severity=Severity.INFO,
+        category="Preflight",
+        title=f"Optional inputs absent ({len(absent)})",
+        summary=(
+            "The listed optional inputs are not in the deck, so the "
+            "conversion proceeds without them, as the source model does."
+        ),
+        table=DiagnosticTable(columns=["Input"], rows=[[name] for name in absent]),
+    )
+    return checks, [advisory]
 
 
 def unindexed_libs_advisory(

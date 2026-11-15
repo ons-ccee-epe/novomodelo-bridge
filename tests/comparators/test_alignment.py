@@ -8,7 +8,6 @@ directly against a synthetic ``NewaveCase`` (built via the conftest
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import pandas as pd
@@ -17,6 +16,7 @@ from novomodelo_bridge.comparators.newave.alignment import (
     build_entity_alignment,
     read_reference_names,
 )
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case
 
@@ -157,8 +157,8 @@ class TestBuildEntityAlignment:
         assert alignment.hydros[0].name == "code_30"
         assert alignment.thermals[0].name == "code_200"
 
-    def test_line_with_unmapped_bus_is_skipped_and_warns(
-        self, tmp_path: Path, caplog
+    def test_line_with_unmapped_bus_is_skipped_and_reported(
+        self, tmp_path: Path
     ) -> None:
         id_map = NewaveIdMap(subsystem_ids=[1, 2], hydro_codes=[10], thermal_codes=[])
         case = make_case(
@@ -173,12 +173,16 @@ class TestBuildEntityAlignment:
             {"id": 1, "source_bus_id": 0, "target_bus_id": 99, "name": "UNMAPPED"},
         ]
 
-        with caplog.at_level(logging.WARNING):
+        with dx.collect() as collected:
             alignment = build_entity_alignment(id_map, case, lines_json)
 
         assert [line.name for line in alignment.lines] == ["MAPPED"]
-        assert "unmapped buses" in caplog.text
-        assert "UNMAPPED" in caplog.text
+        [diag] = collected
+        assert diag.code == "line-bus-unmapped"
+        assert diag.severity is dx.Severity.WARNING
+        assert diag.title == "Lines to buses with no NEWAVE submarket (1)"
+        assert diag.table is not None
+        assert diag.table.rows == [[1, "UNMAPPED", 0, 99]]
 
     def test_hydro_and_thermal_keyerror_skip_branches(self, tmp_path: Path) -> None:
         id_map = _KeyErrorIdMap()

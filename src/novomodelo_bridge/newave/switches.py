@@ -32,7 +32,6 @@ class Switch:
     considered, and ``ignored`` names the input in user-facing text.
     """
 
-    field: str
     label: str
     value: int | None
     on: bool
@@ -64,7 +63,7 @@ class DgerSwitches:
 
         def plain(field: str, label: str, ignored: str) -> Switch:
             value = read(field)
-            return Switch(field, label, value, value is None or value != 0, ignored)
+            return Switch(label, value, value is None or value != 0, ignored)
 
         turbining = read("restricao_turbinamento")
         drop_min_outflow = read("desconsidera_vazao_minima")
@@ -88,7 +87,6 @@ class DgerSwitches:
             ),
             # Inverted: 1 tells NEWAVE to drop every minimum-outflow requirement.
             min_outflow=Switch(
-                "desconsidera_vazao_minima",
                 "DESCONSIDERA VAZMIN",
                 drop_min_outflow,
                 drop_min_outflow is None or drop_min_outflow == 0,
@@ -96,14 +94,12 @@ class DgerSwitches:
             ),
             # 0 none, 1 maximum and minimum, 2 maximum only, 3 minimum only.
             turbined_max=Switch(
-                "restricao_turbinamento",
                 "REST. TURBINAMENTO",
                 turbining,
                 turbining is None or turbining in (1, 2),
                 "TURBMAXT records of modif.dat",
             ),
             turbined_min=Switch(
-                "restricao_turbinamento",
                 "REST. TURBINAMENTO",
                 turbining,
                 turbining is None or turbining in (1, 3),
@@ -126,12 +122,7 @@ def switch_off_diagnostic(switch: Switch) -> Diagnostic:
         title=f"{switch.ignored} ignored: {switch.label} = {switch.value} in dger.dat",
         summary=(
             f"NEWAVE does not consider {switch.ignored} with {switch.label} = "
-            f"{switch.value}, so the converter leaves it out as well."
-        ),
-        notes=[f"switch: {switch.field}"],
-        remediation=(
-            f"Change {switch.label} in dger.dat if {switch.ignored} should be "
-            "considered; otherwise this is informational."
+            f"{switch.value}, so the conversion leaves it out as well."
         ),
     )
 

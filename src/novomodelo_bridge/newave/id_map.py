@@ -154,7 +154,7 @@ def build_id_map_from_readers(
                 category="Entity exclusion",
                 title=f"Fictitious plants left out ({len(rows)})",
                 summary=(
-                    f"{len(rows)} fictitious plant(s), accounting nodes with zero "
+                    "The listed fictitious plants, accounting nodes with zero "
                     "productivity that share a real plant's posto, are left out "
                     "of the case; the cascade links past them to the next real "
                     "plant downstream."

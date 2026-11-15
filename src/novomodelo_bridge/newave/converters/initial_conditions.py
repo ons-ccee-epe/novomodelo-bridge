@@ -7,6 +7,13 @@ from datetime import date
 
 import pandas as pd
 
+from novomodelo_bridge.core.anticipated import commitment_clamped_diagnostic
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
 from novomodelo_bridge.newave.converters.hydro import (
@@ -61,7 +68,7 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     storage is derived from ``Confhd.usinas.volume_inicial_percentual``
     (a percentage of ``volume_maximo`` from Hidr).
 
-    Values outside ``[0, 100]`` are clamped with a warning.
+    Values outside ``[0, 100]`` are clamped, with a warning.
 
     Parameters
     ----------
@@ -96,6 +103,7 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
     storage: list[dict] = []
     filling_storage: list[dict] = []
+    clamped: list[list[object]] = []
     for _, row in existing.iterrows():
         newave_code = int(row["codigo_usina"])
         name = str(row["nome_usina"]).strip()
@@ -121,14 +129,9 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             assert exph_df is not None  # filling membership implies exph present
             morto = float(_filling_row(exph_df, newave_code)["volume_morto"])
             if morto < 0.0 or morto > 100.0:
-                _LOG.warning(
-                    "volume_morto for plant '%s' (code %d) is %.2f"
-                    " — clamping to [0, 100]",
-                    name,
-                    newave_code,
-                    morto,
-                )
-                morto = max(0.0, min(100.0, morto))
+                used = max(0.0, min(100.0, morto))
+                clamped.append([newave_code, name, "exph.dat dead volume", morto, used])
+                morto = used
             filling_storage.append(
                 {
                     "hydro_id": id_map.hydro_id(newave_code),
@@ -154,12 +157,14 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
         pct = float(row["volume_inicial_percentual"])
         if pct < 0.0 or pct > 100.0:
-            _LOG.warning(
-                "volume_inicial_percentual for plant '%s' (code %d) is %.2f"
-                " — clamping to [0, 100]",
-                name,
-                newave_code,
-                pct,
+            clamped.append(
+                [
+                    newave_code,
+                    name,
+                    "confhd.dat initial volume",
+                    pct,
+                    max(0.0, min(100.0, pct)),
+                ]
             )
 
         value_hm3 = initial_storage_hm3(hreg, pct)
@@ -173,8 +178,23 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
 
     storage.sort(key=lambda s: s["hydro_id"])
     filling_storage.sort(key=lambda s: s["hydro_id"])
+    if clamped:
+        emit(_storage_clamped_diagnostic(clamped), logger=_LOG)
 
-    # ── Past anticipated thermal commitments (from adterm.dat) ──────────
+    past_anticipated_commitments = _past_anticipated_commitments(case, id_map)
+
+    result: dict = {
+        "$schema": novomodelo_schemas.schema_url_for("initial_conditions.json"),
+        "storage": storage,
+        "filling_storage": filling_storage,
+    }
+    if past_anticipated_commitments:
+        result["past_anticipated_commitments"] = past_anticipated_commitments
+    return result
+
+
+def _past_anticipated_commitments(case: NewaveCase, id_map: NewaveIdMap) -> list[dict]:
+    """The ``past_anticipated_commitments`` windows seeded from ``adterm.dat``."""
     # Empty for non-GNL cases (despacho_antecipado_gnl=0 in dger.dat). Each entry maps
     # a thermal's source-model code to its novomodelo thermal_id.
     #
@@ -185,34 +205,33 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # that stage's fishing equality infeasible, so we clamp into range and warn rather
     # than emit a case novomodelo would reject.
     anticipated = read_anticipated_dispatch(case)
-    gen_bounds = thermal_generation_bounds(case) if anticipated else {}
-    if anticipated:
-        start_year, start_month = study_start(case.dger)
+    if not anticipated:
+        return []
+    gen_bounds = thermal_generation_bounds(case)
+    start_year, start_month = study_start(case.dger)
     past_anticipated_commitments: list[dict] = []
+    undeclared: list[int] = []
+    moved: list[list[object]] = []
     for newave_code, dispatch in anticipated.items():
         try:
             thermal_id = id_map.thermal_id(newave_code)
         except KeyError:
-            _LOG.warning(
-                "adterm.dat references thermal code=%d that is absent from "
-                "the novomodelo id map; skipping its anticipated commitment.",
-                newave_code,
-            )
+            undeclared.append(newave_code)
             continue
         lo, hi = gen_bounds.get(newave_code, (float("-inf"), float("inf")))
         seeded = [min(max(v, lo), hi) for v in dispatch.values_mw]
-        if any(abs(s - v) > 1e-9 for s, v in zip(seeded, dispatch.values_mw)):
-            _LOG.warning(
-                "adterm.dat thermal code=%d committed dispatch [%s] MW falls "
-                "outside the plant's generation bounds [%.4f, %.4f]; clamping to "
-                "[%s] so the plant's committed (anticipated) dispatch stays "
-                "within its generation bounds.",
+        moved.extend(
+            [
                 newave_code,
-                ", ".join(f"{v:.4f}" for v in dispatch.values_mw),
-                lo,
-                hi,
-                ", ".join(f"{s:.4f}" for s in seeded),
-            )
+                f"stage {k}",
+                round(v, 4),
+                round(lo, 4),
+                round(hi, 4),
+                round(s, 4),
+            ]
+            for k, (s, v) in enumerate(zip(seeded, dispatch.values_mw))
+            if abs(s - v) > 1e-9
+        )
         # novomodelo 0.14 takes past_anticipated_commitments as windowed records
         # {thermal_id, start_date, end_date, value_mw}, one per leading delivery
         # stage, tiling the plant's lead horizon exactly (strict full coverage,
@@ -228,12 +247,54 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
                 }
             )
     past_anticipated_commitments.sort(key=lambda c: (c["thermal_id"], c["start_date"]))
+    if undeclared:
+        emit(_adterm_undeclared_diagnostic(sorted(undeclared)), logger=_LOG)
+    if moved:
+        names = {
+            int(r["codigo_usina"]): str(r["nome_usina"]).strip()
+            for _, r in case.thermal_plants.iterrows()
+        }
+        rows = [[code, names.get(code, ""), *rest] for code, *rest in moved]
+        emit(commitment_clamped_diagnostic(rows, source="adterm.dat"), logger=_LOG)
+    return past_anticipated_commitments
 
-    result: dict = {
-        "$schema": novomodelo_schemas.schema_url_for("initial_conditions.json"),
-        "storage": storage,
-        "filling_storage": filling_storage,
-    }
-    if past_anticipated_commitments:
-        result["past_anticipated_commitments"] = past_anticipated_commitments
-    return result
+
+def _storage_clamped_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="initial-storage-clamped",
+        severity=Severity.WARNING,
+        category="Initial conditions",
+        title=f"Initial storage outside 0-100% clamped ({len(rows)})",
+        summary=(
+            "The deck gives the listed plants an initial storage outside 0-100% "
+            "of their volume, so the conversion clamps it into that range, and "
+            "the case starts from a different stored volume than the deck gives."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Record", "Deck (%)", "Used (%)"],
+            rows=rows,
+            justify=["right", "left", "left", "right", "right"],
+        ),
+        remediation=(
+            "Give each listed plant a percentage between 0 and 100 in the listed "
+            "record."
+        ),
+    )
+
+
+def _adterm_undeclared_diagnostic(codes: list[int]) -> Diagnostic:
+    return Diagnostic(
+        code="adterm-thermal-undeclared",
+        severity=Severity.INFO,
+        category="GNL",
+        title=f"Anticipated dispatch of undeclared thermal plants ({len(codes)})",
+        summary=(
+            "adterm.dat commits generation for the listed thermal plants, which "
+            "conft.dat does not declare, so neither model has the plants and the "
+            "case leaves those commitments out."
+        ),
+        table=DiagnosticTable(columns=["Code"], rows=[[c] for c in codes]),
+        remediation=(
+            "Declare each listed plant in conft.dat, or remove its adterm.dat rows."
+        ),
+    )

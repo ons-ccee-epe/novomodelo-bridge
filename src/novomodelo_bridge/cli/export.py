@@ -15,7 +15,7 @@ from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
 from novomodelo_bridge.cli.logging_config import configure_logging as _configure_logging
 from novomodelo_bridge.cli.verdict import build_verdict
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.errors import BridgeError
+from novomodelo_bridge.core.errors import BridgeError, OutputExistsError
 from novomodelo_bridge.dessem.exporters.fcf import EXPORT_PHASE_LABELS
 from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
 from novomodelo_bridge.dessem.exporters.fcf.source import read_source_deck
@@ -76,15 +76,10 @@ _JsonOpt = Annotated[
 ]
 
 
-def _outputs_exist(output_dir: Path, revision: str) -> bool:
-    """Check if output files already exist."""
-    return any(
-        [
-            (output_dir / f"mapcut.{revision}").exists(),
-            (output_dir / f"cortdeco.{revision}").exists(),
-            (output_dir / "export_manifest.json").exists(),
-        ]
-    )
+def _existing_outputs(output_dir: Path, revision: str) -> list[str]:
+    """The names of the files an export of *revision* writes that already exist."""
+    names = (f"mapcut.{revision}", f"cortdeco.{revision}", "export_manifest.json")
+    return [name for name in names if (output_dir / name).exists()]
 
 
 @export_app.command("dessem")
@@ -145,10 +140,12 @@ def _export_dessem(
     for the delivery of the case's second stage, in R$/MWh and the same on
     every load block, and mapcut record 9 carries that stage's load-block
     hours. The policy's other GNL coefficients are left out and counted in the
-    log. A plant with no coefficient for that delivery, or a coefficient of
-    exactly zero, gets 0.0 and a warning. Each stage's mapcut record 10 also
-    carries the cost of the GNL generation committed before the study, from
-    the case's initial_conditions.json, in 10³ R$.
+    export notes. A plant with no coefficient for that delivery, or a
+    coefficient of exactly zero, gets 0.0 and a warning. Each stage's mapcut
+    record 10 also carries the cost of the GNL generation committed before the
+    study, from the case's initial_conditions.json, in 10³ R$. Every export
+    warns that mapcut's physical records and record 10's other cost parcels
+    are written as zeros.
     """
     _configure_logging(verbose, log_file)
 
@@ -187,11 +184,12 @@ def _export_dessem(
 
     output_dir = output or (case_dir / "dessem_fcf")
 
-    if not force and _outputs_exist(output_dir, revision):
+    existing = _existing_outputs(output_dir, revision)
+    if existing and not force:
         _fail(
             command,
             args,
-            BridgeError(f"Outputs exist at {output_dir}. Use --force to overwrite."),
+            OutputExistsError(f"'{output_dir}' already holds {', '.join(existing)}."),
             1,
         )
 
@@ -238,6 +236,7 @@ def _export_dessem(
     # reach the user as one rendered diagnostic or `--json` envelope, exit 1.
     except Exception as exc:
         _fail(command, args, exc, 1)
+    export_diags = dx.finalize_diagnostics(export_diags)
 
     status = "ok" if exit_code == 0 else "error"
     if json_output:

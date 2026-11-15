@@ -17,11 +17,14 @@ from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.constraint_registers import (
     BoundConflict,
+    ConstraintCensus,
     ConstraintRecord,
     ConstraintTerm,
+    StageBounds,
     bound_conflicts_diagnostic,
     detect_libs_electrical,
     detect_unconverted_rha,
+    drop_unknown_entities,
     lowers_to_bound,
     read_constraints,
 )
@@ -606,7 +609,8 @@ def test_rha_registers_warn_naming_their_constraint_ids() -> None:
     assert diagnostic is not None
     assert diagnostic.code == "decomp-rha-family-unconverted"
     assert diagnostic.severity is Severity.WARNING
-    assert "ids 1, 4" in diagnostic.summary
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1], [4]]
 
 
 def test_deck_without_rha_registers_has_no_rha_finding() -> None:
@@ -850,8 +854,93 @@ def test_bound_conflicts_diagnostic_names_plant_restrictions_and_limits() -> Non
     assert diagnostic.severity is Severity.WARNING
     assert diagnostic.table is not None
     assert diagnostic.table.rows == [
-        [118, "BILLINGS", "QDEF", "HQ 116, HQ 170", 1, 1, 6.0, 0.0]
+        [118, "BILLINGS", "QDEF", "HQ 116, HQ 170", 0, 0, 6.0, 0.0]
     ]
     text = f"{diagnostic.summary} {diagnostic.remediation}"
     for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", "_"):
         assert leak not in text
+
+
+# ---------------------------------------------------------------------------
+# drop_unknown_entities
+# ---------------------------------------------------------------------------
+
+
+def _record(
+    family: str, constraint_id: int, *terms: ConstraintTerm
+) -> ConstraintRecord:
+    per_block = family in ("RE", "HQ")
+    return ConstraintRecord(
+        family=family,
+        constraint_id=constraint_id,
+        stage_start=0,
+        stage_end=0,
+        terms=terms,
+        bounds={0: StageBounds(lower=(None,), upper=(10.0,))},
+        per_block=per_block,
+    )
+
+
+def _screen(*records: ConstraintRecord) -> tuple[ConstraintCensus, list]:
+    census = ConstraintCensus(
+        by_family={},
+        to_bounds=tuple(r for r in records if lowers_to_bound(r)),
+        to_generic=tuple(r for r in records if not lowers_to_bound(r)),
+    )
+    return drop_unknown_entities(
+        census, hydro_codes=(5, 6), thermal_codes=(20,), pumping_codes=(2,)
+    )
+
+
+def test_drop_unknown_entities_keeps_a_census_on_known_entities() -> None:
+    known = (
+        _record(
+            "RE",
+            1,
+            ConstraintTerm(code=20, coefficient=1.0, variable="thermal_generation"),
+        ),
+        _record("HQ", 2, ConstraintTerm(code=2, coefficient=1.0, variable="QBOM")),
+        _record("HV", 3, ConstraintTerm(code=5, coefficient=1.0, variable="VARM")),
+    )
+    census, diagnostics = _screen(*known)
+
+    assert diagnostics == []
+    assert (*census.to_bounds, *census.to_generic) == known
+
+
+def test_drop_unknown_entities_leaves_out_bound_and_generic_records_alike() -> None:
+    single = _record("HV", 7, ConstraintTerm(code=99, coefficient=1.0, variable="VARM"))
+    multi = _record(
+        "HV",
+        8,
+        ConstraintTerm(code=5, coefficient=1.0, variable="VARM"),
+        ConstraintTerm(code=98, coefficient=1.0, variable="VARM"),
+    )
+    census, diagnostics = _screen(single, multi)
+
+    assert census.to_bounds == ()
+    assert census.to_generic == ()
+    [diagnostic] = diagnostics
+    assert diagnostic.code == "decomp-rhv-varm-plant-uncadastred"
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[7, 99], [8, 98]]
+
+
+def test_drop_unknown_entities_reports_each_kind_of_term_once() -> None:
+    _, diagnostics = _screen(
+        _record(
+            "RE",
+            1,
+            ConstraintTerm(code=30, coefficient=1.0, variable="thermal_generation"),
+        ),
+        _record("HQ", 2, ConstraintTerm(code=4, coefficient=1.0, variable="QBOM")),
+        _record("HV", 3, ConstraintTerm(code=4, coefficient=1.0, variable="VBOM")),
+        _record("HV", 4, ConstraintTerm(code=4, coefficient=1.0, variable="VBOM")),
+    )
+
+    assert [(d.code, d.table.rows if d.table else None) for d in diagnostics] == [
+        ("decomp-re-thermal-not-normal", [[1, 30]]),
+        ("decomp-rhq-qbom-no-station", [[2, 4]]),
+        ("decomp-rhv-vbom-no-station", [[3, 4], [4, 4]]),
+    ]

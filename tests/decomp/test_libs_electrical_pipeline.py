@@ -544,9 +544,10 @@ class TestLibsElectricalPipelineWiring:
         assert diagnostic.table is not None
         counts = {str(label): count for label, count in diagnostic.table.rows}
         assert counts["Converted"] == 2
-        assert counts["inactive"] == 0
-        assert counts["unresolved-bucket-a"] == 0
-        assert counts["unresolved-bucket-bc"] == 0
+        assert counts["Left out: never active"] == 0
+        assert counts["Left out: no case variable for a term"] == 0
+        assert counts["Left out: data term not evaluated"] == 0
+        assert counts["Left out: undeclared name"] == 0
 
         assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics_out}
 

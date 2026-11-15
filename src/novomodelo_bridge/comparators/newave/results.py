@@ -20,6 +20,12 @@ import polars as pl
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    Severity,
+    emit,
+    report_file_unreadable_diagnostic,
+)
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.novomodelo.case_io import case_dir_for
 
@@ -1101,8 +1107,17 @@ def _productivity_detail(
     cb_accumulated: dict[int, float] = {}
     try:
         nw_cadastro = read_cadastro(case)
-    except Exception:
-        _LOG.warning("Failed to read HIDR cadastro for productivity building blocks")
+    except Exception as exc:
+        emit(
+            report_file_unreadable_diagnostic(
+                "hidr.dat",
+                case.files.hidr,
+                "the report's Productivity tab leaves out the cadastro building "
+                "blocks and the accumulated productivities.",
+                exc,
+            ),
+            logger=_LOG,
+        )
         nw_cadastro = pd.DataFrame()
     if not nw_cadastro.empty:
         try:
@@ -1114,8 +1129,22 @@ def _productivity_detail(
             cb_accumulated = compute_accumulated_integrated_productivities(
                 nw_cadastro, confhd_df, fictitious=case.fictitious_codes
             )
-        except Exception:
-            _LOG.warning("Failed to compute accumulated productivities for the tab")
+        except Exception as exc:
+            emit(
+                Diagnostic(
+                    code="productivity-accumulated-unavailable",
+                    severity=Severity.WARNING,
+                    category="Compare data",
+                    title="Accumulated productivities not computed",
+                    summary=(
+                        "The accumulated productivities could not be computed "
+                        "from hidr.dat and confhd.dat, so the report's "
+                        "Productivity tab leaves them out."
+                    ),
+                    notes=[f"Reason: {exc}"],
+                ),
+                logger=_LOG,
+            )
     return build_productivity_detail(
         alignment, nw_prod_detail, nw_cadastro, novomodelo_prod_detail, cb_accumulated
     )
@@ -1200,33 +1229,6 @@ def _energy_balance_frames(
         nw_sin = read_medias_sin(source_dir)
     nw_net_load = read_newave_net_load(case.files)
     return nw_market, nw_net_load, nw_sin
-
-
-def _line_bounds_and_meta(
-    novomodelo_output_dir: Path,
-) -> tuple[pl.DataFrame, list[dict]]:
-    """Novomodelo's per-stage line bounds and ``lines.json`` metadata.
-
-    The bounds come from :func:`read_novomodelo_stage_line_bounds`, weighted
-    over the blocks as the plotted stage-mean flow is.
-
-    A missing or unparseable ``lines.json`` degrades to an empty ``line_meta``.
-    """
-    from novomodelo_bridge.novomodelo.readers import read_novomodelo_stage_line_bounds
-
-    lines_json_path = case_dir_for(novomodelo_output_dir) / "system" / "lines.json"
-    line_meta: list[dict] = []
-    if lines_json_path.exists():
-        try:
-            import json as _json
-
-            line_meta = _json.loads(lines_json_path.read_text(encoding="utf-8")).get(
-                "lines", []
-            )
-        except Exception:
-            _LOG.warning("Failed to read lines.json")
-    line_bounds = read_novomodelo_stage_line_bounds(novomodelo_output_dir, line_meta)
-    return line_bounds, line_meta
 
 
 class _PerformanceFields(TypedDict):
@@ -1375,6 +1377,7 @@ def compare_results(
         read_novomodelo_hydro_per_stage_bounds,
         read_novomodelo_hydro_percentiles,
         read_novomodelo_line_percentiles,
+        read_novomodelo_network_lines,
         read_novomodelo_spillage_energy,
         read_novomodelo_thermal_percentiles,
     )
@@ -1384,14 +1387,7 @@ def compare_results(
     # The source-model result files (MEDIAS-*.CSV, nwlistop-*.out) live directly
     # in the case directory (no saidas/ subfolder).
     source_dir = case.files.directory
-    if source_dir.is_dir():
-        medias = _compare_medias(source_dir, novomodelo_output_dir, entities, alignment)
-    else:
-        _LOG.warning(
-            "NEWAVE source result files not found in the case directory; "
-            "skipping MEDIAS comparison."
-        )
-        medias = _MediasComparison()
+    medias = _compare_medias(source_dir, novomodelo_output_dir, entities, alignment)
     results = list(medias.results)
 
     nw_conv = read_pmo_convergence(case.files.directory)
@@ -1421,7 +1417,7 @@ def compare_results(
     thermal_pct = read_novomodelo_thermal_percentiles(novomodelo_output_dir)
     bus_pct = read_novomodelo_bus_percentiles(novomodelo_output_dir)
     line_pct = read_novomodelo_line_percentiles(novomodelo_output_dir)
-    line_bounds, line_meta = _line_bounds_and_meta(novomodelo_output_dir)
+    line_bounds, line_meta = read_novomodelo_network_lines(novomodelo_output_dir)
 
     performance_fields = _performance_fields(
         case.files.directory, novomodelo_output_dir

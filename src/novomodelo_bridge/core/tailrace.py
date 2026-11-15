@@ -95,7 +95,7 @@ def build_tailrace_table(
             skipped.add(code)
     if skipped:
         _LOG.debug(
-            "Skipped %d polinjus plant code(s) absent from the id map: %s",
+            "Polinjus plant codes absent from the id map, skipped: %d (%s)",
             len(skipped),
             sorted(skipped),
         )
@@ -323,7 +323,7 @@ def spill_outside_tailrace_diagnostic(rows: Sequence[Sequence[object]]) -> Diagn
         category="Hydro production model",
         title=f"FPHA plants lose generation when they spill ({len(rows)})",
         summary=(
-            f"In the source model, the spilled flow of {len(rows)} FPHA plant(s) "
+            "In the source model, the spilled flow of the listed FPHA plants "
             "does not raise their tailrace, so spilling costs them no "
             "generation. Novomodelo's production function always raises the "
             "tailrace with the spilled flow, so whenever these plants spill "
@@ -333,6 +333,7 @@ def spill_outside_tailrace_diagnostic(rows: Sequence[Sequence[object]]) -> Diagn
         table=DiagnosticTable(
             columns=["Code", "Name", "Stages"],
             rows=[list(row) for row in rows],
+            justify=["right", "left", "left"],
             caption="Stage ids are 0-based.",
         ),
     )

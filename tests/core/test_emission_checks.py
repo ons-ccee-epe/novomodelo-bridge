@@ -14,7 +14,6 @@ from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.emission_checks import (
     BoundFamily,
-    EmissionCheckError,
     check_block_id_not_on_anticipated_thermal,
     check_bound_block_id_range,
     check_bound_row_uniqueness,
@@ -25,6 +24,7 @@ from novomodelo_bridge.core.emission_checks import (
     clamp_hydro_bounds_to_declared,
     run_and_gate,
 )
+from novomodelo_bridge.core.errors import EmissionCheckError
 
 
 def _hydros(*entries: dict) -> dict:

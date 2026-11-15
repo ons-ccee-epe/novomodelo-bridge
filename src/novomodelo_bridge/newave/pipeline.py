@@ -699,6 +699,7 @@ def convert_newave_case(
     src: Path,
     dst: Path,
     *,
+    force: bool = False,
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     float_digits: int | None = DEFAULT_FLOAT_DIGITS,
@@ -716,8 +717,7 @@ def convert_newave_case(
         required source-model input file.
     dst:
         Path to the output Novomodelo case directory.  Must not exist or must be
-        empty (call site is responsible for enforcing the --force contract
-        before calling this function).
+        empty unless *force*.
     dry_run:
         When ``True``, run the full in-memory conversion but write nothing to
         *dst* (no files, no subdirectories). The would-write paths are still
@@ -738,10 +738,13 @@ def convert_newave_case(
     FileNotFoundError
         If *src* does not exist, is not a directory, or a required source-model
         file is missing.
-    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+    ~novomodelo_bridge.core.errors.EmissionCheckError
         A ``ValueError``: a post-emission self-check in
         :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
         violation in the converted artifacts. No report is returned.
+    ~novomodelo_bridge.core.errors.OutputExistsError
+        A ``FileExistsError``: *dst* already holds files and ``force`` is not
+        set.
     """
     return run_conversion(
         lambda: _convert_newave_case_impl(
@@ -749,6 +752,7 @@ def convert_newave_case(
         ),
         dst,
         NEWAVE_CLEARED_ARTIFACTS,
+        force=force,
         dry_run=dry_run,
     )
 

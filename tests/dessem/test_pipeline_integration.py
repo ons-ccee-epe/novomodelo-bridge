@@ -26,12 +26,14 @@ from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
     reject_pair,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
+    COST_FIELDS,
     RECORD_SIZE,
     TAMANHO_CORTE,
     LayoutError,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     ENTITY_TYPE_ANTICIPATED_THERMAL,
+    InflowLagAudit,
     SourceHydro,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
@@ -44,7 +46,13 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     PolicyManifest,
     StageCutPool,
 )
-from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
+from novomodelo_bridge.dessem.exporters.fcf.pipeline import (
+    _ZERO_COST_PARCELS,
+    ExportSettings,
+    _emit_cut_pool_mismatch,
+    _emit_inflow_lag_drop_warning,
+    run_export,
+)
 from novomodelo_bridge.dessem.exporters.fcf.source import SourceDeck
 from tests.dessem.conftest import weekly_windows, write_commitments
 
@@ -625,8 +633,8 @@ class TestTravelTimeExport:
             d for d in diagnostics if d.code == "dessem-fcf-undated-buckets-priced"
         )
         assert warning.severity is dx.Severity.WARNING
-        assert "15 cut coefficient(s)" in warning.summary  # 3 pools x 5 cuts x 1 bucket
-        assert "Pool 0: 5 coefficient(s) on 1 undated bucket(s)." in warning.notes
+        assert warning.title.endswith("(15)")  # 3 pools x 5 cuts x 1 bucket
+        assert "Pool 0: 5 coefficients on 1 undated bucket." in warning.notes
 
     def test_undated_bucket_warning_has_no_repo_internal_references(
         self, travel_time_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
@@ -930,7 +938,7 @@ class TestGnlExport:
             patch(
                 "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
             ) as read,
-            caplog.at_level(logging.WARNING, logger=_MAPPER_LOGGER),
+            caplog.at_level(logging.INFO, logger=_MAPPER_LOGGER),
         ):
             read.return_value = PolicyCheckpoint(_make_manifest(), pools)
             result = run_export(
@@ -1111,7 +1119,7 @@ class TestGnlDiagnostics:
         assert exported.category == "FCF export"
         assert exported.table is not None
         assert exported.table.columns == [
-            "GNL plant",
+            "Code",
             "Name",
             "Submarket",
             "Delivery",
@@ -1171,7 +1179,7 @@ class TestGnlDiagnostics:
         (zero,) = _with_code(diagnostics, _ZERO)
         assert zero.severity == dx.Severity.WARNING
         assert zero.table is not None
-        assert zero.table.columns == ["GNL plant", "Name", "Zero cuts", "Cuts"]
+        assert zero.table.columns == ["Code", "Name", "Zero cuts", "Cuts"]
         assert zero.table.rows == [[87, "GNL_B", 1, 5]]
         (exported,) = _with_code(diagnostics, _EXPORTED)
         assert exported.table is not None
@@ -1651,3 +1659,106 @@ class TestFailureManifest:
         assert manifest["status"] == "failed"
         assert manifest["failed_step"] == "read settings-derived inputs"
         assert not (output_dir / "mapcut.rv0").exists()
+
+
+class TestExportFindings:
+    """What the exported pair leaves out is reported, never only logged."""
+
+    def test_every_export_lists_the_mapcut_fields_written_as_zeros(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        result, diagnostics = _run_export_on_policy(
+            synthetic_case_dir,
+            synthetic_source,
+            tmp_path / "dessem_fcf",
+            _make_pools_dict(),
+            _make_manifest(),
+        )
+
+        assert result == 0
+        [zeros] = _with_code(diagnostics, "dessem-fcf-mapcut-fields-zero")
+        assert zeros.severity is dx.Severity.WARNING
+        assert zeros.title == "mapcut.rv0 fields written as zeros"
+        assert zeros.table is not None
+        assert zeros.table.rows[0] == ["4-17", "physical hydro data", "P1"]
+        assert [row[2] for row in zeros.table.rows[1:]] == ["P11"] * 4
+        assert _with_code(diagnostics, "dessem-fcf-cut-pools-unexpected") == []
+
+    def test_the_zero_cost_parcels_are_record_10s_other_fields(self) -> None:
+        assert set(_ZERO_COST_PARCELS) == set(COST_FIELDS) - {
+            "taxa_desconto",
+            "geracao_termica_minima_gerada_gnl",
+        }
+
+    def test_dropped_inflow_lag_coefficients_are_counted_per_pool(self) -> None:
+        with dx.collect() as found:
+            _emit_inflow_lag_drop_warning(
+                InflowLagAudit(per_pool=((0, 4), (1, 0)), total=4)
+            )
+            _emit_inflow_lag_drop_warning(InflowLagAudit(per_pool=((0, 0),), total=0))
+
+        [dropped] = found
+        assert dropped.code == "dessem-fcf-inflow-lag-coefficients-dropped"
+        assert dropped.title == "Inflow-lag coefficients dropped (4)"
+        assert dropped.notes[0] == "Pool 0: 4 coefficients."
+
+    def test_pools_without_cuts_are_reported(self) -> None:
+        with dx.collect() as found:
+            _emit_cut_pool_mismatch((0, 1), 3)
+            _emit_cut_pool_mismatch((0, 1, 2), 3)
+
+        [mismatch] = found
+        assert mismatch.code == "dessem-fcf-cut-pools-unexpected"
+        assert mismatch.notes == ["Pools holding cuts: 0, 1."]
+
+    def test_a_pair_failing_its_check_is_reported_as_renamed(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "dessem_fcf"
+        with patch(
+            "novomodelo_bridge.dessem.exporters.fcf.pipeline.cross_check_pair",
+            side_effect=LayoutError("read-back mismatch"),
+        ):
+            result, diagnostics = _run_export_on_policy(
+                synthetic_case_dir,
+                synthetic_source,
+                output_dir,
+                _make_pools_dict(),
+                _make_manifest(),
+            )
+
+        assert result == 1
+        [failed] = _with_code(diagnostics, "dessem-fcf-export-failed")
+        assert failed.notes[1:] == [
+            f"{name} is kept as {name}.rejected, so DESSEM cannot read it by mistake."
+            for name in ("mapcut.rv0", "cortdeco.rv0")
+        ]
+        assert (output_dir / "mapcut.rv0.rejected").exists()
+
+    def test_an_unwritable_failure_manifest_is_reported(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.dessem.exporters.fcf.core.reader import PolicyFormatError
+
+        with (
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy",
+                side_effect=PolicyFormatError("test error"),
+            ),
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.write_export_manifest",
+                side_effect=OSError("disk full"),
+            ),
+            dx.collect() as diagnostics,
+        ):
+            result = run_export(
+                case_dir=synthetic_case_dir,
+                source=synthetic_source,
+                output_dir=tmp_path / "dessem_fcf",
+                settings=ExportSettings(),
+            )
+
+        assert result == 1
+        [unwritten] = _with_code(diagnostics, "dessem-fcf-failure-manifest-unwritten")
+        assert unwritten.title == "export_manifest.json could not be written"
+        assert unwritten.notes == ["Reason: disk full"]

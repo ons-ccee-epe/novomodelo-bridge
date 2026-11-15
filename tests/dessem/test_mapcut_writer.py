@@ -1,7 +1,6 @@
 """Tests for dessem/exporters/fcf/mapcut_writer.py."""
 
 import csv
-import logging
 from dataclasses import replace
 from pathlib import Path
 
@@ -347,22 +346,3 @@ class TestCommittedGnlCost:
             write_mapcut(header, path)
 
         assert not path.exists()
-
-    def test_p11_log_names_the_four_zero_parcels_only(
-        self,
-        tmp_path: Path,
-        minimal_header: MapcutHeader,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
-            write_mapcut(minimal_header, tmp_path / "mapcut.rv0")
-
-        (message,) = [m for m in caplog.messages if m.startswith("P11")]
-        for parcel in (
-            "parcela_custo_geracao_termica_minima",
-            "parcela_custo_contrato_importacao_minimo",
-            "parcela_custo_contrato_exportacao_minimo",
-            "geracao_termica_minima_sinalizada_gnl",
-        ):
-            assert parcel in message
-        assert "geracao_termica_minima_gerada_gnl" not in message

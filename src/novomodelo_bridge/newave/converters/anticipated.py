@@ -55,6 +55,12 @@ from typing import TYPE_CHECKING
 import pandas as pd
 from inewave.newave import Dger, Patamar
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.pandas_utils import as_int
 
 if TYPE_CHECKING:
@@ -203,20 +209,14 @@ def read_anticipated_dispatch(
     )
 
     result: dict[int, AnticipatedDispatch] = {}
+    truncated: list[list[object]] = []
     for code, group in despachos.groupby("codigo_usina"):
         code_int = as_int(code)
         max_lag = int(group["lag"].max())
         if max_lag <= 0:
             continue
         if max_lag > n_stages_total:
-            _LOG.warning(
-                "adterm.dat plant code=%d has lag=%d exceeding the %d-stage "
-                "horizon; truncating to %d (novomodelo would reject otherwise).",
-                code_int,
-                max_lag,
-                n_stages_total,
-                n_stages_total,
-            )
+            truncated.append([code_int, max_lag])
             max_lag = n_stages_total
         values_mw: list[float] = []
         for lag in range(1, max_lag + 1):
@@ -241,4 +241,22 @@ def read_anticipated_dispatch(
             values_mw.append(mw_eq)
         result[code_int] = AnticipatedDispatch(lead_stages=max_lag, values_mw=values_mw)
 
+    if truncated:
+        emit(
+            Diagnostic(
+                code="adterm-lag-beyond-horizon",
+                severity=Severity.INFO,
+                category="GNL",
+                title=f"Anticipated dispatch past the horizon left out ({len(truncated)})",
+                summary=(
+                    "adterm.dat commits the listed plants for more months ahead "
+                    f"than the {n_stages_total} stages of the horizon, post-study "
+                    "years included. Those deliveries fall on no stage of "
+                    "either model, so the case keeps only the ones inside the "
+                    "horizon."
+                ),
+                table=DiagnosticTable(columns=["Code", "Lag (months)"], rows=truncated),
+            ),
+            logger=_LOG,
+        )
     return result

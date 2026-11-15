@@ -1,11 +1,9 @@
-"""Subprocess tests for the ``convert newave`` early-exit failure paths.
+"""Subprocess tests for the ``convert`` early-exit failure paths.
 
-Tier 1 — pure Python, imports no novomodelo. Locks in the migration of
-``_run_newave_conversion``/``_run_decomp_conversion`` from ``SimpleNamespace``
-to the typed ``ConvertArgs``, and the routing of the two NEWAVE early-exit
-paths (source-missing, dest-not-empty) through ``_fail``: a
-``--json`` run on either condition must now emit a valid error envelope
-instead of empty stdout.
+Tier 1 — pure Python, imports no novomodelo. Locks in the typed ``ConvertArgs``
+of ``_run_newave_conversion``/``_run_decomp_conversion``, and that a missing
+source or an occupied destination ends a ``--json`` run with one error
+envelope instead of empty stdout.
 """
 
 from __future__ import annotations
@@ -66,9 +64,10 @@ class TestConvertNewaveSourceMissingFailpath:
         assert "does not exist" in _panel_text(result.stderr)
 
 
-class TestConvertNewaveDestNotEmptyFailpath:
-    def test_json_emits_one_error_envelope_with_use_force_substring(
-        self, tmp_path: Path
+@pytest.mark.parametrize("track", ["newave", "decomp"])
+class TestConvertDestNotEmptyFailpath:
+    def test_json_emits_one_output_exists_envelope(
+        self, tmp_path: Path, track: str
     ) -> None:
         src = tmp_path / "src"
         src.mkdir()
@@ -76,19 +75,21 @@ class TestConvertNewaveDestNotEmptyFailpath:
         dst.mkdir()
         (dst / "existing.txt").write_text("hello", encoding="utf-8")
 
-        result = _run_cli_subprocess("convert", "newave", str(src), str(dst), "--json")
+        result = _run_cli_subprocess("convert", track, str(src), str(dst), "--json")
 
         assert result.returncode == 1
         document = json.loads(result.stdout)
-        assert document["command"] == "convert newave"
+        assert document["command"] == f"convert {track}"
         assert document["status"] == "error"
-        assert len(document["diagnostics"]) == 1
-        assert "Use --force" in document["diagnostics"][0]["summary"]
-        # The refusal fires before anything touches the destination.
+        assert document["summary"] == _ZEROED_CONVERT_SUMMARY
+        [diagnostic] = document["diagnostics"]
+        assert diagnostic["code"] == "output-exists"
+        assert diagnostic["summary"] == f"'{dst}' already holds files."
+        assert "--force" in diagnostic["remediation"]
         assert [p.name for p in dst.iterdir()] == ["existing.txt"]
 
     def test_without_json_renders_diagnostic_on_stderr_with_empty_stdout(
-        self, tmp_path: Path
+        self, tmp_path: Path, track: str
     ) -> None:
         src = tmp_path / "src"
         src.mkdir()
@@ -96,11 +97,11 @@ class TestConvertNewaveDestNotEmptyFailpath:
         dst.mkdir()
         (dst / "existing.txt").write_text("hello", encoding="utf-8")
 
-        result = _run_cli_subprocess("convert", "newave", str(src), str(dst))
+        result = _run_cli_subprocess("convert", track, str(src), str(dst))
 
         assert result.returncode == 1
         assert result.stdout == ""
-        assert "Use --force" in _panel_text(result.stderr)
+        assert "--force" in _panel_text(result.stderr)
 
 
 class TestConvertHandlerSignatures:
@@ -142,7 +143,7 @@ class TestCliExitCodes:
 
         result = _run_cli_subprocess("convert", "newave", str(src), str(dst))
         assert result.returncode == 1
-        assert "not empty" in _panel_text(result.stderr)
+        assert "already holds files" in _panel_text(result.stderr)
 
     def test_exit_code_1_when_required_file_missing(self, tmp_path: Path) -> None:
         src = _make_fake_newave_dir(tmp_path)

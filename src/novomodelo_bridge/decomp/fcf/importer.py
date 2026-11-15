@@ -423,9 +423,10 @@ def _emit_import_diagnostics(
             category="Boundary FCF",
             title=f"Boundary cost-to-go imported ({summary.n_active_cuts} cuts)",
             summary=(
-                f"{summary.n_active_cuts} boundary cut(s) of the deck price the "
-                f"end-of-study storage of {summary.storage_nonzero_plants} "
-                f"plant(s) and up to {lag_months} month(s) of past inflows."
+                f"The boundary cost-to-go has {dx.counted(summary.n_active_cuts, 'cut')}, "
+                "pricing the end-of-study storage of "
+                f"{dx.counted(summary.storage_nonzero_plants, 'plant')} and up to "
+                f"{dx.counted(lag_months, 'month')} of past inflows."
             ),
             notes=[
                 "Plants with a nonzero inflow term, by lag: "
@@ -445,8 +446,8 @@ def _emit_import_diagnostics(
                 category="Boundary FCF",
                 title=f"Cut plants missing from the case dropped ({len(mapping.dropped)})",
                 summary=(
-                    f"{len(mapping.dropped)} plant(s) of the boundary cuts are "
-                    "not in the converted case. Their storage terms are dropped, "
+                    "The listed plants of the boundary cuts are not in the "
+                    "converted case. Their storage terms are dropped, "
                     "and their inflow terms are folded into each cut's constant "
                     "from the deck's inflow history where the plant has a "
                     "posto; the last stage's share of that inflow is left out."
@@ -487,8 +488,7 @@ def _emit_gnl_deviation(
     )
     max_absolute_spread = max((row[4] for row in rows), default=0.0)
     dropped = (
-        f" {len(mapping.gnl_dropped)} GNL term(s) of the cuts reach no "
-        "delivery window and are listed below."
+        " The notes list the GNL terms of the cuts that reach no delivery window."
         if mapping.gnl_dropped
         else ""
     )
@@ -506,12 +506,12 @@ def _emit_gnl_deviation(
                 "differs from DECOMP's when the committed MW would differ by "
                 "patamar. The largest relative spread of the patamar prices is "
                 f"{relative_headline} ({max_absolute_spread:.4g} absolute) "
-                f"across {len(rows)} (submercado, lag) group(s)."
+                f"across {dx.counted(len(rows), 'submarket and lag group')}."
                 f"{dropped}"
             ),
             table=dx.DiagnosticTable(
                 columns=[
-                    "Submercado",
+                    "Submarket",
                     "Lag",
                     "Σ pi_gnl (carried)",
                     "Patamar spread (%)",
@@ -526,12 +526,12 @@ def _emit_gnl_deviation(
                 "The largest relative spread leaves out groups carrying less "
                 f"than {_GNL_DEVIATION_REL_FLOOR:.1%} of the largest |Σ pi_gnl|.",
                 *(
-                    f"thermal {term.thermal_id}, submercado {term.submercado}: "
-                    f"{term.reason}"
+                    f"Thermal {term.thermal_id}, submarket {term.submercado}: "
+                    f"{term.reason}."
                     if term.thermal_id is not None
-                    else f"submercado {term.submercado}, lag {term.lag}: "
+                    else f"Submarket {term.submercado}, lag {term.lag}: "
                     f"{term.reason}, so its term (Σ pi_gnl {term.coefficient:.6g}) "
-                    "prices nothing in DECOMP either"
+                    "prices nothing in DECOMP either."
                     for term in mapping.gnl_dropped
                 ),
             ],
@@ -554,8 +554,8 @@ def _emit_transit_pricing(
             category="Boundary FCF",
             title=(f"Water in transit valued at the boundary ({len(mapping.transit)})"),
             summary=(
-                f"Water released upstream that has not reached "
-                f"{len(mapping.transit)} plant(s) when the study ends is valued "
+                "Water released upstream that has not reached the listed plants "
+                "when the study ends is valued "
                 "with the plant's boundary storage term when it takes one, "
                 "otherwise with its first inflow-lag term. DECOMP gives that "
                 "water no value at this boundary, so the boundary cost differs "
@@ -597,8 +597,8 @@ def _emit_coupling_diagnostics(
                     f"({len(resolution.borrowed)})"
                 ),
                 summary=(
-                    f"{len(resolution.borrowed)} plant(s) without a row of their "
-                    "own in the boundary cuts take the row of their complex (CX) "
+                    "The listed plants have no row of their own in the boundary "
+                    "cuts and take the row of their complex (CX) "
                     "or, failing that, of the first plant downstream that has "
                     "one, as DECOMP does. A plant takes the storage term only "
                     "through a complex, and only as a reservoir."
@@ -629,7 +629,7 @@ def _emit_coupling_diagnostics(
                 category="Boundary FCF",
                 title=f"Plants with no boundary-cut term ({len(resolution.unowned)})",
                 summary=(
-                    f"{len(resolution.unowned)} plant(s) have no row in the "
+                    "The listed plants have no row in the "
                     "boundary cuts, belong to no complex and reach no plant "
                     "downstream that has one, so the boundary cost-to-go gives "
                     "their water no value."
@@ -678,8 +678,8 @@ def _emit_coupling_diagnostics(
                     f"posto ({len(shares)})"
                 ),
                 summary=(
-                    "DECOMP evaluates the boundary cuts' inflow terms of "
-                    f"{len(shares)} plant(s) on a coupling posto that differs "
+                    "DECOMP evaluates the boundary cuts' inflow terms of the "
+                    "listed plants on a coupling posto that differs "
                     "from the inflow the converted case carries. The difference "
                     "over the earlier stages is folded into the cuts, but in the "
                     "last stage it varies by scenario and is left out, so the "
@@ -902,7 +902,7 @@ def import_boundary_fcf(
     _patch_policy_boundary(writer, config)
     _seed_recent_observations(writer, coupling.recent_observations, initial_conditions)
     _LOG.info(
-        "boundary FCF: seeded %d recent-observation window(s) on the coupling postos",
+        "boundary FCF: recent-observation windows seeded on the coupling postos: %d",
         len(coupling.recent_observations),
     )
 

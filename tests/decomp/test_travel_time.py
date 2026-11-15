@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.decomp.converters.travel_time import (
     TravelTime,
     _defluence_windows,
@@ -38,10 +39,10 @@ class _FakeEffective:
 
     def __init__(self, downstream: dict[int, int], codes: list[int]) -> None:
         self._downstream = downstream
-        self.base = pd.DataFrame(index=pd.Index(codes, name="codigo_usina"))
-
-    def downstream_plant_varies(self, code: int) -> bool:
-        return False
+        self.base = pd.DataFrame(
+            {"nome_usina": [f"PLANT{code}" for code in codes]},
+            index=pd.Index(codes, name="codigo_usina"),
+        )
 
     def downstream_plant(self, code: int, stage_index: int) -> int:
         return self._downstream.get(code, 0)
@@ -220,11 +221,16 @@ def test_convert_travel_time_skips_plant_without_downstream() -> None:
         ]
     )
     effective = _FakeEffective({156: 0}, [111, 156, 162])  # 0 == sink, no arc
-    hours, defluences = convert_travel_time(
-        _FakeDadger(vi), _id_map(), effective, _START, week_hours=168.0
-    )
+    with collect() as found:
+        hours, defluences = convert_travel_time(
+            _FakeDadger(vi), _id_map(), effective, _START, week_hours=168.0
+        )
     assert hours == {}
     assert defluences == []
+    [diagnostic] = found
+    assert diagnostic.code == "decomp-vi-travel-time-unused"
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[156, "PLANT156", "no plant downstream"]]
 
 
 def test_convert_travel_time_skips_unoperated_plant() -> None:
@@ -242,11 +248,15 @@ def test_convert_travel_time_skips_unoperated_plant() -> None:
         ]
     )
     effective = _FakeEffective({999: 111}, [111, 156, 162, 999])
-    hours, defluences = convert_travel_time(
-        _FakeDadger(vi), _id_map(), effective, _START, week_hours=168.0
-    )
+    with collect() as found:
+        hours, defluences = convert_travel_time(
+            _FakeDadger(vi), _id_map(), effective, _START, week_hours=168.0
+        )
     assert hours == {}  # 999 is not in id_map.hydro_codes
     assert defluences == []
+    [diagnostic] = found
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[999, "PLANT999", "not in the case"]]
 
 
 # ---------------------------------------------------------------------------

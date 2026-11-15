@@ -117,7 +117,7 @@ def percent_of_useful_volume(percent: float, vol_min: float, vol_max: float) -> 
 
 
 def _emit_unknown_volume_units(
-    code: str, scope: str, records: list[tuple[int, str, str]], assumed: str
+    code: str, scope: str, records: list[tuple[int, str, str, str]], assumed: str
 ) -> None:
     if not records:
         return
@@ -126,26 +126,26 @@ def _emit_unknown_volume_units(
             code=code,
             severity=Severity.WARNING,
             category="Cadastro overrides",
-            title=f"Volume override(s) with unknown unit ({len(records)})",
+            title=f"Volume records with an unknown unit ({len(records)})",
             summary=(
-                f"MODIF.DAT {scope} volume records carry a unit column ('h' = hm³, "
-                f"'%' = percent of the useful volume); {len(records)} record(s) "
-                f"have none the converter recognises, so their values are taken "
-                f"as {assumed}."
+                f"The listed {scope} volume records in modif.dat give a "
+                "unit other than 'h' (hm³) or '%' (percent of the useful "
+                f"volume), so the conversion reads their values as {assumed}."
             ),
             table=DiagnosticTable(
-                columns=["Code", "Type", "Unit"],
-                rows=[[code_, type_name, unit] for code_, type_name, unit in records],
-                justify=["right", "left", "left"],
+                columns=["Code", "Name", "Record", "Unit"],
+                rows=[list(record) for record in records],
+                justify=["right", "left", "left", "left"],
             ),
-            remediation="Check the unit column of the listed records in MODIF.DAT.",
+            remediation="Write 'h' or '%' in the unit field of the listed records.",
         ),
         logger=_LOG,
     )
 
 
-def _plant_blocks(modif: Modif) -> list[tuple[int, list[Register]]]:
-    """Each plant's ``modif.dat`` records, in the order the plants first appear.
+def _plant_blocks(modif: Modif) -> list[tuple[int, str, list[Register]]]:
+    """Each plant's code, ``USINA`` name and ``modif.dat`` records, in the order
+    the plants first appear.
 
     Only a plant's first ``USINA`` block counts, as in ``Modif.modificacoes_usina``;
     ``modif-records-ignored`` reports the records left out.
@@ -163,7 +163,10 @@ def _plant_blocks(modif: Modif) -> list[tuple[int, list[Register]]]:
     for code, name in zip(usinas["codigo"], usinas["nome"], strict=True):
         names.setdefault(as_int(code), str(name).strip())
     _emit_ignored_records(modif, names)
-    return [(code, modif.modificacoes_usina(code) or []) for code in names]
+    return [
+        (code, name, modif.modificacoes_usina(code) or [])
+        for code, name in names.items()
+    ]
 
 
 def _emit_ignored_records(modif: Modif, names: dict[int, str]) -> None:
@@ -193,12 +196,12 @@ def _emit_ignored_records(modif: Modif, names: dict[int, str]) -> None:
             code="modif-records-ignored",
             severity=Severity.WARNING,
             category="Cadastro overrides",
-            title=f"MODIF.DAT records ignored ({total})",
+            title=f"modif.dat records ignored ({total})",
             summary=(
-                f"{total} MODIF.DAT record(s) lie outside a plant's first USINA "
-                "block and are ignored: the NEWAVE manual allows one block per "
-                "plant, and a record before the first USINA record belongs to "
-                "no plant."
+                "The listed modif.dat records lie outside a plant's first USINA "
+                "block, so the conversion leaves them out: the NEWAVE manual "
+                "allows one block per plant, and a record before the first USINA "
+                "record belongs to no plant."
             ),
             table=DiagnosticTable(
                 columns=["Code", "Name", "Records ignored"],
@@ -214,7 +217,7 @@ def _emit_ignored_records(modif: Modif, names: dict[int, str]) -> None:
             ),
             remediation=(
                 "Move the listed records into the plant's first USINA block in "
-                "MODIF.DAT."
+                "modif.dat."
             ),
         ),
         logger=_LOG,
@@ -263,14 +266,13 @@ def _apply_permanent_overrides(
 
     # Loop-accumulate-then-emit-once: one record per skipped plant/record,
     # emitted after the loop (see the module's finalize_diagnostics de-dup).
-    uncadastred: list[int] = []
-    unsupported_perm: list[tuple[int, str]] = []
-    unit_unknown: list[tuple[int, str, str]] = []
+    uncadastred: list[tuple[int, str]] = []
+    unsupported_perm: list[tuple[int, str, str]] = []
+    unit_unknown: list[tuple[int, str, str, str]] = []
 
-    for code, records in _plant_blocks(modif):
+    for code, name, records in _plant_blocks(modif):
         if code not in result.index:
-            if code not in uncadastred:
-                uncadastred.append(code)
+            uncadastred.append((code, name))
             continue
 
         for rec in records:
@@ -286,7 +288,7 @@ def _apply_permanent_overrides(
             elif _is_record(rec, VOLMAX) or _is_record(rec, VOLMIN):
                 unit = _volume_unit(rec)
                 if unit is None:
-                    unit_unknown.append((code, type_name, _raw_unit(rec)))
+                    unit_unknown.append((code, name, type_name, _raw_unit(rec)))
                     unit = "h"
                 value = as_float(rec.volume)
                 if unit == "%":
@@ -335,23 +337,24 @@ def _apply_permanent_overrides(
                 )
 
             else:
-                unsupported_perm.append((code, type_name))
+                unsupported_perm.append((code, name, type_name))
 
     if uncadastred:
         emit(
             Diagnostic(
                 code="modif-override-plant-uncadastred",
-                severity=Severity.WARNING,
+                severity=Severity.INFO,
                 category="Cadastro overrides",
-                title=(f"MODIF.DAT references {len(uncadastred)} uncadastred plant(s)"),
+                title=f"modif.dat plants not in hidr.dat ({len(uncadastred)})",
                 summary=(
-                    f"MODIF.DAT references {len(uncadastred)} plant code(s) "
-                    "not present in hidr.dat; skipping their overrides."
+                    "The listed plants of modif.dat are not in "
+                    "hidr.dat, so no plant of the case can take their records "
+                    "and the conversion leaves them out."
                 ),
                 table=DiagnosticTable(
-                    columns=["Code"],
-                    rows=[[code] for code in uncadastred],
-                    justify=["right"],
+                    columns=["Code", "Name"],
+                    rows=[[code, name] for code, name in uncadastred],
+                    justify=["right", "left"],
                 ),
             ),
             logger=_LOG,
@@ -362,17 +365,16 @@ def _apply_permanent_overrides(
                 code="modif-permanent-override-unsupported",
                 severity=Severity.WARNING,
                 category="Cadastro overrides",
-                title=(
-                    f"Unsupported permanent override type(s) ({len(unsupported_perm)})"
-                ),
+                title=f"modif.dat records not converted ({len(unsupported_perm)})",
                 summary=(
-                    f"MODIF.DAT contains {len(unsupported_perm)} unsupported "
-                    "or unknown permanent override record(s); skipping."
+                    "The listed modif.dat records are of a kind "
+                    "the conversion does not read, so the case keeps the values "
+                    "they would change in NEWAVE."
                 ),
                 table=DiagnosticTable(
-                    columns=["Code", "Type"],
-                    rows=[[code, type_name] for code, type_name in unsupported_perm],
-                    justify=["right", "left"],
+                    columns=["Code", "Name", "Record"],
+                    rows=[list(record) for record in unsupported_perm],
+                    justify=["right", "left", "left"],
                 ),
             ),
             logger=_LOG,
@@ -407,7 +409,7 @@ def read_diversion_records(case: NewaveCase) -> dict[int, DiversionRecord]:
     if modif is None:
         return {}
     records: dict[int, DiversionRecord] = {}
-    for plant, registers in _plant_blocks(modif):
+    for plant, _, registers in _plant_blocks(modif):
         for register in registers:
             if _is_record(register, CDESVIO):
                 records[plant] = _diversion_record(plant, register)
@@ -499,10 +501,10 @@ def _extract_temporal_overrides(
     result: dict[int, list[dict]] = {}
 
     # Loop-accumulate-then-emit-once (see _apply_permanent_overrides above).
-    undated: list[tuple[int, str]] = []
-    unit_unknown: list[tuple[int, str, str]] = []
+    undated: list[tuple[int, str, str]] = []
+    unit_unknown: list[tuple[int, str, str, str]] = []
 
-    for code, records in _plant_blocks(modif):
+    for code, name, records in _plant_blocks(modif):
         if code not in confhd_set:
             continue
 
@@ -516,7 +518,7 @@ def _extract_temporal_overrides(
                 period = rec.periodo
                 start = rec.data_inicio
                 if rec.mes is None or (period is None and start is None):
-                    undated.append((code, type_name))
+                    undated.append((code, name, type_name))
                     continue
                 month = int(rec.mes)
                 year = None if period is not None or start is None else int(start.year)
@@ -529,7 +531,7 @@ def _extract_temporal_overrides(
                 if type_name in ("VMAXT", "VMINT"):
                     unit = _volume_unit(rec)
                     if unit is None:
-                        unit_unknown.append((code, type_name, _raw_unit(rec)))
+                        unit_unknown.append((code, name, type_name, _raw_unit(rec)))
                         unit = "%"
             else:
                 continue
@@ -554,16 +556,21 @@ def _extract_temporal_overrides(
                 code="modif-temporal-override-undated",
                 severity=Severity.WARNING,
                 category="Cadastro overrides",
-                title=f"Dated override(s) without a date ({len(undated)})",
+                title=f"Dated modif.dat records without a date ({len(undated)})",
                 summary=(
-                    f"MODIF.DAT contains {len(undated)} dated override record(s) "
-                    "with no month, or with neither a year nor a PRE/POS marker; "
-                    "skipping."
+                    "The listed dated modif.dat records have no month, or "
+                    "neither a year nor a PRE/POS marker, so the conversion "
+                    "leaves them out and the case keeps the values they would "
+                    "change."
                 ),
                 table=DiagnosticTable(
-                    columns=["Code", "Type"],
-                    rows=[[code, type_name] for code, type_name in undated],
-                    justify=["right", "left"],
+                    columns=["Code", "Name", "Record"],
+                    rows=[list(record) for record in undated],
+                    justify=["right", "left", "left"],
+                ),
+                remediation=(
+                    "Give each listed record a month and either a year or a "
+                    "PRE/POS marker in modif.dat."
                 ),
             ),
             logger=_LOG,

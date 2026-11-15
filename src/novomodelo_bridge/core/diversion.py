@@ -50,7 +50,7 @@ def unlimited_channels_diagnostic(
         category="Diversion channels",
         title=f"Diversion channels without a flow limit ({len(rows)})",
         summary=(
-            f"{len(rows)} diversion channel(s) give a flow limit of "
+            "The listed diversion channels give a flow limit of "
             f"{UNLIMITED_FLOW_M3S:.0f} m³/s or more in {source}, the source "
             "model's value for no limit, so they are converted without one."
         ),

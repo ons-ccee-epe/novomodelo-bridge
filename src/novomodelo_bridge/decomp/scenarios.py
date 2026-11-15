@@ -107,22 +107,12 @@ def _incremental_context(
     EffectiveCadastro.inflow_gauge`/
     :func:`~novomodelo_bridge.decomp.converters.hydro.entity.
     _downstream_operated`'s own default).
-    A plant whose effective gauge varies across stages (a temporal ``AC
-    NUMPOS``) gets a tracked-gap warning here; the downstream sibling gap is
-    logged inside ``_downstream_operated`` itself, which this function also
-    walks per plant.
+    The pipeline reports a gauge or link that changes on later stages
+    (:func:`novomodelo_bridge.decomp.pipeline._topology_varies_diagnostic`).
     """
     operated = set(id_map.hydro_codes)
     station_by_code: dict[int, str] = {}
     for code in id_map.hydro_codes:
-        if effective.inflow_gauge_varies(code):
-            _LOG.warning(
-                "plant %d's inflow gauge (AC NUMPOS) varies across stages; "
-                "per-stage gauge attribution is not modeled (deferred "
-                "fidelity) -- using the stage-0 effective gauge for the "
-                "whole horizon",
-                code,
-            )
         station_by_code[code] = str(effective.inflow_gauge(code, 0))
     parents: dict[int, list[int]] = {code: [] for code in id_map.hydro_codes}
     for code in id_map.hydro_codes:
@@ -300,11 +290,7 @@ def _report_artificial_gauge_plants(
     effective: EffectiveCadastro, id_map: DecompIdMap
 ) -> None:
     plants = [
-        (
-            code,
-            str(effective.base.loc[code, "nome_usina"]).strip(),
-            id_map.hydro_id(code),
-        )
+        (code, str(effective.base.loc[code, "nome_usina"]).strip())
         for code in id_map.hydro_codes
         if is_artificial_gauge(effective.inflow_gauge(code, 0))
     ]
@@ -330,7 +316,7 @@ def _report_negative_incrementals(
             code,
             str(effective.base.loc[code, "nome_usina"]).strip(),
             effective.inflow_gauge(code, 0),
-            stage_index + 1,
+            stage_index,
             len(found),
             min(found),
         ]
@@ -344,11 +330,11 @@ def _report_negative_incrementals(
             category="Inflow scenarios",
             title=f"Negative incremental inflows kept ({plants})",
             summary=(
-                f"{plants} plant(s) have a negative incremental inflow in the "
-                "inflow file. The values are converted as they are, so novomodelo's "
+                "The listed plants have a negative incremental inflow in "
+                "vazoes.rvN. The conversion keeps each value, so the case's "
                 "water balance removes that water unless its priced inflow "
-                "slack adds it back. The source model reports these "
-                "incremental inflows as zero in its operation output."
+                "slack adds it back. DECOMP reports these incremental inflows "
+                "as zero in its operation output."
             ),
             table=DiagnosticTable(
                 columns=[
@@ -357,15 +343,16 @@ def _report_negative_incrementals(
                     "Posto",
                     "Stage",
                     "Scenarios",
-                    "Lowest (m3/s)",
+                    "Lowest (m³/s)",
                 ],
                 rows=rows,
+                justify=["right", "left", "right", "right", "right", "right"],
+                caption="Stage ids are 0-based.",
             ),
-            remediation=(
-                "Compare the listed plants' operation with the source model's. "
+            notes=[
                 "A negative inflow below a plant whose outflow is capped can "
                 "force that plant to spill or violate its outflow limit."
-            ),
+            ],
         ),
         logger=_LOG,
     )

@@ -67,7 +67,12 @@ from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.decomp.converters.anticipated import gnl_block_commitments
@@ -540,38 +545,44 @@ def _read_restrictions(
         )
 
     _emit_unused_period_rows(
-        "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
-        sorted(code for code in overrides if restrictions[code].is_formula),
-    )
-    _emit_unused_period_rows(
-        "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR",
-        sorted(
-            code
-            for code in limits
-            if code not in restrictions or not restrictions[code].is_formula
-        ),
+        [
+            ("RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", code)
+            for code in sorted(c for c in overrides if restrictions[c].is_formula)
+        ]
+        + [
+            ("RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR", code)
+            for code in sorted(
+                c
+                for c in limits
+                if c not in restrictions or not restrictions[c].is_formula
+            )
+        ]
     )
     return restrictions
 
 
-def _emit_unused_period_rows(card: str, codes: Sequence[int]) -> None:
-    if not codes:
+def _emit_unused_period_rows(rows: Sequence[tuple[str, int]]) -> None:
+    if not rows:
         return
     emit(
         Diagnostic(
             code="decomp-electrical-period-rows-unused",
             severity=Severity.WARNING,
             category="Special constraints",
-            title=f"{card} rows not applied",
+            title=f"Electrical period rows not applied ({len(rows)})",
             summary=(
-                f"{card} rows of {len(codes)} electrical restriction(s) do not "
-                "match the restriction's card shape and are ignored: "
-                f"{list(codes)}."
+                "The listed period rows of the LIBS electrical file do not fit "
+                "their restriction: inequality period rows apply only to "
+                "inequality restrictions, and limit period rows only to formula "
+                "restrictions. The conversion ignores them, so the case runs "
+                "without the limits they set."
+            ),
+            table=DiagnosticTable(
+                columns=["Card", "Restriction"], rows=[list(row) for row in rows]
             ),
             remediation=(
-                "Check the source model's electrical restriction file: "
-                "inequality period rows apply to inequality restrictions and "
-                "limit period rows to formula restrictions."
+                "Move each listed row to the card that fits its restriction, or "
+                "remove it."
             ),
         )
     )
@@ -819,7 +830,7 @@ def _negate(term: ParsedTerm) -> ParsedTerm:
 
 
 class UnrecognizedElectricalToken(ValueError):
-    """A well-formed but undeclared bare identifier: neither a
+    """A well-formed but undeclared bare identifier, *name*: neither a
     declared ``EXPRESSAO-ELETRICA`` named expression, a declared
     ``ALIAS-ELETRICO`` data alias, nor a member of
     :data:`_BUILTIN_BARE_TOKENS`.
@@ -836,6 +847,14 @@ class UnrecognizedElectricalToken(ValueError):
     restriction that references it, without catching (and so silently
     masking) a genuine malformed-DSL bug as a routine drop.
     """
+
+    def __init__(self, name: str, text: str) -> None:
+        super().__init__(
+            f"unrecognized identifier {name!r} in electrical expression "
+            f"{text!r} (not a declared named expression, data alias, "
+            "built-in bare token, or peq_ small-plant reference)"
+        )
+        self.name = name
 
 
 class _ExpressionParser:
@@ -1063,11 +1082,7 @@ class _ExpressionParser:
                     pq_submarket=submarket,
                 )
             ]
-        raise UnrecognizedElectricalToken(
-            f"unrecognized identifier {name!r} in electrical expression "
-            f"{self._text!r} (not a declared named expression, data alias, "
-            "built-in bare token, or peq_ small-plant reference)"
-        )
+        raise UnrecognizedElectricalToken(name, self._text)
 
     def _expand_reference(
         self, key: str, formula: str, scale: float
@@ -2060,47 +2075,56 @@ def assemble_bound(
         return _fold_inequacao_bound(effective, ctx, lhs_partition, rhs_partition)
     except _UnresolvableBucketBTerm as err:
         emit(
-            Diagnostic(
-                code="decomp-electrical-bucket-b-unresolved",
-                severity=Severity.WARNING,
-                category="Special constraints",
-                title="Electrical restriction input-data term could not be resolved",
-                summary=(
-                    f"Electrical restriction {restriction.code} at stage "
-                    f"{stage_index}, block {block_index} could not resolve "
-                    f"an input-data term ({err}); the constraint is skipped "
-                    "rather than emitted with a partial bound."
-                ),
-                remediation=(
-                    "Check the source model's data feeding this restriction "
-                    f"(restriction {restriction.code}, stage {stage_index}, "
-                    f"block {block_index}); the constraint is skipped."
-                ),
+            _unresolved_cell_diagnostic(
+                "decomp-electrical-bucket-b-unresolved",
+                "a data term the conversion cannot evaluate",
+                [restriction.code, stage_index, block_index, str(err)],
             )
         )
         return None
     except _UnresolvableDispUsih as err:
         emit(
-            Diagnostic(
-                code="decomp-electrical-disp-usih-unresolved",
-                severity=Severity.WARNING,
-                category="Special constraints",
-                title="disp_usih available power could not be resolved",
-                summary=(
-                    f"Electrical restriction {restriction.code} at stage "
-                    f"{stage_index}, block {block_index} could not resolve a "
-                    f"disp_usih available-power term ({err}); the "
-                    "constraint is skipped rather than emitted with a "
-                    "partial bound."
-                ),
-                remediation=(
-                    "Check the source model's cadastro/maintenance data for "
-                    f"the plant named in restriction {restriction.code}'s "
-                    "disp_usih term; the constraint is skipped."
-                ),
+            _unresolved_cell_diagnostic(
+                "decomp-electrical-disp-usih-unresolved",
+                "a disp_usih term whose available power the conversion cannot compute",
+                [restriction.code, stage_index, block_index, str(err)],
             )
         )
         return None
+
+
+#: The title of each diagnostic a restriction's unresolved cell is reported under.
+_UNRESOLVED_CELL_TITLES = {
+    "decomp-electrical-bucket-b-unresolved": (
+        "Electrical restrictions with an unresolved data term"
+    ),
+    "decomp-electrical-disp-usih-unresolved": (
+        "Electrical restrictions with an unresolved disp_usih term"
+    ),
+}
+
+
+def _unresolved_cell_diagnostic(code: str, what: str, row: list[object]) -> Diagnostic:
+    """WARNING for one restriction left out over one unresolved cell, as a
+    one-row table that :func:`~novomodelo_bridge.core.diagnostics.merge_tables`
+    joins across restrictions."""
+    return Diagnostic(
+        code=code,
+        severity=Severity.WARNING,
+        category="Special constraints",
+        title=_UNRESOLVED_CELL_TITLES[code],
+        summary=(
+            f"The listed electrical restrictions of the LIBS file have {what} on "
+            "the listed stage and block. The conversion leaves each restriction "
+            "out, so the case runs without these limits."
+        ),
+        table=DiagnosticTable(
+            columns=["Restriction", "Stage", "Block", "Reason"],
+            rows=[row],
+            justify=["right", "right", "right", "left"],
+            caption="Stage and block ids are 0-based.",
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2225,17 +2249,17 @@ def active_cells(
                 code="decomp-electrical-restriction-inactive",
                 severity=Severity.INFO,
                 category="Special constraints",
-                title="Electrical restriction inactive across its horizon",
+                title="Electrical restrictions never active",
                 summary=(
-                    f"Electrical restriction {restriction.code} evaluated "
-                    "false in every in-horizon (stage, block) cell within "
-                    f"stages {stage_start}-{stage_end}; no bound is emitted "
-                    "for it."
+                    "The activation rule of each listed electrical restriction is "
+                    "false on every stage and block of its horizon, so, as in "
+                    "DECOMP, it binds nowhere and the case leaves it out."
                 ),
-                remediation=(
-                    "Check the source model's activation rule and demand "
-                    f"data feeding restriction {restriction.code}; the "
-                    "restriction carries no active cell and is dropped."
+                table=DiagnosticTable(
+                    columns=["Restriction", "First stage", "Last stage"],
+                    rows=[[restriction.code, stage_start, stage_end]],
+                    justify=["right", "right", "right"],
+                    caption="Stage ids are 0-based.",
                 ),
             )
         )
@@ -2353,27 +2377,26 @@ def _emit_disp_usih_substitution(
     stage_index: int,
     a_h_value: float,
 ) -> None:
-    """Emit the spec-§4b fidelity diagnostic for one ``disp_usih -> A_h``
-    substitution (Requirement 3), naming the plant code, the stage, and the
-    ``A_h`` value used.
-    """
+    """Emit the INFO row for one ``disp_usih -> A_h`` substitution, naming the
+    plant code, the stage, and the ``A_h`` value used."""
     emit(
         Diagnostic(
             code="decomp-electrical-disp-usih-substituted",
             severity=Severity.INFO,
             category="Special constraints",
-            title="disp_usih resolved to a reference-head available-power constant",
+            title="Reserve restrictions converted to generation caps",
             summary=(
-                f"Restriction {restriction_code}: disp_usih({plant_code}) at "
-                f"stage {stage_index} substituted A_h={a_h_value:g} MW, from "
-                "the maintenance-aware availability overlay."
+                "The listed electrical restrictions bound a plant's reserve "
+                "through disp_usih, its available power. The conversion takes "
+                "that power on each stage as a constant, at the reference head "
+                "and after maintenance, so each restriction caps the plant's "
+                "generation."
             ),
-            remediation=(
-                "This reformulates the reserve constraint into a generation "
-                "cap at a fixed reference-head available-power value; "
-                "check the source model's "
-                f"maintenance/availability data for plant {plant_code} if "
-                "this value seems stale."
+            table=DiagnosticTable(
+                columns=["Restriction", "Plant code", "Stage", "Available power (MW)"],
+                rows=[[restriction_code, plant_code, stage_index, a_h_value]],
+                justify=["right", "right", "right", "right"],
+                caption="Stage ids are 0-based.",
             ),
         )
     )

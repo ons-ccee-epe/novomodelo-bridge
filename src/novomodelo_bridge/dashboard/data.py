@@ -17,7 +17,14 @@ import pandas as pd
 import polars as pl
 import pyarrow.parquet as pq
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+    report_file_missing_diagnostic,
+    report_file_unreadable_diagnostic,
+)
 from novomodelo_bridge.core.errors import NovomodeloOutputError
 from novomodelo_bridge.novomodelo.case_io import resolve_hydro_productivities
 from novomodelo_bridge.novomodelo.constraint_expr import (
@@ -25,6 +32,8 @@ from novomodelo_bridge.novomodelo.constraint_expr import (
     resolve_generic_constraints,
 )
 from novomodelo_bridge.novomodelo.readers import (
+    SPLIT_PLANT_COLUMNS,
+    SPLIT_PLANT_SUMMARY,
     hydro_home_bus,
     read_novomodelo_generic_constraint_echo,
     read_novomodelo_hydro_metadata,
@@ -33,7 +42,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_load_bus_ids,
     read_novomodelo_scenario_weights,
     read_novomodelo_training_metadata,
-    split_plant_without_home_summary,
+    split_plant_row,
 )
 from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 
@@ -157,11 +166,11 @@ def resolve_hydro_bus_id(
     ``comparators.analyze._bus_name_lookups``. A plant split across buses,
     such as Itaipu, resolves to the one of them with load.
 
-    A split plant with no such bus gets a ``WARNING``
-    :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` and ``None``:
-    callers leave it out of the views keyed by one bus per plant, so its
-    ``load_hydro_metadata`` entry has no ``"bus_id"``. Its generation still
-    counts at each bus, read per bus from ``simulation/hydro_bus_generation``.
+    A split plant with no such bus gets ``None``: callers leave it out of the
+    views keyed by one bus per plant, so its ``load_hydro_metadata`` entry
+    has no ``"bus_id"``, and :func:`load_hydro_bus_map` reports it. Its
+    generation still counts at each bus, read per bus from
+    ``simulation/hydro_bus_generation``.
 
     Raises:
         NovomodeloOutputError: ``unit_groups`` is missing or empty, which
@@ -175,27 +184,7 @@ def resolve_hydro_bus_id(
             f"hydro {hid} ({name}) has no unit_groups; cannot resolve its bus",
             path=str(hydros_path),
         )
-    home = hydro_home_bus(bus_ids, load_bus_ids)
-    if home is not None:
-        return home
-    emit(
-        Diagnostic(
-            code="hydro-unit-groups-multi-bus",
-            severity=Severity.WARNING,
-            category="Dashboard data",
-            title="Hydro plant spans multiple buses",
-            summary=split_plant_without_home_summary(
-                hydro["id"], name, bus_ids, load_bus_ids
-            )
-            + (
-                " Its generation still counts at each bus, but it is left "
-                "out of the per-bus storage, stored-energy and inflow charts."
-            ),
-            notes=[f"hydro_id: {hid}", f"bus_ids: {bus_ids}"],
-        ),
-        logger=logger,
-    )
-    return None
+    return hydro_home_bus(bus_ids, load_bus_ids)
 
 
 def load_hydro_bus_map(
@@ -214,10 +203,40 @@ def load_hydro_bus_map(
     with open(path, encoding="utf-8") as f:
         d = json.load(f)
     result: dict[int, int] = {}
+    split_rows: list[list[object]] = []
     for h in d["hydros"]:
         bus_id = resolve_hydro_bus_id(h, hydros_path=path, load_bus_ids=load_bus_ids)
         if bus_id is not None:
             result[h["id"]] = bus_id
+            continue
+        split_rows.append(
+            split_plant_row(
+                h["id"],
+                h.get("name", str(h["id"])),
+                _unit_group_bus_ids(h),
+                load_bus_ids,
+            )
+        )
+    if split_rows:
+        emit(
+            Diagnostic(
+                code="hydro-unit-groups-multi-bus",
+                severity=Severity.WARNING,
+                category="Dashboard data",
+                title=f"Hydro plants spanning several buses ({len(split_rows)})",
+                summary=(
+                    f"{SPLIT_PLANT_SUMMARY} Their generation still counts at "
+                    "each bus, but the dashboard leaves them out of the per-bus "
+                    "storage, stored-energy and inflow charts."
+                ),
+                table=DiagnosticTable(
+                    columns=SPLIT_PLANT_COLUMNS,
+                    rows=split_rows,
+                    justify=["right", "left", "left", "right"],
+                ),
+            ),
+            logger=logger,
+        )
     return result
 
 
@@ -492,8 +511,16 @@ def load_temporal_context(case_dir: Path) -> TemporalContext:
         try:
             with config_path.open(encoding="utf-8") as f:
                 config = json.load(f)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse config.json; using empty dict")
+        except json.JSONDecodeError as exc:
+            emit(
+                report_file_unreadable_diagnostic(
+                    "config.json",
+                    config_path,
+                    "the dashboard discounts no cost to present value.",
+                    exc,
+                ),
+                logger=logger,
+            )
     discount_rate = float(config.get("discount_rate", 0.0))
 
     stages_json_path = case_dir / "stages.json"
@@ -856,69 +883,53 @@ class StochasticData:
     correlation: dict
 
 
+def _stochastic_file_present(path: Path, content: str) -> bool:
+    """Whether *path* exists; when not, a note that the Stochastic Model tab
+    leaves out its *content*."""
+    if path.exists():
+        return True
+    emit(
+        report_file_missing_diagnostic(
+            f"output/stochastic/{path.name}",
+            path,
+            f"the dashboard's Stochastic Model tab leaves out {content}.",
+        ),
+        logger=logger,
+    )
+    return False
+
+
 def load_stochastic_data(case_dir: Path) -> StochasticData:
     """Load output/stochastic/* (inflow fit, AR coefficients, correlation).
 
     Every file below is optional: a directory that exists but is missing one
     of them (e.g. a fit with no AR-coefficient file) degrades that one field
-    to an empty DataFrame/dict with a WARNING instead of raising.
+    to an empty DataFrame/dict with a ``report-file-missing`` note instead of
+    raising.
     """
     stochastic_dir = case_dir / "output" / "stochastic"
     available = stochastic_dir.exists()
+    inflow_stats_stoch = pd.DataFrame()
+    ar_coefficients = pd.DataFrame()
+    noise_openings = pd.DataFrame()
+    fitting_report: dict = {}
+    correlation: dict = {}
     if available:
-        stats_path = stochastic_dir / "inflow_seasonal_stats.parquet"
-        if stats_path.exists():
-            inflow_stats_stoch = pq.read_table(stats_path).to_pandas()
-        else:
-            logger.warning(
-                "output/stochastic/inflow_seasonal_stats.parquet missing; "
-                "using empty DataFrame"
-            )
-            inflow_stats_stoch = pd.DataFrame()
-
-        ar_path = stochastic_dir / "inflow_ar_coefficients.parquet"
-        if ar_path.exists():
-            ar_coefficients = pq.read_table(ar_path).to_pandas()
-        else:
-            logger.warning(
-                "output/stochastic/inflow_ar_coefficients.parquet missing; "
-                "using empty DataFrame"
-            )
-            ar_coefficients = pd.DataFrame()
-
-        noise_path = stochastic_dir / "noise_openings.parquet"
-        if noise_path.exists():
-            noise_openings = pq.read_table(noise_path).to_pandas()
-        else:
-            logger.warning(
-                "output/stochastic/noise_openings.parquet missing; using "
-                "empty DataFrame"
-            )
-            noise_openings = pd.DataFrame()
-
-        report_path = stochastic_dir / "fitting_report.json"
-        if report_path.exists():
-            fitting_report: dict = json.load(report_path.open(encoding="utf-8"))
-        else:
-            logger.warning(
-                "output/stochastic/fitting_report.json missing; using empty dict"
-            )
-            fitting_report = {}
-
-        corr_path = stochastic_dir / "correlation.json"
-        if corr_path.exists():
-            correlation: dict = json.load(corr_path.open(encoding="utf-8"))
-        else:
-            logger.warning(
-                "output/stochastic/correlation.json missing; using empty dict"
-            )
-            correlation = {}
-    else:
-        inflow_stats_stoch = pd.DataFrame()
-        ar_coefficients = pd.DataFrame()
-        noise_openings = pd.DataFrame()
-        fitting_report = {}
-        correlation = {}
+        path = stochastic_dir / "inflow_seasonal_stats.parquet"
+        if _stochastic_file_present(path, "the fitted inflow statistics"):
+            inflow_stats_stoch = pq.read_table(path).to_pandas()
+        path = stochastic_dir / "inflow_ar_coefficients.parquet"
+        if _stochastic_file_present(path, "the fitted autoregressive coefficients"):
+            ar_coefficients = pq.read_table(path).to_pandas()
+        path = stochastic_dir / "noise_openings.parquet"
+        if _stochastic_file_present(path, "the noise openings"):
+            noise_openings = pq.read_table(path).to_pandas()
+        path = stochastic_dir / "fitting_report.json"
+        if _stochastic_file_present(path, "the fitting report"):
+            fitting_report = json.loads(path.read_text(encoding="utf-8"))
+        path = stochastic_dir / "correlation.json"
+        if _stochastic_file_present(path, "the inflow correlation"):
+            correlation = json.loads(path.read_text(encoding="utf-8"))
     return StochasticData(
         available=available,
         inflow_stats_stoch=inflow_stats_stoch,
@@ -953,7 +964,7 @@ def _load_policy_metadata(case_dir: Path) -> dict:
     of module scope so this module stays importable in a novomodelo-free
     environment), reads the checkpoint via ``novomodelo.results.load_policy``,
     and selects the terminal pool (max ``stage_id``). Degrades to ``{}``
-    with one ``logger.warning`` on any failure in
+    with one ``report-file-unreadable`` warning on any failure in
     :data:`_POLICY_READ_FAILURE_TYPES` — a training-only case with no (or an
     unreadable) policy output must still render.
     """
@@ -968,7 +979,15 @@ def _load_policy_metadata(case_dir: Path) -> dict:
         terminal = max(policy["stage_cuts"], key=lambda stage: stage["stage_id"])
         return {"state_dimension": int(terminal["state_dimension"])}
     except _POLICY_READ_FAILURE_TYPES as exc:
-        logger.warning("output/policy metadata could not be loaded: %s", exc)
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/policy",
+                case_dir / "output" / "policy",
+                "the dashboard leaves out the policy's state dimension.",
+                exc,
+            ),
+            logger=logger,
+        )
         return {}
 
 
@@ -999,8 +1018,16 @@ def load_output_metadata(case_dir: Path) -> OutputMetadata:
         try:
             with meta_path.open(encoding="utf-8") as f:
                 return json.load(f)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse output/%s/metadata.json", subdir)
+        except json.JSONDecodeError as exc:
+            emit(
+                report_file_unreadable_diagnostic(
+                    f"output/{subdir}/metadata.json",
+                    meta_path,
+                    f"the dashboard leaves out what the run recorded about its {subdir}.",
+                    exc,
+                ),
+                logger=logger,
+            )
             return {}
 
     return OutputMetadata(

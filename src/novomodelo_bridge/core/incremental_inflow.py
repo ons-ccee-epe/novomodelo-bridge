@@ -127,38 +127,42 @@ _CATEGORY = "Historical inflows"
 
 
 def artificial_gauge_plants_diagnostic(
-    plants: Iterable[tuple[int, str, int]],
+    plants: Iterable[tuple[int, str]],
 ) -> Diagnostic:
-    """INFO listing the ``(code, name, hydro_id)`` plants on the artificial gauge."""
-    rows = [[code, name, hydro_id] for code, name, hydro_id in plants]
+    """INFO listing the ``(code, name)`` plants on the artificial gauge."""
+    rows = [list(plant) for plant in plants]
     return Diagnostic(
         code="artificial-gauge-plants",
         severity=Severity.INFO,
         category=_CATEGORY,
         title=f"Plants without a gauge ({len(rows)})",
         summary=(
-            f"{len(rows)} plant(s) sit on the artificial gauge (posto "
-            f"{ARTIFICIAL_GAUGE}) and get zero natural inflow. Their water "
-            "comes only from upstream releases, diversions or pumping."
+            "The listed plants sit on the artificial gauge, posto "
+            f"{ARTIFICIAL_GAUGE}, so, as in the source model, they get no "
+            "natural inflow and their water comes only from upstream releases, "
+            "diversions or pumping."
         ),
-        table=DiagnosticTable(columns=["Code", "Name", "Hydro ID"], rows=rows),
+        table=DiagnosticTable(
+            columns=["Code", "Name"], rows=rows, justify=["right", "left"]
+        ),
     )
 
 
 def artificial_gauge_data_ignored_diagnostic(source: str) -> Diagnostic:
-    """WARNING: ``source`` stores nonzero values for the artificial gauge."""
+    """INFO: ``source`` stores nonzero values for the artificial gauge."""
     return Diagnostic(
         code="artificial-gauge-data-ignored",
-        severity=Severity.WARNING,
+        severity=Severity.INFO,
         category=_CATEGORY,
-        title="Inflow values on the artificial gauge ignored",
+        title="Inflow values on the artificial gauge not used",
         summary=(
             f"{source} stores nonzero inflows for posto {ARTIFICIAL_GAUGE}, "
-            "the artificial gauge. Plants on it are converted with zero "
-            "natural inflow, so those values are not used."
+            "the artificial gauge. As in the source model, the plants on it get "
+            "no natural inflow, so those values are not used."
         ),
         remediation=(
-            f"Check whether a gauged plant was meant to use posto {ARTIFICIAL_GAUGE}."
+            f"If a gauged plant was meant to use posto {ARTIFICIAL_GAUGE}, give "
+            "it its own posto."
         ),
     )
 
@@ -183,7 +187,9 @@ def artificial_pass_through_diagnostic(
             "incremental inflow."
         ),
         table=DiagnosticTable(
-            columns=["Code", "Name", "Upstream code", "Upstream name"], rows=rows
+            columns=["Code", "Name", "Upstream code", "Upstream name"],
+            rows=rows,
+            justify=["right", "left", "right", "left"],
         ),
         remediation=(
             "Compare the listed plants' incremental inflow with the source "

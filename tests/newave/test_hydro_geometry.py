@@ -270,7 +270,7 @@ class TestGeometryCoversReferenceVolumes:
         [diagnostic] = [d for d in collected if d.code == "hydro-geometry-extended"]
         assert diagnostic.severity is Severity.INFO
         assert diagnostic.table is not None
-        assert [row[1:] for row in diagnostic.table.rows] == [
+        assert [[row[0], *row[2:]] for row in diagnostic.table.rows] == [
             [1, 100.0, 1000.0, 100.0, 1200.0]
         ]
         _assert_no_repo_internal_leaks(collected)
@@ -288,7 +288,7 @@ class TestGeometryCoversReferenceVolumes:
         assert volumes[-1] == pytest.approx(1000.0)
         [diagnostic] = [d for d in collected if d.code == "hydro-geometry-extended"]
         assert diagnostic.table is not None
-        assert [row[1:] for row in diagnostic.table.rows] == [
+        assert [[row[0], *row[2:]] for row in diagnostic.table.rows] == [
             [1, 100.0, 1000.0, 60.0, 1000.0]
         ]
 
@@ -387,14 +387,14 @@ class TestGenerateHydroGeometryDiagnostics:
         assert diag.severity is Severity.WARNING
         assert diag.category == "Hydro geometry"
         assert diag.table is not None
-        assert diag.table.columns == ["Plant", "Code", "Reason"]
+        assert diag.table.columns == ["Code", "Name", "Reason"]
         assert len(diag.table.rows) == 2
 
-        by_code = {row[1]: row for row in diag.table.rows}
-        assert by_code[1][0] == "PLANT ONE"
+        by_code = {row[0]: row for row in diag.table.rows}
+        assert by_code[1][1] == "PLANT ONE"
         assert "polynomial" in str(by_code[1][2])
-        assert by_code[3][0] == "?"
-        assert "cadastro" in str(by_code[3][2])
+        assert by_code[3][1] == ""
+        assert "hidr.dat" in str(by_code[3][2])
         assert by_code[1][2] != by_code[3][2]
 
         _assert_no_repo_internal_leaks(collected)
@@ -409,19 +409,6 @@ class TestGenerateHydroGeometryDiagnostics:
             generate_hydro_geometry(cadastro, id_map)
 
         assert collected == []
-
-    def test_skips_carry_no_legacy_warning_under_collect(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
-
-        cadastro = _make_geometry_cadastro().copy()
-        for i in range(5):
-            cadastro.loc[1, f"a{i}_volume_cota"] = 0.0
-        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[1], thermal_codes=[])
-
-        with dx.collect() as collected:
-            generate_hydro_geometry(cadastro, id_map)
-
-        assert not any(d.code == "legacy-warning" for d in collected)
 
     def test_no_sink_fallback_logs_one_warning(self, caplog) -> None:
         """With no active collect() sink, emit() degrades to a single logging

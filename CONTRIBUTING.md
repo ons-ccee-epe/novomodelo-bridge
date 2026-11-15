@@ -82,7 +82,10 @@ on them, and they are the canonical statements for humans too. In short:
   DECOMP track in the same change, and vice versa. Shared physics and
   calendar math live once, in `core/`.
 - **Diagnostics, not strings.** A converter reports a degraded input as a
-  `Diagnostic` through the `collect()` sink. Rich is imported only in `ui/`.
+  `Diagnostic` through the `collect()` sink, one per kind of finding with a
+  row per affected entity. Its severity follows the effect on results, and its
+  wording follows `.claude/rules/diagnostics.md`, which
+  `tests/test_diagnostic_style.py` checks. Rich is imported only in `ui/`.
   CLI messages are self-contained: no repository paths or internal symbols,
   because most users have no checkout.
 - **Novomodelo gaps are tracked.** A workaround for a novomodelo limitation carries a
@@ -124,8 +127,9 @@ on them, and they are the canonical statements for humans too. In short:
 1. Write the converter as a module under the track's `converters/` package: a
    function from the parsed case (and the id map) to tables or dicts, with no
    file I/O and no printing.
-2. Emit a `Diagnostic` for every input the converter cannot carry over
-   faithfully, with the affected entities and stages in its detail table.
+2. Emit one `Diagnostic` for each kind of input the converter cannot carry
+   over faithfully, with the affected entities and stages as rows of its
+   table.
 3. Wire it into the track's `pipeline.py`. Write output only through the
    `CaseWriter`; register a new file's `$schema` URL in `novomodelo/schemas.py`.
 4. Describe the new output or field in the track's TOML under `docs/lineage/`

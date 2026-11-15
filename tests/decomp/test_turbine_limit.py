@@ -400,7 +400,7 @@ def test_unconverged_limit_warns_and_keeps_the_last_flow() -> None:
         limits = _limits({1: _plant_row()}, tailrace={1: (_tailrace(20.0, 2.0),)})
     (diagnostic,) = [d for d in sink if d.code == "decomp-turbine-limit-unconverged"]
     assert diagnostic.table is not None
-    assert diagnostic.table.rows == [[1, "PLANT", s] for s in (1, 2, 3)]
+    assert diagnostic.table.rows == [[1, "PLANT", "0-2"]]
     assert limits.cap(1, 0, 0) == pytest.approx(100.0)
 
 

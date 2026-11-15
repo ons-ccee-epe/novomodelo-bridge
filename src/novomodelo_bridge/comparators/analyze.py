@@ -37,10 +37,17 @@ from novomodelo_bridge.comparators.fpha import (
 )
 from novomodelo_bridge.comparators.model import ResultComparison, build_results_summary
 from novomodelo_bridge.core import agreement
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.novomodelo.readers import (
+    SPLIT_PLANT_COLUMNS,
+    SPLIT_PLANT_SUMMARY,
     hydro_home_bus,
-    split_plant_without_home_summary,
+    split_plant_row,
 )
 
 if TYPE_CHECKING:
@@ -657,6 +664,7 @@ def _bus_name_lookups(
         bid for bid, meta in bus_meta.items() if meta.get("has_load")
     )
     hydro_to_bus: dict[int, int] = {}
+    split_rows: list[list[object]] = []
     for hid, meta in hydro_meta.items():
         raw_bus_ids = meta.get("bus_ids")
         if not raw_bus_ids:
@@ -665,22 +673,29 @@ def _bus_name_lookups(
         home = hydro_home_bus(bus_ids, load_bus_ids)
         if home is None:
             name = cast("str", meta.get("name", str(hid)))
-            emit(
-                Diagnostic(
-                    code="hydro-multi-bus-ambiguous",
-                    severity=Severity.WARNING,
-                    category="Compare data",
-                    title="Hydro plant spans multiple buses",
-                    summary=split_plant_without_home_summary(
-                        hid, name, bus_ids, load_bus_ids
-                    )
-                    + " It is left out of the per-bus hydro charts.",
-                    notes=[f"hydro_id: {hid}", f"bus_ids: {sorted(bus_ids)}"],
-                ),
-                logger=_LOG,
-            )
+            split_rows.append(split_plant_row(hid, name, bus_ids, load_bus_ids))
             continue
         hydro_to_bus[hid] = home
+
+    if split_rows:
+        emit(
+            Diagnostic(
+                code="hydro-multi-bus-ambiguous",
+                severity=Severity.WARNING,
+                category="Compare data",
+                title=f"Hydro plants spanning several buses ({len(split_rows)})",
+                summary=(
+                    f"{SPLIT_PLANT_SUMMARY} The comparison leaves them out of "
+                    "the per-bus hydro charts."
+                ),
+                table=DiagnosticTable(
+                    columns=SPLIT_PLANT_COLUMNS,
+                    rows=split_rows,
+                    justify=["right", "left", "left", "right"],
+                ),
+            ),
+            logger=_LOG,
+        )
 
     if hydro_meta and not hydro_to_bus:
         emit(
@@ -688,12 +703,11 @@ def _bus_name_lookups(
                 code="hydro-to-bus-map-empty",
                 severity=Severity.WARNING,
                 category="Compare data",
-                title="No hydro plant could be mapped to a bus",
+                title="No hydro plant mapped to a bus",
                 summary=(
-                    "hydro_meta has entries but none carry a resolvable "
-                    'single-bus "bus_ids" label; the per-bus hydro charts '
-                    "will render empty. Check that the hydro_bus_generation "
-                    "partition was read and merged for this output."
+                    "No hydro plant of the case resolves to a single bus in "
+                    "the run output's simulation/hydro_bus_generation files, "
+                    "so the per-bus hydro charts are empty."
                 ),
             ),
             logger=_LOG,

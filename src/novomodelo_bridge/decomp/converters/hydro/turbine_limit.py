@@ -187,7 +187,7 @@ def compute_turbine_limits(
     caps: dict[tuple[int, int], list[float]] = {}
     plant_caps: dict[int, list[float]] = {}
     fit_maxima: dict[int, list[float]] = {}
-    unconverged: list[list[object]] = []
+    unconverged: dict[int, list[int]] = {}
     gap_stages: dict[tuple[int, str, str], list[int]] = {}
     for code in id_map.hydro_codes:
         for stage in calendar:
@@ -209,13 +209,15 @@ def compute_turbine_limits(
                 plant_caps.setdefault(code, []).append(stage_caps.plant)
             fit_maxima.setdefault(code, []).append(stage_caps.fit_max)
             if not stage_caps.converged:
-                unconverged.append(
-                    [code, _plant_name(effective, code), stage.index + 1]
-                )
+                unconverged.setdefault(code, []).append(stage.index)
             for missing, used in stage_caps.gaps:
                 gap_stages.setdefault((code, missing, used), []).append(stage.index)
     if unconverged:
-        emit(_unconverged_diagnostic(unconverged), logger=_LOG)
+        rows = [
+            [code, _plant_name(effective, code), format_stage_ranges(stages)]
+            for code, stages in unconverged.items()
+        ]
+        emit(_unconverged_diagnostic(rows), logger=_LOG)
     if gap_stages:
         emit(
             turbine_limit_gap_diagnostic(
@@ -412,7 +414,7 @@ def _plant_name(effective: EffectiveCadastro, code: int) -> str:
     return str(effective.base.loc[code, "nome_usina"]).strip()
 
 
-def _unconverged_diagnostic(rows: list[list[object]]) -> Diagnostic:
+def _unconverged_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnostic:
     return Diagnostic(
         code="decomp-turbine-limit-unconverged",
         severity=Severity.WARNING,
@@ -420,13 +422,19 @@ def _unconverged_diagnostic(rows: list[list[object]]) -> Diagnostic:
         title=f"Turbined-flow limit did not converge ({len(rows)})",
         summary=(
             "The head-limited turbined flow of the listed plants did not settle "
-            f"within {_FIXED_POINT_MAX_ITERATIONS} iterations; the last value "
-            "is used as the stage's limit."
+            f"within {_FIXED_POINT_MAX_ITERATIONS} iterations on the listed "
+            "stages, so each takes the last value as its limit there, which can "
+            "differ from DECOMP's."
         ),
-        table=DiagnosticTable(columns=["Code", "Name", "Stage"], rows=rows),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Stages"],
+            rows=rows,
+            justify=["right", "left", "left"],
+            caption="Stage ids are 0-based.",
+        ),
         remediation=(
             "Check the plants' tailrace polynomials and rated heads in hidr.dat "
-            "and polinjus: a tailrace that rises steeply with the flow keeps the "
-            "head and the flow from settling."
+            "and polinjus.csv: a tailrace that rises steeply with the flow keeps "
+            "the head and the flow from settling."
         ),
     )

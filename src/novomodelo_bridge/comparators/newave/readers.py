@@ -8,7 +8,8 @@ pmo.dat, sistema.dat, newave.tim, the FPHA reports, the nwlistop
 tables) is an OPTIONAL
 input, and this module contains no ``raise`` statement — an absent
 input AND a present-but-unparseable input both degrade to a typed-empty
-frame (or ``None``, for the pmo/FPHA readers) plus a ``_LOG.warning``.
+frame (or ``None``, for the pmo/FPHA readers) plus a ``report-file-missing``
+note or a ``report-file-unreadable`` warning.
 This is a genuine behaviour difference from ``novomodelo_readers``/
 ``decomp_readers``, which raise (``NovomodeloReadError``/``ValueError``/
 ``FileNotFoundError``) on a present-but-corrupt file or an absent
@@ -31,6 +32,12 @@ from typing import TYPE_CHECKING, Protocol
 import pandas as pd
 import polars as pl
 
+from novomodelo_bridge.core.diagnostics import (
+    emit,
+    report_file_missing_diagnostic,
+    report_file_unreadable_diagnostic,
+    report_files_unreadable_diagnostic,
+)
 from novomodelo_bridge.core.pandas_utils import as_float, as_timestamp, is_na
 from novomodelo_bridge.core.paths import find_case_insensitive
 from novomodelo_bridge.newave.files import NewaveFiles
@@ -40,6 +47,28 @@ if TYPE_CHECKING:
     from inewave.nwlistop import ArquivoComValores
 
 _LOG = logging.getLogger(__name__)
+
+#: What the report leaves out without ``pmo.dat``, completing ``"pmo.dat was
+#: not found, so ..."``; every pmo.dat reader shares it, so the note is one.
+_PMO_EFFECT = (
+    "the report leaves out NEWAVE's convergence, productivities and cost breakdown."
+)
+_TIM_EFFECT = "the report leaves out NEWAVE's run times."
+_FPHA_EFFECT = "the report leaves out the comparison with NEWAVE's production function."
+
+
+def _emit_pmo_missing(newave_dir: Path) -> None:
+    emit(
+        report_file_missing_diagnostic("pmo.dat", newave_dir / "pmo.dat", _PMO_EFFECT),
+        logger=_LOG,
+    )
+
+
+def _emit_unreadable(path: Path, effect: str, reason: Exception | str) -> None:
+    emit(
+        report_file_unreadable_diagnostic(path.name.lower(), path, effect, reason),
+        logger=_LOG,
+    )
 
 
 def _find_pmo(newave_dir: Path) -> Path | None:
@@ -70,26 +99,36 @@ _MEDIAS_SCHEMA: dict[str, type[pl.DataType]] = {
 
 
 def _read_medias(
-    case_dir: Path, filename: str, read: _MediasReader, code_column: str | None
+    case_dir: Path,
+    filename: str,
+    read: _MediasReader,
+    code_column: str | None,
+    effect: str,
 ) -> pl.DataFrame:
     """One ``MEDIAS-*.CSV`` file in long format, one row per number it prints.
 
     Returns ``newave_code`` (the file's entity code, 0 without one), ``stage``,
     ``variable`` and ``value``. ``stage`` is the file's own stage number, which
     counts months from January of the study's first year, not from the study
-    start. A value printed as ``-`` has no row.
+    start. A value printed as ``-`` has no row. *effect* says what the report
+    leaves out without the file.
     """
     empty = pl.DataFrame(schema=_MEDIAS_SCHEMA)
 
     path = find_case_insensitive(case_dir, filename)
     if path is None:
-        _LOG.warning("%s not found in %s", filename, case_dir)
+        emit(
+            report_file_missing_diagnostic(
+                filename.lower(), case_dir / filename, effect
+            ),
+            logger=_LOG,
+        )
         return empty
 
     try:
         table = read(str(path)).valores
-    except Exception:
-        _LOG.warning("Failed to parse %s", path, exc_info=True)
+    except Exception as exc:
+        _emit_unreadable(path, effect, exc)
         return empty
     if table is None or table.empty:
         return empty
@@ -115,14 +154,26 @@ def read_medias_hydro(case_dir: Path) -> pl.DataFrame:
     """Read MEDIAS-USIH.CSV, keyed by hydro plant code."""
     from inewave.nwlistop import Mediasusih
 
-    return _read_medias(case_dir, "MEDIAS-USIH.CSV", Mediasusih.read, "codigo_usina")
+    return _read_medias(
+        case_dir,
+        "MEDIAS-USIH.CSV",
+        Mediasusih.read,
+        "codigo_usina",
+        "the report leaves out NEWAVE's mean operation of each hydro plant.",
+    )
 
 
 def read_medias_thermal(case_dir: Path) -> pl.DataFrame:
     """Read MEDIAS-USIT.CSV, keyed by thermal plant code."""
     from inewave.nwlistop import Mediasusit
 
-    return _read_medias(case_dir, "MEDIAS-USIT.CSV", Mediasusit.read, "codigo_usina")
+    return _read_medias(
+        case_dir,
+        "MEDIAS-USIT.CSV",
+        Mediasusit.read,
+        "codigo_usina",
+        "the report leaves out NEWAVE's mean generation of each thermal plant.",
+    )
 
 
 def read_medias_market(case_dir: Path) -> pl.DataFrame:
@@ -134,7 +185,11 @@ def read_medias_market(case_dir: Path) -> pl.DataFrame:
     from inewave.nwlistop import Mediasmerc
 
     return _read_medias(
-        case_dir, "MEDIAS-MERC.CSV", Mediasmerc.read, "codigo_submercado"
+        case_dir,
+        "MEDIAS-MERC.CSV",
+        Mediasmerc.read,
+        "codigo_submercado",
+        "the report leaves out NEWAVE's mean results of each submarket.",
     )
 
 
@@ -146,7 +201,13 @@ def read_medias_sin(case_dir: Path) -> pl.DataFrame:
     """
     from inewave.nwlistop import Mediassin
 
-    return _read_medias(case_dir, "MEDIAS-SIN.CSV", Mediassin.read, None)
+    return _read_medias(
+        case_dir,
+        "MEDIAS-SIN.CSV",
+        Mediassin.read,
+        None,
+        "the report leaves out NEWAVE's mean results of the whole system.",
+    )
 
 
 def read_medias_ree(case_dir: Path) -> pl.DataFrame:
@@ -158,7 +219,13 @@ def read_medias_ree(case_dir: Path) -> pl.DataFrame:
     """
     from inewave.nwlistop import Mediasree
 
-    return _read_medias(case_dir, "MEDIAS-REE.CSV", Mediasree.read, "codigo_ree")
+    return _read_medias(
+        case_dir,
+        "MEDIAS-REE.CSV",
+        Mediasree.read,
+        "codigo_ree",
+        "the report leaves out NEWAVE's mean results of each REE.",
+    )
 
 
 # -------------------------------------------------------------------
@@ -204,16 +271,17 @@ def read_pmo_convergence(newave_dir: Path) -> pl.DataFrame:
 
     pmo_path = _find_pmo(newave_dir)
     if pmo_path is None:
-        _LOG.warning("pmo.dat not found in %s", newave_dir)
+        _emit_pmo_missing(newave_dir)
         return empty
 
+    effect = "the report leaves out NEWAVE's convergence."
     try:
         table = _read_pmo(pmo_path).convergencia
-    except Exception:
-        _LOG.warning("Failed to read pmo.dat at %s", pmo_path, exc_info=True)
+    except Exception as exc:
+        _emit_unreadable(pmo_path, effect, exc)
         return empty
     if table is None or table.empty:
-        _LOG.warning("No convergence table in %s", pmo_path)
+        _emit_unreadable(pmo_path, effect, "no convergence table")
         return empty
 
     # With several forward series the source model prints three rows per
@@ -275,22 +343,20 @@ def read_pmo_productivity_detail(newave_dir: Path) -> pl.DataFrame:
 
     pmo_path = _find_pmo(newave_dir)
     if pmo_path is None:
-        _LOG.warning("pmo.dat not found in %s", newave_dir)
+        _emit_pmo_missing(newave_dir)
         return empty
 
+    effect = "the report leaves out NEWAVE's productivities."
     try:
         prod_df = _read_pmo(pmo_path).produtibilidades_equivalentes
-    except Exception:
-        _LOG.warning("Failed to read productivities from pmo.dat")
+    except Exception as exc:
+        _emit_unreadable(pmo_path, effect, exc)
         return empty
 
     if prod_df is None or prod_df.empty:
         return empty
     if "nome_usina" not in prod_df.columns:
-        _LOG.warning(
-            "pmo.dat productivities lack nome_usina column: %s",
-            list(prod_df.columns),
-        )
+        _emit_unreadable(pmo_path, effect, "the productivity table names no plant")
         return empty
 
     df = prod_df
@@ -374,11 +440,12 @@ def read_nwlistop_intercambio(case_dir: Path) -> pl.DataFrame:
     from inewave.nwlistop import Intercambio  # local import — heavy module
 
     rows: list[dict] = []
+    failures: list[tuple[str, Exception]] = []
     for from_code, to_code, path in matches:
         try:
             obj = Intercambio.read(str(path))
-        except Exception:
-            _LOG.warning("Failed to parse %s", path)
+        except Exception as exc:
+            failures.append((path.name.lower(), exc))
             continue
         df = obj.valores
         if df is None or df.empty:
@@ -409,6 +476,16 @@ def read_nwlistop_intercambio(case_dir: Path) -> pl.DataFrame:
                     "value": float(r["valor"]),
                 }
             )
+    if failures:
+        emit(
+            report_files_unreadable_diagnostic(
+                "Interchange tables",
+                failures,
+                "the report leaves out NEWAVE's interchange between the "
+                "submarkets they cover.",
+            ),
+            logger=_LOG,
+        )
     if not rows:
         return empty
     return pl.from_dicts(rows).cast(
@@ -424,16 +501,18 @@ def read_nwlistop_intercambio(case_dir: Path) -> pl.DataFrame:
 _MERCL_FILE_RE = re.compile(r"mercl(\d+)\.out$", re.IGNORECASE)
 
 
-def _read_mercl(path: Path) -> dict[tuple[int, int], float]:
+def _read_mercl(
+    path: Path, failures: list[tuple[str, Exception]]
+) -> dict[tuple[int, int], float]:
     """``{(year, month): net load in MWmes}`` of one nwlistop ``mercl<NNN>.out``;
     calendar months outside the horizon are written ``0.``. Empty when the file
-    does not parse."""
+    does not parse, which appends it to *failures*."""
     from inewave.nwlistop import Mercl
 
     try:
         table = Mercl.read(str(path)).valores
-    except Exception:
-        _LOG.warning("Failed to parse %s", path, exc_info=True)
+    except Exception as exc:
+        failures.append((path.name.lower(), exc))
         return {}
     if table is None:
         return {}
@@ -474,12 +553,24 @@ def read_newave_net_load_nwlistop(newave_dir: Path) -> pl.DataFrame:
         return empty
 
     parsed: dict[int, dict[tuple[int, int], float]] = {}
+    failures: list[tuple[str, Exception]] = []
     for p in files:
         m = _MERCL_FILE_RE.match(p.name)
         if m is None:
             continue
         code = int(m.group(1))  # mercl001 -> submarket 1 (sequential codes)
-        parsed[code] = _read_mercl(p)
+        parsed[code] = _read_mercl(p, failures)
+    if failures:
+        emit(
+            report_files_unreadable_diagnostic(
+                "Net load tables",
+                failures,
+                "the report leaves out NEWAVE's net load of their submarkets, "
+                "or takes it from sistema.dat for the study period only when "
+                "no table is read.",
+            ),
+            logger=_LOG,
+        )
     parsed = {code: months for code, months in parsed.items() if months}
     if not parsed:
         return empty
@@ -539,8 +630,14 @@ def read_newave_net_load(files: NewaveFiles) -> pl.DataFrame:
     )
 
     sistema_path = files.sistema
+    net_load_effect = "the report leaves out NEWAVE's net load."
     if not sistema_path.is_file():
-        _LOG.warning("%s not found in %s", sistema_path.name, files.directory)
+        emit(
+            report_file_missing_diagnostic(
+                sistema_path.name.lower(), sistema_path, net_load_effect
+            ),
+            logger=_LOG,
+        )
         return empty
 
     try:
@@ -549,8 +646,8 @@ def read_newave_net_load(files: NewaveFiles) -> pl.DataFrame:
         sistema = Sistema.read(str(sistema_path))
         load_df = sistema.mercado_energia
         ncs_df = sistema.geracao_usinas_nao_simuladas
-    except Exception:
-        _LOG.warning("Failed to read %s for net load", sistema_path.name)
+    except Exception as exc:
+        _emit_unreadable(sistema_path, net_load_effect, exc)
         return empty
 
     if load_df is None or load_df.empty:
@@ -582,9 +679,11 @@ def read_newave_net_load(files: NewaveFiles) -> pl.DataFrame:
                 ),
                 axis=1,
             )
-        except Exception:
-            _LOG.warning(
-                "Failed to parse %s for net load adjustment", cadical_path.name
+        except Exception as exc:
+            _emit_unreadable(
+                cadical_path,
+                "the report's NEWAVE net load leaves out the additional loads.",
+                exc,
             )
 
     # NCS: sum across all source types per (submarket, date).
@@ -640,12 +739,15 @@ def read_pmo_cost_breakdown(newave_dir: Path) -> dict[str, float]:
     """
     pmo_path = _find_pmo(newave_dir)
     if pmo_path is None:
+        _emit_pmo_missing(newave_dir)
         return {}
 
     try:
         df = _read_pmo(pmo_path).custo_operacao_series_simuladas
-    except Exception:
-        _LOG.warning("Failed to read cost breakdown from pmo.dat")
+    except Exception as exc:
+        _emit_unreadable(
+            pmo_path, "the report leaves out NEWAVE's cost breakdown.", exc
+        )
         return {}
 
     if df is None or df.empty:
@@ -684,14 +786,19 @@ def read_newave_tim_iterations(newave_dir: Path) -> pl.DataFrame:
     empty = pl.DataFrame(schema=_TIM_ITERATION_SCHEMA)
     tim_path = find_case_insensitive(newave_dir, "newave.tim")
     if tim_path is None:
-        _LOG.warning("newave.tim not found in %s", newave_dir)
+        emit(
+            report_file_missing_diagnostic(
+                "newave.tim", newave_dir / "newave.tim", _TIM_EFFECT
+            ),
+            logger=_LOG,
+        )
         return empty
     try:
         from inewave.newave import Newavetim
 
         table = Newavetim.read(str(tim_path)).tempos_iteracoes
-    except Exception:
-        _LOG.warning("Failed to parse newave.tim at %s", tim_path, exc_info=True)
+    except Exception as exc:
+        _emit_unreadable(tim_path, _TIM_EFFECT, exc)
         return empty
     if table is None or table.empty:
         return empty
@@ -720,8 +827,8 @@ def read_newave_tim_stages(newave_dir: Path) -> dict[str, float]:
         from inewave.newave import Newavetim
 
         tim = Newavetim.read(str(tim_path))
-    except Exception:
-        _LOG.warning("Failed to parse newave.tim via inewave at %s", tim_path)
+    except Exception as exc:
+        _emit_unreadable(tim_path, _TIM_EFFECT, exc)
         return {}
     df = tim.tempos_etapas
     if df is None or df.empty:
@@ -810,7 +917,7 @@ def read_fpha_planes(newave_dir: Path) -> pl.DataFrame | None:
         return None
     missing = set(_FPHA_PLANE_COLUMNS) - set(table.columns)
     if missing:
-        _LOG.warning("fpha_cortes is missing columns %s; skipping", sorted(missing))
+        _emit_unreadable(path, _FPHA_EFFECT, f"no {', '.join(sorted(missing))} column")
         return None
     frame = pl.from_pandas(table[list(_FPHA_PLANE_COLUMNS)]).rename(_FPHA_PLANE_COLUMNS)
     return frame.cast(_FPHA_PLANE_SCHEMA)
@@ -878,7 +985,7 @@ def read_fpha_grid(newave_dir: Path) -> pl.DataFrame | None:
         return None
     missing = set(_FPHA_GRID_COLUMNS) - set(table.columns)
     if missing:
-        _LOG.warning("fpha_eco is missing columns %s; skipping", sorted(missing))
+        _emit_unreadable(path, _FPHA_EFFECT, f"no {', '.join(sorted(missing))} column")
         return None
     frame = pl.from_pandas(table[list(_FPHA_GRID_COLUMNS)]).rename(_FPHA_GRID_COLUMNS)
     return frame.cast(_FPHA_GRID_SCHEMA)
@@ -915,7 +1022,11 @@ def _nwlistop_readers() -> dict[str, _NwlistopReader]:
 
 
 def _read_nwlistop_table(
-    path: Path, read: _NwlistopReader, start_year: int, start_month: int
+    path: Path,
+    read: _NwlistopReader,
+    start_year: int,
+    start_month: int,
+    failures: list[tuple[str, Exception]],
 ) -> pl.DataFrame | None:
     """One nwlistop table keyed by study stage, series and block.
 
@@ -923,12 +1034,13 @@ def _read_nwlistop_table(
     ``scenario`` is the series' rank within its calendar year, from 0: a
     historical final simulation labels each year's series by its inflow year.
     ``block`` is ``patamar − 1`` in a per-block table, its ``TOTAL`` rows
-    dropped. ``None`` when the file does not parse.
+    dropped. ``None`` when the file does not parse, which appends it to
+    *failures*.
     """
     try:
         table = read(str(path)).valores
-    except Exception:
-        _LOG.warning("Failed to parse %s", path, exc_info=True)
+    except Exception as exc:
+        failures.append((path.name.lower(), exc))
         return None
     if table is None or table.empty:
         return None
@@ -988,6 +1100,7 @@ def read_nwlistop_hydro_blocks(
     )
     readers = _nwlistop_readers()
     plants: list[pl.DataFrame] = []
+    failures: list[tuple[str, Exception]] = []
     for code in codes:
         plant: pl.DataFrame | None = None
         for prefix, column in _NWLISTOP_BLOCK_TABLES.items():
@@ -996,7 +1109,7 @@ def read_nwlistop_hydro_blocks(
                 None
                 if path is None
                 else _read_nwlistop_table(
-                    path, readers[prefix], start_year, start_month
+                    path, readers[prefix], start_year, start_month, failures
                 )
             )
             if table is None:
@@ -1009,6 +1122,11 @@ def read_nwlistop_hydro_blocks(
             )
         if plant is not None:
             plants.append(plant.with_columns(pl.lit(code).alias("newave_code")))
+    _emit_unreadable_tables(
+        failures,
+        "Plant operation tables",
+        "the report leaves out NEWAVE's per-block operation of their plants.",
+    )
     if not plants:
         return pl.DataFrame(schema=schema)
     frame = pl.concat(plants, how="diagonal_relaxed")
@@ -1050,6 +1168,8 @@ def read_nwlistop_hydro_storage(
         schema,
         start_year,
         start_month,
+        kind="Storage tables",
+        effect="the report leaves out NEWAVE's storage of their reservoirs.",
     )
 
 
@@ -1073,8 +1193,26 @@ def read_nwlistop_block_cmo(
         "cmo": pl.Float64,
     }
     return _read_numbered_tables(
-        newave_dir, "cmarg", "submarket_code", "cmo", schema, start_year, start_month
+        newave_dir,
+        "cmarg",
+        "submarket_code",
+        "cmo",
+        schema,
+        start_year,
+        start_month,
+        kind="Marginal cost tables",
+        effect=(
+            "the report leaves out NEWAVE's per-block marginal cost of their "
+            "submarkets."
+        ),
     )
+
+
+def _emit_unreadable_tables(
+    failures: list[tuple[str, Exception]], kind: str, effect: str
+) -> None:
+    if failures:
+        emit(report_files_unreadable_diagnostic(kind, failures, effect), logger=_LOG)
 
 
 def _read_numbered_tables(
@@ -1085,10 +1223,15 @@ def _read_numbered_tables(
     schema: dict[str, type[pl.DataType]],
     start_year: int,
     start_month: int,
+    *,
+    kind: str,
+    effect: str,
 ) -> pl.DataFrame:
-    """Every ``<prefix><NNN>.out`` table, ``NNN`` in *code_column*."""
+    """Every ``<prefix><NNN>.out`` table, ``NNN`` in *code_column*; the
+    tables that do not parse are one warning, titled by *kind*."""
     if not newave_dir.is_dir():
         return pl.DataFrame(schema=schema)
+    failures: list[tuple[str, Exception]] = []
     pattern = re.compile(rf"^{prefix}(\d{{3}})\.out$", re.IGNORECASE)
     read = _nwlistop_readers()[prefix]
     tables: list[pl.DataFrame] = []
@@ -1096,13 +1239,14 @@ def _read_numbered_tables(
         m = pattern.match(path.name)
         if m is None:
             continue
-        table = _read_nwlistop_table(path, read, start_year, start_month)
+        table = _read_nwlistop_table(path, read, start_year, start_month, failures)
         if table is not None:
             tables.append(
                 table.rename({"valor": value_column}).with_columns(
                     pl.lit(int(m.group(1))).alias(code_column)
                 )
             )
+    _emit_unreadable_tables(failures, kind, effect)
     if not tables:
         return pl.DataFrame(schema=schema)
     return (

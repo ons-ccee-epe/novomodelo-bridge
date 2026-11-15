@@ -121,9 +121,11 @@ class TestOptionalInputAdvisory:
         checks, diagnostics = preflight.optional_input_advisory(files)
 
         assert len(checks) == len(_OPTIONAL_FIELDS)
-        assert len(diagnostics) == len(_OPTIONAL_FIELDS)
-        assert all(diag.severity is Severity.INFO for diag in diagnostics)
-        assert all(diag.code == "optional-file-absent" for diag in diagnostics)
+        [advisory] = diagnostics
+        assert advisory.severity is Severity.INFO
+        assert advisory.code == "optional-file-absent"
+        assert advisory.table is not None
+        assert len(advisory.table.rows) == len(_OPTIONAL_FIELDS)
         assert all(
             check.detail == "absent (optional; conversion proceeds)" for check in checks
         )
@@ -160,9 +162,7 @@ class TestSwitchAdvisory:
         checks, diagnostics = preflight._switch_advisory(files)
 
         assert [c.label for c in checks] == ["dger.dat switches"]
-        assert (
-            checks[0].passed and checks[0].detail == "1 present input(s) switched off"
-        )
+        assert checks[0].passed and checks[0].detail == "1 present input switched off"
         assert [d.code for d in diagnostics] == ["dger-switch-off"]
         assert diagnostics[0].severity is Severity.INFO
         assert "ghmin.dat" in diagnostics[0].title

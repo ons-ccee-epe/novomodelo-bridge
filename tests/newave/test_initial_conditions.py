@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
+from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files, modif_mock
 from tests.newave.conftest import (
@@ -210,28 +210,32 @@ class TestConvertInitialConditions:
         seed = {s["hydro_id"]: s["value_hm3"] for s in result["filling_storage"]}
         assert seed[2] == pytest.approx(1.465)
 
-    def test_volume_morto_out_of_range_clamped(self, tmp_path, caplog) -> None:
-        """A ``volume_morto`` above 100 is clamped to 100% with a warning.
+    def test_volume_morto_out_of_range_clamped(self, tmp_path) -> None:
+        """A ``volume_morto`` above 100 is clamped to 100% and reported.
 
         Synthetic ``volume_morto == 150`` clamps to 100%, giving the full
-        ``volume_minimo == 2.93`` hm³ seed, and logs a clamp warning.
+        ``volume_minimo == 2.93`` hm³ seed.
         """
         from novomodelo_bridge.newave.converters.initial_conditions import (
             convert_initial_conditions,
         )
 
-        with caplog.at_level(logging.WARNING):
+        with collect() as found:
             result = convert_initial_conditions(
                 self._ne_filling_ic_case(tmp_path, volume_morto=150.0),
                 _ne_filling_id_map(),
             )
         seed = {s["hydro_id"]: s["value_hm3"] for s in result["filling_storage"]}
         assert seed[2] == pytest.approx(2.93)
-        assert any("volume_morto" in rec.message for rec in caplog.records)
+        [clamped] = [d for d in found if d.code == "initial-storage-clamped"]
+        assert clamped.table is not None
+        [row] = clamped.table.rows
+        assert (row[2], row[3], row[4]) == ("exph.dat dead volume", 150.0, 100.0)
 
 
-def _ic_case(tmp_path, pct_b: float = 75.0):
-    """Build a NewaveCase with hidr/confhd readers pre-cached for IC tests."""
+def _ic_case(tmp_path, pct_b: float = 75.0, conft: object | None = None):
+    """Build a NewaveCase with hidr/confhd (and *conft*) readers pre-cached for
+    IC tests."""
     mock_hidr = MagicMock()
     mock_hidr.cadastro = _make_hidr_cadastro()
 
@@ -246,7 +250,10 @@ def _ic_case(tmp_path, pct_b: float = 75.0):
     mock_dger.ano_inicio_estudo = 2024
     mock_dger.mes_inicio_estudo = 1
 
-    return make_case(tmp_path, hidr=mock_hidr, confhd=mock_confhd, dger=mock_dger)
+    readers = {} if conft is None else {"conft": conft}
+    return make_case(
+        tmp_path, hidr=mock_hidr, confhd=mock_confhd, dger=mock_dger, **readers
+    )
 
 
 class TestAnticipatedCommitmentSeeding:
@@ -270,7 +277,7 @@ class TestAnticipatedCommitmentSeeding:
         "novomodelo_bridge.newave.converters.initial_conditions.read_anticipated_dispatch"
     )
     def test_in_range_values_pass_through(
-        self, mock_read, mock_bounds, tmp_path, caplog
+        self, mock_read, mock_bounds, tmp_path
     ) -> None:
         from novomodelo_bridge.newave.converters.anticipated import AnticipatedDispatch
         from novomodelo_bridge.newave.converters.initial_conditions import (
@@ -282,10 +289,7 @@ class TestAnticipatedCommitmentSeeding:
         }
         mock_bounds.return_value = {86: (0.0, 481.27)}
 
-        with caplog.at_level(
-            logging.WARNING,
-            logger="novomodelo_bridge.newave.converters.initial_conditions",
-        ):
+        with collect() as found:
             result = convert_initial_conditions(_ic_case(tmp_path), self._id_map())
 
         # Windowed records (novomodelo 0.14): one contiguous monthly window per
@@ -304,7 +308,7 @@ class TestAnticipatedCommitmentSeeding:
                 "value_mw": 0.0,
             },
         ]
-        assert "clamping" not in caplog.text
+        assert found == []
 
     @patch(
         "novomodelo_bridge.newave.converters.initial_conditions.thermal_generation_bounds"
@@ -312,8 +316,8 @@ class TestAnticipatedCommitmentSeeding:
     @patch(
         "novomodelo_bridge.newave.converters.initial_conditions.read_anticipated_dispatch"
     )
-    def test_out_of_range_values_clamped_and_warned(
-        self, mock_read, mock_bounds, tmp_path, caplog
+    def test_out_of_range_values_clamped_and_reported(
+        self, mock_read, mock_bounds, tmp_path
     ) -> None:
         from novomodelo_bridge.newave.converters.anticipated import AnticipatedDispatch
         from novomodelo_bridge.newave.converters.initial_conditions import (
@@ -325,19 +329,24 @@ class TestAnticipatedCommitmentSeeding:
             86: AnticipatedDispatch(lead_stages=2, values_mw=[600.0, -5.0])
         }
         mock_bounds.return_value = {86: (0.0, 481.27)}
+        conft = MagicMock()
+        conft.usinas = pd.DataFrame({"codigo_usina": [86], "nome_usina": ["TERMO 86"]})
 
-        with caplog.at_level(
-            logging.WARNING,
-            logger="novomodelo_bridge.newave.converters.initial_conditions",
-        ):
-            result = convert_initial_conditions(_ic_case(tmp_path), self._id_map())
+        with collect() as found:
+            result = convert_initial_conditions(
+                _ic_case(tmp_path, conft=conft), self._id_map()
+            )
 
         commitments = result["past_anticipated_commitments"]
         assert [c["value_mw"] for c in commitments] == pytest.approx([481.27, 0.0])
         assert commitments[0]["start_date"] == "2024-01-01"
         assert commitments[0]["end_date"] == "2024-02-01"
-        assert "code=86" in caplog.text
-        assert "clamping" in caplog.text
+        [clamped] = [d for d in found if d.code == "anticipated-commitment-clamped"]
+        assert clamped.table is not None
+        assert clamped.table.rows == [
+            [86, "TERMO 86", "stage 0", 600.0, 0.0, 481.27, 481.27],
+            [86, "TERMO 86", "stage 1", -5.0, 0.0, 481.27, 0.0],
+        ]
 
     @patch(
         "novomodelo_bridge.newave.converters.initial_conditions.thermal_generation_bounds"
@@ -346,7 +355,7 @@ class TestAnticipatedCommitmentSeeding:
         "novomodelo_bridge.newave.converters.initial_conditions.read_anticipated_dispatch"
     )
     def test_code_absent_from_id_map_skipped(
-        self, mock_read, mock_bounds, tmp_path, caplog
+        self, mock_read, mock_bounds, tmp_path
     ) -> None:
         from novomodelo_bridge.newave.converters.anticipated import AnticipatedDispatch
         from novomodelo_bridge.newave.converters.initial_conditions import (
@@ -358,15 +367,15 @@ class TestAnticipatedCommitmentSeeding:
         }
         mock_bounds.return_value = {999: (0.0, 500.0)}
 
-        with caplog.at_level(
-            logging.WARNING,
-            logger="novomodelo_bridge.newave.converters.initial_conditions",
-        ):
+        with collect() as found:
             result = convert_initial_conditions(_ic_case(tmp_path), self._id_map())
 
         # Unknown thermal -> skipped, so no commitments key is emitted.
         assert "past_anticipated_commitments" not in result
-        assert "absent from" in caplog.text
+        [undeclared] = found
+        assert undeclared.code == "adterm-thermal-undeclared"
+        assert undeclared.table is not None
+        assert undeclared.table.rows == [[999]]
 
     @patch(
         "novomodelo_bridge.newave.converters.initial_conditions.thermal_generation_bounds"
@@ -409,12 +418,12 @@ class TestReadAnticipatedDispatchHorizonTruncation:
 
     Evidence for the twin-track decision recorded in
     ``decomp/anticipated.py``: adterm.dat commits dispatch only through the
-    study horizon, so a lag beyond it is truncated and warned, never carried
+    study horizon, so a lag beyond it is truncated and reported, never carried
     past the horizon as a post-study surface (unlike the DECOMP GNL model's
     já-comandada/signaled post-horizon windows).
     """
 
-    def test_lag_beyond_horizon_truncated_and_warned(self, tmp_path, caplog) -> None:
+    def test_lag_beyond_horizon_truncated_and_reported(self, tmp_path) -> None:
         from novomodelo_bridge.newave.converters.anticipated import (
             read_anticipated_dispatch,
         )
@@ -448,9 +457,7 @@ class TestReadAnticipatedDispatchHorizonTruncation:
             files, dger=mock_dger, patamar=mock_patamar, adterm=mock_adterm
         )
 
-        with caplog.at_level(
-            logging.WARNING, logger="novomodelo_bridge.newave.converters.anticipated"
-        ):
+        with collect() as found:
             result = read_anticipated_dispatch(case)
 
         # lag=15 exceeds the 12-stage horizon -> truncated to it; the source
@@ -458,5 +465,7 @@ class TestReadAnticipatedDispatchHorizonTruncation:
         assert result[86].lead_stages == 12
         assert len(result[86].values_mw) == 12
         assert result[86].values_mw[0] == pytest.approx(50.0)
-        assert "lag=15" in caplog.text
-        assert "truncating to 12" in caplog.text
+        [truncated] = found
+        assert truncated.code == "adterm-lag-beyond-horizon"
+        assert truncated.table is not None
+        assert truncated.table.rows == [[86, 15]]

@@ -556,7 +556,7 @@ def test_emit_import_diagnostics_gnl_deviation_reports_the_patamar_spread() -> N
     assert deviation.remediation is None
     assert deviation.table is not None
     assert deviation.table.columns == [
-        "Submercado",
+        "Submarket",
         "Lag",
         "Σ pi_gnl (carried)",
         "Patamar spread (%)",
@@ -587,7 +587,7 @@ def test_emit_import_diagnostics_gnl_deviation_lists_every_dropped_term() -> Non
         cuts=(make_mapped_cut(coefficients=(0.0,), intercept=0.0),),
         dropped=(),
         gnl_dropped=(
-            GnlDroppedTerm(None, 2, 1, 0.75, "no GNL thermal in submercado"),
+            GnlDroppedTerm(None, 2, 1, 0.75, "no GNL thermal in the submarket"),
             GnlDroppedTerm(94, 1, None, 0.0, "no dated ring slot for thermal"),
         ),
     )
@@ -598,11 +598,11 @@ def test_emit_import_diagnostics_gnl_deviation_lists_every_dropped_term() -> Non
     deviation = next(
         d for d in sink if d.code == "boundary-fcf-gnl-anticipated-deviation"
     )
-    assert "2 GNL term(s) of the cuts reach no delivery window" in deviation.summary
+    assert "GNL terms of the cuts that reach no delivery window" in deviation.summary
     assert deviation.notes[1:] == [
-        "submercado 2, lag 1: no GNL thermal in submercado, so its term "
-        "(Σ pi_gnl 0.75) prices nothing in DECOMP either",
-        "thermal 94, submercado 1: no dated ring slot for thermal",
+        "Submarket 2, lag 1: no GNL thermal in the submarket, so its term "
+        "(Σ pi_gnl 0.75) prices nothing in DECOMP either.",
+        "Thermal 94, submarket 1: no dated ring slot for thermal.",
     ]
 
 

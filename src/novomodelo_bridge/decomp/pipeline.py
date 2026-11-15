@@ -30,7 +30,6 @@ from novomodelo_bridge.core.bound_merge import merge_bound_tables
 from novomodelo_bridge.core.conversion import (
     ClearedArtifacts,
     ConversionReport,
-    clear_dst_contents,
     run_conversion,
 )
 from novomodelo_bridge.core.diversion import (
@@ -470,34 +469,21 @@ def _topology_relink_diagnostic(
     effective: cadastro_conv.EffectiveCadastro,
     id_map: DecompIdMap,
 ) -> dx.Diagnostic | None:
-    """The ``cadastro-topology-relinked`` INFO diagnostic,
-    or ``None`` when no operated plant's effective downstream link/inflow
-    gauge differs from the base registry (the byte-identical no-override
-    case).
+    """The ``cadastro-topology-relinked`` INFO, or ``None`` when no operated
+    plant's first-stage cascade differs from ``hidr.dat``.
 
-    Lists every operated plant whose stage-0 effective downstream link
-    (``AC NUMJUS``) or inflow gauge (``AC NUMPOS``) differs from the base
-    ``hidr`` value — the direct, human-readable relink; rv3's own 5
-    ``AC NUMJUS`` rows all take this form (34/43 -> 45, 127/181 -> 129,
-    117 -> 108).
-
-    As a defensive backstop — a precise relink check — also walks the
-    incremental-inflow cascade
-    (:func:`~novomodelo_bridge.decomp.scenarios._incremental_context`) under
-    both *effective* and a base-only cadastro (same registry, no override
-    maps) and compares the resolved ``parents`` maps: an ``AC NUMJUS`` on a
-    non-operated intermediate can change which operated plant receives an
-    upstream plant's water without any operated plant's own link differing,
-    so the direct per-code diff above would miss it. No rv3 row exercises
-    that case, so it is not itemized by name here, but it is never silently
-    dropped either — a tracked-gap warning fires instead of a
-    diagnostic-less, byte-different conversion.
+    Lists each operated plant whose own ``AC NUMJUS`` or ``NUMPOS`` changes
+    its downstream plant or gauge, and each whose next operated plant
+    downstream changes only through an ``AC NUMJUS`` on a plant left out of
+    the case, which the per-plant comparison cannot see.
     """
     base = cadastro_conv.EffectiveCadastro(
         base=effective.base, n_stages=effective.n_stages, stage_varying={}
     )
     _, base_parents = scenarios_conv._incremental_context(base, id_map)
     _, effective_parents = scenarios_conv._incremental_context(effective, id_map)
+    base_next = _next_operated(base_parents)
+    effective_next = _next_operated(effective_parents)
 
     rows: list[list[object]] = []
     affected_codes: set[int] = set()
@@ -510,6 +496,17 @@ def _topology_relink_diagnostic(
                 [code, name, "downstream plant", base_downstream, eff_downstream]
             )
             affected_codes.add(code)
+        elif base_next.get(code, 0) != effective_next.get(code, 0):
+            rows.append(
+                [
+                    code,
+                    name,
+                    "next operated plant",
+                    base_next.get(code, 0),
+                    effective_next.get(code, 0),
+                ]
+            )
+            affected_codes.add(code)
         base_gauge = int(effective.base.loc[code, "posto"])
         eff_gauge = effective.inflow_gauge(code, 0)
         if eff_gauge != base_gauge:
@@ -517,14 +514,6 @@ def _topology_relink_diagnostic(
             affected_codes.add(code)
 
     if not rows:
-        if base_parents != effective_parents:
-            _LOG.warning(
-                "the effective and base incremental-inflow cascades differ, "
-                "but no operated plant's own downstream link or inflow "
-                "gauge changed directly; likely an AC NUMJUS relink on a "
-                "non-operated intermediate -- not itemized by the "
-                "cadastro-topology-relinked diagnostic"
-            )
         return None
 
     return dx.Diagnostic(
@@ -536,15 +525,72 @@ def _topology_relink_diagnostic(
             f"({len(affected_codes)})"
         ),
         summary=(
-            f"{len(affected_codes)} plant(s) take an AC NUMJUS or NUMPOS "
-            "register that changes their downstream plant or inflow gauge from "
-            "hidr.dat, as in DECOMP."
+            "AC NUMJUS and NUMPOS registers change the downstream plant or "
+            "inflow gauge of the listed plants from hidr.dat, directly or "
+            "through a plant left out of the case, and the conversion follows "
+            "them, as in DECOMP."
         ),
         table=dx.DiagnosticTable(
             columns=["Code", "Name", "Changes", "hidr.dat", "Effective"],
             rows=rows,
             justify=["right", "left", "left", "right", "right"],
             caption="Effective values are those of the first stage.",
+        ),
+    )
+
+
+def _next_operated(parents: Mapping[int, Sequence[int]]) -> dict[int, int]:
+    return {child: parent for parent, children in parents.items() for child in children}
+
+
+def _topology_varies_diagnostic(
+    effective: cadastro_conv.EffectiveCadastro,
+) -> dx.Diagnostic | None:
+    """The ``decomp-ac-topology-varies`` WARNING, or ``None`` when no ``AC
+    NUMJUS``, ``NUMPOS`` or ``JUSENA`` register changes value between stages.
+
+    The case carries one cascade for the whole horizon, so every cascade walk
+    reads these registers at the first stage.
+    """
+    registers: tuple[tuple[str, Mapping[int, Sequence[int | None]]], ...] = (
+        ("AC NUMJUS", effective.downstream_links),
+        ("AC NUMPOS", effective.inflow_gauges),
+        ("AC JUSENA", effective.energy_links),
+    )
+    rows: list[list[object]] = []
+    for register, series_by_code in registers:
+        for code in sorted(series_by_code):
+            series = series_by_code[code]
+            changed = [
+                stage for stage, value in enumerate(series) if value != series[0]
+            ]
+            if not changed:
+                continue
+            name = (
+                str(effective.base.loc[code, "nome_usina"]).strip()
+                if code in effective.base.index
+                else ""
+            )
+            used = "none" if series[0] is None else series[0]
+            rows.append([code, name, register, used, dx.format_stage_ranges(changed)])
+    if not rows:
+        return None
+    return dx.Diagnostic(
+        code="decomp-ac-topology-varies",
+        severity=dx.Severity.WARNING,
+        category="Cadastro overrides",
+        title=f"Cascade registers that change between stages ({len(rows)})",
+        summary=(
+            "The listed AC registers take a different value on later stages, "
+            "but the converted case has one cascade for the whole horizon and "
+            "uses the first stage's value throughout, so on the listed stages "
+            "the water, inflow or stored-energy routing differs from DECOMP's."
+        ),
+        table=dx.DiagnosticTable(
+            columns=["Code", "Name", "Register", "Used", "Differs on stages"],
+            rows=rows,
+            justify=["right", "left", "left", "right", "left"],
+            caption="Stage ids are 0-based.",
         ),
     )
 
@@ -765,8 +811,8 @@ def _diversion_channel_dropped_diagnostic(
         channel = _first_diversion_channel(effective, code)
         rows.append(
             [
-                names.get(hydro_id, ""),
                 code,
+                names.get(hydro_id, ""),
                 channel.downstream if channel is not None else "-",
                 ceilings[hydro_id],
             ]
@@ -775,19 +821,20 @@ def _diversion_channel_dropped_diagnostic(
         code="decomp-diversion-channel-dropped",
         severity=dx.Severity.WARNING,
         category="Diversion",
-        title="Diversion closed: target plant not in the case",
+        title=f"Diversion closed: target plant not in the case ({len(rows)})",
         summary=(
-            f"{len(dropped)} hydro(s) allow a positive diverted flow, but the "
-            "plant that receives it is not in the case; their diversion is "
-            "closed, so the water stays in the plant's own river."
+            "The listed plants allow a positive diverted flow, but the plant "
+            "that receives it is not in the case. The conversion closes each "
+            "diversion, so the water stays in the plant's own river."
         ),
         table=dx.DiagnosticTable(
-            columns=["Plant", "Code", "Target code", "Max diversion (m³/s)"],
+            columns=["Code", "Name", "Target code", "Max diversion (m³/s)"],
             rows=rows,
+            justify=["right", "left", "right", "right"],
         ),
         remediation=(
-            "Include the receiving plant in the case if the diversion should "
-            "be modeled; otherwise this is informational."
+            "Declare each listed target plant with a UH record in dadger.rvN "
+            "to model its diversion."
         ),
     )
 
@@ -830,6 +877,14 @@ def _base_diversion_channels(
     return channels
 
 
+_LIBS_LEFT_OUT = {
+    "inactive": "Left out: never active",
+    "unrecognized-token": "Left out: undeclared name",
+    "unresolved-bucket-a": "Left out: no case variable for a term",
+    "unresolved-bucket-bc": "Left out: data term not evaluated",
+}
+
+
 def _libs_electrical_census_diagnostic(
     result: libs_electrical_emit.LibsElectricalResult,
 ) -> dx.Diagnostic:
@@ -849,24 +904,22 @@ def _libs_electrical_census_diagnostic(
     converted" claim survives over it.
     """
     n_converted = len(result.converted_codes)
-    n_dropped = sum(len(codes) for codes in result.deferred.values())
+    total = n_converted + sum(len(codes) for codes in result.deferred.values())
     rows: list[list[object]] = [["Converted", n_converted]]
     rows.extend(
-        [reason, len(codes)] for reason, codes in sorted(result.deferred.items())
+        [_LIBS_LEFT_OUT[reason], len(codes)]
+        for reason, codes in sorted(result.deferred.items())
     )
     return dx.Diagnostic(
         code="decomp-libs-electrical-converted",
         severity=dx.Severity.INFO,
         category="Special constraints",
-        title=(
-            f"LIBs electrical constraints converted "
-            f"({n_converted}/{n_converted + n_dropped})"
-        ),
+        title=f"LIBS electrical restrictions converted ({n_converted} of {total})",
         summary=(
-            f"{n_converted} of {n_converted + n_dropped} LIBs-era long-form "
-            "electrical restriction(s) converted to a novomodelo generic "
-            "constraint; the rest were dropped (see table for the "
-            "per-reason breakdown)."
+            f"Of the {dx.counted(total, 'electrical restriction')} in the LIBS "
+            f"file, the conversion turns {n_converted} into generic "
+            "constraints. The table counts the rest by the reason each is left "
+            "out; the other electrical-restriction panels list them."
         ),
         table=dx.DiagnosticTable(
             columns=["Outcome", "Count"],
@@ -973,6 +1026,9 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     relink_diagnostic = _topology_relink_diagnostic(effective, id_map)
     if relink_diagnostic is not None:
         dx.emit(relink_diagnostic, logger=_LOG)
+    varies_diagnostic = _topology_varies_diagnostic(effective)
+    if varies_diagnostic is not None:
+        dx.emit(varies_diagnostic, logger=_LOG)
     fan_probabilities = scenarios_conv.terminal_fan_probabilities(vazoes, calendar)
 
     tx_register = dadger.tx
@@ -1011,9 +1067,11 @@ def _cadastro_overrides_diagnostic(
         "below from the stage each one takes effect, as in DECOMP."
     )
     if report.out_of_horizon:
+        late = len(report.out_of_horizon)
         summary += (
-            f" {len(report.out_of_horizon)} AC override(s) take effect after "
-            "the study horizon and change nothing."
+            f" {dx.counted(late, 'AC override')} "
+            f"{'takes' if late == 1 else 'take'} effect after the study "
+            f"horizon and {'changes' if late == 1 else 'change'} nothing."
         )
     present = {row[0] for row in rows}
     per_unit_set = [name for name in _UNIT_SET_AC_REGISTERS if name in present]
@@ -1026,7 +1084,7 @@ def _cadastro_overrides_diagnostic(
         code="cadastro-overrides-applied",
         severity=dx.Severity.INFO,
         category="Cadastro overrides",
-        title=f"AC registry overrides applied ({len(rows)} register(s))",
+        title=f"AC registry overrides applied ({len(rows)})",
         summary=summary,
         table=dx.DiagnosticTable(
             columns=["AC register", "Plants"],
@@ -1207,7 +1265,7 @@ def _convert_thermals_with_gnl(
             )
         post_study_stages = dict(gnl.post_study_stages or {})
         _LOG.info(
-            "emitted %d GNL anticipated thermal(s) from dadgnl",
+            "GNL anticipated thermals emitted from dadgnl: %d",
             len(gnl.thermals),
         )
     water_bucket_stages = _water_bucket_stages(
@@ -1459,10 +1517,14 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
 
 
 def _read_constraint_census(
-    dadger: Dadger, effective: cadastro_conv.EffectiveCadastro
+    dadger: Dadger,
+    effective: cadastro_conv.EffectiveCadastro,
+    id_map: DecompIdMap,
+    pumping_ids: Mapping[int, int],
 ) -> constraint_registers.ConstraintCensus:
-    """The deck's special constraints split by lowering target, reporting any
-    conflicting bounds they declare as a diagnostic."""
+    """The deck's special constraints split by lowering target, without the
+    ones on an entity the case lacks, reporting those and any conflicting
+    bounds as diagnostics."""
     census = constraint_registers.read_constraints(dadger)
     if census.bound_conflicts:
         names = {
@@ -1476,6 +1538,14 @@ def _read_constraint_census(
             ),
             logger=_LOG,
         )
+    census, unknown = constraint_registers.drop_unknown_entities(
+        census,
+        hydro_codes=id_map.hydro_codes,
+        thermal_codes=id_map.thermal_codes,
+        pumping_codes=pumping_ids.keys(),
+    )
+    for diagnostic in unknown:
+        dx.emit(diagnostic, logger=_LOG)
     return census
 
 
@@ -1493,14 +1563,6 @@ def _released_runofriver_codes(
     unregulated_codes = cadastro_conv.unregulated_runofriver_codes(
         effective, id_map.hydro_codes
     )
-    for code in sorted(unregulated_codes):
-        if effective.downstream_plant_varies(code):
-            _LOG.warning(
-                "plant %d's downstream link (AC NUMJUS) varies across stages; "
-                "the run-of-river minimum-outflow relaxation uses the stage-0 "
-                "effective link for the whole horizon",
-                code,
-            )
     if unregulated_codes:
         dx.emit(
             dx.Diagnostic(
@@ -1512,7 +1574,7 @@ def _released_runofriver_codes(
                     f"minimum outflow ({len(unregulated_codes)})"
                 ),
                 summary=(
-                    f"{len(unregulated_codes)} run-of-river plant(s) sit upstream "
+                    "The listed run-of-river plants sit upstream "
                     "of the first reservoir of their cascade, so, as in DECOMP, "
                     "they take no RQ/UH minimum outflow. A single-plant RHQ QDEF "
                     "floor still applies."
@@ -1591,7 +1653,7 @@ def _couple_diversion_channels(
                 category="Diversion",
                 title=f"Diversions without a QDES restriction ({len(base_diversion_channels)})",
                 summary=(
-                    f"{len(base_diversion_channels)} plant(s) divert water through "
+                    "The listed plants divert water through "
                     "their hidr.dat or AC DESVIO desvio with no QDES restriction. "
                     "Each diverts through a channel to the receiving plant, "
                     "limited only by the AC DESVIO flow, as in DECOMP."
@@ -1674,8 +1736,8 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     turbine_limits = artifacts.turbine_limits
     assert turbine_limits is not None
 
-    census = _read_constraint_census(dadger, effective)
     pumping_ids = network_conv.pumping_station_id_map(dadger)
+    census = _read_constraint_census(dadger, effective, id_map, pumping_ids)
     thermal_generation_contribs, thermal_cost_table = (
         thermal_conv.convert_thermal_bounds(case, id_map)
     )
@@ -2362,27 +2424,14 @@ def convert_decomp_case(
 
     Raises
     ------
-    ~novomodelo_bridge.core.emission_checks.EmissionCheckError
+    ~novomodelo_bridge.core.errors.EmissionCheckError
         A ``ValueError``: a post-emission self-check in
         :mod:`novomodelo_bridge.core.emission_checks` found an ``ERROR``-severity
         violation in the converted artifacts. No report is returned.
-    FileExistsError
-        If *dst* already exists, is non-empty, and ``force`` is not set.
+    ~novomodelo_bridge.core.errors.OutputExistsError
+        A ``FileExistsError``: *dst* already holds files and ``force`` is not
+        set.
     """
-    # Refuse before ``run_conversion``, whose failure rollback would otherwise
-    # delete the pre-existing case.
-    if dst.exists() and any(dst.iterdir()):
-        if not force:
-            raise FileExistsError(
-                f"{dst} already contains files; pass force to overwrite"
-            )
-        # --force over a populated dst: pre-clear the previous case's full
-        # artifact set before rewriting, so a conditional artifact this run
-        # does not reproduce (post_study_stages.json, boundary/) cannot
-        # survive. Skipped under a dry run, which never mutates dst.
-        if not dry_run:
-            clear_dst_contents(dst, DECOMP_CLEARED_ARTIFACTS)
-
     return run_conversion(
         lambda: _convert_decomp_case_impl(
             src,
@@ -2394,6 +2443,7 @@ def convert_decomp_case(
         ),
         dst,
         DECOMP_CLEARED_ARTIFACTS,
+        force=force,
         dry_run=dry_run,
     )
 
@@ -2423,9 +2473,6 @@ def _convert_decomp_case_impl(
     step = on_phase if on_phase is not None else (lambda _label: None)
     step("Discovering deck")
     artifacts = _discover(src)
-
-    if not dry_run:
-        dst.mkdir(parents=True, exist_ok=True)
 
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in

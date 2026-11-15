@@ -210,10 +210,10 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         case = self._case_with_cfuga_on_usina_a(tmp_path)
         hreg_a = _head_corrected_two_plant_cadastro().loc[1]
 
-        reference = _operational_caps(hreg_a, "USINA_A")[0]
+        reference = _operational_caps(hreg_a)[0]
         assert reference == pytest.approx(120.26013470805694)
 
-        per_stage = _operational_caps(hreg_a, "USINA_A", canal_fuga_override=30.0)[0]
+        per_stage = _operational_caps(hreg_a, canal_fuga_override=30.0)[0]
         assert per_stage == pytest.approx(124.34830115445888)
 
         table = convert_per_stage_capacity_caps(case, self._make_id_map())
@@ -275,7 +275,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
                 r["max_turbined_m3s"] for r in rows if r["hydro_id"] == hydro["id"]
             } == {declared}
         assert hydros[0]["generation"]["max_turbined_m3s"] == pytest.approx(
-            _operational_caps(_head_corrected_two_plant_cadastro().loc[1], "A")[0]
+            _operational_caps(_head_corrected_two_plant_cadastro().loc[1])[0]
         )
 
     def test_declared_value_raised_to_per_stage_envelope(self, tmp_path: Path) -> None:
@@ -317,7 +317,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
 
         case = self._case_with_cfuga_on_usina_a(tmp_path)
         hreg_b = _head_corrected_two_plant_cadastro().loc[2]
-        expected_b = _operational_caps(hreg_b, "USINA_B")[0]
+        expected_b = _operational_caps(hreg_b)[0]
 
         result = convert_hydros(case, self._make_id_map())
         hydro_b = next(h for h in result["hydros"] if h["name"] == "USINA_B")
@@ -348,7 +348,7 @@ class TestConvertHydrosMaxTurbinedEnvelope:
             ),
         )
         hreg_a = _head_corrected_two_plant_cadastro().loc[1]
-        expected_a = _operational_caps(hreg_a, "USINA_A")[0]
+        expected_a = _operational_caps(hreg_a)[0]
 
         result = convert_hydros(case, self._make_id_map())
         hydro_a = next(h for h in result["hydros"] if h["name"] == "USINA_A")
@@ -939,18 +939,16 @@ class TestConvertStorageBoundsRamp:
             }
         )
         # No machines online ⇒ both caps are an explicit zero.
-        assert _reduced_caps(hreg, {}, "X") == (0.0, 0.0)
+        assert _reduced_caps(hreg, {}) == (0.0, 0.0)
         # Only conjunto 1 online: 2×50 = 100 m³/s, 2×100 = 200 MW.
-        assert _reduced_caps(hreg, {1: 2}, "X") == (100.0, 200.0)
+        assert _reduced_caps(hreg, {1: 2}) == (100.0, 200.0)
         # Both groups online: 100 + 3×80 = 340 m³/s, 200 + 3×200 = 800 MW.
-        assert _reduced_caps(hreg, {1: 2, 2: 3}, "X") == (
+        assert _reduced_caps(hreg, {1: 2, 2: 3}) == (
             340.0,
             800.0,
         )
         # Generation cap rises monotonically as units come online.
-        mgs = [
-            _reduced_caps(hreg, online, "X")[1] for online in ({}, {1: 2}, {1: 2, 2: 3})
-        ]
+        mgs = [_reduced_caps(hreg, online)[1] for online in ({}, {1: 2}, {1: 2, 2: 3})]
         assert mgs == sorted(mgs)
         assert mgs[0] < mgs[1] < mgs[2]
 
@@ -971,11 +969,11 @@ class TestConvertStorageBoundsRamp:
         online = {1: 2}
         availability = 0.95 * 0.98
 
-        max_turbined, max_generation = _reduced_caps(hreg, online, "X")
+        max_turbined, max_generation = _reduced_caps(hreg, online)
 
         hreg_online = hreg.copy()
         hreg_online["maquinas_conjunto_1"] = 2
-        assert max_turbined == pytest.approx(_operational_caps(hreg_online, "X")[0])
+        assert max_turbined == pytest.approx(_operational_caps(hreg_online)[0])
         assert max_turbined != pytest.approx(
             2 * float(hreg["vazao_nominal_conjunto_1"]) * availability
         )
@@ -1387,97 +1385,58 @@ class TestWaterWithdrawalConversion:
         assert row["water_withdrawal_m3s"][0] == pytest.approx(4.0)
 
 
-class TestClampOutagePctDiagnostics:
-    """Structured-diagnostic coverage for the TEIF/IP > 100 clamp (option B:
-    a per-plant/per-field emit relying on ``(code, summary)`` de-dup, not a
-    threaded accumulator)."""
+class TestOutageRateOvershoots:
+    """TEIF and IP above 100% clamp to 100%, reported in one table per run."""
 
-    def test_value_within_range_emits_no_diagnostic(self) -> None:
+    def test_rates_clamp_into_zero_to_one_hundred(self) -> None:
         from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
 
+        assert _clamp_outage_pct(50.0) == 50.0
+        assert _clamp_outage_pct(150.0) == 100.0
+        assert _clamp_outage_pct(-1.0) == 0.0
+        assert _clamp_outage_pct(float("nan")) == 0.0
+
+    def test_overshoots_fold_into_one_table(self) -> None:
+        from novomodelo_bridge.newave.converters.hydro.bounds import (
+            _report_outage_overshoots,
+        )
+
+        cadastro = _head_corrected_two_plant_cadastro()
+        cadastro.loc[1, "teif"] = 150.0
+        cadastro.loc[1, "ip"] = 200.0
+        cadastro.loc[2, "teif"] = 120.0
+
         with dx.collect() as collected:
-            result = _clamp_outage_pct(50.0, "teif", "USINA_A")
+            _report_outage_overshoots(cadastro, [1, 2])
 
-        assert result == 50.0
-        assert collected == []
-
-    def test_above_100_emits_clamped_diagnostic(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
-
-        with dx.collect() as collected:
-            result = _clamp_outage_pct(150.0, "teif", "USINA_A")
-
-        assert result == 100.0
-        assert len(collected) == 1
-        diag = collected[0]
+        [diag] = collected
         assert diag.code == "hydro-outage-rate-clamped"
         assert diag.severity is Severity.WARNING
-        assert diag.category == "Hydro bounds"
-        assert diag.table is None
-        assert "USINA_A" in diag.summary
-        assert "teif" in diag.summary
-
+        assert diag.table is not None
+        assert diag.table.rows == [
+            [1, "USINA_A", "TEIF", 150.0],
+            [1, "USINA_A", "IP", 200.0],
+            [2, "USINA_B", "TEIF", 120.0],
+        ]
         _assert_no_repo_internal_leaks(collected)
 
-    def test_same_plant_field_clamped_on_two_calls_dedups_to_one(self) -> None:
-        """TEIF > 100 clamped on two ``_operational_caps`` calls — the plant's
-        declaration and a per-stage cap — collapses to one diagnostic once
-        ``finalize_diagnostics`` applies its ``(code, summary)`` de-dup (the
-        raw ``collect()`` sink itself holds both emits verbatim)."""
+    def test_rates_within_range_report_nothing(self) -> None:
+        from novomodelo_bridge.newave.converters.hydro.bounds import (
+            _report_outage_overshoots,
+        )
+
+        with dx.collect() as collected:
+            _report_outage_overshoots(_head_corrected_two_plant_cadastro(), [1, 2])
+
+        assert collected == []
+
+    def test_clamped_rate_leaves_no_available_capacity(self) -> None:
         from novomodelo_bridge.newave.converters.hydro.bounds import _operational_caps
 
         cadastro = _head_corrected_two_plant_cadastro()
         cadastro.loc[1, "teif"] = 150.0
-        hreg = cadastro.loc[1]
 
-        with dx.collect() as collected:
-            _operational_caps(hreg, "USINA_A")
-            _operational_caps(hreg, "USINA_A", canal_fuga_override=30.0)
-
-        assert len(collected) == 2  # both call sites emitted, verbatim
-        finalized = dx.finalize_diagnostics(collected, [])
-        teif_diags = [d for d in finalized if d.code == "hydro-outage-rate-clamped"]
-        assert len(teif_diags) == 1
-        assert "USINA_A" in teif_diags[0].summary
-        assert "teif" in teif_diags[0].summary
-
-    def test_different_fields_stay_distinct(self) -> None:
-        """TEIF and IP both overshoot -> two DISTINCT diagnostics, not de-duped
-        against each other (the summary differs by field)."""
-        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
-
-        with dx.collect() as collected:
-            _clamp_outage_pct(150.0, "teif", "USINA_A")
-            _clamp_outage_pct(200.0, "ip", "USINA_A")
-
-        assert len(collected) == 2
-        codes_and_fields = {(d.code, "teif" in d.summary) for d in collected}
-        assert codes_and_fields == {
-            ("hydro-outage-rate-clamped", True),
-            ("hydro-outage-rate-clamped", False),
-        }
-
-    def test_carries_no_legacy_warning_under_collect(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
-
-        with dx.collect() as collected:
-            _clamp_outage_pct(150.0, "teif", "USINA_A")
-
-        assert not any(d.code == "legacy-warning" for d in collected)
-
-    def test_no_sink_fallback_logs_one_warning_and_returns_100(self, caplog) -> None:
-        """With no active collect() sink, emit() degrades to a single logging
-        record — the pre-migration caplog contract keeps working."""
-        import logging
-
-        from novomodelo_bridge.newave.converters.hydro.bounds import _clamp_outage_pct
-
-        with caplog.at_level(logging.WARNING):
-            result = _clamp_outage_pct(150.0, "teif", "USINA_A")
-
-        assert result == 100.0
-        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
-        assert len(warnings) == 1
+        assert _operational_caps(cadastro.loc[1]) == (0.0, 0.0)
 
 
 class TestExpansionRampBounds:
@@ -1537,7 +1496,7 @@ class TestExpansionRampBounds:
         assert list(other.stage_id) == list(range(12))
         assert (
             list(other.max_generation_mw)
-            == [pytest.approx(_operational_caps(hreg, "USINA_A")[1])] * 12
+            == [pytest.approx(_operational_caps(hreg)[1])] * 12
         )
 
     def test_ramp_cap_and_modif_bound_share_one_row(self, tmp_path) -> None:

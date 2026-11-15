@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from novomodelo_bridge.core.diagnostics import counted
 from novomodelo_bridge.novomodelo import compat as novomodelo_compat
 from novomodelo_bridge.ui.console import print_status, render_error
 
@@ -163,7 +164,7 @@ def _run_novomodelo_validation(
         # Whitelisted-but-present is worth one INFO note, never a WARNING —
         # this is what tells the whitelist apart from a real suppression.
         print_status(
-            f"Note: {len(whitelisted_warnings)} validation warning(s) matched "
+            f"Note: {counted(len(whitelisted_warnings), 'validation warning')} matched "
             "the expected external-solver-interop configuration for "
             f"{command}; not rendered.",
             console=err_console,

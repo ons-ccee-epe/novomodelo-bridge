@@ -85,6 +85,21 @@ class NovomodeloPartitionMissingError(BridgeError):
         self.path = path
 
 
+class EmissionCheckError(BridgeError, ValueError):
+    """A self-check on the converted case found an ``ERROR``-severity defect.
+
+    Each failed check is emitted as its own diagnostic before this is raised;
+    the message names their codes only.
+    """
+
+
+class OutputExistsError(BridgeError, FileExistsError):
+    """The output directory already holds files and ``force`` was not set.
+
+    Raised before anything is written, so the earlier run is left as it was.
+    """
+
+
 # Per-type mapping: exception type → (code, remediation). Looked up by walking
 # ``type(exc).__mro__`` so a subclass still resolves to its base's entry. An
 # exception not present here falls back to ``_FALLBACK`` ("unexpected-error").
@@ -105,6 +120,12 @@ _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
         "novomodelo-partition-missing",
         "Re-run novomodelo at the required version to produce this partition.",
     ),
+    OutputExistsError: (
+        "output-exists",
+        "Pass --force to overwrite, or choose another output directory.",
+    ),
+    # No remediation: each failed check carries its own.
+    EmissionCheckError: ("case-self-check-failed", None),
     # Base-class fallback (last, for readability — a concrete subclass above
     # always wins the MRO walk regardless of dict order). No remediation: an
     # unmapped BridgeError has no knowable specific fix.

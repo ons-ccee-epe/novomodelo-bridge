@@ -16,6 +16,7 @@ from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
     Severity,
+    counted,
     emit,
 )
 from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
@@ -45,6 +46,8 @@ from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     COST_FIELDS,
     GNL_EXPORT_MIDDLE_OFFSET,
+    PHYSICAL_RECORD_FIRST,
+    PHYSICAL_RECORD_LAST,
     CutBlockOffsets,
     LayoutError,
     assert_uniform_blocks,
@@ -59,6 +62,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapcut_writer import (
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     GnlCommittedCost,
     GnlDeliveries,
+    InflowLagAudit,
     MappingError,
     SourceGnlThermal,
     cut_building_pools,
@@ -122,9 +126,10 @@ def _emit_travel_time_info(
     ]
     if undated.total_buckets:
         notes.append(
-            f"{undated.total_buckets} transit bucket(s) carry no arrival window, "
-            "Novomodelo's placeholders for water that would arrive after the "
-            "study ends; they take no part in pi_qdefp."
+            "Transit buckets with no arrival window "
+            f"({undated.total_buckets}) are Novomodelo's placeholders for water "
+            "that would arrive after the study ends; they take no part in "
+            "pi_qdefp."
         )
     emit(
         Diagnostic(
@@ -133,9 +138,9 @@ def _emit_travel_time_info(
             category="FCF export",
             title="Travel-time coefficients exported",
             summary=(
-                f"The cuts value the water in transit from {len(plants)} "
-                "plant(s), by the stage it was released in, up to "
-                f"{max_lag(plants)} stage(s) back."
+                "The cuts value the water in transit from "
+                f"{counted(len(plants), 'plant')}, by the stage it was released "
+                f"in, up to {counted(max_lag(plants), 'stage')} back."
             ),
             notes=notes,
         )
@@ -151,29 +156,119 @@ def _emit_undated_bucket_warning(undated: UndatedBucketAudit) -> None:
             code="dessem-fcf-undated-buckets-priced",
             severity=Severity.WARNING,
             category="FCF export",
-            title="Coefficients on undated transit buckets dropped",
+            title=(
+                "Coefficients on undated transit buckets dropped "
+                f"({undated.total_priced})"
+            ),
             summary=(
-                f"{undated.total_priced} cut coefficient(s) sit on transit buckets "
-                "with no arrival window and are left out of pi_qdefp."
+                "The policy's cuts price transit buckets with no arrival window, "
+                "and the export leaves those coefficients out of pi_qdefp. The "
+                "exported cuts carry no value for the water they priced, so "
+                "they can overstate the future cost and are no longer a "
+                "guaranteed lower bound on it."
             ),
             notes=[
-                f"Pool {count.pool_id}: {count.priced} coefficient(s) on "
-                f"{count.buckets} undated bucket(s)."
+                f"Pool {count.pool_id}: {counted(count.priced, 'coefficient')} "
+                f"on {counted(count.buckets, 'undated bucket')}."
                 for count in undated.per_pool
                 if count.priced
             ]
             + [
                 "Premise P3: a release is priced through the buckets its water "
-                "arrives in; a bucket with no arrival window has no release to charge."
+                "arrives in; a bucket with no arrival window has no release to "
+                "charge.",
+                "Such coefficients usually mean the case's boundary future-cost "
+                "function prices water that arrives after the study ends.",
             ],
-            remediation=(
-                "The exported cuts carry no value for the water those "
-                "coefficients priced, so they can overstate the future cost "
-                "and are no longer a guaranteed lower bound on it. Check "
-                "whether the case's boundary future-cost function prices "
-                "water that arrives after the study ends."
-            ),
         )
+    )
+
+
+def _emit_cut_pool_mismatch(trunk_pool_ids: tuple[int, ...], expected: int) -> None:
+    """Warn when the pools holding cuts are not the policy's cut-building stages."""
+    if len(trunk_pool_ids) == expected:
+        return
+    emit(
+        Diagnostic(
+            code="dessem-fcf-cut-pools-unexpected",
+            severity=Severity.WARNING,
+            category="FCF export",
+            title="Cut pools that do not match the policy's stages",
+            summary=(
+                f"The policy builds cuts on {counted(expected, 'stage')}, but "
+                f"{counted(len(trunk_pool_ids), 'pool')} hold cuts past their "
+                "warm-start slots, so the exported pair holds the cuts of those "
+                "pools only and its stages differ from the policy's."
+            ),
+            notes=[
+                "Pools holding cuts: "
+                f"{', '.join(str(pool_id) for pool_id in trunk_pool_ids) or 'none'}."
+            ],
+        )
+    )
+
+
+def _emit_inflow_lag_drop_warning(audit: InflowLagAudit) -> None:
+    """Warn when premise P8 drops non-zero-count inflow-lag coefficients."""
+    if not audit.total:
+        return
+    emit(
+        Diagnostic(
+            code="dessem-fcf-inflow-lag-coefficients-dropped",
+            severity=Severity.WARNING,
+            category="FCF export",
+            title=f"Inflow-lag coefficients dropped ({audit.total})",
+            summary=(
+                "The policy's cuts carry coefficients on past inflows, which "
+                "the export leaves out, so the exported cuts ignore how the "
+                "future cost depends on recent inflows and differ from the "
+                "policy's."
+            ),
+            notes=[
+                f"Pool {pool_id}: {counted(count, 'coefficient')}."
+                for pool_id, count in audit.per_pool
+                if count
+            ]
+            + ["Premise P8: inflow-lag coefficients are dropped and counted."],
+        )
+    )
+
+
+#: mapcut record 10's cost parcels other than the committed GNL cost, with
+#: the names docs/dessem.md gives them.
+_ZERO_COST_PARCELS = {
+    "parcela_custo_geracao_termica_minima": "thermal minimum-generation cost",
+    "parcela_custo_contrato_importacao_minimo": "import contract minimum cost",
+    "parcela_custo_contrato_exportacao_minimo": "export contract minimum cost",
+    "geracao_termica_minima_sinalizada_gnl": "signalled GNL generation",
+}
+
+
+def _mapcut_zero_fields_diagnostic(mapcut_name: str) -> Diagnostic:
+    """The WARNING listing the mapcut fields premises P1 and P11 write as zeros."""
+    return Diagnostic(
+        code="dessem-fcf-mapcut-fields-zero",
+        severity=Severity.WARNING,
+        category="FCF export",
+        title=f"{mapcut_name} fields written as zeros",
+        summary=(
+            f"{mapcut_name} holds zeros in the listed fields, where DECOMP's own "
+            "file holds the deck's values, because a Novomodelo policy does not "
+            "hold them. How DESSEM uses these fields is not documented, so the "
+            "effect on its results is not known."
+        ),
+        table=DiagnosticTable(
+            columns=["Record", "Field", "Premise"],
+            rows=[
+                [
+                    f"{PHYSICAL_RECORD_FIRST}-{PHYSICAL_RECORD_LAST}",
+                    "physical hydro data",
+                    "P1",
+                ],
+                *(["10", name, "P11"] for name in _ZERO_COST_PARCELS.values()),
+            ],
+            caption="Record indices are 0-based.",
+        ),
     )
 
 
@@ -221,14 +316,14 @@ def _emit_gnl_delivery_missing(
             code="dessem-fcf-gnl-delivery-missing",
             severity=Severity.WARNING,
             category="FCF export",
-            title="GNL delivery missing from the policy",
+            title=f"GNL delivery missing from the policy ({len(rows)})",
             summary=(
-                f"{len(rows)} GNL plant(s) have no coefficient for the delivery "
-                "of the case's second stage; their cuts carry 0.0 for GNL."
+                "The listed GNL plants have no coefficient for the delivery of "
+                "the case's second stage, so their cuts carry 0.0 for GNL."
             ),
             table=DiagnosticTable(
                 columns=[
-                    "GNL plant",
+                    "Code",
                     "Name",
                     "Delivery start",
                     "Lead time (h)",
@@ -320,15 +415,15 @@ def _emit_gnl_coefficients_exported(
             code="dessem-fcf-gnl-coefficients-exported",
             severity=Severity.INFO,
             category="FCF export",
-            title="GNL coefficients exported",
+            title=f"GNL coefficients exported ({len(rows)})",
             summary=(
-                f"The cuts of the first cut-building node carry GNL coefficients "
-                f"for {len(rows)} plant(s), at the delivery of the case's second "
+                "The cuts of the first cut-building node carry GNL coefficients "
+                "for the listed plants, at the delivery of the case's second "
                 "stage."
             ),
             table=DiagnosticTable(
                 columns=[
-                    "GNL plant",
+                    "Code",
                     "Name",
                     "Submarket",
                     "Delivery",
@@ -368,20 +463,19 @@ def _emit_gnl_coefficient_zero(
             code="dessem-fcf-gnl-coefficient-zero",
             severity=Severity.WARNING,
             category="FCF export",
-            title="GNL coefficient is zero in some cuts",
+            title=f"GNL coefficient zero in some cuts ({len(rows)})",
             summary=(
-                f"{len(rows)} GNL plant(s) have cuts whose GNL coefficient is "
-                "exactly 0.0 although the policy holds their delivery."
+                "The listed GNL plants have cuts whose GNL coefficient is "
+                "exactly 0.0 although the policy holds their delivery. The "
+                "export writes the policy's value unchanged, so DESSEM prices "
+                "that commitment at zero where DECOMP's own cuts may not."
             ),
             table=DiagnosticTable(
-                columns=["GNL plant", "Name", "Zero cuts", "Cuts"],
+                columns=["Code", "Name", "Zero cuts", "Cuts"],
                 rows=rows,
                 justify=["right", "left", "right", "right"],
             ),
-            notes=[
-                "The zero is the policy's own value, written unchanged. A "
-                "commitment at the plant's capacity is a known cause."
-            ],
+            notes=["A commitment at the plant's capacity is a known cause."],
         )
     )
 
@@ -415,10 +509,10 @@ def _emit_gnl_committed_cost(
             code="dessem-fcf-gnl-committed-cost-exported",
             severity=Severity.INFO,
             category="FCF export",
-            title="GNL committed cost exported",
+            title=f"GNL committed cost exported ({len(rows)})",
             summary=(
-                "mapcut record 10 holds the cost of the GNL generation committed "
-                f"before the study for each of the {len(rows)} stages."
+                "Record 10 of mapcut holds the cost of the GNL generation "
+                "committed before the study for each listed stage."
             ),
             table=DiagnosticTable(
                 columns=["Stage", "Period", "Hours", "GNL plants", "10³ R$"],
@@ -454,8 +548,8 @@ def _emit_gnl_submarket_repeated(
             code="dessem-fcf-gnl-submarket-repeated",
             severity=Severity.WARNING,
             category="FCF export",
-            title="GNL plants share a submarket",
-            summary=f"{len(rows)} submarket(s) hold more than one GNL plant.",
+            title=f"GNL plants sharing a submarket ({len(rows)})",
+            summary="The listed submarkets hold more than one GNL plant.",
             table=DiagnosticTable(
                 columns=["Submarket", "GNL plants"],
                 rows=rows,
@@ -560,7 +654,20 @@ def _write_failure_manifest(
         )
         write_export_manifest(manifest, paths.manifest)
     except OSError as exc:
-        _LOG.warning("failed to write failure manifest: %s", exc)
+        emit(
+            Diagnostic(
+                code="dessem-fcf-failure-manifest-unwritten",
+                severity=Severity.WARNING,
+                category="Export failure",
+                title=f"{paths.manifest.name} could not be written",
+                summary=(
+                    f"The export failed, and {paths.manifest.name} could not "
+                    "record the failure either, so the file is missing or still "
+                    "describes an earlier export."
+                ),
+                notes=[f"Reason: {exc}"],
+            )
+        )
 
 
 def _assemble_mapcut_header(
@@ -736,7 +843,8 @@ def _plan_export(
         pools = select_pools(
             checkpoint, pool_ids, include_terminal=settings.include_terminal_pool
         )
-        trunk_pool_ids = cut_building_pools(pools, len(pool_ids) - 1)
+        trunk_pool_ids = cut_building_pools(pools)
+        _emit_cut_pool_mismatch(trunk_pool_ids, len(pool_ids) - 1)
         terminal_pool_id = pool_ids[-1]
 
     with progress.step("validate premises", 3):
@@ -749,8 +857,7 @@ def _plan_export(
         _emit_travel_time_info(travel_time, undated)
         _emit_undated_bucket_warning(undated)
 
-        # P8: Audit inflow lag drops
-        inflow_lag_drop_audit(pools)
+        _emit_inflow_lag_drop_warning(inflow_lag_drop_audit(pools))
 
         gnl_thermals = anticipated_thermals(inputs)
         gnl_lags = gnl_lag_months(gnl_thermals, source.gnl_thermals)
@@ -959,6 +1066,7 @@ def run_export(
         mapcut_contents, cortdeco_contents = _write_validated_pair(
             plan, paths, progress
         )
+        emit(_mapcut_zero_fields_diagnostic(paths.mapcut.name))
         _emit_gnl_reports(plan, source.gnl_thermals, mapcut_contents, cortdeco_contents)
 
         with progress.step("write content CSVs", 11):
@@ -972,7 +1080,11 @@ def run_export(
         return 0
 
     except (InputReadError, LayoutError, MappingError, PolicyFormatError) as exc:
-        _LOG.error("export failed at step '%s': %s", progress.current_step, exc)
+        rejected = (
+            reject_pair(paths.mapcut, paths.cortdeco)
+            if progress.unvalidated_pair_published
+            else []
+        )
         emit(
             Diagnostic(
                 code="dessem-fcf-export-failed",
@@ -980,18 +1092,21 @@ def run_export(
                 category="Export failure",
                 title="Export failed",
                 summary=str(exc),
-                notes=[f"Failed step: {progress.current_step}"],
+                notes=[f"Failed step: {progress.current_step}"]
+                + [
+                    f"{path.name} is kept as {path.name}.rejected, so DESSEM "
+                    "cannot read it by mistake."
+                    for path in rejected
+                ],
             )
         )
-        if progress.unvalidated_pair_published:
-            reject_pair(paths.mapcut, paths.cortdeco)
         _write_failure_manifest(
             case_dir, source, settings, paths, progress.current_step
         )
         return 1
 
-    except BaseException as exc:
-        _LOG.error("export failed at step '%s': %s", progress.current_step, exc)
+    except BaseException:
+        _LOG.info("export stopped at step '%s'", progress.current_step)
         if progress.unvalidated_pair_published:
             reject_pair(paths.mapcut, paths.cortdeco)
         _write_failure_manifest(

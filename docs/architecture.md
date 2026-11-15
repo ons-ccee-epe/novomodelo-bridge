@@ -15,8 +15,7 @@ cannot drift far from the tree without a failing build. All paths are under
    (`cli/args.py`) and calls one handler per command (`cli/convert.py`,
    `cli/check.py`, `cli/compare.py`, `cli/dashboard.py`). The handler owns
    what the user sees: exit codes, the `--json` envelope (`cli/verdict.py`),
-   `--force` and `--validate`, and the provenance manifest
-   (`cli/conversion_manifest.py`).
+   `--validate`, and the provenance manifest (`cli/conversion_manifest.py`).
 2. **`newave/`** is the track. `files.py` discovers the source files,
    `case.py` parses each one once and caches it, `id_map.py` fixes the
    deterministic 1-based to 0-based id mapping, `preflight.py` implements
@@ -24,7 +23,9 @@ cannot drift far from the tree without a failing build. All paths are under
    order, reporting coarse phases to the progress bar.
 3. **`core/`** holds the track-independent building blocks: the `Diagnostic`
    model and its `collect()`/`emit()` sink, the typed `BridgeError`
-   hierarchy, hydro physics and productivity, calendar and stage weighting,
+   hierarchy, the conversion runner both tracks call (`run_conversion`, which
+   refuses an occupied destination without `--force` and rolls back a failed
+   run), hydro physics and productivity, calendar and stage weighting,
    the generic-constraint builder, bound-table merging, and the emission
    self-checks run on output tables before they are written.
 4. **`novomodelo/`** is the Novomodelo side: `CaseWriter`, the single funnel every JSON

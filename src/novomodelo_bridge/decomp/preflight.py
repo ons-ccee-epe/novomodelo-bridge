@@ -24,7 +24,12 @@ from typing import TYPE_CHECKING, Protocol
 import pandas as pd
 from idecomp.decomp.modelos import dadger as _dadger_models
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    counted,
+)
 from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
 from novomodelo_bridge.core.preflight import (
     CheckItem,
@@ -36,6 +41,7 @@ from novomodelo_bridge.core.preflight import (
 )
 from novomodelo_bridge.decomp import constraint_registers
 from novomodelo_bridge.decomp.converters.cadastro import (
+    AC_REGISTER_BY_PARAM,
     APPLIED_AC_CLASSES,
     AcRegisters,
 )
@@ -46,6 +52,8 @@ from novomodelo_bridge.decomp.files import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from idecomp.decomp import Dadger, Vazoes
 
     from novomodelo_bridge.decomp.case import DecompCase
@@ -84,14 +92,10 @@ def _verdict(
     return PreflightVerdict.OK
 
 
-def _deferred(code: str, title: str, summary: str, remediation: str) -> Diagnostic:
-    return Diagnostic(
-        code=code,
-        severity=Severity.WARNING,
-        category=_CONTEXT,
-        title=title,
-        summary=summary,
-        remediation=remediation,
+def _register_table(classes: Sequence[type]) -> DiagnosticTable:
+    return DiagnosticTable(
+        columns=["AC register"],
+        rows=[[cls.__name__.removeprefix("AC")] for cls in classes],
     )
 
 
@@ -257,7 +261,7 @@ def _ac_coverage(
     never blocks conversion) plus a diagnostic per bucket that has at least
     one class present in the deck: an ``INFO`` for the applied mnemonics
     (visibility only), a ``WARNING`` for the deferred mnemonics (has a
-    value but no converter consumer), and a ``WARNING`` with a per-row
+    value but no converter consumer), and an ``INFO`` with a per-row
     detail table when *report* carries an out-of-horizon override.
     """
     applied = _ALL_AC_CLASSES & APPLIED_AC_CLASSES
@@ -271,42 +275,44 @@ def _ac_coverage(
             label="AC cadastro-override coverage",
             passed=True,
             detail=(
-                f"applied {len(applied_present)}/{len(applied)}, "
-                f"deferred {len(deferred_present)}/{len(deferred)} "
-                "family(ies) present in the deck"
+                f"{len(applied_present)} of {len(applied)} applied and "
+                f"{len(deferred_present)} of {len(deferred)} unconverted AC "
+                "registers present in the deck"
             ),
         )
     ]
     diagnostics: list[Diagnostic] = []
 
     if applied_present:
-        mnemonics = ", ".join(
-            cls.__name__.removeprefix("AC") for cls in applied_present
-        )
         diagnostics.append(
             Diagnostic(
                 code="decomp-ac-overrides-applied",
                 severity=Severity.INFO,
                 category=_CONTEXT,
-                title="AC cadastro overrides applied",
+                title=f"AC registers applied ({len(applied_present)})",
                 summary=(
-                    f"The deck declares AC cadastro overrides the conversion "
-                    f"applies: {mnemonics}."
+                    "The deck declares the listed AC registers, which the "
+                    "conversion applies from the stage each takes effect, as "
+                    "in DECOMP."
                 ),
+                table=_register_table(applied_present),
             )
         )
 
     if deferred_present:
-        mnemonics = ", ".join(
-            cls.__name__.removeprefix("AC") for cls in deferred_present
-        )
         diagnostics.append(
-            _deferred(
-                "decomp-ac-overrides-deferred",
-                "AC cadastro overrides not converted",
-                f"The deck declares AC cadastro overrides with no converter "
-                f"consumer: {mnemonics}.",
-                "Tracked in the conversion roadmap; no action needed to convert.",
+            Diagnostic(
+                code="decomp-ac-overrides-deferred",
+                severity=Severity.WARNING,
+                category=_CONTEXT,
+                title=f"AC registers not converted ({len(deferred_present)})",
+                summary=(
+                    "The deck declares the listed AC registers, which the "
+                    "conversion does not read. The case keeps the hidr.dat "
+                    "value of each field they change, so its results can "
+                    "differ from DECOMP's."
+                ),
+                table=_register_table(deferred_present),
             )
         )
 
@@ -314,23 +320,32 @@ def _ac_coverage(
         diagnostics.append(
             Diagnostic(
                 code="decomp-ac-out-of-horizon",
-                severity=Severity.WARNING,
+                severity=Severity.INFO,
                 category=_CONTEXT,
-                title="AC override effective date past the study horizon",
+                title=(
+                    "AC registers taking effect after the study horizon "
+                    f"({len(report.out_of_horizon)})"
+                ),
                 summary=(
-                    f"{len(report.out_of_horizon)} AC cadastro override(s) "
-                    "resolve past the calendar horizon and are not applied."
+                    "The listed AC registers take effect after the last stage "
+                    "of the study, so, as in DECOMP, they change nothing."
                 ),
                 table=DiagnosticTable(
-                    columns=["plant", "param", "month", "year"],
+                    columns=["Code", "AC register", "Month", "Year"],
                     rows=[
-                        [oh.code, oh.param, oh.mes, oh.ano]
+                        [
+                            oh.code,
+                            AC_REGISTER_BY_PARAM.get(oh.param, oh.param),
+                            oh.mes,
+                            oh.ano,
+                        ]
                         for oh in report.out_of_horizon
                     ],
+                    justify=["right", "left", "right", "right"],
                 ),
                 remediation=(
-                    "Check the override's (mes, semana, ano) triple against "
-                    "the deck's study horizon."
+                    "Check the month, week and year of each listed AC register "
+                    "in dadger.rvN against the study horizon."
                 ),
             )
         )
@@ -383,31 +398,39 @@ def _special_constraint_coverage(
             label="Special-constraint coverage",
             passed=True,
             detail=(
-                f"{n_bounds} record(s) lowered to bounds, {n_generic} "
-                f"emitted as generic constraints, {len(present_families)} "
-                "family(ies) present in the deck"
+                f"{counted(n_bounds, 'record')} lowered to bounds, {n_generic} "
+                "emitted as generic constraints, "
+                f"{counted(len(present_families), 'family', 'families')} present "
+                "in the deck"
             ),
         )
     ]
     diagnostics: list[Diagnostic] = []
 
     if present_families:
-        breakdown = "; ".join(
-            f"{fam} {bounds_by_family.get(fam, 0)} bound(s)/"
-            f"{generic_by_family.get(fam, 0)} generic"
-            for fam in present_families
-        )
         diagnostics.append(
             Diagnostic(
                 code="decomp-special-constraints-converted",
                 severity=Severity.INFO,
                 category=_CONTEXT,
-                title="Special constraints read and classified",
+                title=f"Special constraints converted ({n_bounds + n_generic})",
                 summary=(
-                    f"The deck declares special constraints in "
-                    f"{len(present_families)} family(ies): {n_bounds} "
-                    f"record(s) lower to an entity bound, {n_generic} emit "
-                    f"as a generic constraint ({breakdown})."
+                    "The table counts how the deck's special constraints "
+                    "convert: each restriction on a single variable becomes a "
+                    "bound on it, and the others become generic constraints. "
+                    "Both bind as DECOMP's restrictions do."
+                ),
+                table=DiagnosticTable(
+                    columns=["Register", "As bounds", "As generic constraints"],
+                    rows=[
+                        [
+                            fam,
+                            bounds_by_family.get(fam, 0),
+                            generic_by_family.get(fam, 0),
+                        ]
+                        for fam in present_families
+                    ],
+                    justify=["left", "right", "right"],
                 ),
             )
         )

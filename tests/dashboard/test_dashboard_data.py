@@ -10,7 +10,6 @@ from __future__ import annotations
 import builtins
 import dataclasses
 import json
-import logging
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -23,6 +22,7 @@ import pyarrow.parquet as pq
 import pytest
 from typer.testing import CliRunner
 
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.dashboard.data import (
     DashboardData,
     _cut_selection_per_stage,
@@ -776,10 +776,28 @@ class TestLoadStochasticDataPartialDirectory:
         case_dir = _build_full_case(tmp_path, tree=False)
         _add_partial_stochastic_dir(case_dir)
 
-        data = DashboardData.load(case_dir)
+        with dx.collect() as collected:
+            data = DashboardData.load(case_dir)
 
         assert data.ar_coefficients.empty is True
         assert data.stochastic_available is True
+        stochastic_notes = [
+            (d.code, d.severity, d.title)
+            for d in collected
+            if d.title.startswith("output/stochastic/")
+        ]
+        assert stochastic_notes == [
+            (
+                "report-file-missing",
+                dx.Severity.INFO,
+                "output/stochastic/inflow_ar_coefficients.parquet not found",
+            ),
+            (
+                "report-file-missing",
+                dx.Severity.INFO,
+                "output/stochastic/correlation.json not found",
+            ),
+        ]
 
     def test_stochastic_tab_renders_on_partial_directory(self, tmp_path: Path) -> None:
         from novomodelo_bridge.dashboard.tabs import stochastic
@@ -841,7 +859,6 @@ class TestLoadPolicyMetadataFailureDegrades:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         case_dir = tmp_path / "case"
         (case_dir / "output" / "policy").mkdir(parents=True)
@@ -854,19 +871,18 @@ class TestLoadPolicyMetadataFailureDegrades:
         )
         monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
-        with caplog.at_level(
-            logging.WARNING, logger="novomodelo_bridge.dashboard.data"
-        ):
+        with dx.collect() as collected:
             result = _load_policy_metadata(case_dir)
 
         assert result == {}
-        assert any("output/policy" in record.message for record in caplog.records)
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "output/policy could not be read")
+        ]
 
     def test_malformed_pool_state_dimension_degrades_and_warns(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A reloaded pool whose ``state_dimension`` is not int-able degrades to
         ``{}`` rather than crashing: ``int(None)`` raises ``TypeError``, which is
@@ -883,13 +899,13 @@ class TestLoadPolicyMetadataFailureDegrades:
         )
         monkeypatch.setitem(sys.modules, "novomodelo", stub_novomodelo)
 
-        with caplog.at_level(
-            logging.WARNING, logger="novomodelo_bridge.dashboard.data"
-        ):
+        with dx.collect() as collected:
             result = _load_policy_metadata(case_dir)
 
         assert result == {}
-        assert any("output/policy" in record.message for record in caplog.records)
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "output/policy could not be read")
+        ]
 
 
 @requires_novomodelo_python

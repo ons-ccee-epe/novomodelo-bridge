@@ -21,8 +21,6 @@ import numpy as np
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     COST_FIELDS,
     PHYSICAL_RECORD_COUNT,
-    PHYSICAL_RECORD_FIRST,
-    PHYSICAL_RECORD_LAST,
     RECORD_SIZE,
     TAMANHO_CORTE,
     LayoutError,
@@ -356,17 +354,6 @@ def write_mapcut(header: MapcutHeader, path: Path) -> int:
         temporary.unlink(missing_ok=True)
         raise
 
-    _LOG.warning(
-        "P1: mapcut records %d-%d emitted as zeros — physical hydro data deferred",
-        PHYSICAL_RECORD_FIRST,
-        PHYSICAL_RECORD_LAST,
-    )
-    _LOG.warning(
-        "P11: reg 10 writes zeros for parcela_custo_geracao_termica_minima, "
-        "parcela_custo_contrato_importacao_minimo, "
-        "parcela_custo_contrato_exportacao_minimo and "
-        "geracao_termica_minima_sinalizada_gnl"
-    )
     _LOG.info(
         "wrote mapcut %s: records=%d bytes=%d numero_cortes=%d numero_cenarios=%d "
         "n_utv=%d max_lag=%d",

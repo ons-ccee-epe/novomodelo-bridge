@@ -370,6 +370,8 @@ def test_emit_rhe_generics_no_storage_plants_skips_and_warns() -> None:
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-no-storage-plants"
+    assert warnings[0].table is not None
+    assert warnings[0].table.rows == [[104, "1"]]
 
 
 def test_emit_rhe_generics_unmapped_ree_skips_and_warns() -> None:
@@ -400,6 +402,37 @@ def test_emit_rhe_generics_unmapped_ree_skips_and_warns() -> None:
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-no-storage-plants"
+
+
+def test_emit_rhe_generics_lists_every_constraint_without_storage_once() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    effective = EffectiveCadastro(base=_hidr_frame({}), n_stages=1, stage_varying={})
+    records = [
+        _he_record(
+            constraint_id=constraint_id,
+            ree_code=ree_code,
+            coefficient=1.0,
+            bounds={0: StageBounds(lower=(50.0,), upper=(None,))},
+            tipo_limite=1,
+            valor_penalidade=250.0,
+        )
+        for constraint_id, ree_code in ((105, 9), (106, 8))
+    ]
+
+    with dx.collect() as collected:
+        emit_rhe_generics(
+            _case([_stage(0, 730.0)]),
+            id_map,
+            census=_census(*records),
+            effective=effective,
+            hydro_to_ree={},
+            ez_fractions={},
+        )
+
+    [diag] = collected
+    assert diag.code == "decomp-rhe-no-storage-plants"
+    assert diag.table is not None
+    assert diag.table.rows == [[105, "9"], [106, "8"]]
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +582,8 @@ def test_emit_rhe_generics_non_positive_penalty_falls_back_and_warns() -> None:
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-default-penalty"
+    assert warnings[0].table is not None
+    assert warnings[0].table.rows == [[108, "0", "1000"]]
 
 
 def test_emit_rhe_generics_unknown_tipo_limite_treated_as_absolute_and_warns() -> None:
@@ -579,6 +614,8 @@ def test_emit_rhe_generics_unknown_tipo_limite_treated_as_absolute_and_warns() -
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhe-unknown-tipo-limite"
+    assert warnings[0].table is not None
+    assert warnings[0].table.rows == [[109, 3]]
 
 
 def test_emit_rhe_generics_empty_census_returns_none() -> None:
@@ -713,7 +750,10 @@ def test_emit_rhe_generics_coupling_is_reported() -> None:
     [diag] = [d for d in collected if d.code == "decomp-rhe-ree-hydraulic-coupling"]
     assert diag.severity is Severity.INFO
     assert diag.table is not None
-    assert diag.table.rows == [[1, 1, 2, "50", 2, 5], [2, 1, 2, "100", 2, 5]]
+    assert diag.table.rows == [
+        [1, "PLANT 1", 1, 2, "50", 2, 5],
+        [2, "PLANT 2", 1, 2, "100", 2, 5],
+    ]
 
 
 def test_emit_rhe_generics_ez_cap_below_the_floor_warns() -> None:
@@ -724,7 +764,8 @@ def test_emit_rhe_generics_ez_cap_below_the_floor_warns() -> None:
 
     warned = [d for d in collected if d.code == "decomp-rhe-ez-cap-unmodeled"]
     assert len(warned) == 1
-    assert "HE constraint 202" in warned[0].summary
+    assert warned[0].table is not None
+    assert warned[0].table.rows == [[202, "0"]]
 
 
 def test_emit_rhe_generics_ez_cap_above_the_floor_is_silent() -> None:
@@ -784,3 +825,43 @@ def test_emit_rhe_generics_energy_link_through_a_plant_outside_the_configuration
     assert result.per_stage_parameters["rho_eq_mwh_plant9"] == [
         pytest.approx(2.0 * 1e6 / 3600.0)
     ]
+
+
+def test_emit_rhe_generics_energy_chain_that_loops_back_is_reported_once() -> None:
+    # UP's AC JUSENA names AGG, outside the configuration, whose water returns
+    # to UP: the chain ends at AGG.
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 5))
+    effective = EffectiveCadastro(
+        base=_hidr_frame(
+            {
+                1: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=5),
+                9: _hydro_row(tipo_regulacao="D", codigo_usina_jusante=1),
+                5: _hydro_row(tipo_regulacao="M", codigo_usina_jusante=0),
+            }
+        ),
+        n_stages=1,
+        stage_varying={},
+        energy_links={1: (9,)},
+    )
+    record = _he_record(
+        constraint_id=300,
+        ree_code=1,
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        tipo_limite=2,
+        valor_penalidade=250.0,
+    )
+
+    with dx.collect() as collected:
+        emit_rhe_generics(
+            _case([_stage(0, 730.0)]),
+            id_map,
+            census=_census(record),
+            effective=effective,
+            hydro_to_ree={1: 1, 5: 1},
+            ez_fractions={},
+        )
+
+    [loop] = [d for d in collected if d.code == "decomp-energy-chain-loop"]
+    assert loop.table is not None
+    assert [(row[0], row[2], row[3]) for row in loop.table.rows] == [(1, 1, 9)]

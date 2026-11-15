@@ -31,12 +31,12 @@ def tab_character_diagnostic(
         category="Source files",
         title="Tab characters in fixed-column files",
         summary=(
-            f"{len(found)} input file(s) contain tab characters. These files are "
+            "The listed input files contain tab characters. These files are "
             "read by fixed columns, so a tab shifts every field after it on its "
             "line, and a data line can read with wrong or missing values."
         ),
         table=DiagnosticTable(
-            columns=["file", "lines"],
+            columns=["File", "Lines"],
             rows=[
                 [path.name, format_stage_ranges(lines)] for path, lines in found.items()
             ],

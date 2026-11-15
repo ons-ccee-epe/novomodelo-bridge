@@ -209,7 +209,7 @@ def warn_nonnull_loss_factor(contracts: Sequence[Contract]) -> None:
             if stage.loss_factor is not None and stage.loss_factor != 0.0
         ]
         if non_null_non_zero:
-            offenders.append((contract.id, contract.name, max(non_null_non_zero)))
+            offenders.append((contract.numero, contract.name, max(non_null_non_zero)))
 
     if not offenders:
         return
@@ -219,20 +219,17 @@ def warn_nonnull_loss_factor(contracts: Sequence[Contract]) -> None:
             code="contract-loss-factor-unmapped",
             severity=dx.Severity.WARNING,
             category="Energy contracts",
-            title=(
-                f"Non-null fator_perdas on {len(offenders)} energy "
-                "contract(s) is ignored"
-            ),
+            title=f"Contract loss factors not converted ({len(offenders)})",
             summary=(
-                "The source model's fator_perdas (loss factor) has no novomodelo "
-                "energy_contracts target; it is ignored — not folded into "
-                "price_per_mwh or limits, and does not reject the deck"
+                "The listed CI and CE contracts give a loss factor, which a "
+                "novomodelo energy contract cannot hold. The conversion leaves "
+                "it out of their prices and limits, so each contract delivers "
+                "and costs as if it had no losses."
             ),
             table=dx.DiagnosticTable(
-                columns=["Id", "Name", "fator_perdas %"],
+                columns=["Code", "Name", "Loss factor (%)"],
                 rows=[
-                    [contract_id, name, round(value, 3)]
-                    for contract_id, name, value in offenders
+                    [numero, name, round(value, 3)] for numero, name, value in offenders
                 ],
                 justify=["right", "left", "right"],
             ),

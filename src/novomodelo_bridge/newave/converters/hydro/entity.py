@@ -18,6 +18,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    format_stage_ranges,
 )
 from novomodelo_bridge.core.diversion import (
     channel_flow_limit,
@@ -26,11 +27,18 @@ from novomodelo_bridge.core.diversion import (
 )
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group, rated_capacity
 from novomodelo_bridge.core.pandas_utils import is_na
-from novomodelo_bridge.core.productivity import fpha_efficiency
+from novomodelo_bridge.core.productivity import (
+    forebay_curve_missing_diagnostic,
+    fpha_efficiency,
+    fpha_efficiency_capped_diagnostic,
+    fpha_efficiency_capped_row,
+    has_forebay_curve,
+)
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.hydro.bounds import (
     _operational_caps,
     _per_stage_turbined_envelope,
+    _report_outage_overshoots,
 )
 from novomodelo_bridge.newave.converters.hydro.geometry import (
     _EVAP_MONTHS,
@@ -164,7 +172,7 @@ def _diversion_channels(
                 category="Diversion channels",
                 title=f"Diversion channels ({len(modeled)})",
                 summary=(
-                    f"{len(modeled)} plant(s) divert water to the target plant "
+                    "The listed plants divert water to the target plant "
                     "through a channel declared by CDESVIO in modif.dat, up to "
                     "the listed maximum flow."
                 ),
@@ -189,8 +197,8 @@ def _diversion_channels(
                 category="Diversion channels",
                 title=f"Diversion channels not converted ({len(dropped)})",
                 summary=(
-                    f"{len(dropped)} CDESVIO record(s) in modif.dat convert to "
-                    "no channel, so the listed plants release water only to "
+                    "The listed CDESVIO records in modif.dat convert to "
+                    "no channel, so their plants release water only to "
                     "their downstream plant."
                 ),
                 table=DiagnosticTable(
@@ -455,7 +463,7 @@ def _generation_caps(
     """
     config = context.expansion_configs.get(newave_code)
     hreg_declared = hreg if config is None else config.declared_hreg(hreg)
-    max_turbined_reference = _operational_caps(hreg_declared, name)[0]
+    max_turbined_reference = _operational_caps(hreg_declared)[0]
     envelope_value = context.turbined_envelope.get(hydro_id)
     max_turbined = (
         max_turbined_reference
@@ -555,11 +563,13 @@ def _tailrace(hreg: pd.Series) -> dict | None:
 
 
 class _PlantEntry(NamedTuple):
-    """A plant's ``hydros.json`` entry and its filling/expansion report rows."""
+    """A plant's ``hydros.json`` entry and its filling, expansion and capped
+    FPHA efficiency report rows."""
 
     entry: dict
     filling_row: list[object] | None
     expansion_row: list[object] | None
+    efficiency_row: list[object] | None
 
 
 def _hydro_entry(
@@ -632,11 +642,10 @@ def _hydro_entry(
     # non-FPHA cases) keep the constant-productivity path with no efficiency.
     is_fpha = newave_code in context.fpha_codes
     efficiency: dict | None = None
+    efficiency_row: list[object] | None = None
     if is_fpha and rho_esp is not None:
-        efficiency = {
-            "type": "constant",
-            "value": fpha_efficiency(rho_esp, name),
-        }
+        efficiency = {"type": "constant", "value": fpha_efficiency(rho_esp)}
+        efficiency_row = fpha_efficiency_capped_row(newave_code, name, rho_esp)
 
     tailrace = _tailrace(hreg)
 
@@ -681,7 +690,7 @@ def _hydro_entry(
         "entry_stage_id": filling.entry_stage_id,
         "exit_stage_id": None,
     }
-    return _PlantEntry(entry, filling.report_row, caps.expansion_row)
+    return _PlantEntry(entry, filling.report_row, caps.expansion_row, efficiency_row)
 
 
 def _report_filling_plants(rows: list[list[object]]) -> None:
@@ -694,7 +703,7 @@ def _report_filling_plants(rows: list[list[object]]) -> None:
             category="Filling plants",
             title=f"Plants filling their dead volume ({len(rows)})",
             summary=(
-                f"{len(rows)} plant(s) marked NE in confhd.dat fill their dead "
+                "The listed plants marked NE in confhd.dat fill their dead "
                 "volume as exph.dat schedules before they operate; their "
                 "capacity is 0 until then and grows as their units enter."
             ),
@@ -709,7 +718,7 @@ def _report_filling_plants(rows: list[list[object]]) -> None:
                 ],
                 rows=rows,
                 justify=["right", "left", "right", "right", "right", "left"],
-                caption=("Stage ids are 0-based; capacity is 0 until 'Operates from'."),
+                caption="Stage ids are 0-based.",
             ),
         ),
         logger=_LOG,
@@ -726,19 +735,18 @@ def _report_expansion_plants(rows: list[list[object]]) -> None:
             category="Expansion plants",
             title=f"Expansion plants ramped ({len(rows)})",
             summary=(
-                f"{len(rows)} plant(s) marked "
-                '"existente em expansão" operate from the first stage at the '
-                "configuration modif.dat declares for the study start and "
-                "reach the hidr.dat configuration as the exph.dat machines "
-                "enter; the capacity before each entry is written as a "
-                "per-stage bound."
+                "The listed plants marked EE in confhd.dat operate from the "
+                "first stage at the configuration modif.dat declares for the "
+                "study start and reach the hidr.dat configuration as the "
+                "exph.dat machines enter, as in NEWAVE; the capacity before "
+                "each entry is a per-stage bound."
             ),
             table=DiagnosticTable(
                 columns=[
                     "Code",
                     "Name",
-                    "MW at start",
-                    "MW when full",
+                    "At start (MW)",
+                    "When full (MW)",
                     "Machines entering",
                     "First entry stage",
                 ],
@@ -781,6 +789,9 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     hydros: list[dict] = []
     filling_rows: list[list[object]] = []
     expansion_rows: list[list[object]] = []
+    efficiency_rows: list[list[object]] = []
+    no_curve_rows: list[list[object]] = []
+    all_stages = format_stage_ranges(range(case.horizon.total_stages))
     for _, row in context.active_hydros.iterrows():
         plant = _hydro_entry(row, context, id_map)
         hydros.append(plant.entry)
@@ -788,6 +799,12 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
             filling_rows.append(plant.filling_row)
         if plant.expansion_row is not None:
             expansion_rows.append(plant.expansion_row)
+        if plant.efficiency_row is not None:
+            efficiency_rows.append(plant.efficiency_row)
+        code = int(row["codigo_usina"])
+        hreg = context.cadastro.loc[code]
+        if not has_forebay_curve([float(hreg[f"a{i}_volume_cota"]) for i in range(5)]):
+            no_curve_rows.append([code, str(row["nome_usina"]).strip(), all_stages])
 
     hydros.sort(key=lambda h: h["id"])
 
@@ -797,6 +814,13 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     # separate diagnostics.
     _report_filling_plants(filling_rows)
     _report_expansion_plants(expansion_rows)
+    if efficiency_rows:
+        emit(fpha_efficiency_capped_diagnostic(efficiency_rows), logger=_LOG)
+    if no_curve_rows:
+        emit(forebay_curve_missing_diagnostic(no_curve_rows), logger=_LOG)
+    _report_outage_overshoots(
+        context.cadastro, (int(code) for code in context.active_hydros["codigo_usina"])
+    )
 
     return {
         "$schema": novomodelo_schemas.schema_url_for("system/hydros.json"),

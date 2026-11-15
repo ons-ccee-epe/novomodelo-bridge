@@ -557,7 +557,7 @@ class TestGnlDropAudit:
         assert audit.total == 50
         assert _mapper_messages(caplog) == [
             (
-                "WARNING",
+                "INFO",
                 "premise P14 drops 50 anticipated-thermal coefficients: "
                 "pool 0=10, pool 1=20, pool 2=20",
             )

@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 
 from novomodelo_bridge.cli import app
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
+from novomodelo_bridge.core.errors import EmissionCheckError
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -170,10 +171,10 @@ class TestScenarioEmitters:
         assert diagnostic.severity is Severity.WARNING
         assert diagnostic.table is not None
         assert diagnostic.table.rows == [
-            [2, "BETA", 12, 1, 1, -2.0],
-            [2, "BETA", 12, 3, 2, -4.0],
+            [2, "BETA", 12, 0, 1, -2.0],
+            [2, "BETA", 12, 2, 2, -4.0],
         ]
-        text = f"{diagnostic.summary} {diagnostic.remediation}"
+        text = " ".join([diagnostic.summary, *diagnostic.notes])
         for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", "_"):
             assert leak not in text
 
@@ -522,7 +523,7 @@ class TestEmissionCheckWiring:
         def _run_emission_checks() -> None:
             emission_checks.check_bound_row_uniqueness(bound_families)
 
-        with pytest.raises(emission_checks.EmissionCheckError) as excinfo:
+        with pytest.raises(EmissionCheckError) as excinfo:
             emission_checks.run_and_gate(_run_emission_checks)
         assert isinstance(excinfo.value, ValueError)
 
@@ -636,21 +637,29 @@ class TestCli:
     def test_convert_decomp_emission_check_error_exits_one(
         self, tmp_path: Path
     ) -> None:
-        """The ``ValueError`` ``convert_decomp_case`` raises on an
-        ERROR-severity post-emission self-check finding is caught
-        by the same except tuple as a missing/existing-destination failure —
-        no dedicated CLI branch is needed."""
+        """A failed self-check exits 1 through the shared failure handler and
+        reports its own code under ``--json``."""
         runner = CliRunner()
         with patch(
             "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
-            side_effect=ValueError(
-                "DECOMP conversion failed 1 post-emission self-check error(s)"
+            side_effect=EmissionCheckError(
+                "The converted case failed 1 self-check (bound-row-duplicate), "
+                "so the conversion stopped."
             ),
         ):
             result = runner.invoke(
-                app, ["convert", "decomp", str(tmp_path), str(tmp_path / "out")]
+                app,
+                [
+                    "convert",
+                    "decomp",
+                    str(tmp_path),
+                    str(tmp_path / "out"),
+                    "--json",
+                ],
             )
         assert result.exit_code == 1
+        verdict = json.loads(result.stdout)
+        assert [d["code"] for d in verdict["diagnostics"]] == ["case-self-check-failed"]
 
 
 # A fully synthetic Tier-1 harness for ``convert_decomp_case`` — no real
@@ -1191,7 +1200,7 @@ class TestGnlWiring:
         thermal_matches = [
             r
             for r in caplog.records
-            if "emitted 2 GNL anticipated thermal(s) from dadgnl" in r.message
+            if "GNL anticipated thermals emitted from dadgnl: 2" in r.message
         ]
         assert len(thermal_matches) == 1
         assert not any(
@@ -1762,8 +1771,8 @@ class TestDryRun:
 
     def test_real_run_failure_clears_partial_writes(self, tmp_path: Path) -> None:
         """A mid-conversion failure on a real run removes the known outputs
-        already written before the raise, so a plain (no ``--force``) retry
-        is not refused as "destination not empty"."""
+        already written before the raise, and the directory the run created
+        for them."""
         from novomodelo_bridge.decomp import pipeline as decomp_pipeline
 
         dst = tmp_path / "case"
@@ -1781,7 +1790,7 @@ class TestDryRun:
         ):
             decomp_pipeline.convert_decomp_case(tmp_path / "src", dst)
 
-        assert not (dst / "config.json").exists()
+        assert not dst.exists()
 
     def test_dry_run_failure_preserves_pre_existing_dst_contents(
         self, tmp_path: Path
@@ -1877,13 +1886,9 @@ class TestDryRun:
     def test_real_run_against_populated_dst_refuses_without_clearing(
         self, tmp_path: Path
     ) -> None:
-        """Regression for the data-loss bug: the non-empty/``force``
-        refusal must fire before the clearing ``try``/``except`` so a plain
-        (no ``--force``) run against a pre-existing, populated ``dst`` raises
-        cleanly and never deletes the user's existing case. Exercises the
-        real guard (no mocking of ``_convert_decomp_case_impl``), since a
-        guard living inside the mocked-out implementation would not be
-        caught by a test that replaces it with a fake."""
+        """Without ``force`` a populated ``dst`` is refused before the
+        conversion's failure rollback could delete the case it holds."""
+        from novomodelo_bridge.core.errors import OutputExistsError
         from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 
         dst = tmp_path / "case"
@@ -1891,7 +1896,7 @@ class TestDryRun:
         existing = dst / "config.json"
         existing.write_bytes(b"keep me")
 
-        with pytest.raises(FileExistsError, match="force"):
+        with pytest.raises(OutputExistsError, match="already holds files"):
             convert_decomp_case(tmp_path / "src", dst)
 
         assert existing.read_bytes() == b"keep me"
@@ -2156,7 +2161,7 @@ class TestDiversionChannelDroppedDiagnostic:
         diagnostic = self._diagnostic()
         assert diagnostic.code == "decomp-diversion-channel-dropped"
         assert diagnostic.table is not None
-        assert diagnostic.table.rows == [["TOCOS", 180, 999, 25.0]]
+        assert diagnostic.table.rows == [[180, "TOCOS", 999, 25.0]]
 
     def test_remediation_has_no_repo_internal_references(self) -> None:
         text = f"{self._diagnostic().summary} {self._diagnostic().remediation}"

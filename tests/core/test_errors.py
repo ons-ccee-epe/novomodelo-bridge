@@ -5,6 +5,7 @@ from __future__ import annotations
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import (
     BridgeError,
+    EmissionCheckError,
     FieldParseError,
     NovomodeloOutputError,
     NovomodeloPartitionMissingError,
@@ -88,6 +89,13 @@ class TestDiagnosticFromException:
         diag = diagnostic_from_exception(exc, context="Dashboard")
         assert diag.category == "Dashboard failure"
         assert diag.title == "Dashboard failed"
+
+    def test_failed_self_check_has_its_own_code_and_no_remediation(self) -> None:
+        exc = EmissionCheckError("The converted case failed 1 self-check (x).")
+        diag = diagnostic_from_exception(exc, context="Conversion")
+        assert isinstance(exc, ValueError)
+        assert diag.code == "case-self-check-failed"
+        assert diag.remediation is None
 
     def test_novomodelo_partition_missing_error_category(self) -> None:
         exc = NovomodeloPartitionMissingError(

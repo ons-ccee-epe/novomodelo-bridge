@@ -25,6 +25,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
     format_stage_ranges,
+    unreadable_file_diagnostic,
 )
 from novomodelo_bridge.core.pandas_utils import as_int, as_timestamp
 from novomodelo_bridge.newave.case import NewaveCase
@@ -497,8 +498,21 @@ class _StageBoundsModel:
                             "data_fim": row["data_fim"],
                         }
                     )
-        except Exception:
-            _LOG.warning("expt.dat could not be parsed; EXPT overrides skipped.")
+        except Exception as exc:
+            emit(
+                unreadable_file_diagnostic(
+                    code="expt-unreadable",
+                    file_name="expt.dat",
+                    category="Thermal bounds",
+                    effect=(
+                        "the case has none of the thermal capacity and "
+                        "minimum-generation changes it gives, and the thermal "
+                        "plants' limits differ from NEWAVE's."
+                    ),
+                    exc=exc,
+                ),
+                logger=_LOG,
+            )
 
         potef_windows: dict[int, list[tuple[date, date]]] = {}
         gtmin_windows: dict[int, list[tuple[date, date]]] = {}
@@ -530,10 +544,20 @@ class _StageBoundsModel:
             try:
                 manutt = case.manutt
                 manutt_df = manutt.manutencoes if manutt is not None else None
-            except Exception:
-                _LOG.warning(
-                    "%s could not be parsed; maintenance skipped.",
-                    case.files.manutt.name,
+            except Exception as exc:
+                emit(
+                    unreadable_file_diagnostic(
+                        code="manutt-unreadable",
+                        file_name=case.files.manutt.name.lower(),
+                        category="Thermal bounds",
+                        effect=(
+                            "the case has none of the thermal maintenance it "
+                            "schedules, and the thermal plants stay available "
+                            "where NEWAVE takes them out."
+                        ),
+                        exc=exc,
+                    ),
+                    logger=_LOG,
                 )
         # A file with no maintenance record reads as None: no maintenance.
         if manutt_df is not None:
@@ -681,8 +705,8 @@ def _emit_gtmin_above_capacity(records: list[_GtminRecord], case: NewaveCase) ->
         recs = by_code[code]
         rows.append(
             [
-                names.get(code, "?"),
                 code,
+                names.get(code, ""),
                 format_stage_ranges(r.stage_id for r in recs),
                 round(max(r.gtmin_mw for r in recs), 2),
                 round(min(r.capacity_mw for r in recs), 2),
@@ -696,22 +720,34 @@ def _emit_gtmin_above_capacity(records: list[_GtminRecord], case: NewaveCase) ->
             code="thermal-gtmin-above-capacity",
             severity=Severity.WARNING,
             category="Thermal bounds",
-            title=f"GTMIN exceeds available capacity ({plant_count} plant(s))",
+            title=f"GTMIN above the available capacity ({plant_count})",
             summary=(
-                f"GTMIN exceeds the available capacity (after FCMAX, TEIF, IP and "
-                f"maintenance) for {plant_count} thermal plant(s) in at least one "
-                "stage; honoring GTMIN to keep the LP feasible."
+                "The listed thermal plants have a GTMIN above their "
+                "available capacity, after FCMAX, TEIF, IP and maintenance, on "
+                "at least one stage. NEWAVE rejects such a deck; the conversion "
+                "lifts the plant's maximum generation to GTMIN on those stages."
             ),
             table=DiagnosticTable(
-                columns=["Plant", "Code", "Stages", "GTMIN MW", "Cap MW", "Excess MW"],
+                columns=[
+                    "Code",
+                    "Name",
+                    "Stages",
+                    "GTMIN (MW)",
+                    "Capacity (MW)",
+                    "Excess (MW)",
+                ],
                 rows=rows,
-                justify=["left", "right", "left", "right", "right", "right"],
-                caption=(
-                    "GTMIN = max, Cap = min available capacity, Excess = largest "
-                    "single-stage excess across the listed stages"
-                ),
+                justify=["right", "left", "left", "right", "right", "right"],
+                caption="Stage ids are 0-based.",
             ),
-            remediation="Check EXPT FCMAX/GTMIN and MANUTT for these plants.",
+            notes=[
+                "GTMIN is the highest and Capacity the lowest over the listed "
+                "stages; Excess is the largest excess on a single stage."
+            ],
+            remediation=(
+                "Check GTMIN, FCMAX and POTEF in term.dat and expt.dat, and the "
+                "maintenance in manutt.dat, for the listed plants."
+            ),
         ),
         logger=_LOG,
     )
@@ -781,21 +817,20 @@ def convert_thermal_bounds(
                 severity=Severity.INFO,
                 category="Thermal bounds",
                 title=(
-                    f"Plants without a POTEF entry ({len(model.codes_without_potef)})"
+                    f"EE and NE thermals without a POTEF record ({len(model.codes_without_potef)})"
                 ),
                 summary=(
-                    f"{len(model.codes_without_potef)} thermal plant(s) are marked "
-                    "EE or NE in CONFT.DAT with no POTEF entry in EXPT.DAT; the "
-                    "model discards their registry capacity and declares none, "
-                    "so they are treated as not installed (max generation 0)."
+                    "The listed thermal plants marked EE "
+                    "or NE in conft.dat have no POTEF record in expt.dat, so, as "
+                    "in NEWAVE, they have no capacity and generate nothing."
                 ),
                 table=DiagnosticTable(
-                    columns=["Plant", "Code"],
+                    columns=["Code", "Name"],
                     rows=[
-                        [names.get(code, "?"), code]
+                        [code, names.get(code, "")]
                         for code in sorted(model.codes_without_potef)
                     ],
-                    justify=["left", "right"],
+                    justify=["right", "left"],
                 ),
             ),
             logger=_LOG,

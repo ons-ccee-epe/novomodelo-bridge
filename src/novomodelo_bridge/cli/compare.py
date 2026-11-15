@@ -280,6 +280,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
         report_html = _build_html_compare_report(
             dataset, formats, reference_label="NEWAVE"
         )
+    compare_diagnostics = dx.finalize_diagnostics(compare_diagnostics)
 
     verdict = build_compare_verdict(dataset)
 
@@ -394,6 +395,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
         report_html = _build_html_compare_report(
             dataset, formats, reference_label="DECOMP"
         )
+    compare_diagnostics = dx.finalize_diagnostics(compare_diagnostics)
 
     verdict = build_compare_verdict(dataset)
 

@@ -136,11 +136,13 @@ def _parse_fpha_plane_reduction(case: NewaveCase) -> dict | None:
                 code="fpha-plane-reduction-multiple-methods",
                 severity=Severity.WARNING,
                 category="Production model",
-                title="Multiple active FPHA plane-reduction methods",
+                title="More than one FPHA plane-reduction method",
                 summary=(
-                    f"{path.name} has multiple active FPHA plane-reduction "
-                    f"methods; using the first ({methods[0]['method']})."
+                    f"{path.name} turns on more than one FPHA plane-reduction "
+                    f"method, so the conversion uses the first, "
+                    f"{methods[0]['method']}."
                 ),
+                remediation=f"Leave one plane-reduction method on in {path.name}.",
             ),
             logger=_LOG,
         )
@@ -390,15 +392,19 @@ def _turbined_fit_maxima(
                 code="fpha-turbined-fit-range-unconverged",
                 severity=Severity.WARNING,
                 category="Production model",
-                title=(
-                    f"FPHA turbined fit range did not converge ({len(unconverged)})"
-                ),
+                title=f"FPHA turbined fit range not settled ({len(unconverged)})",
                 summary=(
-                    "The tailrace-dependent turbined fit range of the listed "
-                    f"plants did not settle within {_FIT_FLOW_MAX_ITERATIONS} "
-                    "iterations; the last value is used."
+                    "The turbined-flow range of the FPHA fit, which depends on "
+                    "the tailrace level, did not settle within "
+                    f"{_FIT_FLOW_MAX_ITERATIONS} iterations for the listed "
+                    "plants, so the conversion fits over "
+                    "the last range it computed."
                 ),
-                table=DiagnosticTable(columns=["Code", "Name"], rows=unconverged),
+                table=DiagnosticTable(
+                    columns=["Code", "Name"],
+                    rows=unconverged,
+                    justify=["right", "left"],
+                ),
             ),
             logger=_LOG,
         )

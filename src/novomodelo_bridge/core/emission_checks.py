@@ -56,11 +56,20 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.errors import EmissionCheckError
 from novomodelo_bridge.core.tolerances import relative_tolerance
 
 _LOG = logging.getLogger(__name__)
 
-_CATEGORY = "Emission self-checks"
+_CATEGORY = "Converted case checks"
+
+_REJECTED = "Novomodelo rejects such a case when it loads it, so the conversion stops."
+
+#: For a finding only a conversion defect can produce: the deck is not at fault.
+_DEFECT_REMEDIATION = (
+    "The conversion should never write such a case: report it to the "
+    "novomodelo-bridge maintainers with the deck."
+)
 
 #: Both guarded columns for rule 43 / rule 41, checked independently.
 _ENVELOPE_COLUMNS: tuple[str, ...] = ("max_turbined_m3s", "max_generation_mw")
@@ -79,10 +88,6 @@ _CLAMP_LIMIT_LABELS: dict[str, str] = {
     "max_generation_mw": "Max generation (MW)",
     "max_outflow_m3s": "Max outflow (m³/s)",
 }
-
-
-class EmissionCheckError(ValueError):
-    """A post-emission self-check reported at least one ERROR-severity diagnostic."""
 
 
 def _tolerance(declared: float) -> float:
@@ -175,11 +180,11 @@ def check_hydro_bounds_no_raising(
                 code="hydro-bounds-raising-not-applicable",
                 severity=Severity.INFO,
                 category=_CATEGORY,
-                title="Hydro-bounds raising check (rule 43) not applicable",
+                title="Per-stage capacity check not needed",
                 summary=(
-                    "hydro_bounds carries neither max_turbined_m3s nor "
-                    "max_generation_mw for this case, so novomodelo rule 43 (no row "
-                    "may raise a hydro's declared capacity) has nothing to scan"
+                    "The case sets no per-stage turbined-flow or generation limit "
+                    "in constraints/hydro_bounds.parquet, so no stage can exceed "
+                    "a plant's capacity."
                 ),
             ),
             logger=_LOG,
@@ -229,22 +234,18 @@ def check_hydro_bounds_no_raising(
             code="hydro-bounds-raises-declared-capacity",
             severity=Severity.ERROR,
             category=_CATEGORY,
-            title=f"hydro_bounds raises declared capacity ({len(rows)} finding(s))",
+            title=f"Stage limits above the plant capacity ({len(rows)})",
             summary=(
-                f"{len(rows)} (hydro, column) combination(s) have a hydro_bounds "
-                "row that raises max_turbined_m3s or max_generation_mw above the "
-                "plant's own declared value in system/hydros.json (novomodelo rule 43)"
+                "The listed per-stage limits in "
+                "constraints/hydro_bounds.parquet sit above the capacity "
+                f"system/hydros.json declares for the plant. {_REJECTED}"
             ),
             table=DiagnosticTable(
-                columns=["Hydro ID", "Column", "Stages", "Declared", "Worst offending"],
+                columns=["Hydro ID", "Column", "Stages", "Capacity", "Highest value"],
                 rows=rows,
                 justify=["right", "left", "left", "right", "right"],
             ),
-            remediation=(
-                "Declare the plant at its final (post-uprate) value instead and "
-                "add hydro_bounds rows tightening the earlier stages down to "
-                "their true value."
-            ),
+            remediation=_DEFECT_REMEDIATION,
         ),
         logger=_LOG,
     )
@@ -425,7 +426,7 @@ def _capped_to_capacity_diagnostic(
         category="Hydro capacity",
         title=f"Stage limits above the plant capacity capped ({len(rows)})",
         summary=(
-            f"{len(rows)} per-stage limit(s) in the deck sit above the plant's "
+            "The listed per-stage limits in the deck sit above the plant's "
             "own capacity and were capped at it. The plant cannot exceed its "
             "capacity, so the cap leaves the results unchanged."
         ),
@@ -450,7 +451,7 @@ def _raised_to_minimum_diagnostic(
         category="Hydro capacity",
         title=f"Stage limits below the plant minimum raised ({len(rows)})",
         summary=(
-            f"{len(rows)} per-stage limit(s) in the deck sit below the plant's "
+            "The listed per-stage limits in the deck sit below the plant's "
             "own minimum and were raised to it, so on those stages the case "
             "allows more than the deck does."
         ),
@@ -517,23 +518,17 @@ def check_unit_group_envelope(hydros: Mapping[str, object]) -> None:
             code="hydro-unit-group-envelope-exceeded",
             severity=Severity.ERROR,
             category=_CATEGORY,
-            title=(
-                f"Unit-group maxima exceed the plant envelope ({len(rows)} finding(s))"
-            ),
+            title=f"Unit groups above the plant capacity ({len(rows)})",
             summary=(
-                f"{len(rows)} hydro/column combination(s) have unit groups whose "
-                "max_turbined_m3s or max_generation_mw sums above the plant's "
-                "own declared value in system/hydros.json (novomodelo rule 41)"
+                "The listed plant limits in system/hydros.json sit below "
+                f"the sum of the plant's unit groups. {_REJECTED}"
             ),
             table=DiagnosticTable(
-                columns=["Hydro ID", "Column", "Declared", "Group sum"],
+                columns=["Hydro ID", "Column", "Capacity", "Group sum"],
                 rows=rows,
                 justify=["right", "left", "right", "right"],
             ),
-            remediation=(
-                "Lower the unit groups' maxima so their sum does not exceed the "
-                "plant's own declared value; the plant value is the envelope."
-            ),
+            remediation=_DEFECT_REMEDIATION,
         ),
         logger=_LOG,
     )
@@ -653,15 +648,12 @@ def check_group_bound_envelope(
             code="hydro-group-bounds-raises-declared-capacity",
             severity=Severity.ERROR,
             category=_CATEGORY,
-            title=(
-                f"hydro_unit_group_bounds raises declared capacity "
-                f"({len(rows)} finding(s))"
-            ),
+            title=f"Stage limits above the unit-group capacity ({len(rows)})",
             summary=(
-                f"{len(rows)} (hydro, group, column) combination(s) have a "
-                "hydro_unit_group_bounds row that raises max_turbined_m3s or "
-                "max_generation_mw above that group's own declared value in "
-                "system/hydros.json (novomodelo rule 45)"
+                "The listed per-stage limits in "
+                "constraints/hydro_unit_group_bounds.parquet sit above the "
+                "capacity system/hydros.json declares for the unit group. "
+                f"{_REJECTED}"
             ),
             table=DiagnosticTable(
                 columns=[
@@ -669,17 +661,13 @@ def check_group_bound_envelope(
                     "Group ID",
                     "Column",
                     "Stages",
-                    "Declared",
-                    "Worst offending",
+                    "Capacity",
+                    "Highest value",
                 ],
                 rows=rows,
                 justify=["right", "right", "left", "left", "right", "right"],
             ),
-            remediation=(
-                "Lower the overlay row(s) below the group's own declared "
-                "value, or raise the group's declared value if it should be "
-                "higher."
-            ),
+            remediation=_DEFECT_REMEDIATION,
         ),
         logger=_LOG,
     )
@@ -807,18 +795,17 @@ def check_bound_row_uniqueness(families: Sequence[BoundFamily]) -> None:
             code="bound-row-duplicate",
             severity=Severity.ERROR,
             category=_CATEGORY,
-            title=f"Duplicate bound rows ({len(findings)} finding(s))",
+            title=f"Bound rows set twice ({len(findings)})",
             summary=(
-                f"{len(findings)} bound row(s) set the same column twice for the "
-                "same (entity, stage, block) key (novomodelo rule 36)"
+                "The listed rows of the case's bound files set the same "
+                "limit twice for the same entity, stage and load block. "
+                f"{_REJECTED}"
             ),
             table=DiagnosticTable(
                 columns=columns,
                 rows=findings,
             ),
-            remediation=(
-                "Remove the duplicate row or merge the overrides into a single row."
-            ),
+            remediation=_DEFECT_REMEDIATION,
         ),
         logger=_LOG,
     )
@@ -938,17 +925,18 @@ def check_bound_block_id_range(
             code="bound-block-id-out-of-range",
             severity=Severity.ERROR,
             category=_CATEGORY,
-            title=f"block_id out of range ({len(findings)} finding(s))",
+            title=f"Bound rows on a load block the stage lacks ({len(findings)})",
             summary=(
-                f"{len(findings)} bound row(s) carry a block_id outside the "
-                "range the row's own stage declares in stages.json"
+                "The listed rows of the case's bound files name a load "
+                f"block that their stage does not declare in stages.json. "
+                f"{_REJECTED}"
             ),
             table=DiagnosticTable(
                 columns=columns,
                 rows=findings,
                 justify=justify,
             ),
-            remediation="Fix the block_id or the stage's declared block count.",
+            remediation=_DEFECT_REMEDIATION,
         ),
         logger=_LOG,
     )
@@ -1016,21 +1004,19 @@ def check_block_id_not_on_anticipated_thermal(
             code="thermal-bound-block-id-on-anticipated",
             severity=Severity.ERROR,
             category=_CATEGORY,
-            title=f"block_id on an anticipated thermal ({len(rows)} finding(s))",
+            title=f"Per-block limits on anticipated thermals ({len(rows)})",
             summary=(
-                f"{len(rows)} thermal_bounds row(s) carry a non-null block_id "
-                "for a thermal whose thermals.json entry declares "
-                "anticipated_config (novomodelo rule 38)"
+                "The listed rows of constraints/thermal_bounds.parquet set a "
+                "per-block limit for a thermal that system/thermals.json "
+                "declares as anticipated, whose limits apply to the whole "
+                f"stage. {_REJECTED}"
             ),
             table=DiagnosticTable(
                 columns=["Thermal ID", "Stage", "block_id"],
                 rows=rows,
                 justify=["right", "right", "right"],
             ),
-            remediation=(
-                "Drop the per-block override row(s) for this thermal; an "
-                "anticipated thermal's bounds must stay stage-level."
-            ),
+            remediation=_DEFECT_REMEDIATION,
         ),
         logger=_LOG,
     )
@@ -1097,11 +1083,12 @@ def check_diversion_has_channel(
             code="hydro-diversion-without-channel",
             severity=Severity.ERROR,
             category=_CATEGORY,
-            title=f"Diversion without a receiving plant ({plants} hydro(s))",
+            title=f"Diversions without a receiving plant ({plants})",
             summary=(
-                f"{plants} hydro(s) may divert water but declare no diversion "
+                "The listed plants may divert water in "
+                "constraints/hydro_bounds.parquet but declare no diversion "
                 "channel in system/hydros.json, so the diverted water would "
-                "reach no plant"
+                f"reach no plant. {_REJECTED}"
             ),
             table=DiagnosticTable(
                 columns=["Hydro ID", "Name", "Column", "Stages", "Largest value"],
@@ -1109,30 +1096,13 @@ def check_diversion_has_channel(
                 justify=["right", "left", "left", "left", "right"],
             ),
             remediation=(
-                "Each listed plant needs the plant that receives its diverted "
-                "water in the case; include that plant, or remove the "
-                "diversion restriction from the source deck."
+                "Include in the case the plant that receives each listed "
+                "plant's diversion, or remove the diversion restriction from "
+                "the deck."
             ),
         ),
         logger=_LOG,
     )
-
-
-def _describe_emission_check_errors(errors: Sequence[Diagnostic]) -> str:
-    """Render *errors* (every entry ``ERROR`` severity) as a multi-line,
-    human-readable block naming the failing rule and the offending entities —
-    the message :func:`run_and_gate` raises when any is found. Each
-    diagnostic's own detail table (hydro/thermal/line id, stage, column) is
-    included, not just its one-line summary, so the exception is actionable
-    on its own without re-running with a diagnostics sink attached.
-    """
-    lines: list[str] = []
-    for diagnostic in errors:
-        lines.append(f"- {diagnostic.code}: {diagnostic.summary}")
-        if diagnostic.table is not None:
-            for row in diagnostic.table.rows:
-                lines.append("    " + ", ".join(str(value) for value in row))
-    return "\n".join(lines)
 
 
 def run_and_gate(run_checks: Callable[[], None]) -> None:
@@ -1147,9 +1117,12 @@ def run_and_gate(run_checks: Callable[[], None]) -> None:
         run_checks()
     for diagnostic in check_diagnostics:
         emit(diagnostic, logger=_LOG)
-    check_errors = [d for d in check_diagnostics if d.severity is Severity.ERROR]
-    if check_errors:
+    failed = list(
+        dict.fromkeys(d.code for d in check_diagnostics if d.severity is Severity.ERROR)
+    )
+    if failed:
+        checks = "self-check" if len(failed) == 1 else "self-checks"
         raise EmissionCheckError(
-            f"{len(check_errors)} post-emission self-check error(s):\n"
-            f"{_describe_emission_check_errors(check_errors)}"
+            f"The converted case failed {len(failed)} {checks} "
+            f"({', '.join(failed)}), so the conversion stopped."
         )

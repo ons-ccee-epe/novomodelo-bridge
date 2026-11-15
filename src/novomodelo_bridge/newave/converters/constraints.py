@@ -31,6 +31,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    unreadable_file_diagnostic,
 )
 from novomodelo_bridge.core.errors import BridgeError, FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
@@ -101,7 +102,7 @@ class _ElectricTermSkip:
 
     constraint_code: int
     kind: Literal["hydro-unmapped", "no-line", "malformed"]
-    source: Literal["formula", "RE.DAT"]
+    source: Literal["restricao-eletrica.csv", "re.dat"]
     hydro_code: int | None = None
     sys_from: int | None = None
     sys_to: int | None = None
@@ -110,10 +111,11 @@ class _ElectricTermSkip:
 
 @dataclass
 class _ElectricConstraintSkip:
-    """One electric constraint code dropped entirely (no terms, or no bounds)."""
+    """One electric constraint code dropped entirely: no term the case can
+    carry, or no limit when *unbounded*."""
 
     constraint_code: int
-    reason: str
+    unbounded: bool
 
 
 @dataclass
@@ -702,7 +704,7 @@ def _add_vminop_constraints(
                 _VminopSkip(
                     ree_code=ree_code,
                     ree_name=rees.names[ree_code],
-                    reason="no hydro plants",
+                    reason="no hydro plant",
                 )
             )
             continue
@@ -713,7 +715,7 @@ def _add_vminop_constraints(
                 _VminopSkip(
                     ree_code=ree_code,
                     ree_name=rees.names[ree_code],
-                    reason="no valid terms for VminOP expression",
+                    reason="no plant stores energy",
                 )
             )
             continue
@@ -805,21 +807,22 @@ def _vminop_pct_by_stage(
 
 
 def _emit_vminop_skips(skips: list[_VminopSkip]) -> None:
-    """Emit the ``vminop-ree-not-expressible`` WARNING, one row per skipped REE."""
+    """Emit the ``vminop-ree-not-expressible`` note, one row per skipped REE."""
     if not skips:
         return
     emit(
         Diagnostic(
             code="vminop-ree-not-expressible",
-            severity=Severity.WARNING,
+            severity=Severity.INFO,
             category=_CATEGORY,
-            title=f"VminOP constraint not expressible ({len(skips)} REE(s))",
+            title=f"Security curve of REEs without storage not converted ({len(skips)})",
             summary=(
-                f"{len(skips)} REE(s) with a curva.dat VminOP entry "
-                "could not be expressed as a generic constraint; skipping."
+                "The listed REEs with a curva.dat security curve have no "
+                "plant that stores energy, so the curve's floor is zero and the "
+                "conversion writes no constraint for them."
             ),
             table=DiagnosticTable(
-                columns=["REE", "Name", "Reason"],
+                columns=["Code", "Name", "Reason"],
                 rows=[[s.ree_code, s.ree_name, s.reason] for s in skips],
                 justify=["right", "left", "left"],
             ),
@@ -837,18 +840,18 @@ def _emit_vminop_penalty_clamps(clamps: list[_VminopPenaltyClamp]) -> None:
             code="vminop-penalty-nonpositive",
             severity=Severity.WARNING,
             category=_CATEGORY,
-            title=f"VminOP penalty not positive ({len(clamps)} REE(s))",
+            title=f"Security-curve penalties not positive ({len(clamps)})",
             summary=(
-                f"{len(clamps)} REE(s) declare a curva.dat VminOP "
-                f"penalty that is not positive; using {_VMINOP_DEFAULT_PENALTY} "
-                "instead."
+                "The listed REEs give curva.dat a security-curve penalty "
+                "that is not positive, so the conversion penalizes their "
+                f"shortfall at {_VMINOP_DEFAULT_PENALTY:g} instead."
             ),
             table=DiagnosticTable(
-                columns=["REE", "Name", "Declared", "Applied"],
+                columns=["Code", "Name", "Declared penalty", "Applied penalty"],
                 rows=[[c.ree_code, c.ree_name, c.declared, c.applied] for c in clamps],
                 justify=["right", "left", "right", "right"],
             ),
-            remediation="Check curva.dat's penalty column for these REEs.",
+            remediation="Give the listed REEs a positive penalty in curva.dat.",
         ),
         logger=_LOG,
     )
@@ -1058,7 +1061,7 @@ def _parse_formula(
                         _ElectricTermSkip(
                             constraint_code=constraint_code,
                             kind="hydro-unmapped",
-                            source="formula",
+                            source="restricao-eletrica.csv",
                             hydro_code=plant_code,
                         )
                     )
@@ -1072,7 +1075,7 @@ def _parse_formula(
                         _ElectricTermSkip(
                             constraint_code=constraint_code,
                             kind="malformed",
-                            source="formula",
+                            source="restricao-eletrica.csv",
                             raw=args_str,
                         )
                     )
@@ -1086,7 +1089,7 @@ def _parse_formula(
                         _ElectricTermSkip(
                             constraint_code=constraint_code,
                             kind="no-line",
-                            source="formula",
+                            source="restricao-eletrica.csv",
                             sys_from=from_sys,
                             sys_to=to_sys,
                         )
@@ -1139,6 +1142,12 @@ def _stage_ids_between(
 _NO_INDIVIDUALIZADO_CUTOFF = 9999
 
 
+_CUTOFF_EFFECT = (
+    "The electric constraints take their restricao-eletrica.csv ceilings on "
+    "every stage, without the re.dat ceilings NEWAVE applies after that period."
+)
+
+
 def _get_individualizado_cutoff(
     case: NewaveCase,
     start_year: int,
@@ -1165,11 +1174,10 @@ def _get_individualizado_cutoff(
                     code="individualizado-cutoff-unknown",
                     severity=Severity.WARNING,
                     category=_CATEGORY,
-                    title="Individualizado cutoff unknown",
+                    title="End of the individualized period unknown",
                     summary=(
-                        "REE.DAT has no entries; the individualizado cutoff "
-                        "is unknown, so post-individualizado electric (RE) "
-                        "bounds are not emitted."
+                        "ree.dat lists no REE, so the conversion cannot tell "
+                        f"where the individualized period ends. {_CUTOFF_EFFECT}"
                     ),
                 ),
                 logger=_LOG,
@@ -1185,11 +1193,10 @@ def _get_individualizado_cutoff(
                 code="individualizado-cutoff-unknown",
                 severity=Severity.WARNING,
                 category=_CATEGORY,
-                title="Individualizado cutoff unknown",
+                title="End of the individualized period unknown",
                 summary=(
-                    "Could not read the individualizado cutoff from REE.DAT; "
-                    "post-individualizado electric (RE) bounds are not "
-                    "emitted."
+                    "The end of the individualized period could not be read "
+                    f"from ree.dat. {_CUTOFF_EFFECT}"
                 ),
             ),
             logger=_LOG,
@@ -1224,14 +1231,14 @@ def _parse_re_dat(
 
     try:
         re_file = case.re_dat
-    except Exception:
+    except Exception as exc:
         emit(
-            Diagnostic(
+            unreadable_file_diagnostic(
                 code="re-dat-unreadable",
-                severity=Severity.WARNING,
+                file_name="re.dat",
                 category=_CATEGORY,
-                title="RE.DAT could not be parsed",
-                summary="RE.DAT could not be parsed; RE constraints are skipped.",
+                effect="the case has none of its generation limits on plant sets.",
+                exc=exc,
             ),
             logger=_LOG,
         )
@@ -1360,16 +1367,14 @@ def convert_electric_constraints(
         )
         if novomodelo_expr is None:
             elec_constraint_skips.append(
-                _ElectricConstraintSkip(
-                    constraint_code=cod, reason="no valid terms in expression"
-                )
+                _ElectricConstraintSkip(constraint_code=cod, unbounded=False)
             )
             continue
 
         bounds = _electric_bounds(cod, sources, grid.horizon)
         if not bounds.has_sup and not bounds.has_inf:
             elec_constraint_skips.append(
-                _ElectricConstraintSkip(constraint_code=cod, reason="no bound data")
+                _ElectricConstraintSkip(constraint_code=cod, unbounded=True)
             )
             continue
 
@@ -1512,9 +1517,10 @@ def _resolve_eletri_penalty(case: NewaveCase) -> float | None:
                     category=_CATEGORY,
                     title="ELETRI penalty could not be read",
                     summary=(
-                        "PENALID.DAT's ELETRI penalty could not be read; "
-                        "falling back to 10x the maximum deficit cost, or "
-                        "disabling the slack if that is also unavailable."
+                        "The ELETRI penalty of penalid.dat could not be read, "
+                        "so the conversion prices violations of the electric "
+                        "constraints at ten times the highest deficit cost, or "
+                        "makes them hard limits when sistema.dat gives none."
                     ),
                     notes=[str(exc)],
                 ),
@@ -1564,7 +1570,7 @@ def _electric_expression(
                 _ElectricTermSkip(
                     constraint_code=cod,
                     kind="hydro-unmapped",
-                    source="RE.DAT",
+                    source="re.dat",
                     hydro_code=plant_code,
                 )
             )
@@ -1674,7 +1680,7 @@ def _add_electric_constraint(
 
 
 def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
-    """Emit one WARNING per kind of dropped electric-constraint term."""
+    """Emit one diagnostic per kind of dropped electric-constraint term."""
     if not skips:
         return
     by_kind: dict[str, list[_ElectricTermSkip]] = defaultdict(list)
@@ -1686,19 +1692,19 @@ def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
         emit(
             Diagnostic(
                 code="electric-constraint-hydro-unmapped",
-                severity=Severity.WARNING,
+                severity=Severity.INFO,
                 category=_CATEGORY,
                 title=(
-                    "Electric constraint references an unmapped hydro "
-                    f"plant ({len(hydro_unmapped)})"
+                    "Electric-constraint terms on plants outside the case "
+                    f"({len(hydro_unmapped)})"
                 ),
                 summary=(
-                    f"{len(hydro_unmapped)} electric constraint term(s) "
-                    "reference a hydro plant code with no matching novomodelo "
-                    "entity; the term is dropped."
+                    "The listed electric-constraint terms name a "
+                    "hydro plant that is not in the case, so it generates "
+                    "nothing and the conversion leaves the term out."
                 ),
                 table=DiagnosticTable(
-                    columns=["Constraint", "Hydro code", "Source"],
+                    columns=["Constraint", "Plant code", "Source"],
                     rows=[
                         [s.constraint_code, s.hydro_code, s.source]
                         for s in hydro_unmapped
@@ -1714,23 +1720,23 @@ def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
         emit(
             Diagnostic(
                 code="electric-constraint-interchange-no-line",
-                severity=Severity.WARNING,
+                severity=Severity.INFO,
                 category=_CATEGORY,
                 title=(
-                    "Electric constraint interchange has no matching line "
+                    "Electric-constraint terms on subsystems without interchange "
                     f"({len(no_line)})"
                 ),
                 summary=(
-                    f"{len(no_line)} electric constraint interchange "
-                    "term(s) reference a subsystem pair with no matching "
-                    "novomodelo line; the term is dropped."
+                    "The listed electric-constraint interchange terms "
+                    "name a subsystem pair with no interchange limit in "
+                    "sistema.dat, so no flow runs between them and the "
+                    "conversion leaves the term out."
                 ),
                 table=DiagnosticTable(
                     columns=["Constraint", "From", "To"],
                     rows=[[s.constraint_code, s.sys_from, s.sys_to] for s in no_line],
                     justify=["right", "right", "right"],
                 ),
-                remediation="Declare the pair as an interchange line.",
             ),
             logger=_LOG,
         )
@@ -1742,16 +1748,20 @@ def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
                 code="electric-constraint-malformed-term",
                 severity=Severity.WARNING,
                 category=_CATEGORY,
-                title=f"Electric constraint has a malformed term ({len(malformed)})",
+                title=f"Malformed electric-constraint terms ({len(malformed)})",
                 summary=(
-                    f"{len(malformed)} electric constraint interchange "
-                    "term(s) declared fewer than 2 arguments; the term is "
-                    "dropped."
+                    "The listed ener_interc terms of "
+                    "restricao-eletrica.csv name fewer than two subsystems, so "
+                    "the conversion leaves them out of their constraint."
                 ),
                 table=DiagnosticTable(
                     columns=["Constraint", "Term"],
                     rows=[[s.constraint_code, s.raw] for s in malformed],
                     justify=["right", "left"],
+                ),
+                remediation=(
+                    "Give each listed ener_interc term both subsystems in "
+                    "restricao-eletrica.csv."
                 ),
             ),
             logger=_LOG,
@@ -1759,26 +1769,51 @@ def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
 
 
 def _emit_electric_constraint_skips(skips: list[_ElectricConstraintSkip]) -> None:
-    """Emit the ``electric-constraint-skipped`` WARNING, one row per constraint."""
-    if not skips:
-        return
-    emit(
-        Diagnostic(
-            code="electric-constraint-skipped",
-            severity=Severity.WARNING,
-            category=_CATEGORY,
-            title=f"Electric constraint skipped ({len(skips)})",
-            summary=(
-                f"{len(skips)} electric constraint(s) could not be converted; skipping."
+    """Emit the constraints left out: those with no term the case can carry
+    (``electric-constraint-skipped``) and those with no limit
+    (``electric-constraint-unbounded``)."""
+    termless = sorted(s.constraint_code for s in skips if not s.unbounded)
+    unbounded = sorted(s.constraint_code for s in skips if s.unbounded)
+    if termless:
+        emit(
+            Diagnostic(
+                code="electric-constraint-skipped",
+                severity=Severity.WARNING,
+                category=_CATEGORY,
+                title=f"Electric constraints without a term not converted ({len(termless)})",
+                summary=(
+                    "The listed electric constraints have no ger_usih "
+                    "or ener_interc term the case can carry, so the conversion "
+                    "leaves them out."
+                ),
+                table=DiagnosticTable(
+                    columns=["Constraint"],
+                    rows=[[code] for code in termless],
+                    justify=["right"],
+                ),
             ),
-            table=DiagnosticTable(
-                columns=["Constraint", "Reason"],
-                rows=[[s.constraint_code, s.reason] for s in skips],
-                justify=["right", "left"],
+            logger=_LOG,
+        )
+    if unbounded:
+        emit(
+            Diagnostic(
+                code="electric-constraint-unbounded",
+                severity=Severity.INFO,
+                category=_CATEGORY,
+                title=f"Electric constraints without a limit not converted ({len(unbounded)})",
+                summary=(
+                    "The listed electric constraints have no limit on "
+                    "any stage, so they cannot bind and the conversion leaves "
+                    "them out."
+                ),
+                table=DiagnosticTable(
+                    columns=["Constraint"],
+                    rows=[[code] for code in unbounded],
+                    justify=["right"],
+                ),
             ),
-        ),
-        logger=_LOG,
-    )
+            logger=_LOG,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2038,44 +2073,44 @@ def _agrint_slots(
 
 
 def _emit_agrint_term_skips(skips: list[_AgrintTermSkip]) -> None:
-    """Emit the ``agrint-interchange-no-line`` WARNING, one row per dropped term."""
+    """Emit the ``agrint-interchange-no-line`` note, one row per dropped term."""
     if not skips:
         return
     emit(
         Diagnostic(
             code="agrint-interchange-no-line",
-            severity=Severity.WARNING,
+            severity=Severity.INFO,
             category=_CATEGORY,
-            title=f"AGRINT interchange has no matching line ({len(skips)})",
+            title=f"agrint.dat terms on subsystems without interchange ({len(skips)})",
             summary=(
-                f"{len(skips)} AGRINT group term(s) reference "
-                "a subsystem pair with no matching novomodelo line; the term "
-                "is dropped."
+                "The listed agrint.dat group terms name a subsystem pair "
+                "with no interchange limit in sistema.dat, so no flow runs "
+                "between them and the conversion leaves the term out."
             ),
             table=DiagnosticTable(
                 columns=["Group", "From", "To"],
                 rows=[[s.group_id, s.sys_a, s.sys_b] for s in skips],
                 justify=["right", "right", "right"],
             ),
-            remediation="Declare the subsystem pair as an interchange line.",
         ),
         logger=_LOG,
     )
 
 
 def _emit_agrint_group_skips(skips: list[_AgrintGroupSkip]) -> None:
-    """Emit the ``agrint-group-empty`` WARNING, one row per dropped group."""
+    """Emit the ``agrint-group-empty`` note, one row per dropped group."""
     if not skips:
         return
     emit(
         Diagnostic(
             code="agrint-group-empty",
-            severity=Severity.WARNING,
+            severity=Severity.INFO,
             category=_CATEGORY,
-            title=f"AGRINT group has no valid terms ({len(skips)})",
+            title=f"agrint.dat groups without interchange not converted ({len(skips)})",
             summary=(
-                f"{len(skips)} AGRINT group(s) had no valid "
-                "terms after line lookup; skipping."
+                "The listed agrint.dat groups name only subsystem pairs "
+                "with no interchange limit in sistema.dat, so the group's flow "
+                "is zero and the conversion writes no constraint for it."
             ),
             table=DiagnosticTable(
                 columns=["Group"],

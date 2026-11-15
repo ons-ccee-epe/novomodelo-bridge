@@ -5,7 +5,10 @@ compute scenario means matching the source model MEDIAS aggregation level.  Also
 convergence data and hydro metadata.
 
 Reader-failure contract: an absent OPTIONAL input yields a typed-empty
-frame plus a WARNING log; a present-but-unreadable file, or an absent
+frame plus a ``report-file-missing`` note, or nothing when novomodelo or the
+conversion writes that file only for a case with the entity it holds; a
+present file without the columns a reader needs yields a typed-empty frame
+plus a ``report-file-unreadable`` warning; a present-but-unreadable file, or an absent
 REQUIRED input, raises a typed error (``NovomodeloReadError``, ``ValueError``,
 or ``FileNotFoundError``) — never a silent empty, since an empty frame
 from real-but-broken data fabricates a false zero-vs-zero match
@@ -29,7 +32,14 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import (
+    REPORT_FILES_CATEGORY,
+    Diagnostic,
+    Severity,
+    emit,
+    report_file_missing_diagnostic,
+    report_file_unreadable_diagnostic,
+)
 from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.tolerances import BIG_M
@@ -47,6 +57,17 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
 _LOG = logging.getLogger(__name__)
+
+#: What a report leaves out without each file several readers share,
+#: completing ``"<file> was not found, so ..."``.
+_HYDROS_EFFECT = (
+    "the report shows the hydro plants without their names and cadastro data."
+)
+_BUSES_EFFECT = "the report shows the buses without their names."
+_TRAINING_METADATA_EFFECT = (
+    "the report leaves out the training time and the novomodelo version and "
+    "settings the run recorded."
+)
 
 
 class NovomodeloReadError(RuntimeError):
@@ -144,9 +165,23 @@ def read_novomodelo_scenario_weights(novomodelo_output_dir: Path) -> ScenarioWei
     path = simulation_dir / "scenario_summary.parquet"
     if not path.is_file():
         if simulation_dir.is_dir():
-            _LOG.warning(
-                "No %s; the simulation scenarios are averaged with equal weights.",
-                path,
+            emit(
+                Diagnostic(
+                    code="scenario-probabilities-missing",
+                    severity=Severity.WARNING,
+                    category=REPORT_FILES_CATEGORY,
+                    title="Simulation scenarios averaged with equal weights",
+                    summary=(
+                        "The run output has no "
+                        "simulation/scenario_summary.parquet, so the report "
+                        "averages the simulation scenarios with equal weights. "
+                        "A run that enumerated the policy graph's scenarios "
+                        "weighs each by its probability, and its expected "
+                        "values differ from the report's."
+                    ),
+                    notes=[f"Path: {path}"],
+                ),
+                logger=_LOG,
             )
         return UNIFORM
     try:
@@ -196,7 +231,15 @@ def read_novomodelo_generic_constraint_echo(
     """
     path = novomodelo_output_dir / _GENERIC_CONSTRAINT_ECHO
     if not path.exists():
-        _LOG.warning("Generic-constraint echo not found: %s", path)
+        emit(
+            report_file_missing_diagnostic(
+                f"output/{_GENERIC_CONSTRAINT_ECHO.as_posix()}",
+                path,
+                "the report leaves out the terms, bounds and values of the "
+                "generic constraints.",
+            ),
+            logger=_LOG,
+        )
         return None
     try:
         return pl.read_parquet(path)
@@ -210,7 +253,9 @@ def scan_simulation_entity(
 ) -> pl.LazyFrame | None:
     """Scan hive-partitioned simulation parquets for *entity*.
 
-    Returns a LazyFrame or None if the directory does not exist.
+    Returns a LazyFrame or None if the directory does not exist, which is
+    no finding: novomodelo writes no partition for an entity type the case
+    lacks, and no simulation directory for a run without that phase.
 
     Parameters
     ----------
@@ -222,7 +267,7 @@ def scan_simulation_entity(
     """
     sim_dir = novomodelo_output_dir / "simulation" / entity
     if not sim_dir.is_dir():
-        _LOG.warning("Simulation directory not found: %s", sim_dir)
+        _LOG.debug("simulation directory not found: %s", sim_dir)
         return None
 
     pattern = sim_dir / "**/*.parquet"
@@ -316,13 +361,13 @@ def read_novomodelo_hydro_bus_generation(novomodelo_output_dir: Path) -> pl.Lazy
                 code="hydro-bus-generation-partition-empty",
                 severity=Severity.WARNING,
                 category="Compare data",
-                title="hydro_bus_generation partition is present but empty",
+                title="Hydro generation per bus missing from the run output",
                 summary=(
-                    f"{sim_dir} exists but contains no scenario parquet "
-                    "files; treating hydro-bus generation as empty rather "
-                    "than failing the comparison."
+                    "The run output's simulation/hydro_bus_generation "
+                    "directory has no scenario files, so the generation of "
+                    "each hydro plant per bus reads as empty."
                 ),
-                notes=[f"path: {sim_dir}"],
+                notes=[f"Directory: {sim_dir}"],
             ),
             logger=_LOG,
         )
@@ -419,7 +464,15 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     avail_stage = [c for c in stage_cols if c in available]
 
     if not avail_flow and not avail_stage:
-        _LOG.warning("No recognized value columns in hydros simulation")
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/simulation/hydros",
+                novomodelo_output_dir / "simulation" / "hydros",
+                "the report leaves out the hydro plants' simulated operation.",
+                "none of the columns the report reads",
+            ),
+            logger=_LOG,
+        )
         return empty
 
     block_hours = _load_block_hours(novomodelo_output_dir)
@@ -782,8 +835,16 @@ def read_novomodelo_iteration_timing(novomodelo_output_dir: Path) -> pl.DataFram
         return empty
     try:
         df = pl.read_parquet(conv_path)
-    except Exception:
-        _LOG.warning("Failed to read convergence.parquet for timings")
+    except Exception as exc:
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/training/convergence.parquet",
+                conv_path,
+                "the report leaves out the time each training iteration took.",
+                exc,
+            ),
+            logger=_LOG,
+        )
         return empty
     keep = ["iteration", "time_forward_ms", "time_backward_ms", "time_total_ms"]
     avail = [c for c in keep if c in df.columns]
@@ -809,16 +870,8 @@ def read_novomodelo_training_duration(novomodelo_output_dir: Path) -> float:
     Sourced from ``training/metadata.json:duration_seconds``. Returns
     ``0.0`` when the metadata file is missing or malformed.
     """
-    meta_path = novomodelo_output_dir / "training" / "metadata.json"
-    if not meta_path.exists():
-        return 0.0
-    try:
-        with meta_path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        _LOG.warning("Failed to parse training/metadata.json")
-        return 0.0
-    return float(data.get("duration_seconds", 0.0) or 0.0)
+    metadata = read_novomodelo_training_metadata(novomodelo_output_dir)
+    return float(metadata.get("duration_seconds", 0.0) or 0.0)
 
 
 def read_novomodelo_training_metadata(novomodelo_output_dir: Path) -> dict:
@@ -847,8 +900,16 @@ def read_novomodelo_training_metadata(novomodelo_output_dir: Path) -> dict:
 
     try:
         data = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        _LOG.warning("Failed to parse %s", metadata_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/training/metadata.json",
+                metadata_path,
+                _TRAINING_METADATA_EFFECT,
+                exc,
+            ),
+            logger=_LOG,
+        )
         return {}
 
     return data if isinstance(data, dict) else {}
@@ -1090,8 +1151,8 @@ def read_novomodelo_line_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
     Returns every row verbatim (including per-block override rows), with
     the converter's own columns: ``line_id``, ``stage_id``, ``block_id``
     (nullable -- ``None`` on the stage-level base row), ``direct_mw``,
-    ``reverse_mw``. Absent parquet -> typed-empty frame + WARNING;
-    present-but-corrupt -> :class:`NovomodeloReadError`. Callers own their own
+    ``reverse_mw``. Absent parquet -> typed-empty frame + a
+    ``report-file-missing`` note; present-but-corrupt -> :class:`NovomodeloReadError`. Callers own their own
     ``block_id``-null filtering and any dict/lookup construction (kept in
     the ANALYZE layer).
     """
@@ -1099,7 +1160,14 @@ def read_novomodelo_line_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
     case_dir = case_dir_for(novomodelo_output_dir)
     path = case_dir / "constraints" / "line_bounds.parquet"
     if not path.exists():
-        _LOG.warning("line_bounds.parquet not found at %s", path)
+        emit(
+            report_file_missing_diagnostic(
+                "constraints/line_bounds.parquet",
+                path,
+                "the report shows the lines without their limits.",
+            ),
+            logger=_LOG,
+        )
         return empty
     try:
         return pl.read_parquet(path)
@@ -1117,6 +1185,29 @@ _STAGE_LINE_BOUNDS_SCHEMA = pl.Schema(
         "reverse_mw": pl.Float64,
     }
 )
+
+
+def read_novomodelo_network_lines(
+    novomodelo_output_dir: Path,
+) -> tuple[pl.DataFrame, list[dict]]:
+    """The Network tab's line capacity per (line, stage) and ``lines.json`` lines.
+
+    The capacities are :func:`read_novomodelo_stage_line_bounds`'; the lines are
+    :func:`read_novomodelo_lines`' list verbatim. An unparseable ``lines.json``
+    is a ``report-file-unreadable`` warning and leaves the tab without lines
+    instead of failing the comparison.
+    """
+    try:
+        lines = read_novomodelo_lines(novomodelo_output_dir)
+    except NovomodeloReadError as exc:
+        path = _find_system_json(novomodelo_output_dir, "lines.json")
+        _emit_system_json_unreadable(
+            path or case_dir_for(novomodelo_output_dir) / "system" / "lines.json",
+            "the report's Network tab shows no line.",
+            exc.__cause__ if isinstance(exc.__cause__, Exception) else exc,
+        )
+        lines = []
+    return read_novomodelo_stage_line_bounds(novomodelo_output_dir, lines), lines
 
 
 def read_novomodelo_stage_line_bounds(
@@ -1238,7 +1329,15 @@ def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:
 
     available = set(lf.collect_schema().names())
     if "generation_mw" not in available:
-        _LOG.warning("generation_mw column not found in thermals simulation")
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/simulation/thermals",
+                novomodelo_output_dir / "simulation" / "thermals",
+                "the report leaves out the thermal plants' simulated generation.",
+                "no generation_mw column",
+            ),
+            logger=_LOG,
+        )
         return empty
 
     id_col = "thermal_id" if "thermal_id" in available else "entity_id"
@@ -1288,7 +1387,15 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     value_cols = [c for c in ("spot_price", "deficit_mw") if c in available]
 
     if not value_cols:
-        _LOG.warning("No recognized value columns in buses simulation")
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/simulation/buses",
+                novomodelo_output_dir / "simulation" / "buses",
+                "the report leaves out the buses' simulated prices and deficits.",
+                "none of the columns the report reads",
+            ),
+            logger=_LOG,
+        )
         return empty
 
     id_col = "bus_id" if "bus_id" in available else "entity_id"
@@ -1931,27 +2038,6 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
     )
 
 
-def read_converted_penalties(novomodelo_output_dir: Path) -> dict:
-    """Load the converted ``penalties.json`` for the Novomodelo case.
-
-    ``penalties.json`` lives at the Novomodelo *case* root (the parent of the
-    ``output`` directory the comparator is pointed at), so we look there first,
-    then in the output dir itself. Returns the parsed dict, or ``{}`` when not
-    found — callers should treat an empty dict as "penalties unavailable".
-    """
-    for candidate in (
-        case_dir_for(novomodelo_output_dir) / "penalties.json",
-        novomodelo_output_dir / "penalties.json",
-    ):
-        if candidate.is_file():
-            try:
-                return json.loads(candidate.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                _LOG.warning("Failed to parse %s", candidate)
-                return {}
-    return {}
-
-
 def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Read Novomodelo convergence data from training output.
 
@@ -1972,7 +2058,15 @@ def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
 
     conv_path = novomodelo_output_dir / "training" / "convergence.parquet"
     if not conv_path.exists():
-        _LOG.warning("convergence.parquet not found at %s", conv_path)
+        if conv_path.parent.is_dir():
+            emit(
+                report_file_missing_diagnostic(
+                    "output/training/convergence.parquet",
+                    conv_path,
+                    "the report leaves out the training convergence.",
+                ),
+                logger=_LOG,
+            )
         return empty
 
     try:
@@ -2031,9 +2125,14 @@ def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
         "lower_bound" not in col_map.values()
         or "upper_bound_mean" not in col_map.values()
     ):
-        _LOG.warning(
-            "Cannot identify bound columns in convergence.parquet: %s",
-            df.columns,
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/training/convergence.parquet",
+                conv_path,
+                "the report leaves out the training convergence.",
+                f"no lower and upper bound columns among {', '.join(df.columns)}",
+            ),
+            logger=_LOG,
         )
         return empty
 
@@ -2069,14 +2168,14 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
     """
     hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
     if hydros_path is None:
-        _LOG.warning("hydros.json not found near %s", novomodelo_output_dir)
+        _emit_system_json_missing(novomodelo_output_dir, "hydros.json", _HYDROS_EFFECT)
         return {}
 
     try:
         with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        _LOG.warning("Failed to parse hydros.json")
+    except (OSError, json.JSONDecodeError) as exc:
+        _emit_system_json_unreadable(hydros_path, _HYDROS_EFFECT, exc)
         return {}
 
     case_dir = hydros_path.parent.parent
@@ -2167,7 +2266,16 @@ def read_novomodelo_load_bus_ids(novomodelo_output_dir: Path) -> frozenset[int]:
         / "load_seasonal_stats.parquet"
     )
     if not path.exists():
-        _LOG.warning("load_seasonal_stats.parquet not found at %s", path)
+        emit(
+            report_file_missing_diagnostic(
+                "scenarios/load_seasonal_stats.parquet",
+                path,
+                "the report cannot tell the market buses from the "
+                "transshipment buses when it places a hydro plant that spans "
+                "several buses.",
+            ),
+            logger=_LOG,
+        )
         return frozenset()
     try:
         stats = pl.read_parquet(path, columns=["bus_id", "mean_mw"])
@@ -2195,17 +2303,25 @@ def hydro_home_bus(bus_ids: Iterable[int], load_bus_ids: frozenset[int]) -> int 
     return next(iter(loaded)) if len(loaded) == 1 else None
 
 
-def split_plant_without_home_summary(
+SPLIT_PLANT_COLUMNS = ["Hydro ID", "Name", "Buses", "Buses with load"]
+SPLIT_PLANT_SUMMARY = (
+    "The listed hydro plants have generating units at more than one bus, and "
+    "none or several of those buses have load, so no one bus can stand for "
+    "the whole plant."
+)
+
+
+def split_plant_row(
     hydro_id: int, name: str, bus_ids: Iterable[int], load_bus_ids: frozenset[int]
-) -> str:
-    """Say why :func:`hydro_home_bus` found no home for a plant."""
+) -> list[object]:
+    """The table row naming a plant :func:`hydro_home_bus` found no home for."""
     distinct = sorted(set(bus_ids))
-    n_loaded = sum(1 for b in distinct if b in load_bus_ids)
-    which = "none of them has" if n_loaded == 0 else f"{n_loaded} of them have"
-    return (
-        f"Hydro {hydro_id} ({name}) has generating units at buses {distinct}, "
-        f"and {which} load, so no one bus can stand for the whole plant."
-    )
+    return [
+        hydro_id,
+        name,
+        ", ".join(str(bus) for bus in distinct),
+        sum(1 for bus in distinct if bus in load_bus_ids),
+    ]
 
 
 def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int, dict]:
@@ -2228,13 +2344,13 @@ def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int
     """
     hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
     if hydros_path is None:
-        _LOG.warning("hydros.json not found near %s", novomodelo_output_dir)
+        _emit_system_json_missing(novomodelo_output_dir, "hydros.json", _HYDROS_EFFECT)
         return {}
     try:
         with hydros_path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        _LOG.warning("Failed to parse hydros.json for productivity detail")
+    except (OSError, json.JSONDecodeError) as exc:
+        _emit_system_json_unreadable(hydros_path, _HYDROS_EFFECT, exc)
         return {}
 
     result: dict[int, dict] = {}
@@ -2277,6 +2393,28 @@ def _find_system_json(novomodelo_output_dir: Path, filename: str) -> Path | None
     return None
 
 
+def _emit_system_json_missing(
+    novomodelo_output_dir: Path, filename: str, effect: str
+) -> None:
+    """Note a ``system/`` JSON the conversion always writes as missing."""
+    emit(
+        report_file_missing_diagnostic(
+            f"system/{filename}",
+            case_dir_for(novomodelo_output_dir) / "system" / filename,
+            effect,
+        ),
+        logger=_LOG,
+    )
+
+
+def _emit_system_json_unreadable(path: Path, effect: str, exc: Exception) -> None:
+    """Warn that the ``system/`` JSON at *path* could not be parsed."""
+    emit(
+        report_file_unreadable_diagnostic(f"system/{path.name}", path, effect, exc),
+        logger=_LOG,
+    )
+
+
 def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
     """Read ``system/lines.json`` and return its ``"lines"`` list.
 
@@ -2292,7 +2430,7 @@ def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
     """
     path = _find_system_json(novomodelo_output_dir, "lines.json")
     if path is None:
-        _LOG.warning("lines.json not found near %s", novomodelo_output_dir)
+        _LOG.debug("no system/lines.json near %s", novomodelo_output_dir)
         return []
     try:
         with path.open(encoding="utf-8") as f:
@@ -2309,14 +2447,16 @@ def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, d
     """
     path = _find_system_json(novomodelo_output_dir, "thermals.json")
     if path is None:
-        _LOG.warning("thermals.json not found near %s", novomodelo_output_dir)
+        _LOG.debug("no system/thermals.json near %s", novomodelo_output_dir)
         return {}
 
     try:
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
-        _LOG.warning("Failed to parse thermals.json")
+    except Exception as exc:
+        _emit_system_json_unreadable(
+            path, "the report shows the thermal plants without their names.", exc
+        )
         return {}
 
     return {
@@ -2333,14 +2473,14 @@ def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]
     """
     path = _find_system_json(novomodelo_output_dir, "buses.json")
     if path is None:
-        _LOG.warning("buses.json not found near %s", novomodelo_output_dir)
+        _emit_system_json_missing(novomodelo_output_dir, "buses.json", _BUSES_EFFECT)
         return {}
 
     try:
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
-    except Exception:
-        _LOG.warning("Failed to parse buses.json")
+    except Exception as exc:
+        _emit_system_json_unreadable(path, _BUSES_EFFECT, exc)
         return {}
 
     load_bus_ids = read_novomodelo_load_bus_ids(novomodelo_output_dir)

@@ -142,14 +142,15 @@ def turbine_limit_gap_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnostic
         category="Hydro capacity",
         title=f"Turbined-flow limit without its head rule ({len(rows)})",
         summary=(
-            f"{len(rows)} plant(s) lack a datum the source model's "
+            "The listed plants lack a datum the source model's "
             "turbined-flow limit is computed from; their limit leaves out the "
             "part of the rule that datum feeds and can sit above the source "
             "model's."
         ),
         table=DiagnosticTable(
-            columns=["Code", "Name", "Missing", "Limit used", "Stages"],
+            columns=["Code", "Name", "Missing", "Limit used (m³/s)", "Stages"],
             rows=[list(row) for row in rows],
+            justify=["right", "left", "left", "right", "left"],
             caption="Stage ids are 0-based.",
         ),
     )

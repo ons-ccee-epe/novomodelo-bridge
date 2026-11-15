@@ -21,7 +21,7 @@ from datetime import date
 
 import pandas as pd
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, counted, emit
 from novomodelo_bridge.core.errors import SourceFileError
 from novomodelo_bridge.core.libs_index import HIDRELETRICA_CADASTRO_RESERVATORIO
 from novomodelo_bridge.core.pandas_utils import as_frame, is_na
@@ -116,7 +116,7 @@ def _stage_references(
         raise SourceFileError(
             f"{_file_name(case)} gives plant {code} "
             f"reference volumes but none for {year:04d}/{month:02d} "
-            f"({len(missing)} study stage(s) uncovered); the source model "
+            f"({counted(len(missing), 'study stage')} uncovered); the source model "
             "requires a value in every period",
             path=str(path),
             field=f"{HIDRELETRICA_CADASTRO_RESERVATORIO} {code}",
@@ -202,7 +202,7 @@ def _initial_storage_diagnostic(case: NewaveCase) -> Diagnostic:
         title="FPHA reference volumes at the initial storage",
         summary=(
             f"The deck {reason}, so each monthly reservoir's FPHA reference "
-            "volume is its initial storage in every stage, as in the source model."
+            "volume is its initial storage in every stage, as in NEWAVE."
         ),
     )
 

@@ -153,9 +153,6 @@ def convert_pumping_stations(
             }
         )
 
-    # Emit INFO diagnostic
-    code_by_id = {v: k for k, v in station_ids.items()}
-    exempted = sorted(case.pumping_related_codes)
     emit(
         Diagnostic(
             code="pumping-stations-converted",
@@ -163,24 +160,27 @@ def convert_pumping_stations(
             category="Pumped storage",
             title=f"Pumping stations converted ({len(stations)})",
             summary=(
-                f"Converted {len(stations)} station(s). "
-                f"Hydros {exempted} exempted from fictitious filter."
+                "The case has the listed pumping stations of "
+                "estacao-bombeamento.csv. The plants they pump from and into "
+                "stay in the case even when they are fictitious."
             ),
             table=DiagnosticTable(
-                columns=["ID", "Code", "Name", "Source", "Dest", "Bus"],
+                columns=["Code", "Name", "From plant", "To plant", "Subsystem"],
                 rows=[
                     [
-                        s["id"],
-                        code_by_id[s["id"]],
-                        s["name"],
-                        s["source_hydro_id"],
-                        s["destination_hydro_id"],
-                        s["bus_id"],
+                        int(row["codigo_estacao"]),
+                        str(row["nome_estacao"]).strip(),
+                        int(row["codigo_usina_origem"]),
+                        int(row["codigo_usina_destino"]),
+                        int(row["codigo_submercado"]),
                     ]
-                    for s in stations
+                    for _, row in inputs.stations.sort_values(
+                        "codigo_estacao"
+                    ).iterrows()
                 ],
+                justify=["right", "left", "right", "right", "right"],
             ),
-        )
+        ),
     )
 
     return {

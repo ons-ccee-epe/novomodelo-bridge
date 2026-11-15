@@ -353,7 +353,7 @@ def undated_bucket_audit(pools: Mapping[int, StageCutPool]) -> UndatedBucketAudi
 
     if audit.total_buckets:
         _LOG.info(
-            "premise P3: %d undated transit bucket(s) take no weight: %s",
+            "premise P3: undated transit buckets taking no weight: %d (%s)",
             audit.total_buckets,
             ", ".join(
                 f"pool {count.pool_id}={count.buckets}"
@@ -364,8 +364,9 @@ def undated_bucket_audit(pools: Mapping[int, StageCutPool]) -> UndatedBucketAudi
     else:
         _LOG.info("premise P3: every transit bucket is dated on this case")
     if audit.total_priced:
-        _LOG.warning(
-            "premise P3: %d non-zero coefficient(s) on undated transit buckets dropped: %s",
+        _LOG.info(
+            "premise P3: non-zero coefficients dropped on undated transit "
+            "buckets: %d (%s)",
             audit.total_priced,
             ", ".join(
                 f"pool {count.pool_id}={count.priced}"

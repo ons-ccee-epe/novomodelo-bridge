@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Iterable
 from typing import NamedTuple
 
 import pandas as pd
@@ -18,6 +19,7 @@ import pyarrow as pa
 
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
+    DiagnosticTable,
     Severity,
     emit,
     format_stage_ranges,
@@ -60,41 +62,59 @@ from novomodelo_bridge.newave.switches import DgerSwitches, switch_off_diagnosti
 _LOG = logging.getLogger(__name__)
 
 
-def _clamp_outage_pct(value: float, label: str, plant_name: str) -> float:
-    """Clamp TEIF/IP percentages into ``[0, 100]``, reporting an overshoot.
+_OUTAGE_FIELDS = (("teif", "TEIF"), ("ip", "IP"))
 
-    :func:`_operational_caps` runs once per plant from ``convert_hydros`` and
-    once per configuration from :func:`convert_per_stage_capacity_caps`, so the
-    same plant+field can be clamped more than once in one run. Emitting per
-    call and relying on ``finalize_diagnostics``' ``(code, summary)`` de-dup
-    collapses that to a single diagnostic instead of threading an accumulator
-    through every call site.
-    """
+
+def _clamp_outage_pct(value: float) -> float:
+    """A TEIF/IP percentage clamped into ``[0, 100]``;
+    :func:`_report_outage_overshoots` reports a value above 100."""
     if math.isnan(value) or value < 0.0:
         return 0.0
-    if value > 100.0:
-        emit(
-            Diagnostic(
-                code="hydro-outage-rate-clamped",
-                severity=Severity.WARNING,
-                category="Hydro bounds",
-                title="Outage rate exceeds 100%",
-                summary=(
-                    f"{label} exceeds 100% for plant {plant_name} "
-                    f"({label.lower()}={value:.2f}); clamping to 100."
-                ),
-            ),
-            logger=_LOG,
-        )
-        return 100.0
-    return value
+    return min(value, 100.0)
 
 
-def _availability(hreg: pd.Series, name: str) -> float:
+def _availability(hreg: pd.Series) -> float:
     """Joint TEIF/IP availability factor — both apply multiplicatively."""
-    teif = _clamp_outage_pct(float(hreg.get("teif", 0.0) or 0.0), "teif", name)
-    ip = _clamp_outage_pct(float(hreg.get("ip", 0.0) or 0.0), "ip", name)
+    teif, ip = (
+        _clamp_outage_pct(float(hreg.get(field, 0.0) or 0.0))
+        for field, _label in _OUTAGE_FIELDS
+    )
     return ((100.0 - teif) / 100.0) * ((100.0 - ip) / 100.0)
+
+
+def _report_outage_overshoots(cadastro: pd.DataFrame, codes: Iterable[int]) -> None:
+    """Emit ``hydro-outage-rate-clamped`` over the TEIF and IP of *codes* in
+    *cadastro* that exceed 100%, one row per plant and field."""
+    rows: list[list[object]] = []
+    for code in codes:
+        hreg = cadastro.loc[code]
+        for field, label in _OUTAGE_FIELDS:
+            value = float(hreg.get(field, 0.0) or 0.0)
+            if value > 100.0:
+                name = str(hreg.get("nome_usina", "")).strip()
+                rows.append([code, name, label, round(value, 2)])
+    if not rows:
+        return
+    emit(
+        Diagnostic(
+            code="hydro-outage-rate-clamped",
+            severity=Severity.WARNING,
+            category="Hydro bounds",
+            title=f"Outage rates above 100% ({len(rows)})",
+            summary=(
+                "The listed hidr.dat outage rates, TEIF or IP, exceed 100%, "
+                "so the conversion takes them as 100% and the plant has no "
+                "available capacity."
+            ),
+            table=DiagnosticTable(
+                columns=["Code", "Name", "Rate", "Declared (%)"],
+                rows=rows,
+                justify=["right", "left", "left", "right"],
+            ),
+            remediation="Give the listed plants a TEIF and IP of at most 100% in hidr.dat.",
+        ),
+        logger=_LOG,
+    )
 
 
 def _operating_head(
@@ -197,7 +217,6 @@ def _turbine_limit_gap(
 
 def _operational_caps(
     hreg: pd.Series,
-    name: str,
     *,
     canal_fuga_override: float | None = None,
     cmont_override: float | None = None,
@@ -228,7 +247,7 @@ def _operational_caps(
         )
         for i in range(1, int(hreg["numero_conjuntos_maquinas"]) + 1)
     ]
-    availability = _availability(hreg, name)
+    availability = _availability(hreg)
     rated_flow = sum(n * q for n, q, _p in sets)
     rated_power = sum(n * p for n, _q, p in sets)
     available_power = rated_power * availability
@@ -257,9 +276,7 @@ def _operational_caps(
     return engolimento * availability, available_power
 
 
-def _reduced_caps(
-    hreg: pd.Series, online: dict[int, int], name: str
-) -> tuple[float, float]:
+def _reduced_caps(hreg: pd.Series, online: dict[int, int]) -> tuple[float, float]:
     """Return ``(max_turbined, max_generation)`` over the online machine subset.
 
     Computes the :func:`_operational_caps` of a filling plant at a ramp stage
@@ -276,7 +293,7 @@ def _reduced_caps(
     hreg_copy = hreg_with_machines(
         hreg, {c: online.get(c, 0) for c in range(1, n_sets + 1)}
     )
-    return _operational_caps(hreg_copy, name)
+    return _operational_caps(hreg_copy)
 
 
 def convert_per_stage_capacity_caps(
@@ -334,7 +351,7 @@ def convert_per_stage_capacity_caps(
             if key not in caps:
                 rated = hreg if config is None else config.hreg_at(hreg, stage_id)
                 caps[key] = _operational_caps(
-                    rated, name, canal_fuga_override=cfuga, cmont_override=cmont
+                    rated, canal_fuga_override=cfuga, cmont_override=cmont
                 )
                 gaps[key] = _turbine_limit_gap(
                     rated, canal_fuga_override=cfuga, cmont_override=cmont
@@ -782,7 +799,6 @@ def _filling_ramp_rows(
         if code not in cadastro.index:
             continue
         hreg = cadastro.loc[code]
-        name = str(hreg.get("nome_usina", "")).strip() or str(code)
 
         exph_rows = exph_df.loc[exph_df["codigo_usina"] == code]
         fill_row = exph_rows.loc[exph_rows["data_inicio_enchimento"].notna()].iloc[0]
@@ -809,7 +825,7 @@ def _filling_ramp_rows(
         full_online_sid = max(max(usid, entry_sid) for _c, usid in unit_rows)
         for s in range(min(full_online_sid, total_stages)):
             online = online_machines(unit_rows, entry_sid, s)
-            mt, mg = _reduced_caps(hreg, online, name)
+            mt, mg = _reduced_caps(hreg, online)
             rows.append(
                 _BoundRow(
                     hydro_id,

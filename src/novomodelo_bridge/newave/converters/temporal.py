@@ -16,6 +16,12 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from inewave.newave import Dger
 
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.penalties import INFLOW_NON_NEGATIVITY_METHOD
 from novomodelo_bridge.core.run_config import SIMULATION_CUT_SET
 from novomodelo_bridge.core.season_calendar import (
@@ -72,7 +78,8 @@ def block_fractions(case: NewaveCase) -> list[tuple[float, ...]]:
                 last_year = cal_year
 
     fractions: list[tuple[float, ...]] = []
-    for stage_date in stage_dates_for(case.horizon):
+    missing: list[list[object]] = []
+    for stage_id, stage_date in enumerate(stage_dates_for(case.horizon)):
         year, month = stage_date.year, stage_date.month
         stage: list[float] = []
         for pat_idx in range(1, num_patamares + 1):
@@ -81,16 +88,35 @@ def block_fractions(case: NewaveCase) -> list[tuple[float, ...]]:
                 fraction = lookup.get((last_year, month, pat_idx))
             if fraction is None:
                 fraction = 1.0 / num_patamares
-                logger.warning(
-                    "No patamar duration for year %d, calendar month %d, "
-                    "patamar %d; using equal fraction %.4f",
-                    year,
-                    month,
-                    pat_idx,
-                    fraction,
+                missing.append(
+                    [stage_id, f"{year}-{month:02d}", pat_idx - 1, round(fraction, 4)]
                 )
             stage.append(fraction)
         fractions.append(tuple(stage))
+    if missing:
+        emit(
+            Diagnostic(
+                code="patamar-duration-missing",
+                severity=Severity.WARNING,
+                category="Load blocks",
+                title=f"Load blocks without a duration ({len(missing)})",
+                summary=(
+                    "patamar.dat gives no duration for the listed load blocks, "
+                    "so the case gives each an equal share of its month, and "
+                    "the hours that weight their load and generation differ "
+                    "from NEWAVE's."
+                ),
+                table=DiagnosticTable(
+                    columns=["Stage", "Month", "Block", "Share used"],
+                    rows=missing,
+                    caption="Stage and block ids are 0-based.",
+                ),
+                remediation=(
+                    "Give each listed month and block its duration in patamar.dat."
+                ),
+            ),
+            logger=logger,
+        )
     return fractions
 
 
@@ -208,10 +234,20 @@ def _resolve_risk_measure_policy(
             lambda_override=_cvar_percent_overrides(df_lambda, const_lambda),
         )
     if dger_cvar in (1, 2) and case.cvar is None:
-        logger.warning(
-            "dger.cvar=%d requires cvar.dat but file is missing; "
-            "falling back to expectation for all stages.",
-            dger_cvar,
+        emit(
+            Diagnostic(
+                code="cvar-file-absent",
+                severity=Severity.WARNING,
+                category="Risk",
+                title="CVaR switched on without cvar.dat",
+                summary=(
+                    "dger.dat switches CVaR on, but the deck has no cvar.dat "
+                    "giving its α and λ, so the case is risk-neutral on every "
+                    "stage and its policy differs from NEWAVE's."
+                ),
+                remediation="Add cvar.dat to the deck, or switch CVaR off in dger.dat.",
+            ),
+            logger=logger,
         )
         return _RiskMeasurePolicy(deterministic, 0)
     return _RiskMeasurePolicy(deterministic, dger_cvar)
@@ -472,9 +508,24 @@ def _historical_years_from_shist(
     if shist.varredura == 0:
         years_raw = shist.anos_inicio_simulacoes
         if not years_raw:
-            logger.warning(
-                "shist.dat has varredura=0 but anos_inicio_simulacoes is empty;"
-                " falling back to a single-year list at ano_inicio_estudo - 1."
+            emit(
+                Diagnostic(
+                    code="shist-start-years-empty",
+                    severity=Severity.WARNING,
+                    category="Inflow scenarios",
+                    title="Historical simulation without start years",
+                    summary=(
+                        "shist.dat selects a list of start years for the "
+                        "historical simulation but lists none, so the case "
+                        f"simulates the one sequence starting in {ano_inicio - 1}, "
+                        "and its simulated statistics differ from NEWAVE's."
+                    ),
+                    remediation=(
+                        "List the start years in shist.dat, or select a range "
+                        "of years instead."
+                    ),
+                ),
+                logger=logger,
             )
             return [ano_inicio - 1]
         return [int(y) for y in years_raw]
@@ -485,12 +536,22 @@ def _historical_years_from_shist(
     range_from = int(shist.ano_inicio_varredura or (dger.ano_inicial_historico or 1931))
     range_to = ano_inicio - horizon_years
     if range_to < range_from:
-        logger.warning(
-            "shist.dat varredura range collapses: ano_inicio_varredura=%d but"
-            " latest valid year=%d (horizon=%d years); clamping range_to=range_from.",
-            range_from,
-            range_to,
-            horizon_years,
+        emit(
+            Diagnostic(
+                code="shist-range-collapsed",
+                severity=Severity.WARNING,
+                category="Inflow scenarios",
+                title="Historical simulation range starts too late",
+                summary=(
+                    f"shist.dat starts the historical range in {range_from}, but "
+                    f"a {horizon_years}-year sequence must end before the study "
+                    f"starts, so the latest start year is {range_to}. The case "
+                    f"simulates the one sequence starting in {range_from}, and "
+                    "its simulated statistics differ from NEWAVE's."
+                ),
+                remediation=f"Start the shist.dat range in {range_to} or earlier.",
+            ),
+            logger=logger,
         )
         range_to = range_from
     return {"from": range_from, "to": range_to}
@@ -520,17 +581,35 @@ def _order_selection(consideracao_anual: int | None) -> str | None:
     if consideracao_anual == 0:
         return "pacf"
     if consideracao_anual not in (1, 2, 3):
-        logger.warning(
-            "Unexpected consideracao_media_anual_afluencias=%d; "
-            "treating as PAR(p)-A (pacf_annual).",
-            consideracao_anual,
+        emit(
+            Diagnostic(
+                code="par-annual-option-unknown",
+                severity=Severity.WARNING,
+                category="Inflow scenarios",
+                title="Unknown annual-mean option of the inflow model",
+                summary=(
+                    "dger.dat sets the option for the annual mean in the inflow "
+                    f"model to {consideracao_anual}, which NEWAVE does not "
+                    "define, so the case fits the PAR(p)-A model of option 3."
+                ),
+                remediation="Set the annual-mean option of dger.dat to 0, 1, 2 or 3.",
+            ),
+            logger=logger,
         )
     elif consideracao_anual in (1, 2):
-        logger.warning(
-            "consideracao_media_anual_afluencias=%d (approximate PAR(p)-A) "
-            "mapped to Novomodelo 'pacf_annual', which implements only the exact "
-            "12-axis variant (NEWAVE option 3).",
-            consideracao_anual,
+        emit(
+            Diagnostic(
+                code="par-annual-variant-approximated",
+                severity=Severity.WARNING,
+                category="Inflow scenarios",
+                title="PAR(p)-A variant fitted as option 3",
+                summary=(
+                    f"dger.dat selects PAR(p)-A option {consideracao_anual}, "
+                    "but Novomodelo fits only option 3, the exact PAR(p)-A, so "
+                    "the inflow model and its scenarios differ from NEWAVE's."
+                ),
+            ),
+            logger=logger,
         )
     return "pacf_annual"
 
@@ -603,11 +682,20 @@ def _cut_selection(dger: Dger) -> dict:
             "lookback_iterations": 2,
         }
     if dger.janela_de_cortes == 1:
-        logger.warning(
-            "dger.dat turns on the cut window (janela_de_cortes=1), which "
-            "discards the cuts not used in the most recent iterations. Novomodelo has "
-            "no cut window: it keeps every cut, the exact policy the window "
-            "approximates, so the two models' policies can differ."
+        emit(
+            Diagnostic(
+                code="cut-window-not-converted",
+                severity=Severity.WARNING,
+                category="Training",
+                title="Cut window not converted",
+                summary=(
+                    "dger.dat turns on the cut window, which discards the cuts "
+                    "not used in the most recent iterations. Novomodelo keeps "
+                    "every cut, the exact policy the window approximates, so "
+                    "the two models' policies can differ."
+                ),
+            ),
+            logger=logger,
         )
     return cut_selection
 

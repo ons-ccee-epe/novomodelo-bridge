@@ -68,7 +68,6 @@ def _equivalent_productivity_mw_per_m3s(
         tipo_perda=tipo_perda,
         perdas=perdas,
         reference_volume_hm3=reference_volume_hm3,
-        plant_name=str(effective.base.loc[code, "nome_usina"]).strip(),
     )
 
 

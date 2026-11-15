@@ -36,6 +36,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    format_stage_ranges,
 )
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import relative_tolerance
@@ -227,7 +228,7 @@ def convert_ncs_factors(
     """
     calendar = case.calendar
     entries: list[dict] = []
-    clamped = 0
+    clamped_stages: dict[str, list[int]] = {}
     for s in _all_series(case.dadger, id_map, calendar, case.renovaveis):
         for stage in calendar:
             blocks = s.per_stage_blocks[stage.index]
@@ -245,12 +246,9 @@ def convert_ncs_factors(
                     f"the hours invariant (Σ f·h = {weighted}, expected "
                     f"{stage.total_hours})"
                 )
-            factors = []
-            for factor in raw_factors:
-                if factor <= 0.0:
-                    factor = _MIN_FACTOR
-                    clamped += 1
-                factors.append(factor)
+            factors = [max(factor, _MIN_FACTOR) for factor in raw_factors]
+            if any(factor <= 0.0 for factor in raw_factors):
+                clamped_stages.setdefault(s.name, []).append(stage.index)
             entries.append(
                 {
                     "ncs_id": s.ncs_id,
@@ -261,20 +259,38 @@ def convert_ncs_factors(
                     ],
                 }
             )
-    if clamped:
-        _LOG.warning(
-            "%d zero NCS block factor(s) clamped to %.0e (schema requires "
-            "factors > 0; must-run pinning keeps the availability "
-            "numerically zero)",
-            clamped,
-            _MIN_FACTOR,
-        )
+    if clamped_stages:
+        emit(_zero_factor_diagnostic(clamped_stages), logger=_LOG)
     return {
         "$schema": novomodelo_schemas.schema_url_for(
             "scenarios/non_controllable_factors.json"
         ),
         "non_controllable_factors": entries,
     }
+
+
+def _zero_factor_diagnostic(clamped_stages: dict[str, list[int]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-ncs-zero-block-factor",
+        severity=Severity.INFO,
+        category="Renewable parks",
+        title=(f"Non-controllable sources idle in some blocks ({len(clamped_stages)})"),
+        summary=(
+            "The listed sources generate nothing in some blocks of a stage "
+            "with positive generation. The case requires every block factor to "
+            f"be positive, so the conversion uses a factor of {_MIN_FACTOR:.0e} "
+            "in those blocks, which keeps their generation there negligibly "
+            "above DECOMP's zero."
+        ),
+        table=DiagnosticTable(
+            columns=["Name", "Stages"],
+            rows=[
+                [name, format_stage_ranges(stages)]
+                for name, stages in clamped_stages.items()
+            ],
+            caption="Stage ids are 0-based.",
+        ),
+    )
 
 
 _PEE_GENERATION_KEY = ["codigo_pee", "estagio", "patamar"]
@@ -290,7 +306,7 @@ def _non_empty_frame(accessor_result: object) -> pd.DataFrame | None:
 def _emit_repeated_pee_generation(dropped: pd.DataFrame) -> None:
     keys = sorted(
         {
-            (int(r["codigo_pee"]), int(r["estagio"]), int(r["patamar"]))
+            (int(r["codigo_pee"]), int(r["estagio"]) - 1, int(r["patamar"]) - 1)
             for _, r in dropped.iterrows()
         }
     )
@@ -299,18 +315,21 @@ def _emit_repeated_pee_generation(dropped: pd.DataFrame) -> None:
             code="decomp-pee-generation-repeated",
             severity=Severity.WARNING,
             category="Renewable parks",
-            title="Repeated PEE-GER-PER-PAT generation rows",
+            title=f"Repeated PEE-GER-PER-PAT generation rows ({len(keys)})",
             summary=(
-                f"{len(dropped)} PEE-GER-PER-PAT row(s) repeat a (park, stage, "
-                "load block) already declared; the last row of each is used."
+                "The listed renewable parks have more than one PEE-GER-PER-PAT "
+                "row for the same stage and patamar. The conversion keeps the "
+                "last of them, so the park generates the last declared value."
             ),
             table=DiagnosticTable(
-                columns=["Park", "Stage", "Load block"],
+                columns=["Code", "Stage", "Block"],
                 rows=[list(key) for key in keys],
+                justify=["right", "right", "right"],
+                caption="Stage and block ids are 0-based.",
             ),
             remediation=(
-                "Check the renewable generation file; each park should declare "
-                "one value per stage and load block."
+                "Keep one PEE-GER-PER-PAT row per park, stage and patamar in "
+                "the renewable file."
             ),
         ),
         logger=_LOG,
@@ -486,27 +505,24 @@ def _pee_series(
         values.setdefault(key, {})[int(row["cenario"])] = float(row["geracao"])
 
     per_park: dict[int, dict[int, list[float]]] = {}
-    for (code, stage_index, block), by_scenario in values.items():
+    spread_rows: list[list[object]] = []
+    for (code, stage_index, block), by_scenario in sorted(values.items()):
         scenario_values = list(by_scenario.values())
-        # DECOMP renewables are deterministic: every scenario carries the same
-        # generation for a (park, stage, block). A per-scenario spread is a deck
-        # typo (e.g. one scenario's value fat-fingered), not real stochasticity —
-        # so recover the majority (modal) value, robust to a single stray entry,
-        # and warn rather than crash or trust the outlier (the max).
+        # The modal value is robust to a single mistyped scenario, where the
+        # maximum would trust the outlier.
         representative = Counter(scenario_values).most_common(1)[0][0]
         spread = max(scenario_values) - min(scenario_values)
         if spread > relative_tolerance(representative):
-            _LOG.warning(
-                "renewable park %d stage %d block %d: generation is not identical "
-                "across %d scenarios (%.6g..%.6g) — DECOMP renewables are "
-                "deterministic, so this is a deck typo; using the modal value %.6g",
-                code,
-                stage_index + 1,
-                block + 1,
-                len(scenario_values),
-                min(scenario_values),
-                max(scenario_values),
-                representative,
+            spread_rows.append(
+                [
+                    code,
+                    names.get(code, ""),
+                    stage_index,
+                    block,
+                    min(scenario_values),
+                    max(scenario_values),
+                    representative,
+                ]
             )
         stage_blocks = per_park.setdefault(code, {}).setdefault(
             stage_index, [0.0] * len(calendar[stage_index].block_hours)
@@ -542,7 +558,43 @@ def _pee_series(
         )
     if without_state:
         _emit_pee_without_operating_state(without_state)
+    if spread_rows:
+        emit(_generation_spread_diagnostic(spread_rows), logger=_LOG)
     return series
+
+
+def _generation_spread_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-pee-generation-spread",
+        severity=Severity.WARNING,
+        category="Renewable parks",
+        title=f"Renewable generation that differs between scenarios ({len(rows)})",
+        summary=(
+            "The listed parks declare a different PEE-GER-PER-PAT-CEN "
+            "generation for some scenarios of a stage and block, but the case "
+            "gives each stage and block one value, so the conversion uses the "
+            "value most scenarios share, and the generation differs from "
+            "DECOMP's in the other scenarios."
+        ),
+        table=DiagnosticTable(
+            columns=[
+                "Code",
+                "Name",
+                "Stage",
+                "Block",
+                "Min (MW)",
+                "Max (MW)",
+                "Used (MW)",
+            ],
+            rows=rows,
+            justify=["right", "left", "right", "right", "right", "right", "right"],
+            caption="Stage and block ids are 0-based.",
+        ),
+        remediation=(
+            "Give every scenario of each listed stage and block the same "
+            "PEE-GER-PER-PAT-CEN generation in the renewable file."
+        ),
+    )
 
 
 _CURTAILABLE_OPERATING_STATE = "centralizado"
@@ -584,16 +636,16 @@ def _emit_pee_without_operating_state(codes: Sequence[int]) -> None:
             code="decomp-pee-operating-state-missing",
             severity=Severity.WARNING,
             category="Renewable parks",
-            title="Renewable parks without an operating state",
+            title=f"Renewable parks without an operating state ({len(codes)})",
             summary=(
-                f"{len(codes)} renewable park(s) have generation but no "
-                "PEE-CONFIG-PER operating state; they are converted without "
-                "curtailment."
+                "The listed renewable parks have generation but no "
+                "PEE-CONFIG-PER operating state. The conversion treats each as "
+                "not curtailable, so it always generates its declared value."
             ),
-            table=DiagnosticTable(columns=["Park"], rows=[[code] for code in codes]),
+            table=DiagnosticTable(columns=["Code"], rows=[[code] for code in codes]),
             remediation=(
-                "Declare the park's operating state in the renewable file if "
-                "its generation may be curtailed."
+                "Declare a PEE-CONFIG-PER operating state in the renewable file "
+                "for each listed park whose generation may be curtailed."
             ),
         ),
         logger=_LOG,

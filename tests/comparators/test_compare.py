@@ -23,6 +23,7 @@ from novomodelo_bridge.comparators.model import (
     ResultComparison,
     build_results_summary,
 )
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.tolerances import is_effectively_infinite
 
 if TYPE_CHECKING:
@@ -808,25 +809,6 @@ class TestCompareHydrosProductivity:
         assert prod == []  # turbined == 0 on both sides → no productivity row
 
 
-class TestReconstructedCost:
-    """Reconstruct the source model live immediate cost from MEDIAS × our penalties."""
-
-    def test_read_converted_penalties(self, tmp_path: Path) -> None:
-        from novomodelo_bridge.novomodelo.readers import read_converted_penalties
-
-        (tmp_path / "penalties.json").write_text(
-            '{"hydro": {"spillage_cost": 0.5}}', encoding="utf-8"
-        )
-        out = tmp_path / "output"
-        out.mkdir()
-        # Found at the case root (parent of output).
-        assert read_converted_penalties(out)["hydro"]["spillage_cost"] == 0.5
-        # Absent (neither dir nor its parent has penalties.json) → empty dict.
-        isolated = tmp_path / "sub"
-        isolated.mkdir()
-        assert read_converted_penalties(isolated / "output") == {}
-
-
 class TestOverviewCostCharts:
     """Overview thermal-cost (CTERM) and other-costs (COPER − CTERM) charts."""
 
@@ -1478,8 +1460,7 @@ class TestCompareResultsReturnsDataset:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The tab's accumulated productivities are computed with the case's
-        fictitious set and reach the tab; a failure there is swallowed into a
-        warning, so only the delivered values show it."""
+        fictitious set and reach the tab."""
         import pandas as pd
 
         from novomodelo_bridge.comparators.newave.results import compare_results
@@ -1538,6 +1519,45 @@ class TestCompareResultsReturnsDataset:
 
         assert seen["fictitious"] == frozenset({7})
         assert seen["accumulated"] == {1: 2.5}
+
+    def test_accumulated_productivities_that_fail_are_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import pandas as pd
+
+        from novomodelo_bridge.comparators.newave.results import compare_results
+
+        self._patch_all_readers(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            "novomodelo_bridge.newave.converters.hydro.read_cadastro",
+            lambda _case: pd.DataFrame({"produtibilidade_especifica": [0.01]}),
+        )
+
+        def _fail(*_args: object, **_kwargs: object) -> dict[int, float]:
+            raise KeyError("codigo_usina")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.newave.converters.constraints."
+            "compute_accumulated_integrated_productivities",
+            _fail,
+        )
+        case = MagicMock()
+        case.files.directory = tmp_path
+
+        with dx.collect() as collected:
+            compare_results(
+                case=case,
+                id_map=MagicMock(),
+                alignment=MagicMock(),
+                novomodelo_output_dir=tmp_path,
+                tolerance=0.05,
+            )
+
+        [diag] = [
+            d for d in collected if d.code == "productivity-accumulated-unavailable"
+        ]
+        assert diag.severity is dx.Severity.WARNING
+        assert diag.notes == ["Reason: 'codigo_usina'"]
 
 
 class TestProductivityDetail:
@@ -2137,9 +2157,7 @@ class TestEvaluateLhsNovomodelo:
         # Scenario 0: (40·100 + 80·300)/400 = 70; scenario 1: 90.
         assert result["lhs_value"].to_list() == [pytest.approx(80.0)]
 
-    def test_case_without_block_hours_is_not_compared(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_case_without_block_hours_is_not_compared(self) -> None:
         from novomodelo_bridge.comparators.constraints import evaluate_lhs_novomodelo
 
         with (
@@ -2147,12 +2165,15 @@ class TestEvaluateLhsNovomodelo:
                 "novomodelo_bridge.comparators.constraints.scan_simulation_entity",
                 return_value=None,
             ),
-            caplog.at_level("WARNING"),
+            dx.collect() as collected,
         ):
             result = evaluate_lhs_novomodelo(self._storage_constraint(), Path("/out"))
 
         assert result.is_empty()
-        assert "No block hours" in caplog.text
+        [diag] = collected
+        assert diag.code == "report-file-unreadable"
+        assert diag.title == "stages.json could not be read"
+        assert "Reason: no stage with block hours" in diag.notes
 
 
 # -------------------------------------------------------------------
