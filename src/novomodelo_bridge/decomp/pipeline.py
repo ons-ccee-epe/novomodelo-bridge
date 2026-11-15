@@ -543,58 +543,6 @@ def _next_operated(parents: Mapping[int, Sequence[int]]) -> dict[int, int]:
     return {child: parent for parent, children in parents.items() for child in children}
 
 
-def _topology_varies_diagnostic(
-    effective: cadastro_conv.EffectiveCadastro,
-) -> dx.Diagnostic | None:
-    """The ``decomp-ac-topology-varies`` WARNING, or ``None`` when no ``AC
-    NUMJUS``, ``NUMPOS`` or ``JUSENA`` register changes value between stages.
-
-    The case carries one cascade for the whole horizon, so every cascade walk
-    reads these registers at the first stage.
-    """
-    registers: tuple[tuple[str, Mapping[int, Sequence[int | None]]], ...] = (
-        ("AC NUMJUS", effective.downstream_links),
-        ("AC NUMPOS", effective.inflow_gauges),
-        ("AC JUSENA", effective.energy_links),
-    )
-    rows: list[list[object]] = []
-    for register, series_by_code in registers:
-        for code in sorted(series_by_code):
-            series = series_by_code[code]
-            changed = [
-                stage for stage, value in enumerate(series) if value != series[0]
-            ]
-            if not changed:
-                continue
-            name = (
-                str(effective.base.loc[code, "nome_usina"]).strip()
-                if code in effective.base.index
-                else ""
-            )
-            used = "none" if series[0] is None else series[0]
-            rows.append([code, name, register, used, dx.format_stage_ranges(changed)])
-    if not rows:
-        return None
-    return dx.Diagnostic(
-        code="decomp-ac-topology-varies",
-        severity=dx.Severity.WARNING,
-        category="Cadastro overrides",
-        title=f"Cascade registers that change between stages ({len(rows)})",
-        summary=(
-            "The listed AC registers take a different value on later stages, "
-            "but the converted case has one cascade for the whole horizon and "
-            "uses the first stage's value throughout, so on the listed stages "
-            "the water, inflow or stored-energy routing differs from DECOMP's."
-        ),
-        table=dx.DiagnosticTable(
-            columns=["Code", "Name", "Register", "Used", "Differs on stages"],
-            rows=rows,
-            justify=["right", "left", "left", "right", "left"],
-            caption="Stage ids are 0-based.",
-        ),
-    )
-
-
 #: The withdrawal axis's own side-table schema -- mirrors
 #: :func:`~novomodelo_bridge.decomp.converters.bounds.convert_irrigation_withdrawal`'s shape
 #: plus the ``block_id`` column :func:`_fan_resolved_rows` needs as a fan-out
@@ -983,7 +931,7 @@ def _water_bucket_stages(
 def _discover(src: Path) -> DecompCaseArtifacts:
     """The ``step("Discovering deck")`` phase: parse *src* via one
     :class:`DecompCase`, resolve the cadastro override view (emitting its
-    overrides-applied/topology-relinked diagnostics), and compute the scalars
+    AC-register diagnostics), and compute the scalars
     every later phase needs -- the Itaipu-operated flag, the terminal fan
     probabilities, and the annual discount rate.
     """
@@ -1019,6 +967,9 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     )
     if cadastro_report.applied or cadastro_report.out_of_horizon:
         dx.emit(_cadastro_overrides_diagnostic(cadastro_report), logger=_LOG)
+    deferred_diagnostic = cadastro_conv.ac_overrides_deferred_diagnostic(dadger)
+    if deferred_diagnostic is not None:
+        dx.emit(deferred_diagnostic, logger=_LOG)
     # The topology/gauge relink is its own diagnostic
     # (not folded into the summary above) so an automated consumer can key
     # on "cadastro-topology-relinked" specifically — the resolved
@@ -1026,7 +977,7 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     relink_diagnostic = _topology_relink_diagnostic(effective, id_map)
     if relink_diagnostic is not None:
         dx.emit(relink_diagnostic, logger=_LOG)
-    varies_diagnostic = _topology_varies_diagnostic(effective)
+    varies_diagnostic = cadastro_conv.topology_varies_diagnostic(effective)
     if varies_diagnostic is not None:
         dx.emit(varies_diagnostic, logger=_LOG)
     fan_probabilities = scenarios_conv.terminal_fan_probabilities(vazoes, calendar)

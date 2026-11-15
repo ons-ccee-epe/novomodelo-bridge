@@ -110,11 +110,11 @@ _NON_SCALAR_AC_CLASS_BY_PARAM: dict[str, type] = {
 
 
 #: Every AC register the resolver ingests AND applies to a live consumer —
-#: the single source of truth `check decomp` diffs the idecomp AC universe
-#: against. Derived from `_SCALAR_AC_SPECS` and
+#: the single source of truth `findings.DEFERRED_AC_CLASSES` diffs the idecomp
+#: AC universe against. Derived from `_SCALAR_AC_SPECS` and
 #: `_NON_SCALAR_AC_CLASS_BY_PARAM`; a new non-scalar reader wired into
 #: `build_effective_cadastro` adds its class to that dict, or `check decomp`
-#: misreports it as not converted.
+#: and `convert decomp` misreport it as not converted.
 APPLIED_AC_CLASSES: frozenset[type] = frozenset(
     spec.ac_class for spec in _SCALAR_AC_SPECS
 ) | frozenset(_NON_SCALAR_AC_CLASS_BY_PARAM.values())

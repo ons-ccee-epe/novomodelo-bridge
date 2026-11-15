@@ -173,9 +173,9 @@ def _downstream_operated(
     NUMJUS``) cascade at *stage_index*, or ``None`` at the sink.
 
     Every caller reads the first stage: the case has one cascade for the
-    whole horizon, and the pipeline reports the plants whose ``AC NUMJUS``
-    changes it on later stages
-    (:func:`novomodelo_bridge.decomp.pipeline._topology_varies_diagnostic`).
+    whole horizon, and the plants whose ``AC NUMJUS`` changes it on later
+    stages are reported
+    (:func:`novomodelo_bridge.decomp.converters.cadastro.topology_varies_diagnostic`).
     """
     return _cascade_walk(effective, code, operated, stage_index)[0]
 

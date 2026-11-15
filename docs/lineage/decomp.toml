@@ -3121,37 +3121,37 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "AC"
   item = "COFEVA"
   status = "deferred"
-  note = "Alteração do coeficiente de evaporação mensal. Lido pelo `check decomp` (diagnóstico `decomp-ac-overrides-deferred`), sem consumidor no conversor: a evaporação usa os coeficientes mensais de `hidr.dat`. Converter exige sobrepor o coeficiente do mês na tabela efetiva antes de emitir os coeficientes de evaporação."
+  note = "Alteração do coeficiente de evaporação mensal. Avisado pelo `check decomp` e pelo `convert decomp` (diagnóstico `decomp-ac-overrides-deferred`), sem consumidor no conversor: a evaporação usa os coeficientes mensais de `hidr.dat`. Converter exige sobrepor o coeficiente do mês na tabela efetiva antes de emitir os coeficientes de evaporação."
 
   [[source.item]]
   register = "AC"
   item = "COTARE"
   status = "deferred"
-  note = "Alteração de um coeficiente do polinômio cota-área. Lido pelo `check decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA."
+  note = "Alteração de um coeficiente do polinômio cota-área. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA."
 
   [[source.item]]
   register = "AC"
   item = "COTVAZ"
   status = "deferred"
-  note = "Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Lido pelo `check decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina."
+  note = "Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina."
 
   [[source.item]]
   register = "AC"
   item = "NCHAVE"
   status = "deferred"
-  note = "Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Lido pelo `check decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`."
+  note = "Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`."
 
   [[source.item]]
   register = "AC"
   item = "TIPERH"
   status = "deferred"
-  note = "Alteração do tipo de perdas hidráulicas. Lido pelo `check decomp`, sem consumidor: o conversor usa o `tipo_perda` de `hidr.dat`. Converter exige sobrepor o tipo na tabela efetiva antes de calcular perdas e produtibilidade."
+  note = "Alteração do tipo de perdas hidráulicas. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: o conversor usa o `tipo_perda` de `hidr.dat`. Converter exige sobrepor o tipo na tabela efetiva antes de calcular perdas e produtibilidade."
 
   [[source.item]]
   register = "AC"
   item = "VERTJU"
   status = "deferred"
-  note = "Consideração da influência do vertimento no canal de fuga. Lido pelo `check decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante, e o diagnóstico `fpha-spill-outside-tailrace` lê o flag do `hidr.dat` sem esta alteração."
+  note = "Consideração da influência do vertimento no canal de fuga. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: o Novomodelo não modela essa influência na cota de jusante, e o diagnóstico `fpha-spill-outside-tailrace` lê o flag do `hidr.dat` sem esta alteração."
 
   [[source.item]]
   register = "CE"

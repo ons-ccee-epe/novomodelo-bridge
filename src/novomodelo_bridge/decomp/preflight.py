@@ -17,12 +17,8 @@ mirror, never a substitute.
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
-
-import pandas as pd
-from idecomp.decomp.modelos import dadger as _dadger_models
 
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
@@ -42,8 +38,14 @@ from novomodelo_bridge.core.preflight import (
 from novomodelo_bridge.decomp import constraint_registers
 from novomodelo_bridge.decomp.converters.cadastro import (
     AC_REGISTER_BY_PARAM,
+    ALL_AC_CLASSES,
     APPLIED_AC_CLASSES,
+    DEFERRED_AC_CLASSES,
     AcRegisters,
+    ac_overrides_deferred_diagnostic,
+    ac_register_table,
+    ac_registers_present,
+    topology_varies_diagnostic,
 )
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
@@ -52,27 +54,17 @@ from novomodelo_bridge.decomp.files import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from idecomp.decomp import Dadger, Vazoes
 
     from novomodelo_bridge.decomp.case import DecompCase
-    from novomodelo_bridge.decomp.converters.cadastro import CadastroResolutionReport
+    from novomodelo_bridge.decomp.converters.cadastro import (
+        CadastroResolutionReport,
+        EffectiveCadastro,
+    )
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _CONTEXT = "Preflight"
-
-#: Every idecomp `AC` register class, discovered by reflection so a future
-#: idecomp release adding one lands automatically in the deferred bucket
-#: (the conservative default) with no edit here. idecomp is a hard
-#: dependency (unlike the optional `novomodelo` wheel), so this module-scope
-#: import/reflection is safe in every CI tier.
-_ALL_AC_CLASSES: frozenset[type] = frozenset(
-    obj
-    for name, obj in vars(_dadger_models).items()
-    if name.startswith("AC") and inspect.isclass(obj)
-)
 
 #: Per-stage scenario probabilities must sum to 1 within this absolute
 #: tolerance — the deck writes them rounded to four decimals.
@@ -90,13 +82,6 @@ def _verdict(
     if any(diag.severity is Severity.WARNING for diag in diagnostics):
         return PreflightVerdict.WARNINGS
     return PreflightVerdict.OK
-
-
-def _register_table(classes: Sequence[type]) -> DiagnosticTable:
-    return DiagnosticTable(
-        columns=["AC register"],
-        rows=[[cls.__name__.removeprefix("AC")] for cls in classes],
-    )
 
 
 _CALENDAR_LABEL = "Operative calendar (operative weeks, then whole months)"
@@ -220,55 +205,25 @@ class _SpecialConstraintRegisters(
     """The deck accessors the special-constraint coverage check reads."""
 
 
-def _ac_present(dadger: AcRegisters, classes: frozenset[type]) -> list[type]:
-    """The subset of *classes* present in *dadger*'s deck, name-sorted.
-
-    A class is present iff its ``AC`` frame is a non-empty
-    ``pd.DataFrame`` — mirrors the resolver's own guard
-    (:func:`novomodelo_bridge.decomp.converters.cadastro.overrides.
-    _read_scalar_overrides` and its siblings), so a ``None``/empty frame
-    (an unregistered mnemonic, or an absent one) contributes nothing.
-    """
-    present = [
-        cls
-        for cls in classes
-        if isinstance(
-            frame := dadger.ac(codigo_usina=None, modificacao=cls, df=True),
-            pd.DataFrame,
-        )
-        and not frame.empty
-    ]
-    return sorted(present, key=lambda cls: cls.__name__)
-
-
 def _ac_coverage(
-    dadger: AcRegisters, report: CadastroResolutionReport
+    dadger: AcRegisters,
+    effective: EffectiveCadastro,
+    report: CadastroResolutionReport,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
-    """Classify every idecomp ``AC`` class into applied/deferred and report
-    which of those buckets the deck actually exercises.
+    """Report which applied and which unconverted ``AC`` registers the deck
+    declares, the ones taking effect after the horizon, and the cascade
+    registers that change between stages.
 
-    A pure function of *dadger* (for the per-class deck-presence scan) and
-    *report* (for ``out_of_horizon``) — no file I/O, no calendar, no
-    ``hidr``. The two buckets are computed once by set arithmetic against
-    the module-level :data:`_ALL_AC_CLASSES` reflection and the resolver's
-    own :data:`~novomodelo_bridge.decomp.converters.cadastro.overrides.
-    APPLIED_AC_CLASSES` registry
-    — enumerate-and-diff, never a hand-maintained list, so a newly-applied
-    family automatically drops off the deferred bucket and a new idecomp
-    class automatically lands in it.
-
-    Always returns exactly one passing summary :class:`CheckItem` (coverage
-    never blocks conversion) plus a diagnostic per bucket that has at least
-    one class present in the deck: an ``INFO`` for the applied mnemonics
-    (visibility only), a ``WARNING`` for the deferred mnemonics (has a
-    value but no converter consumer), and an ``INFO`` with a per-row
-    detail table when *report* carries an out-of-horizon override.
+    The two buckets diff the idecomp ``AC`` universe against the resolver's
+    own :data:`~novomodelo_bridge.decomp.converters.cadastro.APPLIED_AC_CLASSES`,
+    never a hand-maintained list. The unconverted-register and cascade
+    WARNINGs are the ones ``convert decomp`` raises, from the same builders.
+    Always returns exactly one passing summary :class:`CheckItem`: coverage
+    never blocks conversion.
     """
-    applied = _ALL_AC_CLASSES & APPLIED_AC_CLASSES
-    deferred = _ALL_AC_CLASSES - APPLIED_AC_CLASSES
-
-    applied_present = _ac_present(dadger, applied)
-    deferred_present = _ac_present(dadger, deferred)
+    applied = ALL_AC_CLASSES & APPLIED_AC_CLASSES
+    applied_present = ac_registers_present(dadger, applied)
+    deferred_present = ac_registers_present(dadger, DEFERRED_AC_CLASSES)
 
     checks = [
         CheckItem(
@@ -276,8 +231,8 @@ def _ac_coverage(
             passed=True,
             detail=(
                 f"{len(applied_present)} of {len(applied)} applied and "
-                f"{len(deferred_present)} of {len(deferred)} unconverted AC "
-                "registers present in the deck"
+                f"{len(deferred_present)} of {len(DEFERRED_AC_CLASSES)} "
+                "unconverted AC registers present in the deck"
             ),
         )
     ]
@@ -295,26 +250,13 @@ def _ac_coverage(
                     "conversion applies from the stage each takes effect, as "
                     "in DECOMP."
                 ),
-                table=_register_table(applied_present),
+                table=ac_register_table(applied_present),
             )
         )
 
-    if deferred_present:
-        diagnostics.append(
-            Diagnostic(
-                code="decomp-ac-overrides-deferred",
-                severity=Severity.WARNING,
-                category=_CONTEXT,
-                title=f"AC registers not converted ({len(deferred_present)})",
-                summary=(
-                    "The deck declares the listed AC registers, which the "
-                    "conversion does not read. The case keeps the hidr.dat "
-                    "value of each field they change, so its results can "
-                    "differ from DECOMP's."
-                ),
-                table=_register_table(deferred_present),
-            )
-        )
+    deferred_diagnostic = ac_overrides_deferred_diagnostic(dadger)
+    if deferred_diagnostic is not None:
+        diagnostics.append(deferred_diagnostic)
 
     if report.out_of_horizon:
         diagnostics.append(
@@ -349,6 +291,10 @@ def _ac_coverage(
                 ),
             )
         )
+
+    varies_diagnostic = topology_varies_diagnostic(effective)
+    if varies_diagnostic is not None:
+        diagnostics.append(varies_diagnostic)
 
     return checks, diagnostics
 
@@ -555,7 +501,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
 
         try:
             hidr = read_hidr(files.hidr)
-            _effective, cadastro_report = build_effective_cadastro(
+            effective, cadastro_report = build_effective_cadastro(
                 dadger, hidr, calendar
             )
         except (ValueError, KeyError, OSError) as exc:
@@ -567,7 +513,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
                 )
             )
         else:
-            cov_checks, cov_diags = _ac_coverage(dadger, cadastro_report)
+            cov_checks, cov_diags = _ac_coverage(dadger, effective, cadastro_report)
             checks.extend(cov_checks)
             diagnostics.extend(cov_diags)
 

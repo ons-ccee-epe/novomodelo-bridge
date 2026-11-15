@@ -28,16 +28,14 @@ from novomodelo_bridge.core.diagnostics import collect
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
+    topology_varies_diagnostic,
 )
 from novomodelo_bridge.decomp.converters.hydro import (
     convert_hydros,
     convert_initial_storage,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.pipeline import (
-    _topology_relink_diagnostic,
-    _topology_varies_diagnostic,
-)
+from novomodelo_bridge.decomp.pipeline import _topology_relink_diagnostic
 from novomodelo_bridge.decomp.scenarios import (
     _incremental_context,
     convert_external_inflows,
@@ -447,7 +445,7 @@ def test_temporal_topology_is_reported_and_uses_stage0() -> None:
     assert effective.downstream_plant_varies(1) is True
 
     _, parents = _incremental_context(effective, _ABC_ID_MAP)
-    diagnostic = _topology_varies_diagnostic(effective)
+    diagnostic = topology_varies_diagnostic(effective)
 
     assert diagnostic is not None
     assert diagnostic.code == "decomp-ac-topology-varies"
@@ -483,7 +481,7 @@ def test_temporal_gauge_is_reported_and_uses_stage0() -> None:
     assert effective.inflow_gauge_varies(1) is True
 
     station_by_code, _ = _incremental_context(effective, _ABC_ID_MAP)
-    diagnostic = _topology_varies_diagnostic(effective)
+    diagnostic = topology_varies_diagnostic(effective)
 
     assert station_by_code[1] == "11"
     assert diagnostic is not None
@@ -495,7 +493,7 @@ def test_temporal_jusena_is_reported_with_no_first_stage_link() -> None:
     dadger = _FakeDadger({ACJUSENA: _numjus_override(1, 3, mes="AGO", semana=1.0)})
     effective, _ = build_effective_cadastro(dadger, _abc_hidr(), _calendar())
 
-    diagnostic = _topology_varies_diagnostic(effective)
+    diagnostic = topology_varies_diagnostic(effective)
 
     assert diagnostic is not None
     assert diagnostic.table is not None
@@ -506,7 +504,7 @@ def test_a_register_constant_over_the_horizon_is_not_reported() -> None:
     dadger = _FakeDadger({ACNUMJUS: _numjus_override(1, 3)})
     effective, _ = build_effective_cadastro(dadger, _abc_hidr(), _calendar())
 
-    assert _topology_varies_diagnostic(effective) is None
+    assert topology_varies_diagnostic(effective) is None
 
 
 # ---------------------------------------------------------------------------

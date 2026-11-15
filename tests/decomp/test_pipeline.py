@@ -35,6 +35,7 @@ from novomodelo_bridge.decomp.converters.anticipated import GnlEmission
 from novomodelo_bridge.decomp.converters.cadastro import (
     DiversionChannel,
     EffectiveCadastro,
+    ac_overrides_deferred_diagnostic,
 )
 from novomodelo_bridge.decomp.converters.hydro import TurbineLimits
 from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
@@ -70,6 +71,8 @@ from tests.decomp.conftest import flat_turbine_limits
 from tests.decomp.test_constraint_registers import _qdef_ceiling_and_floor
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from idecomp.decomp import Dadger, Vazoes
 
     from novomodelo_bridge.decomp.case import DecompCase
@@ -909,11 +912,16 @@ class _CadastroDadger:
         def of_type(_register: type) -> list[object]:
             return []
 
-    def __init__(self, ac_volmax_frame: pd.DataFrame | None) -> None:
+    def __init__(
+        self,
+        ac_volmax_frame: pd.DataFrame | None,
+        ac_frames: Mapping[type, pd.DataFrame] | None = None,
+    ) -> None:
         self.tx = self._Tx()
         self.data = self._Data()
         self._uh = _cadastro_uh_frame()
         self._ac_volmax_frame = ac_volmax_frame
+        self._ac_frames = ac_frames or {}
 
     def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
@@ -943,7 +951,7 @@ class _CadastroDadger:
 
         if modificacao is ACVOLMAX:
             return self._ac_volmax_frame
-        return None
+        return self._ac_frames.get(modificacao) if modificacao else None
 
 
 def _run_cadastro_pipeline(
@@ -960,6 +968,7 @@ def _run_cadastro_pipeline(
     convert_gnl_mock_out: list[MagicMock] | None = None,
     turbine_limits: TurbineLimits | None = None,
     gnl_ct_thermals: list[dict] | None = None,
+    ac_frames: Mapping[type, pd.DataFrame] | None = None,
 ) -> Path:
     """Run ``convert_decomp_case`` against the fully synthetic mock deck
     above, patching every converter not under test to a canned
@@ -1004,6 +1013,7 @@ def _run_cadastro_pipeline(
     *gnl_emission* (``[]`` drives a deck whose only thermals are GNL).
 
     *turbine_limits* replaces the default flat turbined-flow limits.
+    *ac_frames* gives the mock deck the ``AC`` frames of other registers.
     """
     from novomodelo_bridge.decomp.files import DecompFiles
     from novomodelo_bridge.decomp.pipeline import convert_decomp_case
@@ -1017,7 +1027,7 @@ def _run_cadastro_pipeline(
         renovaveis=None,
         polinjus=None,
     )
-    dadger = _CadastroDadger(ac_volmax_frame)
+    dadger = _CadastroDadger(ac_volmax_frame, ac_frames)
     hidr = _cadastro_hidr_frame()
     calendar = _calendar()
     case = make_decomp_case(
@@ -1526,6 +1536,28 @@ class TestCadastroPipelineWiring:
         assert cadastro_diagnostics[0].severity is dx.Severity.INFO
         assert cadastro_diagnostics[0].table is not None
         assert cadastro_diagnostics[0].table.rows == [["VOLMAX", 1]]
+
+    def test_an_unconverted_ac_register_warns_as_check_decomp_does(
+        self, tmp_path: Path
+    ) -> None:
+        """``convert decomp`` raises the ``AC`` WARNING ``check decomp`` raises
+        for a register it does not read, from the same builder."""
+        from idecomp.decomp.modelos.dadger import ACCOTVAZ
+
+        ac_frames: dict[type, pd.DataFrame] = {
+            ACCOTVAZ: pd.DataFrame([{"codigo_usina": 1}])
+        }
+        collected: list[Diagnostic] = []
+        _run_cadastro_pipeline(
+            tmp_path, None, ac_frames=ac_frames, diagnostics_out=collected
+        )
+
+        [deferred] = [d for d in collected if d.code == "decomp-ac-overrides-deferred"]
+        assert deferred == ac_overrides_deferred_diagnostic(
+            _CadastroDadger(None, ac_frames)
+        )
+        assert deferred.table is not None
+        assert deferred.table.rows == [["COTVAZ"]]
 
 
 # Synthetic RE/RHQ/RHV/RHE ``to_generic`` records for

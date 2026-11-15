@@ -1,7 +1,7 @@
-"""AC-override ingestion and the per-stage-effective cadastro view.
+"""AC-override ingestion, the per-stage-effective cadastro view, and its findings.
 
 Thin facade — defines nothing itself; re-exports the public API from
-:mod:`.stage_resolution`, :mod:`.overrides`, :mod:`.effective`.
+:mod:`.stage_resolution`, :mod:`.overrides`, :mod:`.effective`, :mod:`.findings`.
 """
 
 from __future__ import annotations
@@ -26,6 +26,24 @@ from novomodelo_bridge.decomp.converters.cadastro.effective import (
 )
 from novomodelo_bridge.decomp.converters.cadastro.effective import (
     unregulated_runofriver_codes as unregulated_runofriver_codes,
+)
+from novomodelo_bridge.decomp.converters.cadastro.findings import (
+    ALL_AC_CLASSES as ALL_AC_CLASSES,
+)
+from novomodelo_bridge.decomp.converters.cadastro.findings import (
+    DEFERRED_AC_CLASSES as DEFERRED_AC_CLASSES,
+)
+from novomodelo_bridge.decomp.converters.cadastro.findings import (
+    ac_overrides_deferred_diagnostic as ac_overrides_deferred_diagnostic,
+)
+from novomodelo_bridge.decomp.converters.cadastro.findings import (
+    ac_register_table as ac_register_table,
+)
+from novomodelo_bridge.decomp.converters.cadastro.findings import (
+    ac_registers_present as ac_registers_present,
+)
+from novomodelo_bridge.decomp.converters.cadastro.findings import (
+    topology_varies_diagnostic as topology_varies_diagnostic,
 )
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     _SCALAR_AC_SPECS as _SCALAR_AC_SPECS,

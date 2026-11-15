@@ -107,8 +107,8 @@ def _incremental_context(
     EffectiveCadastro.inflow_gauge`/
     :func:`~novomodelo_bridge.decomp.converters.hydro.entity.
     _downstream_operated`'s own default).
-    The pipeline reports a gauge or link that changes on later stages
-    (:func:`novomodelo_bridge.decomp.pipeline._topology_varies_diagnostic`).
+    A gauge or link that changes on later stages is reported
+    (:func:`novomodelo_bridge.decomp.converters.cadastro.topology_varies_diagnostic`).
     """
     operated = set(id_map.hydro_codes)
     station_by_code: dict[int, str] = {}
