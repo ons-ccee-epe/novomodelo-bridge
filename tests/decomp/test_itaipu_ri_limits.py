@@ -126,6 +126,37 @@ class TestConvertItaipuFrequencyMinGeneration:
             == {}
         )
 
+    def test_a_dormant_itaipu_takes_no_floor(self) -> None:
+        ri = _ri_frame(
+            [
+                {
+                    "estagio": 1,
+                    "geracao_minima_50_hz_1": 4267.2,
+                    "geracao_minima_50_hz_2": 4073.2,
+                    "geracao_minima_50_hz_3": 3491.7,
+                    "geracao_minima_60_hz_1": 2000.0,
+                    "geracao_minima_60_hz_2": 2000.0,
+                    "geracao_minima_60_hz_3": 2000.0,
+                },
+                {
+                    "estagio": 3,
+                    "geracao_minima_50_hz_1": 3818.2,
+                    "geracao_minima_50_hz_2": 3645.2,
+                    "geracao_minima_50_hz_3": 3130.7,
+                    "geracao_minima_60_hz_1": 1800.0,
+                    "geracao_minima_60_hz_2": 1800.0,
+                    "geracao_minima_60_hz_3": 1800.0,
+                },
+            ]
+        )
+        id_map = DecompIdMap(
+            bus_codes=(1,),
+            bus_names=("SE",),
+            hydro_codes=(10, _ITAIPU_CODE),
+            dormant_hydro_codes=(_ITAIPU_CODE,),
+        )
+        assert convert_itaipu_frequency_min_generation(_case(ri), id_map) == {}
+
     def test_block_count_mismatch_raises(self) -> None:
         # only two patamar values for a 3-block stage
         ri = _ri_frame(

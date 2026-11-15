@@ -641,7 +641,7 @@ _NAMES = {
     132: "LAJES",
     147: "FONTES AB",
     169: "SOBRADINHO",
-    260: "ESTRELA",
+    901: "CUT PLANT",
     305: "ITIQUIRA II",
 }
 
@@ -699,7 +699,7 @@ def test_emit_coupling_diagnostics_warns_on_a_carried_lag_share() -> None:
 
 
 def test_emit_coupling_diagnostics_lists_unrepresented_coupling_inflows() -> None:
-    shares = (TerminalShare(1, 1, 301, 2.5), TerminalShare(260, 260, None, 40.0))
+    shares = (TerminalShare(1, 1, 301, 2.5), TerminalShare(901, 901, None, 40.0))
 
     with dx.collect() as sink:
         _emit_coupling_diagnostics(
@@ -712,7 +712,7 @@ def test_emit_coupling_diagnostics_lists_unrepresented_coupling_inflows() -> Non
     assert terminal.table is not None
     assert terminal.table.rows == [
         [1, "", 1, 301, 2.5],
-        [260, "ESTRELA", 260, "-", 40.0],
+        [901, "CUT PLANT", 901, "-", 40.0],
     ]
 
 

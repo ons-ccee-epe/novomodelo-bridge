@@ -43,8 +43,10 @@ from novomodelo_bridge.core.productivity import (
     fpha_efficiency_capped_row,
     has_forebay_curve,
 )
+from novomodelo_bridge.decomp import plants
 from novomodelo_bridge.decomp.converters.cadastro import (
     effective_storage_range,
+    is_reservoir,
     storage_envelope,
 )
 from novomodelo_bridge.decomp.converters.hydro.bounds import (
@@ -85,34 +87,52 @@ class UhRegisters(Protocol):
     def uh(self, *, df: bool) -> object: ...
 
 
-def _operated_uh(dadger: UhRegisters) -> pd.DataFrame:
-    """The ``UH`` rows carrying an initial volume (the operated plants).
-
-    Rows without one (coupling-only registrations) are excluded — their
-    terminal-value treatment is the boundary importer's concern, not the
-    registry's. :func:`convert_hydros` reports the excluded set (by name) once.
-    """
+def _uh_frame(dadger: UhRegisters) -> pd.DataFrame:
     uh = as_frame(dadger.uh(df=True))
     if uh is None or uh.empty:
         raise ValueError("the deck has no UH records; cannot convert hydros")
-    return uh[uh["volume_inicial"].notna()]
+    return uh
+
+
+def _operated_uh(dadger: UhRegisters) -> pd.DataFrame:
+    """The ``UH`` rows of the operated plants (see :mod:`~novomodelo_bridge.decomp.plants`).
+
+    Rows without a volume (coupling-only registrations) and rows marked ``NW``
+    (dormant plants) are excluded. :func:`convert_hydros` reports the
+    coupling-only set (by name) once.
+    """
+    return plants.operated_uh(_uh_frame(dadger))
+
+
+def _converted_uh(dadger: UhRegisters) -> pd.DataFrame:
+    """The ``UH`` rows of the converted plants: the operated and the dormant ones."""
+    return plants.converted_uh(_uh_frame(dadger))
+
+
+def _deck_volume_pct(row: pd.Series) -> float:
+    """A ``UH`` row's initial volume in % of useful volume; 0.0 for a dormant
+    row that gives none."""
+    volume = row["volume_inicial"]
+    return 0.0 if pd.isna(volume) else float(volume)
 
 
 def initial_volume_percentages(dadger: UhRegisters) -> dict[int, float]:
-    """``{code: UH volume_inicial}`` for every operated plant, in % of useful volume."""
+    """``{code: UH volume_inicial}`` for every converted plant, in % of useful volume.
+
+    A dormant plant whose ``UH`` record gives no volume takes 0.0.
+    """
     return {
-        int(row["codigo_usina"]): float(row["volume_inicial"])
-        for _, row in _operated_uh(dadger).iterrows()
+        int(row["codigo_usina"]): _deck_volume_pct(row)
+        for _, row in _converted_uh(dadger).iterrows()
     }
 
 
-def _coupling_only_codes(dadger: UhRegisters) -> list[int]:
+def _coupling_only_codes(dadger: UhRegisters) -> tuple[int, ...]:
     """Operated-set-excluded ``UH`` codes — registrations with no initial volume."""
     uh = as_frame(dadger.uh(df=True))
     if uh is None or uh.empty:
-        return []
-    excluded = uh[uh["volume_inicial"].isna()]
-    return sorted(int(c) for c in excluded["codigo_usina"])
+        return ()
+    return plants.coupling_only_codes(uh)
 
 
 def _registry_name(hidr: pd.DataFrame, code: int) -> str:
@@ -123,7 +143,7 @@ def _registry_name(hidr: pd.DataFrame, code: int) -> str:
         return ""
 
 
-def _coupling_only_diagnostic(hidr: pd.DataFrame, codes: list[int]) -> Diagnostic:
+def _coupling_only_diagnostic(hidr: pd.DataFrame, codes: tuple[int, ...]) -> Diagnostic:
     return Diagnostic(
         code="decomp-coupling-only-plants-excluded",
         severity=Severity.INFO,
@@ -152,11 +172,13 @@ class CascadeLinks(Protocol):
 def _cascade_walk(
     effective: CascadeLinks, code: int, operated: set[int], stage_index: int
 ) -> tuple[int | None, int | None]:
-    """``(next operated plant, invalid link)`` below *code* at *stage_index*.
+    """``(next plant of *operated*, invalid link)`` below *code* at *stage_index*.
 
-    Non-operated intermediates are skipped through and code 0 is the sink. A
-    link that loops back or names a plant missing from ``hidr.dat`` ends the
-    walk as a sink and is returned as the invalid link.
+    *operated* is the set of plants the walk may stop at: the converted plants,
+    or the operated ones when a dormant plant must be seen through. Plants
+    outside it are skipped through and code 0 is the sink. A link that loops
+    back or names a plant missing from ``hidr.dat`` ends the walk as a sink and
+    is returned as the invalid link.
     """
     visited = {code}
     current = effective.downstream_plant(code, stage_index)
@@ -175,7 +197,7 @@ def _downstream_operated(
     *,
     stage_index: int = 0,
 ) -> int | None:
-    """The next *operated* plant below *code* on the effective (post-``AC
+    """The next plant of *operated* below *code* on the effective (post-``AC
     NUMJUS``) cascade at *stage_index*, or ``None`` at the sink.
 
     Every caller reads the first stage: the case has one cascade for the
@@ -270,7 +292,10 @@ class _HydroContext:
     hidr: pd.DataFrame
     effective: EffectiveCadastro
     turbine_limits: TurbineLimits
-    operated_codes: set[int]
+    converted_codes: set[int]
+    dormant_codes: set[int]
+    n_stages: int
+    horizon_end: str
     min_outflow_by_code: dict[int, float]
     mp: pd.DataFrame | None
     fd: pd.DataFrame | None
@@ -289,9 +314,9 @@ def _hydro_context(
     travel_time_hours: dict[int, float] | None,
     fpha_codes: set[int] | None,
 ) -> _HydroContext:
-    """Read the operated plants' ``UH`` minimum outflows and evaporation flags
-    (and, for Itaipu, the ``MP``/``FD`` registers), noting every
-    coupling-only ``UH`` registration."""
+    """Read the operated plants' ``UH`` minimum outflows and every converted
+    plant's evaporation flag (and, for Itaipu, the ``MP``/``FD`` registers),
+    noting every coupling-only ``UH`` registration."""
     dadger = case.dadger
     hidr = case.hidr
     start_date = case.start_date
@@ -299,7 +324,7 @@ def _hydro_context(
     coupling_only = _coupling_only_codes(dadger)
     if coupling_only:
         emit(_coupling_only_diagnostic(hidr, coupling_only), logger=_LOG)
-    operated_codes = set(id_map.hydro_codes)
+    converted_codes = set(id_map.hydro_codes)
     min_outflow_by_code: dict[int, float] = {}
     for _, row in operated.iterrows():
         value = row.get("vazao_defluente_minima")
@@ -310,7 +335,7 @@ def _hydro_context(
     # keeps every other (hand-built or real, non-Itaipu) caller from needing
     # a Dadger stub for methods this function otherwise never touches.
     mp = fd = None
-    if _ITAIPU_CODE in operated_codes:
+    if _ITAIPU_CODE in converted_codes:
         mp = as_frame(dadger.mp(df=True))
         fd = as_frame(dadger.fd(df=True))
 
@@ -318,7 +343,10 @@ def _hydro_context(
         hidr=hidr,
         effective=effective,
         turbine_limits=turbine_limits,
-        operated_codes=operated_codes,
+        converted_codes=converted_codes,
+        dormant_codes=set(id_map.dormant_hydro_codes),
+        n_stages=len(case.calendar),
+        horizon_end=case.calendar[-1].end_date.isoformat(),
         min_outflow_by_code=min_outflow_by_code,
         mp=mp,
         fd=fd,
@@ -434,7 +462,10 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
     hreg = hidr.loc[code]
     name = str(hreg["nome_usina"]).strip()
     is_fpha = context.fpha_codes is not None and code in context.fpha_codes
-    downstream, invalid_link = _cascade_walk(effective, code, context.operated_codes, 0)
+    dormant = code in context.dormant_codes
+    downstream, invalid_link = _cascade_walk(
+        effective, code, context.converted_codes, 0
+    )
     min_storage_hm3, max_storage_hm3 = storage_envelope(effective, code)
     runofriver_collapsed = str(hreg.get("tipo_regulacao", "")).strip() == "D" and float(
         hreg["volume_minimo"]
@@ -445,7 +476,7 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
     entry: dict = {
         "id": id_map.hydro_id(code),
         "name": name,
-        "operational_start_date": context.op_date,
+        "operational_start_date": (context.horizon_end if dormant else context.op_date),
         "downstream_id": (None if downstream is None else id_map.hydro_id(downstream)),
         "reservoir": {
             "min_storage_hm3": min_storage_hm3,
@@ -464,6 +495,8 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
         },
         "unit_groups": unit_groups,
     }
+    if dormant:
+        entry["entry_stage_id"] = context.n_stages
     efficiency_row: list[object] | None = None
     if is_fpha:
         entry.update(_fpha_fields(code, effective))
@@ -481,6 +514,62 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
         None if invalid_link is None else [code, name, invalid_link]
     )
     return _PlantEntry(entry, runofriver_collapsed, efficiency_row, invalid_link_row)
+
+
+def _refuse_unsupported_dormant_plants(
+    case: DecompCase, id_map: DecompIdMap, effective: EffectiveCadastro
+) -> None:
+    """Refuse the plants marked ``NW`` whose conversion would misstate the case.
+
+    Each refusal names the plant: one missing from ``hidr.dat``; a reservoir
+    whose ``UH`` record gives an initial volume above its stage-0 minimum
+    (novomodelo's storage semantics for it are not settled); one named by a
+    ``VI`` record; and an operated plant whose ``VI`` record delays an arc that
+    ends at a dormant plant, which ``novomodelo validate`` refuses.
+    """
+    dormant = set(id_map.dormant_hydro_codes)
+    if not dormant:
+        return
+    hidr = case.hidr
+    for code in id_map.dormant_hydro_codes:
+        if code not in hidr.index:
+            raise ValueError(f"UH plant {code} is not in the hydro registry")
+
+    vi = as_frame(case.dadger.vi(df=True))
+    vi_codes = set() if vi is None or vi.empty else {int(c) for c in vi["codigo_usina"]}
+    for code in sorted(vi_codes):
+        if code in dormant:
+            raise ValueError(
+                f"UH plant {code} ({_registry_name(hidr, code)}) is marked NW "
+                "and has a VI record: a travel time cannot delay the arc of a "
+                "plant that never operates"
+            )
+        if code in id_map.operated_hydro_codes and code in hidr.index:
+            below, _ = _cascade_walk(effective, code, set(id_map.hydro_codes), 0)
+            if below in dormant:
+                raise ValueError(
+                    f"UH plant {code} ({_registry_name(hidr, code)}) has a VI "
+                    f"record whose arc ends at plant {below} "
+                    f"({_registry_name(hidr, below)}), marked NW and never "
+                    "operated: its VI record is the cause, since novomodelo "
+                    "refuses a travel time into a plant that does not operate"
+                )
+
+    for _, row in _converted_uh(case.dadger).iterrows():
+        code = int(row["codigo_usina"])
+        if code not in dormant or pd.isna(row["volume_inicial"]):
+            continue
+        if not is_reservoir(effective, code):
+            continue
+        v_min, _ = effective_storage_range(effective, code, 0)
+        if _initial_volume_hm3(effective, code, _deck_volume_pct(row)) > v_min:
+            raise ValueError(
+                f"UH plant {code} ({_registry_name(hidr, code)}) is a reservoir "
+                f"marked NW whose UH record gives an initial volume of "
+                f"{_deck_volume_pct(row):g}% above its minimum storage: "
+                "novomodelo's storage semantics for it are not settled, so "
+                "clear the volume or the NW mark"
+            )
 
 
 def _report_machine_set_overrides(
@@ -521,7 +610,16 @@ def convert_hydros(
     travel_time_hours: dict[int, float] | None = None,
     fpha_codes: set[int] | None = None,
 ) -> dict:
-    """Build ``hydros.json`` for the operated plants.
+    """Build ``hydros.json`` for the converted plants: the operated ones and
+    the plants marked ``NW``, which enter after the horizon.
+
+    A dormant plant carries ``entry_stage_id`` = the stage count and
+    ``operational_start_date`` = the horizon end, so novomodelo keeps it filling
+    at every stage and passes its inflow to the first operating plant below. A
+    plant marked ``NW`` that is missing from ``hidr.dat``, a reservoir with a
+    deck volume above its minimum storage, or one named by a ``VI`` record, and an
+    operated plant whose ``VI`` arc ends at a dormant plant, raise
+    :class:`ValueError` before any entry is built.
 
     *fpha_codes* (from :func:`novomodelo_bridge.decomp.converters.fpha.fpha_eligible_codes`)
     selects the plants emitted with novomodelo's computed-FPHA generation model:
@@ -578,6 +676,7 @@ def convert_hydros(
     always sit inside it. Per-family ``AC`` coverage is reported by
     ``check decomp`` (:mod:`novomodelo_bridge.decomp.preflight`), not logged here.
     """
+    _refuse_unsupported_dormant_plants(case, id_map, effective)
     context = _hydro_context(
         case,
         id_map,
@@ -610,7 +709,7 @@ def convert_hydros(
                 [code, plant.entry["name"], format_stage_ranges(no_curve)]
             )
 
-    _report_machine_set_overrides(effective, context.operated_codes)
+    _report_machine_set_overrides(effective, set(id_map.operated_hydro_codes))
     _report_runofriver_collapse(n_runofriver_collapsed)
     if efficiency_rows:
         emit(fpha_efficiency_capped_diagnostic(efficiency_rows), logger=_LOG)
@@ -636,17 +735,17 @@ def _initial_volume_hm3(effective: EffectiveCadastro, code: int, pct: float) -> 
     ``(vol_ref, vol_ref)``, so its initial
     value is ``vol_ref`` regardless of *pct*. Shared by
     :func:`convert_initial_storage` (the initial condition) and
-    :func:`_operated_initial_volumes` (the generation-productivity anchor) so
+    :func:`_converted_initial_volumes` (the generation-productivity anchor) so
     both resolve a plant's initial volume identically.
     """
     v_min, v_max = effective_storage_range(effective, code, 0)
     return min(max(v_min + (pct / 100.0) * (v_max - v_min), v_min), v_max)
 
 
-def _operated_initial_volumes(
+def _converted_initial_volumes(
     case: DecompCase, *, effective: EffectiveCadastro
 ) -> dict[int, float]:
-    """``{code: initial reservoir volume hm³}`` for every operated ``UH`` plant.
+    """``{code: initial reservoir volume hm³}`` for every converted ``UH`` plant.
 
     The volume :func:`convert_energy_productivity` anchors each plant's
     generation productivity on — the same value :func:`convert_initial_storage`
@@ -668,14 +767,14 @@ def convert_initial_storage(
 
     The percentage is resolved by :func:`_initial_volume_hm3` against the
     stage-0 effective useful volume (run-of-river plants collapse to their
-    reference volume).
+    reference volume). A dormant plant takes its deck volume, or its minimum
+    storage when the record gives none.
     """
-    operated = _operated_uh(case.dadger)
     storage: list[dict] = []
     filling: list[list[object]] = []
-    for _, row in operated.iterrows():
+    for _, row in _converted_uh(case.dadger).iterrows():
         code = int(row["codigo_usina"])
-        value = _initial_volume_hm3(effective, code, float(row["volume_inicial"]))
+        value = _initial_volume_hm3(effective, code, _deck_volume_pct(row))
         storage.append({"hydro_id": id_map.hydro_id(code), "value_hm3": value})
         dead = row.get("volume_morto_inicial")
         if not pd.isna(dead):

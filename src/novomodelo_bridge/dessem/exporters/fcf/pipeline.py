@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +20,8 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     exception_reason,
 )
+from novomodelo_bridge.core.errors import CaseIdentityError
+from novomodelo_bridge.decomp.case_identity import match_case_hydros
 from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
     content_csv_path,
     write_cortdeco_content_csv,
@@ -66,17 +68,20 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     InflowLagAudit,
     MappingError,
     SourceGnlThermal,
+    check_never_active_hydros,
     cut_building_pools,
     discount_factors,
     downstream_positions,
     first_node_per_stage,
+    frozen_storage_offset,
     gnl_block,
     gnl_committed_costs,
     gnl_drop_audit,
     gnl_lag_months,
     inflow_lag_drop_audit,
-    match_source_hydros,
+    never_active_hydro_ids,
     plant_codes,
+    refuse_priced_dropped_buckets,
     select_gnl_deliveries,
     select_submarket_buses,
     storage_plant_ids,
@@ -760,6 +765,8 @@ def _assemble_cuts(
     pools: dict,
     trunk_pool_ids: tuple[int, ...],
     plant_ids: tuple[int, ...],
+    dropped: frozenset[int],
+    frozen_storage_hm3: Mapping[int, float],
     offsets: Any,
     travel_time: tuple[TravelTimePlant, ...],
     stages: tuple[StageInfo, ...],
@@ -788,8 +795,9 @@ def _assemble_cuts(
             )
             node_cuts.append(
                 CutInput(
-                    intercept=piece.intercept,
-                    pi_varm=storage_coefficients(piece, pool.slots, plant_ids),
+                    intercept=piece.intercept
+                    + frozen_storage_offset(piece, pool.slots, frozen_storage_hm3),
+                    pi_varm=storage_coefficients(piece, pool.slots, plant_ids, dropped),
                     pi_qdefp=release_weights @ piece.coefficients,
                     pi_gnl=pi_gnl,
                 )
@@ -827,6 +835,8 @@ class _ExportPlan:
     pools: dict[int, StageCutPool]
     trunk_pool_ids: tuple[int, ...]
     plant_ids: tuple[int, ...]
+    dropped: frozenset[int]
+    frozen_storage_hm3: Mapping[int, float]
     travel_time: tuple[TravelTimePlant, ...]
     stages: tuple[StageInfo, ...]
     n_patamares: int
@@ -848,7 +858,37 @@ def _plan_export(
     """Read the case and its policy, check the premises, and lay out the pair."""
     with progress.step("read settings-derived inputs", 0):
         inputs = read_case_inputs(case_dir)
-        match_source_hydros(inputs.hydros, source.hydros)
+        try:
+            match_case_hydros(
+                {hydro.id: hydro.name for hydro in inputs.hydros}, source.hydros
+            )
+        except CaseIdentityError as exc:
+            raise MappingError(
+                f"{exc}; export from the deck the case was converted from"
+            ) from exc
+        dropped = never_active_hydro_ids(inputs.hydros, len(inputs.stages))
+        check_never_active_hydros(
+            inputs.hydros, source.hydros, source.dormant_codes, dropped
+        )
+        for hydro in inputs.hydros:
+            if hydro.id in dropped and hydro.id not in inputs.initial_storage_hm3:
+                raise MappingError(
+                    f"hydro {hydro.id} ({hydro.name}, plant "
+                    f"{source.hydros[hydro.id].code}) never enters the horizon "
+                    "but initial_conditions.json holds no storage for it"
+                )
+        frozen_storage_hm3 = {
+            hydro_id: inputs.initial_storage_hm3[hydro_id]
+            for hydro_id in sorted(dropped)
+        }
+        inputs = replace(
+            inputs,
+            hydros=tuple(h for h in inputs.hydros if h.id not in dropped),
+        )
+        source = replace(
+            source,
+            hydros={i: h for i, h in source.hydros.items() if i not in dropped},
+        )
 
     with progress.step("read the policy checkpoint", 1):
         checkpoint = read_policy(case_dir)
@@ -865,6 +905,7 @@ def _plan_export(
                 "no pool of the policy checkpoint holds cuts past its warm-start "
                 "slots, so the run trained no cuts and there is no trunk to export"
             )
+        refuse_priced_dropped_buckets(pools, trunk_pool_ids, dropped)
         _emit_cut_pool_mismatch(trunk_pool_ids, len(pool_ids) - 1)
         terminal_pool_id = pool_ids[-1]
 
@@ -903,7 +944,11 @@ def _plan_export(
             )
 
     with progress.step("build mapping quantities", 5):
-        plant_ids = storage_plant_ids(pools[trunk_pool_ids[0]].slots)
+        plant_ids = tuple(
+            hydro_id
+            for hydro_id in storage_plant_ids(pools[trunk_pool_ids[0]].slots)
+            if hydro_id not in dropped
+        )
         hydro_codes = plant_codes(plant_ids, source.hydros)
 
         # P6: GNL submarket codes
@@ -943,6 +988,8 @@ def _plan_export(
         pools=pools,
         trunk_pool_ids=trunk_pool_ids,
         plant_ids=plant_ids,
+        dropped=dropped,
+        frozen_storage_hm3=frozen_storage_hm3,
         travel_time=travel_time,
         stages=inputs.stages,
         n_patamares=n_patamares,
@@ -967,6 +1014,8 @@ def _write_validated_pair(
             plan.pools,
             plan.trunk_pool_ids,
             plan.plant_ids,
+            plan.dropped,
+            plan.frozen_storage_hm3,
             plan.offsets,
             plan.travel_time,
             plan.stages,

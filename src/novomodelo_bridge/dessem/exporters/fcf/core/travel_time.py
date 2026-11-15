@@ -32,11 +32,11 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
 )
 
 if TYPE_CHECKING:
+    from novomodelo_bridge.decomp.case_identity import SourceHydro
     from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
         HydroInfo,
         StageInfo,
     )
-    from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceHydro
     from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
         EntitySlotRecord,
         StageCutPool,

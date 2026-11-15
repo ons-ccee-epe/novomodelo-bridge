@@ -75,3 +75,68 @@ def test_from_dadger_keeps_the_uh_rows_without_initial_volume_apart() -> None:
     assert id_map.coupling_only_codes == (46, 134)
     with pytest.raises(KeyError):
         id_map.hydro_id(46)
+
+
+class _NwDadger:
+    """A stub deck whose ``UH`` rows are: 5 operated, 3 ``NW`` with no volume,
+    4 coupling-only, and 2 ``NW`` with a volume of 0.0."""
+
+    def sb(self, df: bool = True) -> pd.DataFrame:
+        return pd.DataFrame({"codigo_submercado": [1], "nome_submercado": ["SE"]})
+
+    def uh(self, df: bool = True) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "codigo_usina": [5, 3, 4, 2],
+                "configuracao_newave": ["", "NW", "", "NW"],
+                "volume_inicial": [94.7, None, None, 0.0],
+            }
+        )
+
+    def ct(self, df: bool = True) -> None:
+        return None
+
+
+class TestNwPlants:
+    def test_nw_rows_take_dense_ids_in_ascending_code_order(self) -> None:
+        id_map = DecompIdMap.from_dadger(_NwDadger())
+
+        assert id_map.hydro_codes == (2, 3, 5)
+        assert id_map.hydro_id(5) == 2
+        assert id_map.hydro_id(3) == 1
+        assert id_map.dormant_hydro_codes == (2, 3)
+        assert id_map.operated_hydro_codes == (5,)
+        assert id_map.coupling_only_codes == (4,)
+
+    def test_dormant_codes_outside_the_hydro_codes_raise(self) -> None:
+        with pytest.raises(ValueError, match="dormant"):
+            DecompIdMap(
+                bus_codes=(1,),
+                bus_names=("SE",),
+                hydro_codes=(1, 2),
+                dormant_hydro_codes=(3,),
+            )
+
+    def test_dormant_codes_that_are_not_ascending_raise(self) -> None:
+        with pytest.raises(ValueError, match="dormant"):
+            DecompIdMap(
+                bus_codes=(1,),
+                bus_names=("SE",),
+                hydro_codes=(1, 2),
+                dormant_hydro_codes=(2, 1),
+            )
+
+    def test_dormant_codes_that_are_coupling_only_raise(self) -> None:
+        with pytest.raises(ValueError, match="dormant"):
+            DecompIdMap(
+                bus_codes=(1,),
+                bus_names=("SE",),
+                hydro_codes=(1, 2),
+                coupling_only_codes=(2,),
+                dormant_hydro_codes=(2,),
+            )
+
+    def test_idle_hydro_codes_are_the_coupling_only_and_nw_codes(self) -> None:
+        id_map = DecompIdMap.from_dadger(_NwDadger())
+
+        assert id_map.idle_hydro_codes == (2, 3, 4)

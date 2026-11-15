@@ -14,6 +14,7 @@ from typing import Protocol
 
 from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.pandas_utils import as_frame
+from novomodelo_bridge.decomp import plants
 
 TRANSHIPMENT_BUS_NAME = "IV"
 
@@ -30,11 +31,16 @@ class _IdMapRegisters(Protocol):
 class DecompIdMap:
     """Deterministic mapping from deck codes to dense 0-based Novomodelo ids.
 
-    Hydro codes are the ``UH``-activated *operated* plants (rows carrying an
-    initial volume); thermal codes are the ``CT``-declared plants. Both are
-    sorted ascending and mapped to dense 0-based ids. Coupling-only codes are
-    the ``UH`` rows without an initial volume, which DECOMP keeps only for
-    the coupling with NEWAVE and does not operate; they get no id.
+    Hydro codes are the *converted* ``UH`` plants (see
+    :mod:`novomodelo_bridge.decomp.plants`): the operated rows carrying an
+    initial volume, and the dormant rows marked ``NW``, which DECOMP does not
+    operate but whose cut terms the case prices. Thermal codes are the
+    ``CT``-declared plants. Both are sorted ascending and mapped to dense
+    0-based ids, so a dormant code takes an id among the operated ones.
+    ``dormant_hydro_codes`` are the dormant plants, a subset of the hydro
+    codes. Coupling-only codes are the ``UH`` rows without an initial volume
+    that are not dormant, which DECOMP keeps only for the coupling with
+    NEWAVE; they get no id.
     """
 
     bus_codes: tuple[int, ...]
@@ -42,6 +48,7 @@ class DecompIdMap:
     hydro_codes: tuple[int, ...] = ()
     thermal_codes: tuple[int, ...] = ()
     coupling_only_codes: tuple[int, ...] = ()
+    dormant_hydro_codes: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.bus_codes) != len(self.bus_names):
@@ -53,11 +60,22 @@ class DecompIdMap:
             ("hydro", self.hydro_codes),
             ("thermal", self.thermal_codes),
             ("coupling-only", self.coupling_only_codes),
+            ("dormant", self.dormant_hydro_codes),
         ):
             if list(codes) != sorted(set(codes)):
                 raise ValueError(
                     f"{label} codes must be strictly ascending; got {codes}"
                 )
+        if not set(self.dormant_hydro_codes) <= set(self.hydro_codes):
+            raise ValueError(
+                f"dormant codes {self.dormant_hydro_codes} are not all hydro "
+                f"codes {self.hydro_codes}"
+            )
+        if set(self.dormant_hydro_codes) & set(self.coupling_only_codes):
+            raise ValueError(
+                f"dormant codes {self.dormant_hydro_codes} overlap the "
+                f"coupling-only codes {self.coupling_only_codes}"
+            )
         if TRANSHIPMENT_BUS_NAME in {n.strip() for n in self.bus_names}:
             raise UnsupportedSourceError(
                 f"dadger.rvN declares a subsystem named {TRANSHIPMENT_BUS_NAME} in "
@@ -84,12 +102,11 @@ class DecompIdMap:
         uh = as_frame(dadger.uh(df=True))
         hydro_codes: tuple[int, ...] = ()
         coupling_only_codes: tuple[int, ...] = ()
+        dormant_hydro_codes: tuple[int, ...] = ()
         if uh is not None and not uh.empty:
-            operated = uh["volume_inicial"].notna()
-            hydro_codes = tuple(sorted(int(c) for c in uh[operated]["codigo_usina"]))
-            coupling_only_codes = tuple(
-                sorted(int(c) for c in uh[~operated]["codigo_usina"])
-            )
+            hydro_codes = plants.converted_codes(uh)
+            coupling_only_codes = plants.coupling_only_codes(uh)
+            dormant_hydro_codes = plants.dormant_codes(uh)
 
         ct = as_frame(dadger.ct(df=True))
         thermal_codes: tuple[int, ...] = ()
@@ -102,10 +119,22 @@ class DecompIdMap:
             hydro_codes=hydro_codes,
             thermal_codes=thermal_codes,
             coupling_only_codes=coupling_only_codes,
+            dormant_hydro_codes=dormant_hydro_codes,
         )
 
+    @property
+    def operated_hydro_codes(self) -> tuple[int, ...]:
+        """The hydro codes DECOMP operates: every hydro code but the dormant ones."""
+        dormant = set(self.dormant_hydro_codes)
+        return tuple(code for code in self.hydro_codes if code not in dormant)
+
+    @property
+    def idle_hydro_codes(self) -> tuple[int, ...]:
+        """The plants DECOMP does not operate: the coupling-only and the dormant ones."""
+        return tuple(sorted({*self.coupling_only_codes, *self.dormant_hydro_codes}))
+
     def hydro_id(self, code: int) -> int:
-        """Map an operated hydro code to its 0-based id."""
+        """Map a converted hydro code, operated or dormant, to its 0-based id."""
         try:
             return self.hydro_codes.index(code)
         except ValueError:

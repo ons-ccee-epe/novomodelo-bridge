@@ -122,6 +122,10 @@ class EmissionCheckError(BridgeError, ValueError):
     """
 
 
+class CaseIdentityError(BridgeError, ValueError):
+    """A case and a source deck that hold different hydro plants or names."""
+
+
 class OutputExistsError(BridgeError, FileExistsError):
     """The output directory already holds files and ``force`` was not set.
 
@@ -165,6 +169,10 @@ _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
     ),
     # No remediation: each failed check carries its own.
     EmissionCheckError: ("case-self-check-failed", None),
+    CaseIdentityError: (
+        "case-deck-mismatch",
+        "Run the command against the deck the case was converted from.",
+    ),
     # Base-class fallback (last, for readability — a concrete subclass above
     # always wins the MRO walk regardless of dict order). No remediation: an
     # unmapped BridgeError has no knowable specific fix.

@@ -147,6 +147,8 @@ class _StubVazoes:
                 {"estagio": 3, "cenario": 2, "11": 120.0, "12": 180.0},
             ]
         )
+        self.previsoes_com_postos_artificiais = None
+        self.cenarios_calculados_com_postos_artificiais = None
         self.probabilidades = pd.DataFrame(
             [
                 {"estagio": 1, "no": 1, "cenario": 1, "probabilidade": 1.0},
@@ -328,6 +330,8 @@ class TestScenarioEmitters:
                     {"estagio": 5, "cenario": 2, "11": 95.0, "12": 145.0},  # fan
                 ]
             )
+            previsoes_com_postos_artificiais = None
+            cenarios_calculados_com_postos_artificiais = None
 
         table = convert_external_inflows(
             case,
@@ -368,6 +372,8 @@ class TestScenarioEmitters:
                     {"estagio": 5, "cenario": 1, "11": 90.0, "12": 140.0},
                 ]
             )
+            previsoes_com_postos_artificiais = None
+            cenarios_calculados_com_postos_artificiais = None
 
         with pytest.raises(
             FieldParseError, match="monthly stage 4 .*inflow scenario 2"

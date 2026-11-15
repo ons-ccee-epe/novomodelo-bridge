@@ -195,7 +195,7 @@ class _EnergyCascade:
         self._id_map = id_map
         self._ree = hydro_to_ree
         self._ez = ez_fractions
-        self._operated = set(id_map.hydro_codes)
+        self._operated = set(id_map.operated_hydro_codes)
         self._water: dict[int, int | None] = {}
         self._chains: dict[int, _Chain] = {}
         self.loop_rows: list[list[object]] = []
@@ -374,7 +374,7 @@ def build_rhe_shares(
     REE below no share.
     """
     cascade = _EnergyCascade(effective, id_map, hydro_to_ree, ez_fractions)
-    operated = set(id_map.hydro_codes)
+    operated = set(id_map.operated_hydro_codes)
     reservoirs = [
         code
         for code in sorted(hydro_to_ree)

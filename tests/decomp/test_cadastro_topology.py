@@ -105,6 +105,8 @@ class _StubVazoes:
                 }
             ]
         )
+        self.previsoes_com_postos_artificiais = None
+        self.cenarios_calculados_com_postos_artificiais = None
 
 
 def _calendar() -> list[OperativeStage]:

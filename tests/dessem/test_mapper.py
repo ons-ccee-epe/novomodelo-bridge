@@ -1,14 +1,21 @@
 """Tests for dessem/exporters/fcf/mapper.py."""
 
+import json
 import logging
 from dataclasses import replace
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.policy_dates import UNDATED
 from novomodelo_bridge.core.tolerances import floats_differ
+from novomodelo_bridge.decomp.case_identity import SourceHydro
+from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
+    storage_coefficients,
+)
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     BlockInfo,
     CaseInputs,
@@ -22,22 +29,26 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     DAYS_PER_YEAR,
     DECOMP_COST_DIVISOR,
     ENTITY_TYPE_ANTICIPATED_THERMAL,
+    ENTITY_TYPE_HYDRO_STORAGE,
+    ENTITY_TYPE_HYDRO_TRANSIT_BUCKET,
     EXCLUDED_BUS_ID,
     SUBMARKET_COUNT,
     GnlDeliveries,
     MappingError,
     SourceGnlThermal,
-    SourceHydro,
+    check_never_active_hydros,
     discount_factors,
     downstream_positions,
+    frozen_storage_offset,
     gnl_block,
     gnl_committed_costs,
     gnl_drop_audit,
     gnl_lag_months,
-    match_source_hydros,
     negate_gnl_array,
+    never_active_hydro_ids,
     parse_end_date,
     plant_codes,
+    refuse_priced_dropped_buckets,
     select_gnl_deliveries,
     select_submarket_buses,
     storage_plant_ids,
@@ -50,6 +61,8 @@ from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     EntitySlotRecord,
     StageCutPool,
 )
+from novomodelo_bridge.dessem.exporters.fcf.pipeline import ExportSettings, run_export
+from novomodelo_bridge.dessem.exporters.fcf.source import SourceDeck
 
 
 class TestCostConversion:
@@ -153,22 +166,151 @@ def _source(*hydro_ids: int) -> dict[int, SourceHydro]:
     return {i: SourceHydro(code=100 + i, name=f"UHE_{i}") for i in hydro_ids}
 
 
-class TestMatchSourceHydros:
-    """The deck must be the one the case was converted from."""
+def _piece(coefficients: list[float], slot_index: int = 0) -> AffinePieceRecord:
+    return AffinePieceRecord(
+        slot_index=slot_index,
+        iteration=slot_index + 1,
+        forward_pass_index=0,
+        intercept=0.0,
+        coefficients=np.array(coefficients),
+        is_active=True,
+    )
 
-    def test_same_plants_and_names_pass(self) -> None:
-        match_source_hydros([_hydro(0, None), _hydro(1, 0)], _source(0, 1))
 
-    def test_different_plant_set_raises(self) -> None:
+def _never_active(hydro_id: int, downstream_id: int | None = None) -> HydroInfo:
+    return replace(_hydro(hydro_id, downstream_id), entry_stage_id=3)
+
+
+class TestNeverActiveHydros:
+    """Premise P16: a hydro that never enters the horizon leaves the pair, frozen."""
+
+    def test_hydros_that_enter_at_or_after_the_horizon_end_are_dropped(self) -> None:
+        hydros = [
+            replace(_hydro(0, None), entry_stage_id=None),
+            replace(_hydro(1, None), entry_stage_id=2),
+            replace(_hydro(2, None), entry_stage_id=3),
+            replace(_hydro(3, None), entry_stage_id=4),
+        ]
+
+        assert never_active_hydro_ids(hydros, 3) == {2, 3}
+
+    def test_a_dropped_hydro_outside_the_decks_nw_set_raises(self) -> None:
+        hydros = [_hydro(1, None), _never_active(2)]
+
+        with pytest.raises(MappingError, match=r"hydro 2 \(UHE_2, plant 102\)"):
+            check_never_active_hydros(
+                hydros, _source(1, 2), dormant_codes=(), dropped={2}
+            )
+
+    def test_an_nw_hydro_the_case_keeps_active_raises(self) -> None:
+        hydros = [_hydro(1, None), _hydro(2, None)]
+
+        with pytest.raises(MappingError, match=r"hydro 2 \(UHE_2, plant 102\)"):
+            check_never_active_hydros(
+                hydros, _source(1, 2), dormant_codes=(102,), dropped=frozenset()
+            )
+
+    def test_a_kept_hydro_draining_into_a_dropped_one_raises(self) -> None:
+        hydros = [_hydro(1, 2), _never_active(2)]
+
         with pytest.raises(
-            MappingError, match="operates 3 hydro plants but the case holds 2"
+            MappingError, match=r"hydro 1 \(UHE_1, plant 101\).*hydro 2 \(UHE_2"
         ):
-            match_source_hydros([_hydro(0, None), _hydro(1, 0)], _source(0, 1, 2))
+            check_never_active_hydros(
+                hydros, _source(1, 2), dormant_codes=(102,), dropped={2}
+            )
 
-    def test_renamed_plant_raises(self) -> None:
-        source = _source(0, 1) | {1: SourceHydro(code=101, name="OTHER")}
-        with pytest.raises(MappingError, match="'UHE_1' in the case, 'OTHER'"):
-            match_source_hydros([_hydro(0, None), _hydro(1, 0)], source)
+    def test_the_deck_nw_set_with_nothing_draining_into_it_passes(self) -> None:
+        hydros = [_hydro(1, None), _never_active(2, downstream_id=1)]
+
+        check_never_active_hydros(
+            hydros, _source(1, 2), dormant_codes=(102,), dropped={2}
+        )
+
+    def test_a_priced_transit_bucket_on_a_dropped_hydro_raises(self) -> None:
+        slots = [
+            _slot(ENTITY_TYPE_HYDRO_STORAGE, 1),
+            _slot(ENTITY_TYPE_HYDRO_STORAGE, 2),
+            _slot(ENTITY_TYPE_HYDRO_TRANSIT_BUCKET, 2),
+        ]
+        pool = replace(
+            _pool(slots, 4),
+            pieces=(_piece([1.0, 2.0, 0.0], 0), _piece([1.0, 2.0, 0.5], 1)),
+            populated_count=2,
+        )
+
+        with pytest.raises(MappingError, match=r"pool 4 .*hydro 2"):
+            refuse_priced_dropped_buckets({4: pool}, (4,), {2})
+
+    def test_a_bucket_no_exported_cut_prices_passes(self) -> None:
+        slots = [
+            _slot(ENTITY_TYPE_HYDRO_STORAGE, 1),
+            _slot(ENTITY_TYPE_HYDRO_STORAGE, 2),
+            _slot(ENTITY_TYPE_HYDRO_TRANSIT_BUCKET, 2),
+        ]
+        warm = replace(
+            _pool(slots, 0),
+            pieces=(_piece([1.0, 2.0, 0.5]),),
+            warm_start_count=1,
+        )
+        zero = replace(_pool(slots, 1), pieces=(_piece([1.0, 2.0, 0.0]),))
+        priced = replace(_pool(slots, 2), pieces=(_piece([1.0, 2.0, 0.5]),))
+        pools = {0: warm, 1: zero, 2: priced}
+
+        refuse_priced_dropped_buckets(pools, (0, 1), {2})
+        refuse_priced_dropped_buckets(pools, (0, 1, 2), {1})
+
+    def test_frozen_storage_offset_is_the_dropped_coefficients_times_their_storage(
+        self,
+    ) -> None:
+        slots = [_slot(ENTITY_TYPE_HYDRO_STORAGE, hydro_id) for hydro_id in (7, 5, 6)]
+        piece = _piece([1.0, 2.0, 3.0])
+
+        assert frozen_storage_offset(piece, slots, {5: 10.0}) == 20.0
+        assert frozen_storage_offset(piece, slots, {5: 10.0, 6: 0.5}) == 21.5
+        assert frozen_storage_offset(piece, slots, {}) == 0.0
+
+    def test_frozen_storage_offset_reads_storage_axes_only(self) -> None:
+        slots = [
+            _slot(ENTITY_TYPE_HYDRO_STORAGE, 5),
+            _slot(ENTITY_TYPE_HYDRO_TRANSIT_BUCKET, 5),
+        ]
+
+        assert frozen_storage_offset(_piece([2.0, 9.0]), slots, {5: 10.0}) == 20.0
+
+    def test_storage_coefficients_skip_only_the_dropped_axes(self) -> None:
+        slots = [_slot(ENTITY_TYPE_HYDRO_STORAGE, hydro_id) for hydro_id in (7, 5, 6)]
+        piece = _piece([1.0, 2.0, 3.0])
+
+        assert storage_coefficients(piece, slots, (7, 6), dropped={5}).tolist() == [
+            1.0,
+            3.0,
+        ]
+        with pytest.raises(MappingError, match="plant-code record"):
+            storage_coefficients(piece, slots, (7,), dropped={5})
+
+    def test_a_dropped_hydro_without_initial_storage_raises(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        hydros_path = synthetic_case_dir / "system" / "hydros.json"
+        hydros = json.loads(hydros_path.read_text(encoding="utf-8"))
+        hydros["hydros"][2]["entry_stage_id"] = 3
+        hydros_path.write_text(json.dumps(hydros), encoding="utf-8")
+        output_dir = tmp_path / "dessem_fcf"
+
+        with dx.collect() as diagnostics:
+            result = run_export(
+                case_dir=synthetic_case_dir,
+                source=replace(synthetic_source, dormant_codes=(103,)),
+                output_dir=output_dir,
+                settings=ExportSettings(),
+            )
+
+        assert result == 1
+        assert not (output_dir / "mapcut.rv0").exists()
+        errors = [d for d in diagnostics if d.code == "dessem-fcf-export-failed"]
+        assert len(errors) == 1
+        assert "hydro 3 (UHE_C, plant 103)" in errors[0].summary
 
 
 def _gnl(thermal_id: int, name: str, cost_per_mwh: float = 0.0) -> ThermalInfo:

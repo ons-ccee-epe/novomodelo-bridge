@@ -142,6 +142,19 @@ P15 = (
     "names differ or a plant has no NL record."
 )
 
+P16 = (
+    "P16: mapcut and cortdeco leave out every hydro that never enters the "
+    "horizon, one whose entry_stage_id is at or past the stage count. Its "
+    "storage stays at its initial_conditions.json value, so its term in a cut "
+    "is a constant: the export adds each cut's coefficient on that storage "
+    "times the value to the cut's intercept, in R$ and hm3 before P2's "
+    "division, and leaves every other coefficient unchanged. The hydros left "
+    "out must be exactly the source deck's NW plants, the plants DECOMP leaves "
+    "out of its own pair. The export is refused when they are not, when a kept "
+    "hydro drains into one, when a cut-building pool prices a transit bucket "
+    "of one, or when one has no initial storage in initial_conditions.json."
+)
+
 
 PREMISES: tuple[str, ...] = (
     P1,
@@ -159,4 +172,5 @@ PREMISES: tuple[str, ...] = (
     P13,
     P14,
     P15,
+    P16,
 )

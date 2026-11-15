@@ -26,6 +26,7 @@ from novomodelo_bridge.comparators.decomp.results import (
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.units import C_M3S2HM3, HM3_PER_M3S_HOUR, MEAN_MONTH_HOURS
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
@@ -263,6 +264,39 @@ class TestEvaporationResultComparisons:
         assert collected[0].code == "evaporation-plant-one-sided"
         assert collected[0].table is not None
         assert collected[0].table.rows == [[20, "B", "run output"]]
+
+    def test_a_dormant_plant_is_not_one_sided(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        id_map = DecompIdMap(
+            bus_codes=(1,),
+            bus_names=("SE",),
+            hydro_codes=(10, 20),
+            dormant_hydro_codes=(20,),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_evap",
+            lambda *_a, **_k: _evap_dec_oper_evap_fixture().filter(
+                pl.col("codigo_usina") == 10
+            ),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results._novomodelo_stage_hours",
+            lambda *_a, **_k: {0: 168.0},
+        )
+
+        with dx.collect() as collected:
+            results, one_sided = _evaporation_result_comparisons(
+                tmp_path,
+                tmp_path,
+                _evap_aligned_fixture().novomodelo_hydro,
+                id_map,
+                {0: "A", 1: "B"},
+            )
+
+        assert [r.novomodelo_id for r in results] == [0]
+        assert one_sided == []
+        assert collected == []
 
     def test_plant_present_only_on_source_side_excluded_and_counted(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

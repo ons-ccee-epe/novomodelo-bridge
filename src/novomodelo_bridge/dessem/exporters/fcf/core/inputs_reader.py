@@ -15,7 +15,8 @@ from __future__ import annotations
 import json
 import logging
 import math
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -60,9 +61,9 @@ class StageInfo:
 class HydroInfo:
     """One hydro plant.
 
-    `None` marks a terminal plant in `downstream_id`, and in
+    `None` marks a terminal plant in `downstream_id`, in
     `travel_time_hours` a plant whose defluence reaches its downstream plant at
-    once.
+    once, and in `entry_stage_id` a plant in service from the first stage.
     """
 
     id: int
@@ -71,6 +72,7 @@ class HydroInfo:
     min_storage_hm3: float
     max_storage_hm3: float
     travel_time_hours: float | None = None
+    entry_stage_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +109,11 @@ class BusInfo:
 
 @dataclass(frozen=True)
 class CaseInputs:
-    """Everything the conversion reads from the case's JSON inputs."""
+    """Everything the conversion reads from the case's JSON inputs.
+
+    *initial_storage_hm3* maps a hydro id to its initial storage and is empty
+    when `initial_conditions.json` declares none.
+    """
 
     stages: tuple[StageInfo, ...]
     hydros: tuple[HydroInfo, ...]
@@ -115,6 +121,7 @@ class CaseInputs:
     buses: tuple[BusInfo, ...]
     annual_discount_rate: float
     past_anticipated_commitments: tuple[CommitmentWindow, ...]
+    initial_storage_hm3: Mapping[int, float] = field(default_factory=dict)
 
 
 def _load_json(path: Path) -> Any:
@@ -247,7 +254,7 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
     for pos, entry in enumerate(_require_list(raw, "hydros", "hydros")):
         dotted = f"hydros[{pos}]"
         reservoir = _require(entry, "reservoir", f"{dotted}.reservoir")
-        downstream = entry.get("downstream_id") if isinstance(entry, dict) else None
+        downstream = entry.get("downstream_id")
         if downstream is not None and type(downstream) is not int:
             raise InputReadError(
                 f"{dotted}.downstream_id must be int or null, "
@@ -255,12 +262,21 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
             )
         travel_time = (
             _require_float(entry, "travel_time_hours", f"{dotted}.travel_time_hours")
-            if isinstance(entry, dict) and entry.get("travel_time_hours") is not None
+            if entry.get("travel_time_hours") is not None
             else None
         )
         if travel_time is not None and travel_time < 0.0:
             raise InputReadError(
                 f"{dotted}.travel_time_hours must be non-negative, got {travel_time}"
+            )
+        entry_stage = (
+            _require_int(entry, "entry_stage_id", f"{dotted}.entry_stage_id")
+            if entry.get("entry_stage_id") is not None
+            else None
+        )
+        if entry_stage is not None and entry_stage < 0:
+            raise InputReadError(
+                f"{dotted}.entry_stage_id must be non-negative, got {entry_stage}"
             )
         hydros.append(
             HydroInfo(
@@ -278,6 +294,7 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
                     f"{dotted}.reservoir.max_storage_hm3",
                 ),
                 travel_time_hours=travel_time,
+                entry_stage_id=entry_stage,
             )
         )
     return tuple(hydros)
@@ -332,13 +349,19 @@ def _read_buses(path: Path) -> tuple[BusInfo, ...]:
     )
 
 
-def _read_initial_conditions(path: Path) -> tuple[CommitmentWindow, ...]:
-    """Read the past_anticipated_commitments windows of initial_conditions.json."""
+def _read_initial_conditions(
+    path: Path,
+) -> tuple[tuple[CommitmentWindow, ...], dict[int, float]]:
+    """Read the past_anticipated_commitments windows and the storage of initial_conditions.json."""
     raw = _load_json(path)
     if not isinstance(raw, dict):
         raise InputReadError(
             f"{path} must hold a JSON object, got {type(raw).__name__}"
         )
+    return _read_commitment_windows(raw), _read_initial_storage(raw)
+
+
+def _read_commitment_windows(raw: dict[str, Any]) -> tuple[CommitmentWindow, ...]:
     if "past_anticipated_commitments" not in raw:
         return ()
     windows = []
@@ -367,6 +390,26 @@ def _read_initial_conditions(path: Path) -> tuple[CommitmentWindow, ...]:
     return tuple(windows)
 
 
+def _read_initial_storage(raw: dict[str, Any]) -> dict[int, float]:
+    if "storage" not in raw:
+        return {}
+    storage: dict[int, float] = {}
+    for pos, entry in enumerate(_require_list(raw, "storage", "storage")):
+        dotted = f"storage[{pos}]"
+        hydro_id = _require_int(entry, "hydro_id", f"{dotted}.hydro_id")
+        value_hm3 = _require_float(entry, "value_hm3", f"{dotted}.value_hm3")
+        if hydro_id in storage:
+            raise InputReadError(
+                f"{dotted}.hydro_id {hydro_id} repeats an earlier storage entry"
+            )
+        if value_hm3 < 0.0:
+            raise InputReadError(
+                f"{dotted}.value_hm3 must be non-negative, got {value_hm3}"
+            )
+        storage[hydro_id] = value_hm3
+    return storage
+
+
 def anticipated_thermals(inputs: CaseInputs) -> tuple[ThermalInfo, ...]:
     """Return the GNL-capable thermals, ascending by id."""
     return tuple(
@@ -382,15 +425,17 @@ def read_case_inputs(case_dir: Path) -> CaseInputs:
     case_dir = case_dir.resolve()
     system_dir = case_dir / _SYSTEM_DIR
     stages, annual_discount_rate = _read_stages(case_dir / _STAGES_FILE)
+    commitments, initial_storage = _read_initial_conditions(
+        case_dir / _INITIAL_CONDITIONS_FILE
+    )
     inputs = CaseInputs(
         stages=stages,
         hydros=_read_hydros(system_dir / _HYDROS_FILE),
         thermals=_read_thermals(system_dir / _THERMALS_FILE),
         buses=_read_buses(system_dir / _BUSES_FILE),
         annual_discount_rate=annual_discount_rate,
-        past_anticipated_commitments=_read_initial_conditions(
-            case_dir / _INITIAL_CONDITIONS_FILE
-        ),
+        past_anticipated_commitments=commitments,
+        initial_storage_hm3=initial_storage,
     )
 
     _LOG.info(

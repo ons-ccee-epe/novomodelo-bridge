@@ -14,7 +14,8 @@ gauging-station column already holds the plant's own incremental (local)
 inflow, so each plant's value is read straight through from its (post-``AC
 NUMPOS``) gauge column — no upstream subtraction. novomodelo re-derives the natural
 flow at each plant by routing upstream releases down the ``downstream_id``
-cascade.
+cascade. The one exception is a group of NW plants (:class:`NwInflowSplit`),
+which takes NEWAVE's split of the flow from the coupling tables.
 
 The tree is emitted node-natively: every stage draws its openings from
 ``external_inflow_scenarios.parquet`` (trunk column 0, terminal fan columns
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Protocol
 
@@ -68,6 +70,22 @@ _LOG = logging.getLogger(__name__)
 _PROBABILITY_ATOL = 1e-4
 _VAZOES = "vazoes.rvN"
 
+#: How far the operation and coupling inflow tables may differ, on any row, for an
+#: NW plant's inflow to be split from its downstream plant's: the rounding of the
+#: tables' whole-m³/s values over one NW plant and its absorber.
+NW_SPLIT_TOLERANCE_M3S = 1.0
+
+_WEEKLY_KEYS = ("estagio",)
+_MONTHLY_KEYS = ("estagio", "cenario")
+_PAIRED_TABLES = (
+    ("previsoes", "previsoes_com_postos_artificiais", _WEEKLY_KEYS),
+    (
+        "cenarios_gerados",
+        "cenarios_calculados_com_postos_artificiais",
+        _MONTHLY_KEYS,
+    ),
+)
+
 
 class ObservationTables(Protocol):
     """The pre-study observation tables of a ``vazoes`` file."""
@@ -85,6 +103,12 @@ class _TreeTables(Protocol):
 
     @property
     def cenarios_gerados(self) -> pd.DataFrame | None: ...
+
+    @property
+    def previsoes_com_postos_artificiais(self) -> pd.DataFrame | None: ...
+
+    @property
+    def cenarios_calculados_com_postos_artificiais(self) -> pd.DataFrame | None: ...
 
 
 class _ProbabilityTable(Protocol):
@@ -145,6 +169,195 @@ def _incremental_values(
     relink.)
     """
     return [float(row[station_by_code[code]]) for code in id_map.hydro_codes]
+
+
+def posto_value(row: pd.Series, posto: int) -> float:
+    """*row*'s value on the ``posto`` column (named by the posto number)."""
+    column = str(posto)
+    if column not in row.index:
+        raise ValueError(f"the inflow file has no posto {posto} column")
+    return float(row[column])
+
+
+@dataclass(frozen=True)
+class NwInflowSplit:
+    """How the inflow of each NW plant is split from the plant below it.
+
+    An NW plant is one DECOMP does not operate. The operation tables give the
+    flow of a *group* (the NW plants whose first operated plant below is the
+    same *absorber*) to the absorber, and give each NW plant none. NEWAVE's
+    coupling tables split that flow plant by plant, and the boundary cuts price
+    that split. A group that passes the guard (:func:`split_nw_inflows`) takes
+    it: each NW plant carries its coupling inflow and the absorber the rest of
+    its operation inflow. A group that fails keeps the operation series.
+
+    Attributes
+    ----------
+    passed:
+        Absorber code -> the codes of its NW plants, for the groups that pass.
+    failed:
+        The same, for the groups that fail.
+    max_balance_gap_m3s:
+        Per failed absorber, the largest ``|op[absorber] - Σ c[absorber and
+        its NW plants]|`` over the paired rows.
+    max_nw_operation_m3s:
+        Per failed absorber, the largest ``|op[NW plant]|`` over the paired
+        rows and the group's NW plants.
+    unabsorbed:
+        The NW plants with no operated plant below, which keep the operation
+        series.
+    """
+
+    passed: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    failed: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    max_balance_gap_m3s: Mapping[int, float] = field(default_factory=dict)
+    max_nw_operation_m3s: Mapping[int, float] = field(default_factory=dict)
+    unabsorbed: tuple[int, ...] = ()
+
+    @property
+    def carried_codes(self) -> tuple[int, ...]:
+        """The absorbers and NW plants of the passed groups."""
+        return tuple(
+            code
+            for absorber, nw_codes in self.passed.items()
+            for code in (absorber, *nw_codes)
+        )
+
+    def carried(
+        self,
+        code: int,
+        operation_row: pd.Series,
+        coupling_row: pd.Series,
+        effective: EffectiveCadastro,
+    ) -> float:
+        """The inflow the case carries for plant *code* on one paired row.
+
+        An NW plant of a passed group carries its coupling inflow, and its
+        absorber the operation inflow less its NW plants' coupling inflows.
+        Every other plant carries its operation inflow.
+        """
+
+        def operation(plant: int) -> float:
+            return posto_value(operation_row, effective.inflow_gauge(plant, 0))
+
+        def coupling(plant: int) -> float:
+            return posto_value(coupling_row, effective.coupling_gauge(plant))
+
+        nw_codes = self.passed.get(code)
+        if nw_codes is not None:
+            return operation(code) - sum(coupling(nw) for nw in nw_codes)
+        if code in self.carried_codes:
+            return coupling(code)
+        return operation(code)
+
+
+def _row_key(row: pd.Series, keys: tuple[str, ...]) -> tuple[int, ...]:
+    return tuple(int(row[key]) for key in keys)
+
+
+def _coupling_rows(
+    table: pd.DataFrame | None, keys: tuple[str, ...]
+) -> dict[tuple[int, ...], pd.Series]:
+    if table is None:
+        return {}
+    return {_row_key(row, keys): row for _, row in table.iterrows()}
+
+
+def _paired_rows(vazoes: _TreeTables) -> list[tuple[pd.Series, pd.Series]]:
+    """Every operation row with its coupling row: ``previsoes`` on ``estagio``,
+    ``cenarios_gerados`` on ``estagio`` and ``cenario``."""
+    pairs: list[tuple[pd.Series, pd.Series]] = []
+    for operation_name, coupling_name, keys in _PAIRED_TABLES:
+        operation: pd.DataFrame | None = getattr(vazoes, operation_name)
+        if operation is None:
+            continue
+        coupling_rows = _coupling_rows(getattr(vazoes, coupling_name), keys)
+        for _, row in operation.iterrows():
+            key = _row_key(row, keys)
+            if key not in coupling_rows:
+                at = ", ".join(f"{k} {v}" for k, v in zip(keys, key, strict=True))
+                raise ValueError(
+                    f"the inflow file's {operation_name} row at {at} has no "
+                    f"row in {coupling_name}"
+                )
+            pairs.append((row, coupling_rows[key]))
+    return pairs
+
+
+def split_nw_inflows(
+    vazoes: _TreeTables,
+    effective: EffectiveCadastro,
+    id_map: DecompIdMap,
+) -> NwInflowSplit:
+    """Group the NW plants by absorber and run the guard on every paired row.
+
+    A group passes when, on every row, both checks hold within
+    :data:`NW_SPLIT_TOLERANCE_M3S` (inclusive): the absorber's operation
+    inflow equals the sum of the coupling inflows of the absorber and its NW
+    plants, and each NW plant's own operation inflow, which the split
+    discards, is near zero. A deck without NW plants gets an empty split and
+    its coupling tables are not read.
+
+    Raises
+    ------
+    ValueError
+        If an NW plant's coupling table is missing, or an operation row has no
+        coupling row to pair with.
+    """
+    dormant = id_map.dormant_hydro_codes
+    if not dormant:
+        return NwInflowSplit()
+    for _, coupling_name, _ in _PAIRED_TABLES:
+        if getattr(vazoes, coupling_name) is None:
+            plural = "s" if len(dormant) > 1 else ""
+            raise ValueError(
+                f"cannot split the inflow of NW plant{plural} "
+                f"{', '.join(map(str, dormant))}: the inflow file has no "
+                f"{coupling_name} table"
+            )
+
+    operated = set(id_map.operated_hydro_codes)
+    groups: dict[int, list[int]] = defaultdict(list)
+    unabsorbed: list[int] = []
+    for code in dormant:
+        absorber = _downstream_operated(effective, code, operated)
+        if absorber is None:
+            unabsorbed.append(code)
+        else:
+            groups[absorber].append(code)
+
+    max_gap = dict.fromkeys(groups, 0.0)
+    max_nw = dict.fromkeys(groups, 0.0)
+    for operation_row, coupling_row in _paired_rows(vazoes):
+        for absorber, nw_codes in groups.items():
+            coupled = sum(
+                posto_value(coupling_row, effective.coupling_gauge(code))
+                for code in (absorber, *nw_codes)
+            )
+            operated_flow = posto_value(
+                operation_row, effective.inflow_gauge(absorber, 0)
+            )
+            max_gap[absorber] = max(max_gap[absorber], abs(operated_flow - coupled))
+            max_nw[absorber] = max(
+                max_nw[absorber],
+                *(
+                    abs(posto_value(operation_row, effective.inflow_gauge(code, 0)))
+                    for code in nw_codes
+                ),
+            )
+
+    passes = {
+        absorber: max_gap[absorber] <= NW_SPLIT_TOLERANCE_M3S
+        and max_nw[absorber] <= NW_SPLIT_TOLERANCE_M3S
+        for absorber in groups
+    }
+    return NwInflowSplit(
+        passed={a: tuple(nw) for a, nw in groups.items() if passes[a]},
+        failed={a: tuple(nw) for a, nw in groups.items() if not passes[a]},
+        max_balance_gap_m3s={a: g for a, g in max_gap.items() if not passes[a]},
+        max_nw_operation_m3s={a: v for a, v in max_nw.items() if not passes[a]},
+        unabsorbed=tuple(unabsorbed),
+    )
 
 
 def recent_observation_rows(
@@ -231,6 +444,7 @@ def _tree_values(
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
+    split: NwInflowSplit,
 ) -> dict[tuple[int, int], list[float]]:
     """``{(stage_index, scenario_index): incrementals}`` for the whole tree.
 
@@ -243,8 +457,32 @@ def _tree_values(
     For a multi-month deck the monthly trunk stages (deterministic, scenario 1)
     come from ``cenarios_gerados``, not ``previsoes``. The terminal fan's
     multiple scenarios also come from ``cenarios_gerados``.
+
+    Each plant reads its operation gauge, except the plants of a passed NW
+    group (:meth:`NwInflowSplit.carried`).
     """
     station_by_code, _ = _incremental_context(effective, id_map)
+    weekly_coupling = _coupling_rows(
+        vazoes.previsoes_com_postos_artificiais if split.passed else None,
+        _WEEKLY_KEYS,
+    )
+    monthly_coupling = _coupling_rows(
+        vazoes.cenarios_calculados_com_postos_artificiais if split.passed else None,
+        _MONTHLY_KEYS,
+    )
+
+    def row_values(
+        row: pd.Series,
+        coupling_rows: dict[tuple[int, ...], pd.Series],
+        keys: tuple[str, ...],
+    ) -> list[float]:
+        incrementals = _incremental_values(row, id_map, station_by_code)
+        for code in split.carried_codes:
+            incrementals[id_map.hydro_id(code)] = split.carried(
+                code, row, coupling_rows[_row_key(row, keys)], effective
+            )
+        return incrementals
+
     terminal = len(calendar) - 1
     n_weekly = weekly_stage_count(calendar)
 
@@ -264,7 +502,7 @@ def _tree_values(
                 f"trunk forecast stage {int(row['estagio'])} outside the "
                 f"weekly range (1..{n_weekly})"
             )
-        values[(stage_index, 0)] = _incremental_values(row, id_map, station_by_code)
+        values[(stage_index, 0)] = row_values(row, weekly_coupling, _WEEKLY_KEYS)
 
     cenarios = vazoes.cenarios_gerados
     if cenarios is None or cenarios.empty:
@@ -286,8 +524,8 @@ def _tree_values(
                 path=_VAZOES,
                 field="cenarios_gerados cenario",
             )
-        values[(stage_index, scenario_index)] = _incremental_values(
-            row, id_map, station_by_code
+        values[(stage_index, scenario_index)] = row_values(
+            row, monthly_coupling, _MONTHLY_KEYS
         )
     return values
 
@@ -364,6 +602,70 @@ def _report_negative_incrementals(
     )
 
 
+def _report_nw_split_fallback(
+    split: NwInflowSplit, effective: EffectiveCadastro
+) -> None:
+    """WARN on the NW plants that keep the operation inflows."""
+
+    def name(code: int) -> str:
+        return str(effective.base.loc[code, "nome_usina"]).strip()
+
+    rows: list[list[object]] = [
+        [
+            absorber,
+            name(absorber),
+            ", ".join(map(str, nw_codes)),
+            split.max_balance_gap_m3s[absorber],
+            split.max_nw_operation_m3s[absorber],
+        ]
+        for absorber, nw_codes in split.failed.items()
+    ]
+    rows.extend([code, name(code), str(code), "-", "-"] for code in split.unabsorbed)
+    if not rows:
+        return
+    emit(
+        Diagnostic(
+            code="decomp-nw-inflow-split-fallback",
+            severity=Severity.WARNING,
+            category="Inflow scenarios",
+            title=f"NW plant inflows keep the operation series ({len(rows)})",
+            summary=(
+                "DECOMP's operation inflows (vazoes.rvN) give the flow of an NW "
+                "plant to the first operated plant below it, but its boundary "
+                "cuts read each NW plant on a coupling posto of its own. The "
+                "conversion gives each NW plant its own coupling inflow, and "
+                "the operated plant below it the rest, only when the operation "
+                f"and coupling inflows agree within {NW_SPLIT_TOLERANCE_M3S:g} "
+                "m³/s on every row. The listed plants do not, or have no "
+                "operated plant below them, so they keep the operation inflows "
+                "and the boundary cost of their inflow terms can differ from "
+                "DECOMP's."
+            ),
+            table=DiagnosticTable(
+                columns=[
+                    "Code",
+                    "Name",
+                    "NW plants",
+                    "Largest balance gap (m³/s)",
+                    "Largest NW operation (m³/s)",
+                ],
+                rows=rows,
+                justify=["right", "left", "left", "right", "right"],
+            ),
+            notes=[
+                "The balance gap is the greatest difference, over the rows of "
+                "vazoes.rvN, between the operated plant's operation inflow and "
+                "the sum of its group's coupling inflows. The NW operation is "
+                "the greatest operation inflow of the group's NW plants, which "
+                "the split would discard.",
+                "An NW plant with no operated plant below it has no group to "
+                "split and is listed on its own row.",
+            ],
+        ),
+        logger=_LOG,
+    )
+
+
 def convert_external_inflows(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -373,9 +675,12 @@ def convert_external_inflows(
 ) -> pa.Table:
     """``external_inflow_scenarios.parquet``: the tree of per-plant incremental
     inflows, read off each plant's *effective* (post-``AC NUMPOS``) gauge
-    column."""
+    column, except the plants of an NW group that passes the guard
+    (:func:`split_nw_inflows`)."""
+    split = split_nw_inflows(vazoes, effective, id_map)
     _report_artificial_gauge_plants(effective, id_map)
-    values = _tree_values(vazoes, effective, id_map, case.calendar)
+    values = _tree_values(vazoes, effective, id_map, case.calendar, split)
+    _report_nw_split_fallback(split, effective)
     _report_negative_incrementals(values, effective, id_map)
 
     stage_ids: list[int] = []
@@ -407,16 +712,19 @@ def expected_incremental_inflows(
     fan_probabilities: Sequence[float],
 ) -> dict[tuple[int, int], float]:
     """``{(plant code, stage_index): incremental inflow m³/s}``, as the deck
-    gives it (negative values included).
+    gives it (negative values included), with the NW split of
+    :func:`split_nw_inflows`. It reports nothing: the conversion's own read
+    (:func:`convert_external_inflows`) does.
 
     A trunk stage takes its single forecast; the terminal stage takes its fan's
     mean weighted by *fan_probabilities* (from
     :func:`terminal_fan_probabilities`), never the uniform mean.
     """
     terminal = len(calendar) - 1
+    split = split_nw_inflows(vazoes, effective, id_map)
     expected: dict[tuple[int, int], float] = defaultdict(float)
     for (stage_index, scenario_index), incrementals in _tree_values(
-        vazoes, effective, id_map, calendar
+        vazoes, effective, id_map, calendar, split
     ).items():
         weight = fan_probabilities[scenario_index] if stage_index == terminal else 1.0
         for code, value in zip(id_map.hydro_codes, incrementals, strict=True):

@@ -20,17 +20,19 @@ directory.
 `convert decomp`. The export reads from it:
 
 - the revision named in `caso.dat`, which sets the output file suffix;
-- the operated hydro plants (`UH` records with an initial volume);
+- the hydro plants `convert decomp` converts: the `UH` records with an initial
+  volume and those marked `NW`;
 - their `hidr.dat` codes, which label the plants in `mapcut`;
 - each GNL plant's lag in months, from its `NL` record in `dadgnl`, which
   `mapcut` carries per GNL plant;
 - the order of its `VI` records, which numbers the plants with a water travel
   time in `mapcut`.
 
-The deck must operate exactly the case's hydro plants, under the names the
+The deck must hold exactly the case's hydro plants, under the names the
 case gives them. Otherwise the export fails with a message naming the first
-difference. Novomodelo hydro id `i` is the `i`-th smallest operated plant code,
-the numbering `convert decomp` uses. Likewise the deck's GNL plants, in
+difference. Novomodelo hydro id `i` is the `i`-th smallest of those plant codes,
+the numbering `convert decomp` uses. Premise P16 describes the `NW` plants,
+which the export leaves out of the cuts. Likewise the deck's GNL plants, in
 ascending code order, must match the case's anticipated thermals in id order
 and by name, and each must have an `NL` record.
 
@@ -141,6 +143,7 @@ and every export copies it into `export_manifest.json`. In brief:
 | P13 | `cortdeco` holds one extra record duplicating the last cut. |
 | P14 | The first cut-building node's cuts carry each GNL plant's coefficient for the delivery of the case's second stage, divided by that stage's hours; the other GNL coefficients are dropped and counted in the `dessem-fcf-gnl-coefficients-exported` note. |
 | P15 | GNL lag months are read from the deck's `NL` records; a GNL plant with no `NL` record is refused. |
+| P16 | A hydro that never enters the case's horizon is left out of `mapcut` and `cortdeco`, and each cut's intercept takes its storage coefficient times its initial storage. The export is refused unless these hydros are exactly the deck's `NW` plants, and when another plant drains into one, a cut prices a transit bucket of one, or `initial_conditions.json` gives one no storage. |
 
 ## Exit codes
 

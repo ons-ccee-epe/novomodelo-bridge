@@ -119,17 +119,24 @@ def _limits(
     initial_volumes: Mapping[int, float] | None = None,
     factors: Mapping[tuple[int, int], float] | None = None,
     altefe: pd.DataFrame | None = None,
+    dormant: Sequence[int] = (),
 ) -> TurbineLimits:
     """The limits for the plants in *rows*, the same inputs on every stage.
 
     Every plant defaults to the flat tailrace, zero inflow, its minimum
     volume and an ``MP × FD`` of 1 on group 0 (``(code, group)`` keys in
     *factors* override it). *altefe* is an ``AC ALTEFE`` frame resolved
-    through the effective cadastro.
+    through the effective cadastro. *dormant* names the plants of *rows* the
+    deck marks ``NW``.
     """
     hidr = _hidr_frame(rows)
     codes = tuple(rows)
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=codes)
+    id_map = DecompIdMap(
+        bus_codes=(1,),
+        bus_names=("SE",),
+        hydro_codes=codes,
+        dormant_hydro_codes=tuple(dormant),
+    )
     calendar = _calendar()
     effective, _ = build_effective_cadastro(
         _FakeDadger(uh=_uh_frame(codes), altefe=altefe), hidr, calendar
@@ -287,6 +294,22 @@ def test_upstream_inflow_reaches_the_plant_through_run_of_river_plants(
     assert limits.cap(2, 0, 0) == pytest.approx(expected)
 
 
+def test_a_dormant_reservoir_upstream_passes_its_inflow_to_the_plant_below() -> None:
+    """A plant marked NW neither stores nor regulates: its inflow goes to the
+    first operating plant below, whatever its type."""
+    rows = {
+        1: _plant_row(name="UP", jusante=2, tipo_regulacao="M"),
+        2: _plant_row(name="DOWN"),
+    }
+    limits = _limits(
+        rows,
+        tailrace={1: _RISING_TAILRACE, 2: _RISING_TAILRACE},
+        inflows={1: 100.0, 2: 50.0},
+        dormant=(1,),
+    )
+    assert limits.cap(2, 0, 0) == pytest.approx(_rising_turbined(150.0))
+
+
 def test_downstream_plant_level_selects_the_tailrace_family() -> None:
     """Families at 10 m and 30 m downstream levels; the plant below sits at
     20 m, halfway, so the tailrace is the families' mean, 25 m."""
@@ -296,6 +319,21 @@ def test_downstream_plant_level_selects_the_tailrace_family() -> None:
     }
     families = (_tailrace(15.0, reference_m=10.0), _tailrace(35.0, reference_m=30.0))
     limits = _limits(rows, tailrace={1: families})
+    assert limits.cap(1, 0, 0) == pytest.approx(100.0 * (75.0 / 80.0) ** 0.5)
+
+
+def test_a_dormant_plant_below_leaves_the_tailrace_level_to_the_next_operated_plant() -> (
+    None
+):
+    """Plant 2 never operates, so plant 1's tailrace level is plant 3's 20 m,
+    not plant 2's 40 m."""
+    rows = {
+        1: _plant_row(name="UP", jusante=2),
+        2: _plant_row(name="DORMANT", jusante=3, cota=(40.0, 0.0, 0.0, 0.0, 0.0)),
+        3: _plant_row(name="DOWN", cota=(20.0, 0.0, 0.0, 0.0, 0.0)),
+    }
+    families = (_tailrace(15.0, reference_m=10.0), _tailrace(35.0, reference_m=30.0))
+    limits = _limits(rows, tailrace={1: families}, dormant=(2,))
     assert limits.cap(1, 0, 0) == pytest.approx(100.0 * (75.0 / 80.0) ** 0.5)
 
 

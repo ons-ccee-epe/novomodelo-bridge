@@ -608,6 +608,43 @@ class TestSpecialConstraintCoverage:
             "4 families present in the deck"
         )
 
+    def test_a_term_on_an_nw_plant_is_left_out_as_convert_does(self) -> None:
+        """An ``NW`` plant is converted but not operated: its ``FU`` term is
+        left out with the INFO, and the rest of its ``RE`` is kept."""
+        dadger = _ConstraintFakeDadger(
+            re=_decl((10, 1, 2)),
+            fu=_coeff(
+                (10, 21, 1.0, 1, float("nan")),
+                (10, 40, 1.0, 1, float("nan")),
+                freq=True,
+            ),
+        )
+        id_map = DecompIdMap(
+            bus_codes=(1,),
+            bus_names=("SE",),
+            hydro_codes=(21, 40),
+            dormant_hydro_codes=(21,),
+        )
+        _, expected = drop_unknown_entities(
+            read_constraints(dadger),
+            hydro_codes=id_map.operated_hydro_codes,
+            coupling_only_codes=id_map.idle_hydro_codes,
+            thermal_codes=(),
+            pumping_codes=(),
+        )
+
+        checks, diagnostics = _coverage(dadger, None, id_map, {})
+
+        converted, *left_out = diagnostics
+        assert left_out == expected
+        [note] = left_out
+        assert note.code == "decomp-re-term-coupling-only-plant"
+        assert note.severity is Severity.INFO
+        assert note.table is not None
+        assert note.table.rows == [[10, 21]]
+        assert checks[0].detail is not None
+        assert checks[0].detail.startswith("1 record lowered to bounds, 0 emitted")
+
     def test_conflicting_flow_restrictions_are_reported_as_convert_does(
         self,
     ) -> None:

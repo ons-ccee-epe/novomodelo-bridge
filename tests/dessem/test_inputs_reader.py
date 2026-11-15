@@ -16,6 +16,20 @@ from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
 from tests.dessem.conftest import weekly_windows
 
 
+def _declare_storage(case_dir: Path, storage: Any) -> None:
+    path = case_dir / "initial_conditions.json"
+    conditions = json.loads(path.read_text(encoding="utf-8"))
+    conditions["storage"] = storage
+    path.write_text(json.dumps(conditions), encoding="utf-8")
+
+
+def _declare_entry_stage_id(case_dir: Path, pos: int, value: Any) -> None:
+    path = case_dir / "system" / "hydros.json"
+    hydros = json.loads(path.read_text(encoding="utf-8"))
+    hydros["hydros"][pos]["entry_stage_id"] = value
+    path.write_text(json.dumps(hydros), encoding="utf-8")
+
+
 class TestReadCaseInputs:
     """Test reading Novomodelo case JSON files."""
 
@@ -60,6 +74,76 @@ class TestReadCaseInputs:
 
         with pytest.raises(InputReadError, match="must be non-negative"):
             read_case_inputs(synthetic_case_dir)
+
+    def test_entry_stage_id_is_read_where_the_case_declares_it(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        _declare_entry_stage_id(synthetic_case_dir, 1, 3)
+
+        inputs = read_case_inputs(synthetic_case_dir)
+
+        assert [hydro.entry_stage_id for hydro in inputs.hydros] == [None, 3, None]
+
+    def test_malformed_entry_stage_id_raises(self, synthetic_case_dir: Path) -> None:
+        cases: list[tuple[Any, str]] = [
+            (-1, r"hydros\[1\]\.entry_stage_id must be non-negative, got -1"),
+            (True, r"hydros\[1\]\.entry_stage_id must be int, got bool"),
+            (1.5, r"hydros\[1\]\.entry_stage_id must be int, got float"),
+            ("3", r"hydros\[1\]\.entry_stage_id must be int, got str"),
+        ]
+        for value, message in cases:
+            _declare_entry_stage_id(synthetic_case_dir, 1, value)
+
+            with pytest.raises(InputReadError, match=message):
+                read_case_inputs(synthetic_case_dir)
+
+    def test_initial_storage_is_read_by_hydro_id(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        assert read_case_inputs(synthetic_case_dir).initial_storage_hm3 == {}
+        _declare_storage(
+            synthetic_case_dir,
+            [
+                {"hydro_id": 2, "value_hm3": 0.0},
+                {"hydro_id": 1, "value_hm3": 10.0},
+            ],
+        )
+
+        inputs = read_case_inputs(synthetic_case_dir)
+
+        assert inputs.initial_storage_hm3 == {1: 10.0, 2: 0.0}
+        assert inputs.past_anticipated_commitments == weekly_windows(100)
+
+    def test_malformed_initial_storage_raises(self, synthetic_case_dir: Path) -> None:
+        cases: list[tuple[Any, str]] = [
+            ({"hydro_id": 1, "value_hm3": 1.0}, r"storage must be a list, got dict"),
+            ([{"value_hm3": 1.0}], r"missing required key storage\[0\]\.hydro_id"),
+            (
+                [{"hydro_id": 1.5, "value_hm3": 1.0}],
+                r"storage\[0\]\.hydro_id must be int, got float",
+            ),
+            ([{"hydro_id": 1}], r"missing required key storage\[0\]\.value_hm3"),
+            (
+                [{"hydro_id": 1, "value_hm3": "10"}],
+                r"storage\[0\]\.value_hm3 must be a number, got str",
+            ),
+            (
+                [
+                    {"hydro_id": 1, "value_hm3": 1.0},
+                    {"hydro_id": 1, "value_hm3": 2.0},
+                ],
+                r"storage\[1\]\.hydro_id 1 repeats an earlier storage entry",
+            ),
+            (
+                [{"hydro_id": 1, "value_hm3": -1.0}],
+                r"storage\[0\]\.value_hm3 must be non-negative, got -1\.0",
+            ),
+        ]
+        for storage, message in cases:
+            _declare_storage(synthetic_case_dir, storage)
+
+            with pytest.raises(InputReadError, match=message):
+                read_case_inputs(synthetic_case_dir)
 
     def test_absent_thermals_file_reads_as_no_thermals(
         self, synthetic_case_dir: Path

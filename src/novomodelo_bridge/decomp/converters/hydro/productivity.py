@@ -101,7 +101,7 @@ def convert_energy_productivity(
     ``ρ_eq = ρ_esp · h_net`` with the head taken at the plant's **initial
     reservoir volume** — the source model's FPHA fit anchor (see
     :func:`_equivalent_productivity_mw_per_m3s`). *initial_volumes*
-    (``{code: hm³}``, from :func:`_operated_initial_volumes`) supplies that
+    (``{code: hm³}``, from :func:`_converted_initial_volumes`) supplies that
     anchor; a plant absent from it — or the whole map being ``None`` — falls
     back to the full-range mean anchor (``reference_volume_hm3=None``), the
     pre-FPHA-fix behaviour.
@@ -113,12 +113,12 @@ def convert_energy_productivity(
     ceiling.
     """
     vols = initial_volumes or {}
-    hydro_ids = [id_map.hydro_id(code) for code in id_map.hydro_codes]
+    hydro_ids = [id_map.hydro_id(code) for code in id_map.operated_hydro_codes]
     values = [
         _equivalent_productivity_mw_per_m3s(
             effective, code, 0, reference_volume_hm3=vols.get(code)
         )
-        for code in id_map.hydro_codes
+        for code in id_map.operated_hydro_codes
     ]
     return pa.table(
         {
@@ -216,7 +216,7 @@ def convert_production_models(
     A plant in *stage_models* (``{code: model entry per study stage}``, built by
     the pipeline: an ``fpha`` entry with its ``fpha_config`` and
     ``reference_volume``, or :func:`outage_stage_model`) gets one stage range per
-    run of equal entries, the last open-ended. Every other operated plant keeps
+    run of equal entries, the last open-ended. Every other converted plant keeps
     one open-ended ``constant_productivity`` range, its ρ_eq riding in
     ``hydro_energy_productivity.parquet``.
     """

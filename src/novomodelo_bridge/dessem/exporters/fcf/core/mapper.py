@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import TYPE_CHECKING
@@ -23,6 +23,7 @@ from novomodelo_bridge.core.policy_dates import (
     hours_between,
 )
 from novomodelo_bridge.core.tolerances import floats_differ
+from novomodelo_bridge.decomp.case_identity import SourceHydro
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
     GNL_EXPORT_MIDDLE_OFFSET,
     cortdeco_gnl_offset,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     )
     from novomodelo_bridge.dessem.exporters.fcf.core.layout import CutBlockOffsets
     from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
+        AffinePieceRecord,
         EntitySlotRecord,
         PolicyManifest,
         StageCutPool,
@@ -599,45 +601,6 @@ def first_node_per_stage(manifest: PolicyManifest) -> tuple[int, ...]:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class SourceHydro:
-    """A hydro plant as the source deck names it: `hidr.dat` code and name."""
-
-    code: int
-    name: str
-
-
-def match_source_hydros(
-    hydros: Sequence[HydroInfo], source: Mapping[int, SourceHydro]
-) -> None:
-    """Refuse a deck other than the one the case was converted from.
-
-    *source* is keyed by novomodelo hydro id. The deck must operate exactly the
-    case's hydros, each under the name the case gives it.
-
-    Raises:
-        MappingError: the plant sets or any plant name differ.
-    """
-    if {hydro.id for hydro in hydros} != source.keys():
-        raise MappingError(
-            f"the deck operates {len(source)} hydro plants but the case holds "
-            f"{len(hydros)}; export from the deck the case was converted from"
-        )
-    renamed = [
-        (hydro, source[hydro.id])
-        for hydro in sorted(hydros, key=lambda hydro: hydro.id)
-        if hydro.name != source[hydro.id].name
-    ]
-    if renamed:
-        hydro, plant = renamed[0]
-        raise MappingError(
-            f"{len(renamed)} hydro plant names differ between the case and the "
-            f"deck, first hydro {hydro.id}: {hydro.name!r} in the case, "
-            f"{plant.name!r} (plant {plant.code}) in the deck; export from the "
-            "deck the case was converted from"
-        )
-
-
 def storage_plant_ids(slots: Sequence[EntitySlotRecord]) -> tuple[int, ...]:
     """The hydro ids of a pool's storage axes, in slot order.
 
@@ -703,6 +666,114 @@ def downstream_positions(
                 f"{hydro.downstream_id}, which the case does not hold"
             )
     return tuple(positions)
+
+
+# ---------------------------------------------------------------------------
+# Premise P16: Hydros that never enter the horizon
+# ---------------------------------------------------------------------------
+
+
+def never_active_hydro_ids(
+    hydros: Sequence[HydroInfo], n_stages: int
+) -> frozenset[int]:
+    """The ids of the hydros whose entry stage is at or past the stage count."""
+    return frozenset(
+        hydro.id
+        for hydro in hydros
+        if hydro.entry_stage_id is not None and hydro.entry_stage_id >= n_stages
+    )
+
+
+def _hydro_label(hydro: HydroInfo, source: Mapping[int, SourceHydro]) -> str:
+    return f"hydro {hydro.id} ({hydro.name}, plant {source[hydro.id].code})"
+
+
+def check_never_active_hydros(
+    hydros: Sequence[HydroInfo],
+    source: Mapping[int, SourceHydro],
+    dormant_codes: Collection[int],
+    dropped: Collection[int],
+) -> None:
+    """Refuse a *dropped* set that is not the deck's `NW` plants, or a drain into it.
+
+    *source* is keyed by novomodelo hydro id and *dormant_codes* are the deck
+    codes of its `NW` plants.
+
+    Raises:
+        MappingError: a dropped hydro's deck code is not in *dormant_codes*, a
+            hydro with such a code is not dropped, or a kept hydro drains into a
+            dropped one.
+    """
+    by_id = {hydro.id: hydro for hydro in hydros}
+    for hydro in sorted(hydros, key=lambda hydro: hydro.id):
+        label = _hydro_label(hydro, source)
+        is_dropped = hydro.id in dropped
+        is_dormant = source[hydro.id].code in dormant_codes
+        if is_dropped and not is_dormant:
+            raise MappingError(
+                f"{label} never enters the horizon but the deck does not mark "
+                "it NW; export from the deck the case was converted from"
+            )
+        if is_dormant and not is_dropped:
+            raise MappingError(
+                f"{label} is an NW plant of the deck but the case brings it "
+                "into the horizon; export from the deck the case was "
+                "converted from"
+            )
+        downstream_id = hydro.downstream_id
+        if not is_dropped and downstream_id is not None and downstream_id in dropped:
+            target = _hydro_label(by_id[downstream_id], source)
+            raise MappingError(
+                f"{label} drains into {target}, which never enters the "
+                "horizon, so the pair would route its outflow to a plant it "
+                "does not hold"
+            )
+
+
+def refuse_priced_dropped_buckets(
+    pools: Mapping[int, StageCutPool],
+    trunk_pool_ids: Sequence[int],
+    dropped: Collection[int],
+) -> None:
+    """Refuse a trunk pool whose written cuts price in-transit water to a dropped hydro.
+
+    Raises:
+        MappingError: a cut past the warm-start slots has a nonzero coefficient
+            on a transit bucket of a dropped hydro.
+    """
+    for pool_id in trunk_pool_ids:
+        pool = pools[pool_id]
+        written = [
+            piece for piece in pool.pieces if piece.slot_index >= pool.warm_start_count
+        ]
+        for position in index_slots(pool.slots).transit_bucket:
+            hydro_id = pool.slots[position].entity_id
+            if hydro_id in dropped and any(
+                piece.coefficients[position] != 0.0 for piece in written
+            ):
+                raise MappingError(
+                    f"pool {pool_id} prices a transit bucket of hydro "
+                    f"{hydro_id}, which never enters the horizon, so its cuts "
+                    "carry in-transit water to a plant the pair does not hold"
+                )
+
+
+def frozen_storage_offset(
+    piece: AffinePieceRecord,
+    slots: Sequence[EntitySlotRecord],
+    frozen_storage_hm3: Mapping[int, float],
+) -> float:
+    """The cut's constant term from hydros held at *frozen_storage_hm3*, in R$.
+
+    Each coefficient is in R$/hm³, so the sum is added to the intercept as it
+    stands, before premise P2's division.
+    """
+    return sum(
+        float(piece.coefficients[position])
+        * frozen_storage_hm3[slots[position].entity_id]
+        for position in index_slots(slots).storage
+        if slots[position].entity_id in frozen_storage_hm3
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1810,6 +1810,11 @@ def _map_entities(
     return mapped, unmapped
 
 
+def _operated_hydro_ids(id_map: DecompIdMap) -> dict[int, int]:
+    """``{codigo_usina: novomodelo hydro id}`` of the plants DECOMP operates."""
+    return {code: id_map.hydro_id(code) for code in id_map.operated_hydro_codes}
+
+
 def _novomodelo_hydro(
     novomodelo_output_dir: Path,
 ) -> tuple[pl.DataFrame, dict[int, str]]:
@@ -1894,7 +1899,7 @@ def _read_aligned_frames(
     decomp_dir = case.files.dadger.parent
     id_map = case.id_map
 
-    hydro_codes = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
+    hydro_codes = _operated_hydro_ids(id_map)
     thermal_codes = {code: id_map.thermal_id(code) for code in id_map.thermal_codes}
     bus_codes = {code: id_map.bus_id(code) for code in id_map.bus_codes}
 
@@ -2190,7 +2195,7 @@ def _ree_result_comparisons(
     if id_map is None:
         return [], []
 
-    hydro_codes = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
+    hydro_codes = _operated_hydro_ids(id_map)
 
     try:
         membership = read_relato_membership(decomp_dir)
@@ -2398,7 +2403,7 @@ def _evaporation_result_comparisons(
     if id_map is None:
         return [], []
 
-    hydro_codes = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
+    hydro_codes = _operated_hydro_ids(id_map)
 
     try:
         source_evap, _unmapped_hydro_codes = _evap_side(
@@ -2422,9 +2427,11 @@ def _evaporation_result_comparisons(
     if novomodelo_hydro.is_empty() or "evaporation_m3s" not in novomodelo_hydro.columns:
         _LOG.info("Novomodelo output has no evaporation_m3s column; skipping")
         return [], []
-    novomodelo_evap = novomodelo_hydro.select(
-        "entity_id", "stage_id", "evaporation_m3s"
-    ).drop_nulls("evaporation_m3s")
+    novomodelo_evap = (
+        novomodelo_hydro.select("entity_id", "stage_id", "evaporation_m3s")
+        .drop_nulls("evaporation_m3s")
+        .filter(pl.col("entity_id").is_in(list(hydro_codes.values())))
+    )
 
     stage_hours = _novomodelo_stage_hours(novomodelo_output_dir)
     if not stage_hours:

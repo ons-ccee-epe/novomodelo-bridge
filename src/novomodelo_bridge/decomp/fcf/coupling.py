@@ -13,8 +13,11 @@ Only a reservoir (``tipo_regulacao`` ``M``/``S``) takes a storage term, priced
 above its minimum volume. The inflow-lag terms are evaluated on each plant's
 coupling posto (``AC NPOSNW``, else the ``hidr.dat`` posto) and on the
 ``vazoes`` tables with the artificial postos computed, while novomodelo's lag state
-follows the plant's operation inflow. The deterministic part of that
-difference is returned as a per-depth offset for the mapper to fold.
+follows the inflow the case carries: the plant's operation inflow, except for
+the plants of an NW group that takes NEWAVE's split
+(:class:`~novomodelo_bridge.decomp.scenarios.NwInflowSplit`), which carry that
+split. The deterministic part of the difference is returned as a per-depth
+offset for the mapper to fold.
 """
 
 from __future__ import annotations
@@ -27,7 +30,9 @@ from novomodelo_bridge.decomp.converters.cadastro import is_reservoir
 from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
 from novomodelo_bridge.decomp.scenarios import (
     ObservationTables,
+    posto_value,
     recent_observation_rows,
+    split_nw_inflows,
 )
 
 if TYPE_CHECKING:
@@ -70,12 +75,8 @@ class _SourceOnlyTables(_CouplingTrunkTables, ObservationTables, Protocol):
     pass
 
 
-class _TerminalFanTables(Protocol):
-    @property
-    def cenarios_calculados_com_postos_artificiais(self) -> pd.DataFrame | None: ...
-
-    @property
-    def cenarios_gerados(self) -> pd.DataFrame | None: ...
+class _TerminalFanTables(_CouplingTrunkTables, _OperationTrunkTables, Protocol):
+    pass
 
 
 @dataclass(frozen=True)
@@ -198,13 +199,6 @@ def _first_downstream_owner(
     return None
 
 
-def _posto_value(row: pd.Series, posto: int) -> float:
-    column = str(posto)
-    if column not in row.index:
-        raise ValueError(f"the inflow file has no posto {posto} column")
-    return float(row[column])
-
-
 def _month_share(start: date, end: date, year: int, month: int) -> float:
     """The fraction of ``year``-``month``'s days that ``[start, end)`` covers."""
     month_start, month_end = month_window(year, month)
@@ -282,23 +276,25 @@ def coupling_lag_offsets(
 
     The recent-observation seed is already read on the coupling posto, so only
     the deterministic study stages differ: the coupling inflow (the tables with
-    the artificial postos computed, on the coupling posto) minus the operation
-    inflow novomodelo carries (``previsoes`` and ``cenarios_gerados``, on the
-    operation posto). A hydro whose offsets all vanish is omitted.
+    the artificial postos computed, on the coupling posto) minus the inflow
+    novomodelo carries (``previsoes`` and ``cenarios_gerados``, on the operation
+    posto, or the NW split of a group that passes the guard,
+    :meth:`~novomodelo_bridge.decomp.scenarios.NwInflowSplit.carried`). A
+    hydro whose offsets all vanish is omitted.
     """
+    split = split_nw_inflows(vazoes, effective, id_map)
     coupling_rows = _coupling_trunk(vazoes, calendar)
     operation_rows = _operation_trunk(vazoes, calendar)
     offsets: dict[int, tuple[float, ...]] = {}
     for coupling in couplings:
         code = id_map.hydro_codes[coupling.hydro_id]
         coupling_posto = effective.coupling_gauge(code)
-        operation_posto = effective.inflow_gauge(code, 0)
         gaps = tuple(
             (
                 start,
                 end,
-                _posto_value(c_row, coupling_posto)
-                - _posto_value(o_row, operation_posto),
+                posto_value(c_row, coupling_posto)
+                - split.carried(code, o_row, c_row, effective),
             )
             for (start, end, c_row), (_, _, o_row) in zip(
                 coupling_rows, operation_rows, strict=True
@@ -334,7 +330,7 @@ def source_only_lag_inflows(
             continue
         posto = effective.coupling_gauge(code)
         windows = (
-            (start, end, _posto_value(row, posto))
+            (start, end, posto_value(row, posto))
             for start, end, row in (*observation_rows, *trunk)
         )
         inflows[index] = _monthly_means(windows, months)
@@ -355,7 +351,9 @@ def terminal_shares(
     (``cenarios_calculados_com_postos_artificiais`` on the coupling posto)
     differs from its operation inflow (``cenarios_gerados`` on the operation
     posto) in some terminal scenario; a source-only plant always is, with its
-    whole coupling inflow as the gap.
+    whole coupling inflow as the gap. The plants of an NW group that passes the
+    guard are left out: their gap is within the guard's tolerance, and the
+    inflow the case carries for them is the coupling split.
     """
     terminal_estagio = len(calendar)
     coupling_table = vazoes.cenarios_calculados_com_postos_artificiais
@@ -367,16 +365,19 @@ def terminal_shares(
         )
     coupling_fan = _terminal_fan(coupling_table, terminal_estagio)
     operation_fan = _terminal_fan(operation_table, terminal_estagio)
+    carried_codes = split_nw_inflows(vazoes, effective, id_map).carried_codes
     shares: list[TerminalShare] = []
     for coupling in couplings:
         code = id_map.hydro_codes[coupling.hydro_id]
+        if code in carried_codes:
+            continue
         coupling_posto = effective.coupling_gauge(code)
         operation_posto = effective.inflow_gauge(code, 0)
         gap = max(
             (
                 abs(
-                    _posto_value(c_row, coupling_posto)
-                    - _posto_value(o_row, operation_posto)
+                    posto_value(c_row, coupling_posto)
+                    - posto_value(o_row, operation_posto)
                 )
                 for c_row, o_row in zip(coupling_fan, operation_fan, strict=True)
             ),
@@ -388,7 +389,7 @@ def terminal_shares(
         if code not in effective.base.index:
             continue
         posto = effective.coupling_gauge(code)
-        gap = max((abs(_posto_value(row, posto)) for row in coupling_fan), default=0.0)
+        gap = max((abs(posto_value(row, posto)) for row in coupling_fan), default=0.0)
         shares.append(TerminalShare(code, posto, None, gap))
     return tuple(shares)
 

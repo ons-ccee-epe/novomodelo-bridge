@@ -134,10 +134,10 @@ _LEFT_OUT_FINDINGS: dict[str, tuple[OutsideTerm, str, str, str]] = {
         OutsideTerm.NOT_GENERATING,
         "Electrical-restriction terms on plants DECOMP does not operate left out",
         "The listed electrical restrictions in the LIBS file name a plant "
-        "whose UH record in dadger.rvN gives no initial volume: DECOMP "
-        "does not operate the plant, so the term adds nothing there "
-        "either. The conversion leaves the term out and keeps the rest "
-        "of the restriction.",
+        "whose UH record in dadger.rvN gives no initial volume or is marked "
+        "NW: DECOMP does not operate the plant, so the term adds nothing "
+        "there either. The conversion leaves the term out and keeps the "
+        "rest of the restriction.",
         "hydro plant",
     ),
     _TERM_NO_LINE: (
@@ -280,7 +280,7 @@ def _novomodelo_token(
     thermal, park, bus, or line is absent from its map, or when *term* is
     ``ener_comerc``. Two of them leave out only the term, which is zero in
     DECOMP too: a ``ger_usih`` or ``ger_conjh`` on a plant of
-    ``id_map.coupling_only_codes``, which generates nothing, and an
+    ``id_map.idle_hydro_codes``, which generates nothing, and an
     ``ener_interc`` between two SB submarkets no line joins. An operand that
     fell back to the IV bus may be an undeclared code, so its missing line
     still leaves the whole restriction out.
@@ -295,7 +295,7 @@ def _novomodelo_token(
     """
     if term.token == "ger_usih":
         code = term.args[0]
-        if code in id_map.coupling_only_codes:
+        if code in id_map.idle_hydro_codes:
             return _left_out(_COUPLING_ONLY, term)
         try:
             hydro_id = id_map.hydro_id(code)
@@ -321,7 +321,7 @@ def _novomodelo_token(
 
     if term.token == "ger_conjh":
         code, group = term.args
-        if code in id_map.coupling_only_codes:
+        if code in id_map.idle_hydro_codes:
             return _left_out(_COUPLING_ONLY, term)
         try:
             hydro_id = id_map.hydro_id(code)

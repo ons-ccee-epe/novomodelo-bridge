@@ -63,6 +63,16 @@ def id_map() -> DecompIdMap:
 
 
 @pytest.fixture
+def dormant_id_map() -> DecompIdMap:
+    return DecompIdMap(
+        bus_codes=(1,),
+        bus_names=("SE",),
+        hydro_codes=(1,),
+        dormant_hydro_codes=(1,),
+    )
+
+
+@pytest.fixture
 def calendar() -> list[OperativeStage]:
     """Three placeholder stages — only their count is used by the emitter."""
     return [
@@ -107,6 +117,19 @@ def test_convert_storage_bounds_emits_one_contribution_per_stage_that_differs(
         assert contribution.axis == "storage"
         assert contribution.lower == 20.0
         assert contribution.upper == 100.0
+
+
+def test_convert_storage_bounds_skips_a_dormant_plant(
+    effective: EffectiveCadastro,
+    dormant_id_map: DecompIdMap,
+    calendar: list[OperativeStage],
+) -> None:
+    assert (
+        convert_storage_bounds(
+            _case(None, calendar), dormant_id_map, effective=effective
+        )
+        == []
+    )
 
 
 def test_convert_storage_bounds_no_stage_varying_volumes_emits_no_contributions(
@@ -196,6 +219,20 @@ def test_ve_unoperated_plant_skipped(
     )
 
 
+def test_ve_dormant_plant_skipped(
+    effective: EffectiveCadastro,
+    dormant_id_map: DecompIdMap,
+    calendar: list[OperativeStage],
+) -> None:
+    dadger = _dadger_with_ve([{"codigo_usina": 1, "volume_1": 30.0}])
+    assert (
+        convert_volume_espera_bounds(
+            _case(dadger, calendar), dormant_id_map, effective=effective
+        )
+        == []
+    )
+
+
 # ---------------------------------------------------------------------------
 # TI (irrigation) — consumptive water withdrawal
 # ---------------------------------------------------------------------------
@@ -266,6 +303,15 @@ def test_ti_unoperated_plant_returns_none(
     # plant 999 is not operated -> no rows -> None.
     dadger = _dadger_with_ti([{"codigo_usina": 999, "taxa_1": 5.0}])
     assert convert_irrigation_withdrawal(_case(dadger, calendar), id_map) is None
+
+
+def test_ti_dormant_plant_returns_none(
+    dormant_id_map: DecompIdMap, calendar: list[OperativeStage]
+) -> None:
+    dadger = _dadger_with_ti([{"codigo_usina": 1, "taxa_1": 5.0}])
+    assert (
+        convert_irrigation_withdrawal(_case(dadger, calendar), dormant_id_map) is None
+    )
 
 
 # EZ (percentual máximo do volume útil para acoplamento) is deliberately NOT

@@ -17,8 +17,8 @@ class TestPremises:
     """Test the PREMISES tuple and individual premise constants."""
 
     def test_premises_count(self) -> None:
-        """PREMISES contains exactly 15 premises."""
-        assert len(PREMISES) == 15
+        """PREMISES contains exactly 16 premises."""
+        assert len(PREMISES) == 16
 
     def test_premises_are_strings(self) -> None:
         """All premises are non-empty strings."""

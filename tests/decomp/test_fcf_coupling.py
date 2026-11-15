@@ -13,8 +13,13 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from idecomp.decomp import Vazoes
 
-from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters.cadastro import (
+    EffectiveCadastro,
+    build_effective_cadastro,
+)
 from novomodelo_bridge.decomp.fcf.coupling import (
     BorrowedOwner,
     carried_lag_share,
@@ -59,7 +64,9 @@ _PLANTS = {
     305: ("D", 305, 0, 0.0),  # reaches the sink: no owner
     306: ("D", 306, 307, 0.0),
     307: ("D", 307, 306, 0.0),  # 306 <-> 307 is a cycle: no owner
-    260: ("D", 260, 0, 0.0),  # a cut plant not converted
+    901: ("D", 901, 0, 0.0),  # a cut plant not converted
+    501: ("D", 501, 502, 0.0),  # an NW plant draining to 502
+    502: ("D", 502, 0, 0.0),
 }
 
 
@@ -82,8 +89,13 @@ def _effective(
     )
 
 
-def _id_map(*codes: int) -> DecompIdMap:
-    return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=codes)
+def _id_map(*codes: int, dormant: tuple[int, ...] = ()) -> DecompIdMap:
+    return DecompIdMap(
+        bus_codes=(1,),
+        bus_names=("SE",),
+        hydro_codes=codes,
+        dormant_hydro_codes=dormant,
+    )
 
 
 def test_lag_months_starts_at_the_cut_month_and_crosses_the_year() -> None:
@@ -102,7 +114,7 @@ def test_resolve_couplings_follows_own_row_complex_and_downstream_plant() -> Non
     id_map = _id_map(1, 2, 109, 146, 147, 305, 306, 400)
 
     resolution = resolve_couplings(
-        (1, 2, 132, 260), id_map, effective, {132: [147, 146]}
+        (1, 2, 132, 901), id_map, effective, {132: [147, 146]}
     )
 
     assert resolution.couplings == (
@@ -129,6 +141,21 @@ def test_resolve_couplings_ignores_a_complex_absent_from_the_cut() -> None:
 
     assert resolution.couplings == ()
     assert resolution.unowned == (147,)
+
+
+def test_an_nw_plant_binds_to_its_own_cut_row(decomp_mini_case: DecompCase) -> None:
+    id_map = DecompIdMap.from_dadger(decomp_mini_case.dadger)
+    effective, _ = build_effective_cadastro(
+        decomp_mini_case.dadger, decomp_mini_case.hidr, decomp_mini_case.calendar
+    )
+    estrela = 260
+
+    resolution = resolve_couplings((estrela,), id_map, effective, {})
+
+    assert estrela in id_map.dormant_hydro_codes
+    assert HydroCoupling(id_map.hydro_id(estrela), 0, None) in resolution.couplings
+    assert estrela not in resolution.unowned
+    assert all(owner.plant_code != estrela for owner in resolution.borrowed)
 
 
 def _trunk(column: str, values: tuple[float, ...]) -> pd.DataFrame:
@@ -190,14 +217,14 @@ def test_coupling_lag_offsets_rejects_a_missing_posto() -> None:
 
 def test_source_only_lag_inflows_join_history_and_trunk_on_the_coupling_posto() -> None:
     vazoes = SimpleNamespace(
-        observacoes_mensais=pd.DataFrame({"mes": [1, 2], "260": [100.0, 200.0]}),
-        observacoes_semanais=pd.DataFrame({"semana": [1, 2], "260": [300.0, 400.0]}),
-        previsoes_com_postos_artificiais=_trunk("260", (10.0, 20.0, 30.0)),
-        cenarios_calculados_com_postos_artificiais=_terminal_fan("260", 900.0),
+        observacoes_mensais=pd.DataFrame({"mes": [1, 2], "901": [100.0, 200.0]}),
+        observacoes_semanais=pd.DataFrame({"semana": [1, 2], "901": [300.0, 400.0]}),
+        previsoes_com_postos_artificiais=_trunk("901", (10.0, 20.0, 30.0)),
+        cenarios_calculados_com_postos_artificiais=_terminal_fan("901", 900.0),
     )
 
     inflows = source_only_lag_inflows(
-        vazoes, _effective(), (1, 260, 999), (1, 2), _CALENDAR, _MONTHS
+        vazoes, _effective(), (1, 901, 999), (1, 2), _CALENDAR, _MONTHS
     )
 
     assert set(inflows) == {1}  # plant 999 has no hidr.dat row, so no posto
@@ -221,7 +248,7 @@ def test_terminal_shares_lists_differing_and_source_only_plants() -> None:
                 "cenario": [2, 1],
                 "11": [60.0, 50.0],
                 "2": [8.0, 7.0],
-                "260": [3.0, -7.0],
+                "901": [3.0, -7.0],
             }
         ),
         cenarios_gerados=pd.DataFrame(
@@ -231,14 +258,137 @@ def test_terminal_shares_lists_differing_and_source_only_plants() -> None:
     couplings = (HydroCoupling(0, 0, 0.0), HydroCoupling(1, 1, None))
 
     shares = terminal_shares(
-        vazoes, effective, _id_map(1, 2), couplings, (260,), _CALENDAR
+        vazoes, effective, _id_map(1, 2), couplings, (901,), _CALENDAR
     )
 
     assert [(s.plant_code, s.coupling_posto, s.operation_posto) for s in shares] == [
         (1, 11, 1),
-        (260, 260, None),
+        (901, 901, None),
     ]
     assert [s.max_gap_m3s for s in shares] == pytest.approx([5.0, 7.0])
+
+
+def _split_group_vazoes(*, terminal_gaps: tuple[float, float]) -> SimpleNamespace:
+    """NW plant 501 (posto 501) above plant 502 (posto 502).
+
+    The operation tables give 502 the whole group's flow: its coupling inflow
+    plus 501's, and *terminal_gaps* on the two terminal scenarios. 501's own
+    operation value is 0.
+    """
+    c501, c502 = (10.0, 20.0, 30.0), (5.0, 5.0, 5.0)
+    fan501, fan502 = (100.0, 150.0), (40.0, 55.0)
+    fan = pd.DataFrame({"estagio": [4, 4], "cenario": [1, 2]})
+    return SimpleNamespace(
+        previsoes_com_postos_artificiais=pd.DataFrame(
+            {"estagio": [1, 2, 3], "501": c501, "502": c502}
+        ),
+        previsoes=pd.DataFrame(
+            {
+                "estagio": [1, 2, 3],
+                "501": [0.0] * 3,
+                "502": [a + b for a, b in zip(c501, c502, strict=True)],
+            }
+        ),
+        cenarios_calculados_com_postos_artificiais=fan.assign(
+            **{"501": fan501, "502": fan502}
+        ),
+        cenarios_gerados=fan.assign(
+            **{
+                "501": [0.0, 0.0],
+                "502": [
+                    a + b + gap
+                    for a, b, gap in zip(fan501, fan502, terminal_gaps, strict=True)
+                ],
+            }
+        ),
+    )
+
+
+_SPLIT_COUPLINGS = (HydroCoupling(0, 0, None), HydroCoupling(1, 1, None))
+
+
+def test_a_split_group_carries_no_lag_offset() -> None:
+    offsets = coupling_lag_offsets(
+        _split_group_vazoes(terminal_gaps=(1.0, 0.0)),
+        _effective(),
+        _id_map(501, 502, dormant=(501,)),
+        _CALENDAR,
+        _MONTHS,
+        _SPLIT_COUPLINGS,
+    )
+
+    assert offsets == {}
+
+
+def test_a_fallback_group_keeps_its_lag_offset() -> None:
+    offsets = coupling_lag_offsets(
+        _split_group_vazoes(terminal_gaps=(0.0, 1.5)),
+        _effective(),
+        _id_map(501, 502, dormant=(501,)),
+        _CALENDAR,
+        _MONTHS,
+        _SPLIT_COUPLINGS,
+    )
+
+    assert set(offsets) == {0, 1}
+    assert offsets[0][0] == pytest.approx(3 / 30 * 30.0)
+
+
+def test_a_split_group_is_left_out_of_the_terminal_shares() -> None:
+    """The terminal gap of 1 m³/s is within the guard, but not within the
+    exact-match test the other plants take."""
+    shares = terminal_shares(
+        _split_group_vazoes(terminal_gaps=(1.0, 0.0)),
+        _effective(),
+        _id_map(501, 502, dormant=(501,)),
+        _SPLIT_COUPLINGS,
+        (),
+        _CALENDAR,
+    )
+
+    assert shares == ()
+
+
+def test_a_fallback_group_keeps_its_terminal_share() -> None:
+    shares = terminal_shares(
+        _split_group_vazoes(terminal_gaps=(0.0, 1.5)),
+        _effective(),
+        _id_map(501, 502, dormant=(501,)),
+        _SPLIT_COUPLINGS,
+        (),
+        _CALENDAR,
+    )
+
+    assert [(s.plant_code, s.coupling_posto, s.operation_posto) for s in shares] == [
+        (501, 501, 501),
+        (502, 502, 502),
+    ]
+    assert [s.max_gap_m3s for s in shares] == pytest.approx([150.0, 151.5])
+
+
+def test_decomp_mini_couples_estrela_and_salto_without_offset_or_share(
+    decomp_mini_case: DecompCase,
+) -> None:
+    id_map = DecompIdMap.from_dadger(decomp_mini_case.dadger)
+    effective, _ = build_effective_cadastro(
+        decomp_mini_case.dadger, decomp_mini_case.hidr, decomp_mini_case.calendar
+    )
+    vazoes = Vazoes.read(str(decomp_mini_case.files.vazoes))
+    calendar = decomp_mini_case.calendar
+    resolution = resolve_couplings(id_map.hydro_codes, id_map, effective, {})
+    months = lag_months(calendar[-1].start_date.year, calendar[-1].start_date.month)
+    estrela, salto = id_map.hydro_id(260), id_map.hydro_id(262)
+
+    offsets = coupling_lag_offsets(
+        vazoes, effective, id_map, calendar, months, resolution.couplings
+    )
+    shares = terminal_shares(
+        vazoes, effective, id_map, resolution.couplings, (), calendar
+    )
+
+    assert estrela not in offsets
+    assert salto not in offsets
+    assert {share.plant_code for share in shares}.isdisjoint({260, 262})
 
 
 #: Monthly stages only: January is the deterministic trunk, February the fan.

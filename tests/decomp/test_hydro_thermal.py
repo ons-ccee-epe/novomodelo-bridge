@@ -242,8 +242,10 @@ class _StubDadger:
         ct: pd.DataFrame | None = None,
         mp: pd.DataFrame | None = None,
         fd: pd.DataFrame | None = None,
+        vi: pd.DataFrame | None = None,
     ) -> None:
         self._uh, self._ct, self._mp, self._fd = uh, ct, mp, fd
+        self._vi = vi
 
     def uh(self, df: bool = False) -> pd.DataFrame | None:
         return self._uh
@@ -256,6 +258,9 @@ class _StubDadger:
 
     def fd(self, df: bool = False) -> pd.DataFrame | None:
         return self._fd
+
+    def vi(self, df: bool = False) -> pd.DataFrame | None:
+        return self._vi
 
     def ac(
         self,
@@ -497,6 +502,192 @@ class TestConvertHydros:
             "model": "constant_productivity",
             "productivity_mw_per_m3s": 0.0,
         }
+
+
+_NW_CODE = 20
+
+
+def _nw_hidr_frame(
+    *, nw_regulation: str = "M", omit: tuple[int, ...] = ()
+) -> pd.DataFrame:
+    """Operated plant 10 drains into plant 20 (the ``NW`` plant), which drains
+    into operated plant 30."""
+    rows = {
+        10: _plant_row("UP", 1, 20, 100.0, 500.0),
+        20: _plant_row("NWPLANT", 1, 30, 50.0, 250.0),
+        30: _plant_row("DOWN", 1, 0, 10.0, 10.0),
+    }
+    regulation = {10: "M", 20: nw_regulation, 30: "D"}
+    df = pd.DataFrame(
+        {
+            code: {**row, "tipo_regulacao": regulation[code]}
+            for code, row in rows.items()
+            if code not in omit
+        }
+    ).T
+    df.index.name = "codigo_usina"
+    return df
+
+
+def _nw_uh_frame(nw_volume: float | None = None) -> pd.DataFrame:
+    """Plants 10 and 30 are operated; plant 20 is marked ``NW`` and carries a
+    minimum outflow no operated plant would."""
+    return pd.DataFrame(
+        [
+            {
+                "codigo_usina": code,
+                "configuracao_newave": marker,
+                "volume_inicial": volume,
+                "vazao_defluente_minima": minimum,
+                "volume_morto_inicial": None,
+            }
+            for code, marker, volume, minimum in (
+                (10, "", 50.0, 30.0),
+                (_NW_CODE, "NW", nw_volume, 40.0),
+                (30, "", 100.0, None),
+            )
+        ]
+    )
+
+
+def _vi_frame(*codes: int) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "codigo_usina": list(codes),
+            "duracao": [24.0] * len(codes),
+            "vazao_1": [100.0] * len(codes),
+        }
+    )
+
+
+def _nw_id_map() -> DecompIdMap:
+    return DecompIdMap(
+        bus_codes=(1,),
+        bus_names=("SE",),
+        hydro_codes=(10, _NW_CODE, 30),
+        dormant_hydro_codes=(_NW_CODE,),
+    )
+
+
+def _convert_nw_hydros(
+    hidr: pd.DataFrame,
+    *,
+    nw_volume: float | None = None,
+    vi: pd.DataFrame | None = None,
+) -> dict:
+    id_map = _nw_id_map()
+    dadger = _StubDadger(uh=_nw_uh_frame(nw_volume), vi=vi)
+    return convert_hydros(
+        _case(dadger, hidr),
+        id_map,
+        effective=_no_override_effective(hidr),
+        turbine_limits=flat_turbine_limits(id_map, 3),
+    )
+
+
+class TestNwPlants:
+    """A ``UH`` plant marked ``NW`` is converted as a hydro that enters after
+    the horizon: DECOMP does not operate it, but the boundary cuts price it."""
+
+    def test_nw_plant_enters_after_the_horizon_with_storage_at_vmin(self) -> None:
+        hidr = _nw_hidr_frame()
+        id_map = _nw_id_map()
+        case = _case(_StubDadger(uh=_nw_uh_frame()), hidr)
+
+        hydros = {
+            h["name"]: h
+            for h in convert_hydros(
+                case,
+                id_map,
+                effective=_no_override_effective(hidr),
+                turbine_limits=flat_turbine_limits(id_map, 3),
+            )["hydros"]
+        }
+        storage = convert_initial_storage(
+            case, id_map, effective=_no_override_effective(hidr)
+        )
+
+        nw = hydros["NWPLANT"]
+        assert nw["id"] == id_map.hydro_id(_NW_CODE)
+        assert nw["entry_stage_id"] == len(case.calendar)
+        assert nw["operational_start_date"] == case.calendar[-1].end_date.isoformat()
+        assert nw["outflow"]["min_outflow_m3s"] == 0.0
+        assert nw["generation"]["model"] == "constant_productivity"
+        for operated in (hydros["UP"], hydros["DOWN"]):
+            assert "entry_stage_id" not in operated
+            assert operated["operational_start_date"] == case.start_date.isoformat()
+        assert hydros["UP"]["outflow"]["min_outflow_m3s"] == 30.0
+        by_id = {e["hydro_id"]: e["value_hm3"] for e in storage}
+        assert by_id[nw["id"]] == pytest.approx(50.0)
+        assert by_id[hydros["UP"]["id"]] == pytest.approx(100.0 + 0.5 * 400.0)
+
+    def test_nw_run_of_river_with_a_deck_volume_takes_its_reference_volume(
+        self,
+    ) -> None:
+        hidr = _nw_hidr_frame(nw_regulation="D")
+        hidr.loc[_NW_CODE, "volume_referencia"] = 120.0
+        case = _case(_StubDadger(uh=_nw_uh_frame(nw_volume=40.0)), hidr)
+        id_map = _nw_id_map()
+
+        storage = convert_initial_storage(
+            case, id_map, effective=_no_override_effective(hidr)
+        )
+        doc = _convert_nw_hydros(hidr, nw_volume=40.0)
+
+        nw_id = id_map.hydro_id(_NW_CODE)
+        assert {e["hydro_id"]: e["value_hm3"] for e in storage}[nw_id] == 120.0
+        assert doc["hydros"][nw_id]["entry_stage_id"] == len(case.calendar)
+
+    def test_nw_reservoir_with_a_deck_volume_above_vmin_raises(self) -> None:
+        hidr = _nw_hidr_frame()
+
+        with pytest.raises(ValueError, match=r"plant 20 \(NWPLANT\)"):
+            _convert_nw_hydros(hidr, nw_volume=40.0)
+
+        doc = _convert_nw_hydros(hidr, nw_volume=0.0)
+        assert doc["hydros"][_nw_id_map().hydro_id(_NW_CODE)]["entry_stage_id"] == 3
+
+    def test_nw_plant_missing_from_hidr_raises(self) -> None:
+        hidr = _nw_hidr_frame(omit=(_NW_CODE,))
+
+        with pytest.raises(
+            ValueError, match="UH plant 20 is not in the hydro registry"
+        ):
+            _convert_nw_hydros(hidr, nw_volume=40.0)
+
+    def test_nw_plant_named_by_a_vi_record_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"plant 20 \(NWPLANT\).*VI"):
+            _convert_nw_hydros(_nw_hidr_frame(), vi=_vi_frame(_NW_CODE))
+
+    def test_operated_plant_draining_into_an_nw_plant_converts_and_passes_its_water_downstream(
+        self,
+    ) -> None:
+        doc = _convert_nw_hydros(_nw_hidr_frame())
+
+        by_name = {h["name"]: h for h in doc["hydros"]}
+        assert by_name["UP"]["downstream_id"] == by_name["NWPLANT"]["id"]
+        assert by_name["NWPLANT"]["downstream_id"] == by_name["DOWN"]["id"]
+        assert by_name["NWPLANT"]["entry_stage_id"] == 3
+        assert "travel_time_hours" not in by_name["UP"]
+
+    def test_operated_plant_with_a_travel_time_into_an_nw_plant_raises(self) -> None:
+        with pytest.raises(ValueError, match=r"plant 10 \(UP\).*VI"):
+            _convert_nw_hydros(_nw_hidr_frame(), vi=_vi_frame(10))
+
+    def test_energy_productivity_lists_only_operated_plants(self) -> None:
+        id_map = DecompIdMap(
+            bus_codes=(1, 2, 3, 4, 11),
+            bus_names=("SE", "S", "NE", "N", "FC"),
+            hydro_codes=(1, 2, 5),
+            thermal_codes=(10, 20),
+            dormant_hydro_codes=(2,),
+        )
+
+        table = convert_energy_productivity(
+            _no_override_effective(_hidr_frame()), id_map
+        ).to_pandas()
+
+        assert table["hydro_id"].tolist() == [0, 2]
 
 
 class TestItaipuBusRelabel:

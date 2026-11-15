@@ -57,6 +57,7 @@ import pyarrow as pa
 
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.tolerances import floats_differ
+from novomodelo_bridge.decomp import plants
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.converters.cadastro import (
     effective_storage_range,
@@ -106,7 +107,7 @@ def convert_hydro_bounds(
     uh = as_frame(dadger.uh(df=True))
     if uh is None:
         return []
-    operated = uh[uh["volume_inicial"].notna()]
+    operated = plants.operated_uh(uh)
     ree_by_code: dict[int, int] = {}
     uh_declared: dict[int, float] = {}
     for _, row in operated.iterrows():
@@ -130,7 +131,7 @@ def convert_hydro_bounds(
         pct_by_ree[int(row["codigo_ree"])] = values
 
     contributions: list[BoundContribution] = []
-    for code in id_map.hydro_codes:
+    for code in id_map.operated_hydro_codes:
         # A run-of-river plant above the first cascade reservoir has its
         # minimum-outflow restriction released — no RQ/UH floor.
         if code in unregulated_codes:
@@ -184,7 +185,7 @@ def convert_storage_bounds(
 ) -> list[BoundContribution]:
     """Sparse per-stage storage contributions wherever a stage tightens the envelope.
 
-    For each hydro *code*, the outer envelope is ``storage_envelope(effective,
+    For each operated hydro *code*, the outer envelope is ``storage_envelope(effective,
     code)`` — the widest floor/ceiling the plant's per-stage volumes ever
     reach, and the default the entity ``reservoir`` block
     declares. A stage whose effective range (:func:`~novomodelo_bridge.decomp.
@@ -200,7 +201,7 @@ def convert_storage_bounds(
     """
     calendar = case.calendar
     contributions: list[BoundContribution] = []
-    for code in id_map.hydro_codes:
+    for code in id_map.operated_hydro_codes:
         env_min, env_max = storage_envelope(effective, code)
         hydro_id = id_map.hydro_id(code)
         for stage_index in range(len(calendar)):
@@ -263,7 +264,7 @@ def convert_volume_espera_bounds(
             if column.startswith("volume_") and column.split("_")[1].isdigit()
         )
     ]
-    operated = set(id_map.hydro_codes)
+    operated = set(id_map.operated_hydro_codes)
     n_stages = len(calendar)
 
     contributions: list[BoundContribution] = []
@@ -313,7 +314,7 @@ def convert_spillage_upper_bounds(
     if uh is None or uh.empty or "limite_superior_vertimento" not in uh.columns:
         return []
 
-    operated = uh[uh["volume_inicial"].notna()]
+    operated = plants.operated_uh(uh)
     calendar = case.calendar
     contributions: list[BoundContribution] = []
     for _, row in operated.iterrows():
@@ -393,7 +394,7 @@ def convert_irrigation_withdrawal(
     if not taxa_columns:
         return None
 
-    operated = set(id_map.hydro_codes)
+    operated = set(id_map.operated_hydro_codes)
     n_stages = len(calendar)
 
     rows_hydro: list[int] = []

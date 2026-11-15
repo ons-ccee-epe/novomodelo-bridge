@@ -11,15 +11,13 @@ import pytest
 
 from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
 from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.case_identity import match_case_hydros
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlCommitmentModel,
     GnlThermal,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import read_case_inputs
-from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
-    SourceGnlThermal,
-    match_source_hydros,
-)
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceGnlThermal
 from novomodelo_bridge.dessem.exporters.fcf.core.travel_time import travel_time_plants
 from novomodelo_bridge.dessem.exporters.fcf.source import read_source_deck
 from tests.decomp.test_anticipated import _GlReg, _StubDadgnl, _tg_row
@@ -52,8 +50,9 @@ def test_deck_matches_the_case_convert_writes_from_it(
     case_dir = tmp_path / "case"
     convert_decomp_case(decomp_mini_deck, case_dir, force=True)
 
-    match_source_hydros(
-        read_case_inputs(case_dir).hydros, read_source_deck(decomp_mini_deck).hydros
+    match_case_hydros(
+        {hydro.id: hydro.name for hydro in read_case_inputs(case_dir).hydros},
+        read_source_deck(decomp_mini_deck).hydros,
     )
 
 
@@ -89,6 +88,25 @@ def test_travel_time_codes_keep_the_deck_order_over_ascending_code(
     dadger.write_text("".join(lines), encoding="latin-1")
 
     assert read_source_deck(deck_dir).travel_time_codes == (162, 156)
+
+
+def test_dormant_codes_are_the_decks_nw_plants(decomp_mini_deck: Path) -> None:
+    assert read_source_deck(decomp_mini_deck).dormant_codes == (260,)
+
+
+def test_deck_without_uh_records_has_no_dormant_codes(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck_dir = tmp_path / "deck"
+    shutil.copytree(decomp_mini_deck, deck_dir)
+    dadger = next(deck_dir.glob("dadger.*"))
+    lines = dadger.read_text(encoding="latin-1").splitlines(keepends=True)
+    dadger.write_text(
+        "".join(line for line in lines if not line.startswith("UH ")),
+        encoding="latin-1",
+    )
+
+    assert read_source_deck(deck_dir).dormant_codes == ()
 
 
 def test_deck_without_gnl_dispatch_has_no_gnl_plants(decomp_mini_deck: Path) -> None:

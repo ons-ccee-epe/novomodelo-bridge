@@ -402,18 +402,18 @@ reads = [
   { file = "dadgnl", register = "NL" },
   { file = "cortesh" },
 ]
-summary = "Volume inicial de cada usina operada (`UH` com `volume_inicial`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara usinas GNL, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
+summary = "Volume inicial de cada usina convertida (`UH` operada ou marcada `NW`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara usinas GNL, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
 
   [[output.field]]
   path = "storage[].hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id 0-based denso das usinas operadas (linhas `UH` com `volume_inicial`), atribuído na ordem crescente de `codigo_usina`."
+  how = "Id 0-based denso das usinas convertidas (linhas `UH` com `volume_inicial` ou marcadas `NW`), atribuído na ordem crescente de `codigo_usina`."
 
   [[output.field]]
   path = "storage[].value_hm3"
-  from = [ { file = "dadger", register = "UH", item = "volume_inicial" }, { file = "hidr", item = "volume_minimo, volume_maximo" }, { file = "hidr", item = "tipo_regulacao, volume_referencia" }, { file = "dadger", register = "AC", item = "VOLMIN, VOLMAX" } ]
-  how = "`volume_inicial` (% do volume útil) resolvido sobre a faixa efetiva do estágio inicial: `vmin + pct/100 · (vmax − vmin)`, com `vmin`/`vmax` do cadastro após os `AC VOLMIN`/`VOLMAX` vigentes no estágio 0, limitado à faixa. Usinas a fio d'água (`tipo_regulacao` = `D`) colapsam ao `volume_referencia` independentemente do percentual. Um `volume_morto_inicial` declarado é apenas avisado, não convertido."
+  from = [ { file = "dadger", register = "UH", item = "volume_inicial" }, { file = "dadger", register = "UH", item = "configuracao_newave" }, { file = "hidr", item = "volume_minimo, volume_maximo" }, { file = "hidr", item = "tipo_regulacao, volume_referencia" }, { file = "dadger", register = "AC", item = "VOLMIN, VOLMAX" } ]
+  how = "`volume_inicial` (% do volume útil) resolvido sobre a faixa efetiva do estágio inicial: `vmin + pct/100 · (vmax − vmin)`, com `vmin`/`vmax` do cadastro após os `AC VOLMIN`/`VOLMAX` vigentes no estágio 0, limitado à faixa. Usinas a fio d'água (`tipo_regulacao` = `D`) colapsam ao `volume_referencia` independentemente do percentual. Uma usina marcada `NW` sem `volume_inicial` conta 0 %, isto é, começa no volume mínimo (ou no `volume_referencia`, se a fio d'água); um reservatório `NW` com `volume_inicial` acima do volume mínimo é recusado. Um `volume_morto_inicial` declarado é apenas avisado, não convertido."
 
   [[output.field]]
   path = "filling_storage"
@@ -811,7 +811,7 @@ reads = [
   { file = "dadger", register = "CV" },
   { file = "hidr" },
 ]
-summary = "Declara, para cada usina operada, os parâmetros calculados pelo Novomodelo `@rho_eq_h{id}`, `@rho_acum_h{id}`, `@rho_eq_mwh_h{id}`, `@rho_acum_mwh_h{id}`, `@earm_max_mwh_h{id}`, `@min_storage_h{id}` e `@max_storage_h{id}` usados em expressões de restrições genéricas; a RHE usa o `rho_acum_mwh` (produtibilidade acumulada integrada no volume, em MWh/hm³) e o `earm_max_mwh` (energia útil máxima, em MWh) quando a cadeia energética do reservatório é a sua rota hídrica. Declara também, por restrição RHE com `tipo_limite` = 2, a fração `pct_rhe{código}` por estágio; para cada reservatório cuja cadeia energética difere da rota hídrica do `hydros.json` (`AC JUSENA`) ou é cortada por um registro `EZ`, os parâmetros de expressão da sua parcela de energia armazenada; para cada usina fora da configuração nessa cadeia, a sua produtibilidade por estágio `rho_eq_mwh_plant{código}`; e, para cada termo de `RE`/`RHQ`/`RHV` cujo coeficiente muda entre os estágios da restrição (ou que entra nela depois do primeiro estágio), o coeficiente por estágio `coef_<família><código>_t<termo>`."
+summary = "Declara, para cada usina convertida, os parâmetros calculados pelo Novomodelo `@rho_eq_h{id}`, `@rho_acum_h{id}`, `@rho_eq_mwh_h{id}`, `@rho_acum_mwh_h{id}`, `@earm_max_mwh_h{id}`, `@min_storage_h{id}` e `@max_storage_h{id}` usados em expressões de restrições genéricas; a RHE usa o `rho_acum_mwh` (produtibilidade acumulada integrada no volume, em MWh/hm³) e o `earm_max_mwh` (energia útil máxima, em MWh) quando a cadeia energética do reservatório é a sua rota hídrica. Declara também, por restrição RHE com `tipo_limite` = 2, a fração `pct_rhe{código}` por estágio; para cada reservatório cuja cadeia energética difere da rota hídrica do `hydros.json` (`AC JUSENA`) ou é cortada por um registro `EZ`, os parâmetros de expressão da sua parcela de energia armazenada; para cada usina fora da configuração nessa cadeia, a sua produtibilidade por estágio `rho_eq_mwh_plant{código}`; e, para cada termo de `RE`/`RHQ`/`RHV` cujo coeficiente muda entre os estágios da restrição (ou que entra nela depois do primeiro estágio), o coeficiente por estágio `coef_<família><código>_t<termo>`."
 
   [[output.field]]
   path = "scalar_parameters[].id"
@@ -823,7 +823,7 @@ summary = "Declara, para cada usina operada, os parâmetros calculados pelo Novo
   path = "scalar_parameters[].name"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}`, `earm_max_mwh_h{id}`, `min_storage_h{id}` ou `max_storage_h{id}`, com o id 0-based da usina operada; `pct_rhe{código}` com o código do `HE`; `coef_re{código}_t{k}`, `coef_hq{código}_t{k}` ou `coef_hv{código}_t{k}` com o código da restrição e o índice 0-based `k` do termo; `rho_eq_mwh_plant{código}` com o código `hidr` de uma usina fora da configuração; nas parcelas de energia armazenada, `rho_chain_mwh_h{id}` com o id da primeira usina da cadeia e `earm_max_chain_mwh_h{id}` e `earm_max_ez_mwh_h{id}` com o id do reservatório."
+  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}`, `earm_max_mwh_h{id}`, `min_storage_h{id}` ou `max_storage_h{id}`, com o id 0-based da usina convertida; `pct_rhe{código}` com o código do `HE`; `coef_re{código}_t{k}`, `coef_hq{código}_t{k}` ou `coef_hv{código}_t{k}` com o código da restrição e o índice 0-based `k` do termo; `rho_eq_mwh_plant{código}` com o código `hidr` de uma usina fora da configuração; nas parcelas de energia armazenada, `rho_chain_mwh_h{id}` com o id da primeira usina da cadeia e `earm_max_chain_mwh_h{id}` e `earm_max_ez_mwh_h{id}` com o id do reservatório."
 
   [[output.field]]
   path = "scalar_parameters[].kind"
@@ -1260,13 +1260,13 @@ reads = [
   { file = "polinjus" },
   { file = "vazoes" },
 ]
-summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_inicial` preenchido), ordenada pelo id Novomodelo; o cadastro vem do `hidr.dat` com as modificações `AC` já resolvidas por estágio, e o bloco `diversion` é acoplado só depois da resolução dos limites."
+summary = "Uma entrada por usina hidráulica convertida (registro `UH` com `volume_inicial` preenchido ou marcado `NW`), ordenada pelo id Novomodelo; o cadastro vem do `hidr.dat` com as modificações `AC` já resolvidas por estágio, e o bloco `diversion` é acoplado só depois da resolução dos limites."
 
   [[output.field]]
   path = "hydros[].id"
-  from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
+  from = [ { file = "dadger", register = "UH", item = "codigo_usina" }, { file = "dadger", register = "UH", item = "volume_inicial" }, { file = "dadger", register = "UH", item = "configuracao_newave" } ]
   status = "derived"
-  how = "Id 0-based denso, atribuído na ordem crescente do `codigo_usina` dos registros `UH` operados (com `volume_inicial`). Registros `UH` sem volume inicial são só de acoplamento e ficam fora do conjunto operado, com aviso."
+  how = "Id 0-based denso, atribuído na ordem crescente do `codigo_usina` dos registros `UH` convertidos: os operados (com `volume_inicial`) e os marcados `NW`, que o DECOMP não opera mas cujos cortes de fronteira precificam. O id de cada usina acima de uma `NW` desloca-se por ela. Registros `UH` sem volume inicial e sem a marca `NW` são só de acoplamento e ficam fora do conjunto convertido, com aviso."
 
   [[output.field]]
   path = "hydros[].name"
@@ -1279,9 +1279,20 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "DT", item = "dia" },
     { file = "dadger", register = "DT", item = "mes" },
     { file = "dadger", register = "DT", item = "ano" },
+    { file = "dadger", register = "DP", item = "duracao" },
+    { file = "dadger", register = "UH", item = "configuracao_newave" },
   ]
   status = "derived"
-  how = "Data de início do estudo (`DT`), em ISO 8601, igual para todas as usinas: nenhuma usina entra em operação dentro do horizonte."
+  how = "Data de início do estudo (`DT`), em ISO 8601, para toda usina operada: nenhuma entra em operação dentro do horizonte. Uma usina marcada `NW` leva a data de fim do último estágio (`DT` mais as durações de `DP`), isto é, o fim do horizonte."
+
+  [[output.field]]
+  path = "hydros[].entry_stage_id"
+  from = [
+    { file = "dadger", register = "UH", item = "configuracao_newave" },
+    { file = "dadger", register = "DP", item = "duracao" },
+  ]
+  status = "derived"
+  how = "Nulo (ausente) para as usinas operadas. Usina marcada `NW`: o número de estágios do estudo, o primeiro estágio além do horizonte, de modo que ela fica em enchimento em todos os estágios, com turbinamento, vertimento e desvio nulos e a afluência repassada à primeira usina em operação a jusante."
 
   [[output.field]]
   path = "hydros[].downstream_id"
@@ -1290,7 +1301,7 @@ summary = "Uma entrada por usina hidráulica operada (registro `UH` com `volume_
     { file = "dadger", register = "AC", item = "NUMJUS" },
     { file = "dadger", register = "UH", item = "codigo_usina" },
   ]
-  how = "Id Novomodelo da primeira usina operada encontrada descendo a cascata pela jusante efetiva (`codigo_usina_jusante`, sobrescrito por `AC NUMJUS`) do estágio inicial; usinas não operadas no caminho são atravessadas e o código 0 (foz) resulta em nulo. Um `AC NUMJUS` que varia ao longo do horizonte gera aviso e só o vínculo do estágio inicial é usado."
+  how = "Id Novomodelo da primeira usina convertida (operada ou marcada `NW`) encontrada descendo a cascata pela jusante efetiva (`codigo_usina_jusante`, sobrescrito por `AC NUMJUS`) do estágio inicial; usinas não convertidas no caminho são atravessadas e o código 0 (foz) resulta em nulo. Um `AC NUMJUS` que varia ao longo do horizonte gera aviso e só o vínculo do estágio inicial é usado."
 
   [[output.field]]
   path = "hydros[].reservoir.min_storage_hm3"
@@ -1630,7 +1641,7 @@ reads = [
   { file = "polinjus" },
   { file = "vazoes" },
 ]
-summary = "Uma entrada por usina operada. As usinas elegíveis recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume e na faixa de turbinamento do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas recebem produtibilidade constante em um único intervalo que cobre todo o horizonte."
+summary = "Uma entrada por usina convertida. As usinas elegíveis, sempre operadas, recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume e na faixa de turbinamento do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas, incluindo as marcadas `NW`, recebem produtibilidade constante em um único intervalo que cobre todo o horizonte."
 
   [[output.field]]
   path = "production_models[].hydro_id"
@@ -1812,7 +1823,7 @@ reads = [
   { file = "dadger", register = "AC" },
   { file = "hidr" },
 ]
-summary = "Curva volume → cota → área amostrada em 100 pontos por usina operada com polinômio cota-volume não nulo (também para as de produtibilidade constante, que servem de referência de remanso); usina a fio d'água contribui um único ponto."
+summary = "Curva volume → cota → área amostrada em 100 pontos por usina convertida com polinômio cota-volume não nulo (também para as de produtibilidade constante, que servem de referência de remanso); usina a fio d'água contribui um único ponto."
 
   [[output.field]]
   path = "hydro_id"
@@ -1860,13 +1871,13 @@ reads = [
   { file = "dadger", register = "AC" },
   { file = "hidr" },
 ]
-summary = "Uma linha padrão por usina operada com o ρ_eq de geração ancorado no volume inicial (nulo para as usinas FPHA, cujo ρ_eq o Novomodelo calcula) e a produtibilidade de energia armazenada da própria usina, que o Novomodelo acumula na cascata para a energia armazenada da RHE; quando um `AC` faz esta última variar entre estágios, ela vai em uma linha por estágio."
+summary = "Uma linha padrão por usina convertida com o ρ_eq de geração ancorado no volume inicial (nulo para as usinas FPHA, cujo ρ_eq o Novomodelo calcula) e a produtibilidade de energia armazenada da própria usina, que o Novomodelo acumula na cascata para a energia armazenada da RHE; quando um `AC` faz esta última variar entre estágios, ela vai em uma linha por estágio."
 
   [[output.field]]
   path = "hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id Novomodelo da usina operada."
+  how = "Id Novomodelo da usina convertida."
 
   [[output.field]]
   path = "stage_id"
@@ -1940,7 +1951,7 @@ reads = [
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "CT" },
 ]
-summary = "Famílias de curvas de nível de jusante por usina (uma linha por segmento polinomial), copiadas do `polinjus.csv` para as usinas operadas e ordenadas por id Novomodelo, família e segmento; segmentos de usinas não operadas são descartados."
+summary = "Famílias de curvas de nível de jusante por usina (uma linha por segmento polinomial), copiadas do `polinjus.csv` para as usinas convertidas e ordenadas por id Novomodelo, família e segmento; segmentos de usinas não convertidas são descartados."
 
   [[output.field]]
   path = "hydro_id"
@@ -1949,7 +1960,7 @@ summary = "Famílias de curvas de nível de jusante por usina (uma linha por seg
     { file = "dadger", register = "UH", item = "codigo_usina" },
   ]
   status = "derived"
-  how = "Id Novomodelo da usina do segmento; códigos ausentes do conjunto operado são descartados."
+  how = "Id Novomodelo da usina do segmento; códigos ausentes do conjunto convertido são descartados."
 
   [[output.field]]
   path = "family_id"
@@ -2408,7 +2419,7 @@ summary = "Tabela identidade (média 0, desvio 1) por usina hidráulica e estág
   path = "hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id 0-based denso das usinas operadas (registros `UH` com `volume_inicial` preenchido), em ordem crescente de `codigo_usina`."
+  how = "Id 0-based denso das usinas convertidas (registros `UH` com `volume_inicial` preenchido ou marcados `NW`), em ordem crescente de `codigo_usina`."
 
   [[output.field]]
   path = "stage_id"
@@ -2467,17 +2478,21 @@ summary = "Árvore explícita de vazões incrementais por usina: o tronco determ
   path = "hydro_id"
   from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id 0-based denso das usinas operadas, em ordem crescente de `codigo_usina`."
+  how = "Id 0-based denso das usinas convertidas, em ordem crescente de `codigo_usina`."
 
   [[output.field]]
   path = "value_m3s"
   from = [
     { file = "vazoes", item = "previsoes · coluna do posto" },
     { file = "vazoes", item = "cenarios_gerados · coluna do posto" },
+    { file = "vazoes", item = "previsoes_com_postos_artificiais · coluna do posto" },
+    { file = "vazoes", item = "cenarios_calculados_com_postos_artificiais · coluna do posto" },
     { file = "hidr", item = "posto" },
     { file = "dadger", register = "AC", item = "NUMPOS · codigo_posto" },
+    { file = "dadger", register = "AC", item = "NPOSNW · codigo_posto" },
+    { file = "dadger", register = "UH", item = "configuracao_newave" },
   ]
-  how = "Vazão incremental lida diretamente da coluna do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, avaliado no estágio inicial), sem subtração de montante: o arquivo de vazões do DECOMP já é incremental. Um `AC NUMPOS` que varia ao longo do horizonte gera aviso e usa o posto do estágio inicial."
+  how = "Vazão incremental lida diretamente da coluna do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, avaliado no estágio inicial), sem subtração de montante: o arquivo de vazões do DECOMP já é incremental. Um `AC NUMPOS` que varia ao longo do horizonte gera aviso e usa o posto do estágio inicial. Exceção: as usinas marcadas `NW` e a primeira usina operada a jusante de cada uma (o absorvedor) formam um grupo. Se, em toda linha pareada (`previsoes` com `previsoes_com_postos_artificiais` por `estagio`; `cenarios_gerados` com `cenarios_calculados_com_postos_artificiais` por `estagio` e `cenario`), a vazão de operação do absorvedor difere da soma das vazões de acoplamento do grupo em até 1 m³/s e cada usina `NW` tem vazão de operação de no máximo 1 m³/s em valor absoluto, o grupo divide a vazão como o NEWAVE: cada usina `NW` leva a vazão da coluna do seu posto de acoplamento (`AC NPOSNW`, senão o `posto` do `hidr`) e o absorvedor leva a própria vazão de operação menos a soma dessas vazões. Se a condição falha em alguma linha, o grupo inteiro mantém a vazão de operação e a conversão emite o aviso `decomp-nw-inflow-split-fallback`. Uma usina `NW` sem usina operada a jusante mantém a vazão de operação e consta do mesmo aviso."
 
 # ---------------------------------------------------------------------------
 # scenarios/load_seasonal_stats.parquet
@@ -3190,15 +3205,9 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
 
   [[source.item]]
   register = "UH"
-  item = "configuracao_newave"
-  status = "unread"
-  note = "Índice da configuração do NEWAVE para acoplamento. Não lido: a FCF de fronteira é acoplada por código de usina e por `CX`."
-
-  [[source.item]]
-  register = "UH"
   item = "estagio_inicio_producao"
   status = "unread"
-  note = "Estágio em que a usina começa a produzir. Não lido: o conversor não emite `entry_stage_id` para hidrelétricas (fica no padrão nulo do esquema). Converter exige mapear este estágio para `entry_stage_id`."
+  note = "Estágio em que a usina começa a produzir. Não lido: o `entry_stage_id` só é emitido para usinas marcadas `NW` em `configuracao_newave`, sempre igual ao número de estágios, e as demais ficam no padrão nulo do esquema. Converter exigiria mapear este estágio para o `entry_stage_id` da usina."
 
   [[source.item]]
   register = "CD"
@@ -3431,17 +3440,17 @@ note = "Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As col
 # ---------------------------------------------------------------------------
 [[source]]
 file = "vazoes"
-note = "Árvore de cenários de vazão gerada pelo GEVAZP. O conversor lê probabilidades, previsões, cenários gerados e observações; as seções abaixo ficam de fora."
+note = "Árvore de cenários de vazão gerada pelo GEVAZP. O conversor lê probabilidades, previsões, cenários gerados e observações, mais as colunas de acoplamento das usinas marcadas `NW`; as seções abaixo ficam de fora ou são lidas só em parte."
 
   [[source.item]]
   item = "previsoes_com_postos_artificiais"
-  status = "unread"
-  note = "Previsões incluindo os postos artificiais de acoplamento. Não lidas: só os postos das usinas operadas interessam."
+  status = "deferred"
+  note = "Previsões incluindo os postos artificiais de acoplamento. Lidas só para dividir a vazão de um grupo de usinas marcadas `NW` como o NEWAVE a divide (`value_m3s` de `scenarios/external_inflow_scenarios.parquet`, com o aviso `decomp-nw-inflow-split-fallback` quando a divisão não vale); as colunas dos demais postos não são convertidas."
 
   [[source.item]]
   item = "cenarios_calculados_com_postos_artificiais"
-  status = "unread"
-  note = "Cenários gerados incluindo postos artificiais. Não lidos, pelo mesmo motivo."
+  status = "deferred"
+  note = "Cenários gerados incluindo postos artificiais. Lidos só para o mesmo fim, nos estágios mensais do tronco e no leque terminal."
 
   [[source.item]]
   item = "numero_aberturas_estagios"

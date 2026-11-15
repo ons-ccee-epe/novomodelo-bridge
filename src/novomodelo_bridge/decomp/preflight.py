@@ -415,8 +415,8 @@ def _special_constraint_coverage(
         return [failed], [diagnostic_from_exception(exc, context=_CONTEXT)]
     census, screened = constraint_registers.screen_constraints(
         census,
-        hydro_codes=id_map.hydro_codes,
-        coupling_only_codes=id_map.coupling_only_codes,
+        hydro_codes=id_map.operated_hydro_codes,
+        coupling_only_codes=id_map.idle_hydro_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
         plant_names={} if plant_names is None else plant_names,

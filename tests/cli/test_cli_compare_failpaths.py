@@ -1,11 +1,13 @@
 """``compare`` early-exit fail-paths routed through ``_fail``.
 
-Covers the three compare failures ``_load_compare_context`` (source-model case
-missing, exit 1), ``_resolve_compare_formats`` (bad ``--format``, exit 2), and
-the two compare handlers' read-error ``except`` blocks (exit 2; ``compare
-decomp`` exits 1 on a source-side failure) now go through — each emits a valid ``--json`` error envelope on stdout instead of
-staying empty/stderr-only, and a plain run still renders the diagnostic to
-stderr. All three fail before any primary result is printed, so their
+Covers the compare failures ``_load_compare_context`` (source-model case
+missing, exit 1), ``_resolve_compare_formats`` (bad ``--format``, exit 2), the
+two compare handlers' read-error ``except`` blocks (exit 2; ``compare
+decomp`` exits 1 on a source-side failure) and ``compare decomp``'s refusal of
+a case converted from another deck (exit 2). Each emits a valid ``--json``
+error envelope on stdout instead of staying empty/stderr-only, and a plain
+run still renders the diagnostic to stderr. All of them fail before any
+primary result is printed, so their
 plain-mode stdout is empty; a bad ``--format`` fails before the comparison
 runs at all. Also covers the diagnostics the HTML report emits while it is
 built, which must reach the run's notes, ``comparison.json`` manifest and
@@ -20,7 +22,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -258,6 +260,15 @@ class TestCompareDecompBadFormat:
         assert stderr == ""
 
 
+def _without_missing_file_note(
+    diagnostics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """The envelope's diagnostics less the ``report-file-missing`` note the
+    case-identity check's read of ``hydros.json`` adds when no case surrounds
+    the output directory."""
+    return [d for d in diagnostics if d["code"] != "report-file-missing"]
+
+
 class TestCompareDecompReadError:
     """``compare decomp``'s read-error ``except`` -> ``_fail(..., 2)``."""
 
@@ -284,8 +295,9 @@ class TestCompareDecompReadError:
         document = json.loads(stdout)
         assert document["command"] == "compare decomp"
         assert document["status"] == "error"
-        assert document["diagnostics"][0]["code"] == "novomodelo-output-unreadable"
-        assert "bad parquet partition" in document["diagnostics"][0]["summary"]
+        [failure] = _without_missing_file_note(document["diagnostics"])
+        assert failure["code"] == "novomodelo-output-unreadable"
+        assert "bad parquet partition" in failure["summary"]
         assert stderr == ""
 
     def test_plain_empty_stdout_stderr_diagnostic_exit_2(
@@ -304,6 +316,93 @@ class TestCompareDecompReadError:
         assert code == 2
         assert stdout == ""
         assert "bad parquet partition" in stderr
+
+
+class TestCompareDecompCaseIdentity:
+    """``compare decomp`` refuses a case converted from another deck (exit 2),
+    before it builds any comparison."""
+
+    @staticmethod
+    def _converted_case_output(deck: Path, tmp_path: Path) -> Path:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        case_dir = tmp_path / "case"
+        convert_decomp_case(deck, case_dir, force=True)
+        output_dir = case_dir / "output"
+        output_dir.mkdir()
+        return output_dir
+
+    @staticmethod
+    def _never_built(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the comparison was built for a mismatched case")
+
+    @staticmethod
+    def _fake_dataset(*_args: object, **_kwargs: object) -> ComparisonDataset:
+        return _fake_decomp_dataset()
+
+    def test_case_converted_from_another_deck_exits_2(
+        self, decomp_mini_deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output_dir = self._converted_case_output(decomp_mini_deck, tmp_path)
+        hydros_path = output_dir.parent / "system" / "hydros.json"
+        document = json.loads(hydros_path.read_text(encoding="utf-8"))
+        document["hydros"][0]["name"] = "ANOTHER-DECK-PLANT"
+        hydros_path.write_text(json.dumps(document), encoding="utf-8")
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
+            self._never_built,
+        )
+
+        code, stdout, _ = _invoke_main(
+            ["compare", "decomp", str(decomp_mini_deck), str(output_dir), "--json"],
+            monkeypatch,
+        )
+
+        assert code == 2
+        document = json.loads(stdout)
+        assert document["status"] == "error"
+        [diagnostic] = [
+            d for d in document["diagnostics"] if d["code"] == "case-deck-mismatch"
+        ]
+        assert "hydro plant names differ" in diagnostic["summary"]
+        assert "ANOTHER-DECK-PLANT" in diagnostic["summary"]
+        assert "the deck the case was converted from" in diagnostic["remediation"]
+
+    def test_case_converted_from_the_deck_is_compared(
+        self, decomp_mini_deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output_dir = self._converted_case_output(decomp_mini_deck, tmp_path)
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
+            self._fake_dataset,
+        )
+
+        code, _, _ = _invoke_main(
+            ["compare", "decomp", str(decomp_mini_deck), str(output_dir), "--json"],
+            monkeypatch,
+        )
+
+        assert code == 0
+
+    def test_output_without_a_case_skips_the_check(
+        self, decomp_mini_deck: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.build_decomp_dataset",
+            self._fake_dataset,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.decomp.case_identity.deck_hydros", self._never_built
+        )
+
+        code, _, _ = _invoke_main(
+            ["compare", "decomp", str(decomp_mini_deck), str(output_dir), "--json"],
+            monkeypatch,
+        )
+
+        assert code == 0
 
 
 def _compare_failure(name: str) -> Exception:
@@ -356,7 +455,7 @@ def test_compare_decomp_exits_1_on_the_source_and_2_on_the_output(
     )
 
     assert code == exit_code
-    [diagnostic] = json.loads(stdout)["diagnostics"]
+    [diagnostic] = _without_missing_file_note(json.loads(stdout)["diagnostics"])
     expected = diagnostic_from_exception(_compare_failure(name), context="Compare")
     assert diagnostic["code"] == expected.code
 

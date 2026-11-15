@@ -12,6 +12,7 @@ import logging
 import numpy as np
 import pytest
 
+from novomodelo_bridge.decomp.case_identity import SourceHydro
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     BlockInfo,
     HydroInfo,
@@ -21,7 +22,6 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     ENTITY_TYPE_HYDRO_STORAGE,
     ENTITY_TYPE_HYDRO_TRANSIT_BUCKET,
     MappingError,
-    SourceHydro,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     UNDATED,
