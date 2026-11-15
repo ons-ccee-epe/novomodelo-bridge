@@ -865,6 +865,9 @@ def convert_history_years(
     ):
         windows.setdefault((int(start), int(end)), []).append(str(name).strip())
     if len(windows) > 1:
+        # TRACKED NOVOMODELO-GAP (C40): the source model fits each plant on its
+        # own window, novomodelo fits every plant on one. Remove when novomodelo
+        # accepts a window per plant.
         raise UnsupportedSourceError(
             "confhd.dat gives the converted plants different fit windows: "
             f"{_describe_windows(windows)}. The case fits the inflow model on "
