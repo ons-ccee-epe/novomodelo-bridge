@@ -82,6 +82,7 @@ from novomodelo_bridge.core.electrical_expression import (
     DataContext,
     MalformedElectricalExpression,
     ParsedTerm,
+    UnrecognizedElectricalToken,
     classify_term,
     classify_terms,
     evaluate_terms,
@@ -251,9 +252,9 @@ class LibsElectricalModel:
         if restriction is None:
             return None
         if restriction.lhs is None:
-            raise ValueError(
+            raise MalformedElectricalExpression(
                 f"re({code}) references restriction {code}, which is declared "
-                "only by period rows and has no single formula"
+                "only by inequality period rows and so has no formula"
             )
         return restriction.lhs
 
@@ -1338,41 +1339,44 @@ def evaluate_se(
     fails the cell even where the other one is taken. The source model
     defines each branch as a number, so a branch carrying a bucket-A
     (decision) or bucket-C (``disp_usih``) term is malformed: folding it
-    would turn that term into a plain number and drop it from the LP.
+    would turn that term into a plain number and drop it from the LP. An
+    undeclared name only matters in the branch the cell takes: the other
+    branch is never evaluated.
 
     Raises
     ------
     MalformedElectricalExpression
         When the condition or either branch is malformed, a branch carrying
         a non-bucket-B term included (naming it).
+    UnrecognizedElectricalToken
+        When the condition, or the branch the cell takes, names an
+        undeclared identifier.
     UnsupportedSourceError
         Propagated from :func:`parse_activation_rule` on the condition.
-    ValueError
-        When *term* is not a ``se`` term or is missing its condition/branch
-        text (a caller contract violation — the parser always populates all
-        three for a ``se`` token).
     """
-    if term.token != SE_TOKEN:
-        raise ValueError(f"evaluate_se: expected a 'se' term, got {term.token!r}")
-    if term.condition is None or term.branch_true is None or term.branch_false is None:
-        raise ValueError(
-            f"evaluate_se: 'se' term is missing condition/branches: {term!r}"
-        )
+    assert term.token == SE_TOKEN  # caller contract
+    assert term.condition is not None  # parser invariant for a se term
+    assert term.branch_true is not None  # parser invariant for a se term
+    assert term.branch_false is not None  # parser invariant for a se term
 
     rule = parse_activation_rule(term.condition, model)
-    true_partition = classify_terms(parse_linear_expression(term.branch_true, model))
-    false_partition = classify_terms(parse_linear_expression(term.branch_false, model))
-    for branch, partition in (
-        (term.branch_true, true_partition),
-        (term.branch_false, false_partition),
-    ):
+    branches: list[dict[Bucket, list[ParsedTerm]] | UnrecognizedElectricalToken] = []
+    for branch in (term.branch_true, term.branch_false):
+        try:
+            partition = classify_terms(parse_linear_expression(branch, model))
+        except UnrecognizedElectricalToken as err:
+            branches.append(err)
+            continue
         if offenders := partition[Bucket.A] + partition[Bucket.C]:
             raise MalformedElectricalExpression(
                 f"se(...) branch {branch!r} carries {term_text(offenders[0])}, "
                 "which is not input data; a se(...) branch reads only input "
                 "data, never a decision"
             )
-    selected = true_partition if evaluate_rule(rule, ctx) else false_partition
+        branches.append(partition)
+    selected = branches[0] if evaluate_rule(rule, ctx) else branches[1]
+    if isinstance(selected, UnrecognizedElectricalToken):
+        raise selected
     return evaluate_terms(selected[Bucket.B], ctx)
 
 
@@ -1604,8 +1608,8 @@ def assemble_bound(
         if sides is None:
             raise ValueError(
                 f"restriction {restriction.code} has no inequality in effect at "
-                f"stage {stage_index}, patamar {patamar}; active_cells excludes "
-                "such cells"
+                f"período {stage_index + 1}, patamar {patamar}, so it is not "
+                "active there"
             )
         lhs, op, rhs = sides
         effective = replace(restriction, lhs=lhs, operator=op, rhs=rhs)
@@ -1615,7 +1619,7 @@ def assemble_bound(
             if a_h is None:
                 raise ValueError(
                     f"restriction {restriction.code} carries a disp_usih "
-                    "term but no AvailablePower lookup was supplied"
+                    "term but no available power was supplied"
                 )
             return _fold_reserve_disp_usih(
                 effective, stage_index, a_h, ctx, lhs_partition, rhs_partition
@@ -1916,7 +1920,7 @@ def _flip_operator(sense: str) -> str:
         return "<="
     if sense == "<=":
         return ">="
-    raise ValueError(f"_flip_operator: unknown operator {sense!r}")
+    raise ValueError(f"unknown inequality operator {sense!r}")
 
 
 DISP_USIH_SUBSTITUTED = "decomp-electrical-disp-usih-substituted"

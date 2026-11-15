@@ -270,7 +270,7 @@ def _novomodelo_token(
     if term.token == "ener_comerc":
         return Unresolved(_ENER_COMERC, (term_text(term),))
 
-    raise ValueError(f"_novomodelo_token: unrecognized bucket-A token {term.token!r}")
+    raise ValueError(f"unrecognized decision token {term.token!r}")
 
 
 def build_electrical_expression(

@@ -92,16 +92,20 @@ def test_re_to_a_restriction_the_scope_lacks_names_it() -> None:
 
 
 @dataclass(frozen=True)
-class _ScopeThatCannotInline(_Scope):
+class _ScopeWithoutAFormula(_Scope):
     def restriction_formula(self, code: int) -> str | None:
-        raise ValueError(f"restriction {code} has no single formula")
+        raise MalformedElectricalExpression(f"restriction {code} has no formula")
 
 
-def test_re_to_a_restriction_the_scope_cannot_inline_is_not_malformed() -> None:
-    with pytest.raises(ValueError, match="has no single formula") as err:
-        parse_linear_expression("re(3)", _ScopeThatCannotInline())
+def test_re_to_a_restriction_with_no_formula_is_malformed_naming_the_expression() -> (
+    None
+):
+    with pytest.raises(MalformedElectricalExpression) as err:
+        parse_linear_expression("2 * re(3)", _ScopeWithoutAFormula())
 
-    assert not isinstance(err.value, MalformedElectricalExpression)
+    assert str(err.value) == (
+        "restriction 3 has no formula in electrical expression '2 * re(3)'"
+    )
 
 
 def test_a_cycle_through_re_is_refused() -> None:

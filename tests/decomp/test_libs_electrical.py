@@ -1560,6 +1560,48 @@ def test_evaluate_se_refuses_a_branch_that_is_not_input_data(
     )
 
 
+def test_evaluate_se_ignores_an_undeclared_name_in_the_branch_it_does_not_select() -> (
+    None
+):
+    model = _model()
+    (term,) = parse_linear_expression(
+        "se(demanda_sin > 1000, val_demanda(1), undeclared_alias)", model
+    )
+    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
+    assert evaluate_se(term, model, ctx) == 300.0
+
+
+def test_a_restriction_whose_unselected_se_branch_names_an_undeclared_alias_converts() -> (
+    None
+):
+    calendar = _ri_calendar(1, n_blocks=1)
+    dadger = _StubElectricalDadger(dp=_dp((1, 1, 1, 1500.0), n_patamares=1))
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    model = _model()
+    restriction = _formula(
+        470,
+        "ger_usih(1) + se(demanda_sin > 1000, 100, undeclared_alias)",
+        {(0, None): (None, 500.0)},
+    )
+    ctx = build_data_context(_case(dadger, calendar), id_map, model=model)(0, 0)
+    assert assemble_bound(restriction, model, 0, 0, ctx) == AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
+        lower=None,
+        upper=400.0,
+    )
+
+
+def test_evaluate_se_keeps_an_undeclared_name_in_the_branch_it_selects() -> None:
+    model = _model()
+    (term,) = parse_linear_expression(
+        "se(demanda_sin > 1000, undeclared_alias, val_demanda(1))", model
+    )
+    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
+    with pytest.raises(UnrecognizedElectricalToken) as exc_info:
+        evaluate_se(term, model, ctx)
+    assert exc_info.value.name == "undeclared_alias"
+
+
 def test_evaluate_se_refuses_a_malformed_branch_it_does_not_select() -> None:
     model = _model()
     (term,) = parse_linear_expression(
@@ -1814,7 +1856,7 @@ def test_assemble_bound_disp_usih_unresolvable_plant_drops_and_warns() -> None:
 
 def test_assemble_bound_disp_usih_without_available_power_raises_value_error() -> None:
     restriction = _inequacao(404, "disp_usih(1) - ger_usih(1)", ">=", "0")
-    with pytest.raises(ValueError, match="AvailablePower"):
+    with pytest.raises(ValueError, match="no available power was supplied"):
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
 
 
@@ -2055,11 +2097,17 @@ def test_assemble_bound_period_only_inequacao_uncovered_cell_raises() -> None:
         assemble_bound(_PERIOD_ONLY, _model(), 0, 1, _dict_context({}))
 
 
-def test_re_reference_to_period_only_inequacao_is_refused_but_not_malformed() -> None:
+def test_re_reference_to_period_only_inequacao_is_malformed() -> None:
+    # The source model's re(X) references restriction X's formula, and an
+    # inequality declares none.
     model = replace(_model(), restrictions={460: _PERIOD_ONLY})
-    with pytest.raises(ValueError, match="declared only by period rows") as exc_info:
+    with pytest.raises(MalformedElectricalExpression) as exc_info:
         parse_linear_expression("re(460)", model)
-    assert not isinstance(exc_info.value, MalformedElectricalExpression)
+    assert str(exc_info.value) == (
+        "re(460) references restriction 460, which is declared only by "
+        "inequality period rows and so has no formula in electrical expression "
+        "'re(460)'"
+    )
 
 
 def test_re_reference_to_an_undeclared_restriction_is_malformed() -> None:

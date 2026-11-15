@@ -164,8 +164,8 @@ class ExpressionScope(Protocol):
         declares no restriction *code*.
 
         Raises:
-            ValueError: restriction *code* has no single formula; the message
-                says why.
+            MalformedElectricalExpression: restriction *code* has no formula
+                for ``re`` to reference; the message says why.
         """
         ...
 
@@ -359,8 +359,10 @@ class _ExpressionParser:
         code = args[0]
         try:
             formula = self._scope.restriction_formula(code)
-        except ValueError as err:
-            raise ValueError(f"{err} in electrical expression {self._text!r}") from err
+        except MalformedElectricalExpression as err:
+            raise MalformedElectricalExpression(
+                f"{err} in electrical expression {self._text!r}"
+            ) from err
         if formula is None:
             raise MalformedElectricalExpression(
                 f"re({code}) references unknown restriction {code} in electrical "
@@ -483,13 +485,11 @@ def parse_linear_expression(
     Raises
     ------
     MalformedElectricalExpression
-        On text the grammar rejects, ``re(R)`` to an undeclared restriction,
-        or a reference cycle.
+        On text the grammar rejects, ``re(R)`` to an undeclared restriction
+        or to one with no formula, or a reference cycle.
     UnrecognizedElectricalToken
         On a bare identifier that is well-formed but undeclared — neither a
         named expression, a data alias, nor a built-in bare token.
-    ValueError
-        On an ``re(R)`` to a restriction the scope cannot inline.
     """
     return _ExpressionParser(text, scope, _seen).parse()
 
