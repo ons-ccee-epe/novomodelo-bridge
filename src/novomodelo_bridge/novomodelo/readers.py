@@ -18,8 +18,12 @@ raise on present-but-corrupt data and differ only in which inputs they
 treat as required — the source model's ``newave_readers`` instead
 degrades every present-but-unparseable input to a typed-empty frame, a
 genuine behaviour difference (see that module's docstring). Every
-partition and system JSON this module reads is an optional input; only
-a present-but-corrupt parquet or JSON raises.
+partition and system JSON this module reads is an optional input. A
+present-but-unparseable system JSON that only names or describes entities
+(lines, thermals, buses, the hydro metadata) or the run's training
+``metadata.json`` degrades to an empty result with a
+``report-file-unreadable`` warning, since the report can go on without those
+labels; every other present-but-corrupt parquet or JSON raises.
 """
 
 from __future__ import annotations
@@ -58,16 +62,13 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger(__name__)
 
-#: What a report leaves out without each file several readers share,
-#: completing ``"<file> was not found, so ..."``.
+#: What a report leaves out without each file, completing ``"<file> was not
+#: found, so ..."`` and ``"<file> could not be read, so ..."``; every reader
+#: of the file passes the same one, so its finding is reported once.
 _HYDROS_EFFECT = (
     "the report shows the hydro plants without their names and cadastro data."
 )
 _BUSES_EFFECT = "the report shows the buses without their names."
-_TRAINING_METADATA_EFFECT = (
-    "the report leaves out the training time and the novomodelo version and "
-    "settings the run recorded."
-)
 
 
 class NovomodeloReadError(RuntimeError):
@@ -915,7 +916,8 @@ def read_novomodelo_training_metadata(novomodelo_output_dir: Path) -> dict:
             report_file_unreadable_diagnostic(
                 "output/training/metadata.json",
                 metadata_path,
-                _TRAINING_METADATA_EFFECT,
+                "the report leaves out the training time and the novomodelo "
+                "version and settings the run recorded.",
                 exc,
             ),
             logger=_LOG,
@@ -1225,9 +1227,7 @@ def read_novomodelo_stage_line_bounds(
 ) -> pl.DataFrame:
     """Line capacity per (line, stage), comparable with the stage-mean flow.
 
-    *lines* is ``lines.json``'s ``"lines"`` list as the caller read it, never
-    re-read here: an unparseable ``lines.json`` must degrade the Network tab
-    in the caller, not raise from the bounds.
+    *lines* is ``lines.json``'s ``"lines"`` list as the caller read it.
 
     Each block's capacity is its override row, else the stage's base row
     (``block_id`` null), else the line's *lines* capacity; the stage

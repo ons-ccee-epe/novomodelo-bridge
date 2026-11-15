@@ -409,8 +409,9 @@ def _fpha_fields(code: int, effective: EffectiveCadastro) -> dict:
 
 class _PlantEntry(NamedTuple):
     """A plant's ``hydros.json`` entry, whether ``storage_envelope``
-    collapsed its run-of-river registry band to the reference volume, and its
-    capped FPHA efficiency report row."""
+    collapsed its run-of-river registry band to the reference volume, and the
+    rows it adds to :func:`convert_hydros`'s capped-FPHA-efficiency and
+    invalid-cascade-link reports."""
 
     entry: dict
     runofriver_collapsed: bool

@@ -149,12 +149,12 @@ def _write_conversion_manifest(
         "lines": report.line_count,
         "stages": report.stage_count,
     }
+    run_diagnostics = report.diagnostics if diagnostics is None else diagnostics
     # Record the minimum novomodelo version the output requires. Every converted case
     # now emits a ``training.parallelism.backward_scheduler`` block (novomodelo 0.12.0+),
     # ``operational_start_date`` on all system entities (novomodelo 0.10.0+), and a
     # mandatory hydro ``unit_groups`` array with the top-level ``bus_id`` removed
     # (novomodelo 0.13.0+), so the output is only loadable by novomodelo >= MIN_NOVOMODELO_VERSION.
-    run_diagnostics = report.diagnostics if diagnostics is None else diagnostics
     manifest = ConversionManifest.create(
         command,
         src,

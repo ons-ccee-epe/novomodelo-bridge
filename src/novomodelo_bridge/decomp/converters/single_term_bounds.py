@@ -93,8 +93,9 @@ def _clamp_upper_to_capacity(
     whose upper is already at or below *cap* passes through unchanged;
     one above it is replaced (:func:`dataclasses.replace`) with *cap*.
 
-    A ceiling above *cap* is **always** clamped (novomodelo rule 43 rejects any
-    upper above the declared capacity, even by a float ULP), but its original
+    A ceiling above *cap* is **always** clamped (novomodelo rule 43 rejects an
+    upper above the declared capacity beyond
+    :data:`~novomodelo_bridge.core.tolerances.RELATIVE_TOLERANCE`), but its original
     contribution is only returned in the reported list — the caller's
     diagnostic trigger — when it exceeds *cap* by more than
     ``_CLAMP_REPORT_REL_TOL`` relative. So a genuine cross-source mismatch (a
