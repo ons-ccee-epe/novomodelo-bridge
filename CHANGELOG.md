@@ -48,6 +48,16 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **`convert decomp` keeps a special constraint that names a plant DECOMP
+  does not operate**: an `FU` term of an `RE` constraint, or a `ger_usih` or
+  `ger_conjh` term of an electrical restriction in the LIBS file, on a plant
+  whose `UH` record gives no initial volume is left out of the sum with the
+  new notes `decomp-re-term-coupling-only-plant` and
+  `decomp-electrical-term-coupling-only-plant`, where the whole constraint
+  used to be left out with a warning. Results change for decks with such
+  terms, so reconvert them; `check decomp` reports such a term as a note, no
+  longer as `decomp-re-plant-not-operated`, unless the constraint has no
+  other term.
 - **BREAKING: `check decomp` raises the warnings `convert decomp` raises for
   the special constraints and `AC` registers it leaves out**
   (`decomp-re-thermal-not-normal`, `decomp-re-plant-not-operated`,

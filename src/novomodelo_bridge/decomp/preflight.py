@@ -337,6 +337,7 @@ def _special_constraint_coverage(
     census, unknown = constraint_registers.drop_unknown_entities(
         constraint_registers.read_constraints(dadger),
         hydro_codes=id_map.hydro_codes,
+        coupling_only_codes=id_map.coupling_only_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
     )

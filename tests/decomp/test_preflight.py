@@ -478,7 +478,11 @@ class TestSpecialConstraintCoverage:
         WARNING, as ``convert decomp`` does."""
         dadger = self._synthetic_dadger()
         _, expected = drop_unknown_entities(
-            read_constraints(dadger), hydro_codes=(), thermal_codes=(), pumping_codes=()
+            read_constraints(dadger),
+            hydro_codes=(),
+            coupling_only_codes=(),
+            thermal_codes=(),
+            pumping_codes=(),
         )
         no_plants = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
 

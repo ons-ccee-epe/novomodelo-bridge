@@ -225,7 +225,7 @@ def test_build_electrical_expression_all_token_kinds_exact_string() -> None:
         upper=None,
     )
     result = build_electrical_expression(
-        assembled, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map
+        assembled, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map, []
     )
     assert result == (
         "hydro_generation(0) + thermal_generation(0) + "
@@ -247,9 +247,64 @@ def test_build_electrical_expression_unresolved_token_drops_whole_expression() -
         lower=None,
         upper=100.0,
     )
-    assert build_electrical_expression(assembled, id_map, {}, {}, {}) == Unresolved(
+    assert build_electrical_expression(assembled, id_map, {}, {}, {}, []) == Unresolved(
         "decomp-electrical-bucket-a-unresolved", ("ger_usih(999)", "hydro plant")
     )
+
+
+_COUPLING_ONLY_MAP = DecompIdMap(
+    bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,), coupling_only_codes=(46,)
+)
+
+
+@pytest.mark.parametrize(
+    "term",
+    [
+        ParsedTerm(coefficient=1.0, token="ger_usih", args=(46,)),
+        ParsedTerm(coefficient=1.0, token="ger_conjh", args=(46, 1)),
+    ],
+)
+def test_novomodelo_token_on_a_coupling_only_plant_is_no_variable(
+    term: ParsedTerm,
+) -> None:
+    assert _novomodelo_token(term, _COUPLING_ONLY_MAP, {}, {}, {}) is None
+
+
+def test_build_electrical_expression_leaves_a_coupling_only_plant_out() -> None:
+    """Plant 46's UH record gives no initial volume, so DECOMP does not
+    operate it and its term adds nothing: the rest of the sum is kept."""
+    on_46 = ParsedTerm(coefficient=2.0, token="ger_usih", args=(46,))
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(66,)), on_46),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[ParsedTerm] = []
+
+    expression = build_electrical_expression(
+        assembled, _COUPLING_ONLY_MAP, {}, {}, {}, left_out
+    )
+
+    assert expression == "hydro_generation(0)"
+    assert left_out == [on_46]
+
+
+def test_a_sum_only_on_coupling_only_plants_is_unresolved() -> None:
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(46,)),),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[ParsedTerm] = []
+
+    expression = build_electrical_expression(
+        assembled, _COUPLING_ONLY_MAP, {}, {}, {}, left_out
+    )
+
+    assert expression == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ger_usih(46)", "hydro plant")
+    )
+    assert left_out == []
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +805,50 @@ def test_emit_merges_one_finding_across_restrictions_into_one_table() -> None:
     assert finding.table.rows == [
         [705, "ger_usih(998)", "hydro plant"],
         [706, "ger_usit(7)", "thermal"],
+    ]
+
+
+def test_emit_reports_the_coupling_only_terms_of_kept_restrictions() -> None:
+    id_map = DecompIdMap(
+        bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,), coupling_only_codes=(46,)
+    )
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            707: _restriction(707, "ger_usih(1) + ger_usih(46)", "<=", "500"),
+            708: _restriction(708, "ger_usih(46) + ger_usit(7)", "<=", "500"),
+        },
+        rules={},
+    )
+
+    with dx.collect() as sink:
+        result = emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+        )
+
+    assert result.converted_codes == (707,)
+    assert result.generic is not None
+    assert [c["expression"] for c in result.generic.constraints] == [
+        "hydro_generation(0)"
+    ]
+    by_code = {d.code: d for d in sink}
+    note = by_code["decomp-electrical-term-coupling-only-plant"]
+    assert note.severity is dx.Severity.INFO
+    assert note.title.endswith(" (1)")
+    assert note.table is not None
+    assert note.table.rows == [[707, "ger_usih(46)"]]
+    assert by_code["decomp-electrical-bucket-a-unresolved"].table is not None
+    assert by_code["decomp-electrical-bucket-a-unresolved"].table.rows == [
+        [708, "ger_usit(7)", "thermal"]
     ]
 
 

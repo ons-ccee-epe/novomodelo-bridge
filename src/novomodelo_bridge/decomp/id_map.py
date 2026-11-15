@@ -32,13 +32,16 @@ class DecompIdMap:
 
     Hydro codes are the ``UH``-activated *operated* plants (rows carrying an
     initial volume); thermal codes are the ``CT``-declared plants. Both are
-    sorted ascending and mapped to dense 0-based ids.
+    sorted ascending and mapped to dense 0-based ids. Coupling-only codes are
+    the ``UH`` rows without an initial volume, which DECOMP keeps only for
+    the coupling with NEWAVE and does not operate; they get no id.
     """
 
     bus_codes: tuple[int, ...]
     bus_names: tuple[str, ...]
     hydro_codes: tuple[int, ...] = ()
     thermal_codes: tuple[int, ...] = ()
+    coupling_only_codes: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.bus_codes) != len(self.bus_names):
@@ -49,6 +52,7 @@ class DecompIdMap:
             ("bus", self.bus_codes),
             ("hydro", self.hydro_codes),
             ("thermal", self.thermal_codes),
+            ("coupling-only", self.coupling_only_codes),
         ):
             if list(codes) != sorted(set(codes)):
                 raise ValueError(
@@ -76,9 +80,13 @@ class DecompIdMap:
 
         uh = as_frame(dadger.uh(df=True))
         hydro_codes: tuple[int, ...] = ()
+        coupling_only_codes: tuple[int, ...] = ()
         if uh is not None and not uh.empty:
-            operated = uh[uh["volume_inicial"].notna()]
-            hydro_codes = tuple(sorted(int(c) for c in operated["codigo_usina"]))
+            operated = uh["volume_inicial"].notna()
+            hydro_codes = tuple(sorted(int(c) for c in uh[operated]["codigo_usina"]))
+            coupling_only_codes = tuple(
+                sorted(int(c) for c in uh[~operated]["codigo_usina"])
+            )
 
         ct = as_frame(dadger.ct(df=True))
         thermal_codes: tuple[int, ...] = ()
@@ -90,6 +98,7 @@ class DecompIdMap:
             bus_names=tuple(name for _, name in rows),
             hydro_codes=hydro_codes,
             thermal_codes=thermal_codes,
+            coupling_only_codes=coupling_only_codes,
         )
 
     def hydro_id(self, code: int) -> int:
