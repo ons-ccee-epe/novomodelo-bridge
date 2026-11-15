@@ -106,7 +106,8 @@ out: the conversion cannot tell the `IV` node from an undeclared code.
 An `FT` term in an `RE` constraint on a fuel-constrained thermal of
 `dadgnl.rvN` is handled as DECOMP handles it, and as the conversion handles
 `ger_usit` on such a plant in the LIBS file: the generation its `GL` records
-command at each stage and patamar, times the term's coefficient, is taken off
+command at each stage and patamar, held within the plant's `TG` minimum and
+capacity there as DECOMP holds it, times the term's coefficient, is taken off
 the limits, and the term leaves the sum. The case holds the plant to its
 commitment for the stage, not to each patamar's `GL` value, so its dispatch
 in a patamar can differ from the generation taken off the limits there;

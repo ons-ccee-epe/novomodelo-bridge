@@ -1253,7 +1253,19 @@ def _gnl_model() -> GnlCommitmentModel:
         },
         weeks_per_month={},
         nl_lag_months={},
-        tg=pd.DataFrame(),
+        tg=pd.DataFrame(
+            [
+                {
+                    "codigo_submercado": 1,
+                    "codigo_usina": 86,
+                    "estagio": 1,
+                    "nome": "SANTA CRUZ",
+                    **{f"cvu_{k}": 199.0 for k in (1, 2, 3)},
+                    **{f"disponibilidade_{k}": 600.0 for k in (1, 2, 3)},
+                    **{f"inflexibilidade_{k}": 0.0 for k in (1, 2, 3)},
+                }
+            ]
+        ),
     )
 
 

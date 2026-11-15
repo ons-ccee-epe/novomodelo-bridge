@@ -297,6 +297,10 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
+  plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
+  the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms
+  are held the same way. Results change for such decks, so reconvert them.
 - **`convert decomp` stopped with `unexpected-error` on deck limits that put
   a floor above the ceiling.** On turbined flow, generation, outflow, storage
   and unit groups it now writes both limits as the deck has them, with one

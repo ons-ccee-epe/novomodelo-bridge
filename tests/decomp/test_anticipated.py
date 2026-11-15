@@ -169,6 +169,31 @@ def test_gnl_block_commitments_weights_each_block_by_its_duracao() -> None:
     assert got[86][1] == pytest.approx(((40 * 100 + 10 * 400) / 50, 200.0, 100.0))
 
 
+def test_gnl_block_commitments_holds_each_week_inside_the_tg_range() -> None:
+    """The TG minimum and capacity of each block prevail over a GL value
+    outside them, week by week before the stage mean: the two-week stage's
+    first block is (40 * 100 + 10 * 120) / 50, not its mean 160 held at 120."""
+    gl = [
+        _GlReg(86, 1, "14032026", [40.0, 48.0, 80.0], [100.0, 200.0, 300.0]),
+        _GlReg(86, 2, "21032026", [40.0, 48.0, 80.0], [100.0, 100.0, 100.0]),
+        _GlReg(86, 3, "28032026", [10.0, 48.0, 110.0], [400.0, 300.0, 100.0]),
+    ]
+    tg = [
+        {
+            **_tg_row(86, "SANTA CRUZ", disp=250.0, inflex=150.0),
+            "disponibilidade_3": 400.0,
+        },
+        {**_tg_row(86, "SANTA CRUZ", disp=120.0), "estagio": 2},
+    ]
+    model = read_gnl_model(_StubDadgnl(gl, tg, []))
+    assert model is not None
+
+    got = gnl_block_commitments(model, _two_stage_calendar())
+
+    assert got[86][0] == (150.0, 200.0, 300.0)
+    assert got[86][1] == pytest.approx((104.0, 110.0, 100.0))
+
+
 def test_gnl_block_commitments_stage_without_gl_week_is_uncommanded() -> None:
     gl = [_GlReg(86, 1, "14032026", [40.0, 48.0, 80.0], [500.0, 500.0, 500.0])]
     model = read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))

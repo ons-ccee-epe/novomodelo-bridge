@@ -370,7 +370,9 @@ def gnl_block_commitments(
     ``geracao`` over every study ``gl`` week (:func:`_split_at_study_end`)
     starting inside the stage — one week for a weekly stage, every week of the
     month for a monthly one, the same stage assignment :func:`convert_gnl`
-    folds its per-stage commitment with.
+    folds its per-stage commitment with. Each week's value is first held
+    inside the block's ``tg`` range at the stage, since the source model's
+    ``tg`` minimum and capacity prevail over a ``gl`` value outside them.
     A stage no ``gl`` week starts in maps to ``None``: the plant's dispatch
     there is not commanded.
 
@@ -382,6 +384,9 @@ def gnl_block_commitments(
     """
     study_week_count = _study_gl_week_count(model.weeks_per_month, calendar)
     horizon_end = calendar[-1].end_date
+    capabilities = dense_stage_records(
+        model.tg, calendar, register="TG", name_column="nome"
+    )
     commitments: dict[int, list[tuple[float, ...] | None]] = {}
     for thermal in model.thermals:
         stages, _ = _split_at_study_end(
@@ -390,8 +395,9 @@ def gnl_block_commitments(
             study_week_count,
             horizon_end,
         )
+        capability = capabilities[thermal.code]["stages"]
         per_stage: list[tuple[float, ...] | None] = []
-        for stage in calendar:
+        for position, stage in enumerate(calendar):
             weeks = [
                 c for c in stages if stage.start_date <= c.start_date < stage.end_date
             ]
@@ -407,10 +413,16 @@ def gnl_block_commitments(
                         f"{dx.counted(len(week.block_mw), 'block')}; stage {stage.index} "
                         f"has {n_blocks}"
                     )
+            limits = capability[position]
             per_stage.append(
                 tuple(
                     _block_weighted_mean(
-                        [week.block_mw[b] for week in weeks],
+                        [
+                            _within_capability(
+                                week.block_mw[b], limits["inflex"][b], limits["disp"][b]
+                            )
+                            for week in weeks
+                        ],
                         [week.block_hours[b] for week in weeks],
                     )
                     for b in range(n_blocks)
@@ -455,8 +467,8 @@ def gnl_patamar_values_diagnostic(
             f"differs by patamar ({len(stages)})"
         ),
         summary=(
-            f"In the listed stages, the listed {noun} read a GNL plant's GL "
-            "generation patamar by patamar, as DECOMP does, and that generation "
+            f"In the listed stages, the listed {noun} read a GNL plant's "
+            "commanded generation patamar by patamar, as DECOMP does, and it "
             "differs by patamar. DECOMP also holds the plant to it in each "
             "patamar; the case holds the plant only to its commitment for the "
             "stage, so its dispatch in a patamar can differ from the generation "
@@ -1059,6 +1071,12 @@ def _stage_capabilities(
     }
 
 
+def _within_capability(value: float, lo: float, hi: float) -> float:
+    """*value* held inside ``[lo, hi]``; an inflexibility above the
+    availability (``lo > hi``) holds it at the availability."""
+    return min(max(value, min(lo, hi)), hi)
+
+
 def _clamp_committed(
     value: float, thermal: GnlThermal, lo: float, hi: float, delivery: str
 ) -> float:
@@ -1068,10 +1086,9 @@ def _clamp_committed(
     The source model's ``gl`` geração and ``tg`` disponibilidade are
     independent fields, so a commitment can exceed capability, and novomodelo
     rejects a ``past_anticipated_commitment`` outside the plant's generation
-    bounds. An inflexibility above the availability (``lo > hi``) clamps to
-    the availability.
+    bounds.
     """
-    clamped = min(max(value, min(lo, hi)), hi)
+    clamped = _within_capability(value, lo, hi)
     if abs(clamped - value) > _NONZERO_TOLERANCE:
         row = [
             thermal.code,
