@@ -1348,8 +1348,8 @@ def _deficit_cost(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataF
     ``duracao`` x the subsystem's ``CD`` cost.
 
     The report prints no deficit parcel, so it is priced here from
-    ``dec_oper_sist``. Deficit in a subsystem without a ``CD`` cost is logged
-    and stays in the unitemized slack.
+    ``dec_oper_sist``. Deficit in a subsystem without a ``CD`` cost stays in the
+    unitemized slack.
     """
     sist = read_dec_oper_sist(decomp_dir)
     blocks = sist.filter(pl.col("patamar").is_not_null() & (pl.col("deficit_MW") > 0.0))
