@@ -47,10 +47,12 @@ from novomodelo_bridge.core.diagnostics import (
     merge_tables,
 )
 from novomodelo_bridge.core.electrical_expression import (
+    CMO_DEMAND_TOKENS,
     AssembledBound,
     DataContext,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    demand_in_cmo_diagnostic,
     term_text,
 )
 from novomodelo_bridge.core.generic_constraint_builder import (
@@ -480,6 +482,7 @@ def _emit_restrictions(
     constant only for a restriction it keeps."""
     builder = GenericConstraintBuilder(allocator)
     converted: list[int] = []
+    demand_in_cmo: list[tuple[int, str]] = []
     deferred: dict[str, list[int]] = {
         "inactive": [],
         "unresolved-bucket-bc": [],
@@ -506,6 +509,7 @@ def _emit_restrictions(
                     big_m,
                     builder,
                     deferred,
+                    demand_in_cmo,
                 )
         finally:
             for diagnostic in local:
@@ -514,6 +518,14 @@ def _emit_restrictions(
         if kept:
             converted.append(code)
 
+    if demand_in_cmo:
+        emit(
+            demand_in_cmo_diagnostic(
+                "decomp-electrical-demand-in-cmo",
+                demand_in_cmo,
+                source="the RESTRICAO-ELETRICA-ESPECIAL file",
+            )
+        )
     return LibsElectricalResult(
         generic=builder.result(),
         converted_codes=tuple(converted),
@@ -535,9 +547,14 @@ def _emit_restriction(
     big_m: float,
     builder: GenericConstraintBuilder,
     deferred: dict[str, list[int]],
+    demand_in_cmo: list[tuple[int, str]],
 ) -> bool:
     """Add restriction *code* to *builder* and return ``True``, or record on
-    *deferred* why it is dropped and return ``False``."""
+    *deferred* why it is dropped and return ``False``.
+
+    A kept restriction's bound terms in :data:`CMO_DEMAND_TOKENS` are added to
+    *demand_in_cmo*."""
+    demand_terms: set[str] = set()
     try:
         cells = active_cells(restriction, model, context_factory, calendar)
         if not cells:
@@ -551,7 +568,9 @@ def _emit_restriction(
                 model,
                 stage_index,
                 block_index,
-                context_factory(stage_index, block_index),
+                _recording_demand_terms(
+                    context_factory(stage_index, block_index), demand_terms
+                ),
                 a_h,
             )
             if assembled is None:
@@ -604,4 +623,16 @@ def _emit_restriction(
         slack=soft_slack(_resolve_violation_penalty(restriction, big_m), "per_hour"),
         slots=slots_from_record(record, calendar),
     )
+    demand_in_cmo.extend((code, term) for term in demand_terms)
     return True
+
+
+def _recording_demand_terms(ctx: DataContext, seen: set[str]) -> DataContext:
+    """*ctx*, adding to *seen* each :data:`CMO_DEMAND_TOKENS` term it values."""
+
+    def resolve(term: ParsedTerm) -> float:
+        if term.token in CMO_DEMAND_TOKENS:
+            seen.add(term_text(term))
+        return ctx(term)
+
+    return resolve

@@ -1213,6 +1213,36 @@ class TestConvertElectricConstraintsEmission:
             if r["bound_upper"] is not None
         ) == [(stage, stage + 130.0) for stage in range(12)]
 
+    def test_bare_demand_terms_of_kept_constraints_are_listed(
+        self, tmp_path: Path
+    ) -> None:
+        """``demanda`` and ``demanda_sin`` count in the source model's CMO and
+        are listed; ``val_demanda`` and a left-out constraint's terms are not."""
+        case, _ = _make_electric_re_case(
+            tmp_path,
+            "RE;1;ger_usih(10) - demanda(1) + demanda_sin\n"
+            "RE;2;ger_usih(10) - val_demanda(1)\n"
+            "RE;3;ger_usih(10) + ener_comerc(1) - demanda(1)\n"
+            + "".join(
+                f"RE-LIM-FORM-PER-PAT;{cod};2020/01;2020/12;1;50.;200.\n"
+                for cod in (1, 2, 3)
+            ),
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[10], thermal_codes=[])
+
+        with dx.collect() as collected:
+            result = convert_electric_constraints(case, id_map, block_loads={})
+
+        assert result is not None
+        assert {c["name"] for c in result.constraints} == {"RE_1", "RE_2"}
+        [diag] = [d for d in collected if d.code == "electric-constraint-demand-in-cmo"]
+        assert diag.severity is Severity.WARNING
+        assert diag.title == "Electric constraint demand terms left out of the CMO (2)"
+        assert diag.table is not None
+        assert diag.table.rows == [[1, "demanda(1)"], [1, "demanda_sin"]]
+        assert diag.remediation is not None
+        assert "restricao-eletrica.csv" in diag.remediation
+
     _DEMAND_ON_THREE_BLOCKS = (
         "RE;1;ger_usih(10) - demanda(1) + 100\n"
         "RE-HORIZ-PER;1;2020/01;2020/12\n"

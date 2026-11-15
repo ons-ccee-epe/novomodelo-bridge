@@ -37,6 +37,7 @@ from novomodelo_bridge.core.diagnostics import (
     unreadable_file_diagnostic,
 )
 from novomodelo_bridge.core.electrical_expression import (
+    CMO_DEMAND_TOKENS,
     CONST_TOKEN,
     PEQ_TOKEN,
     SE_TOKEN,
@@ -45,6 +46,7 @@ from novomodelo_bridge.core.electrical_expression import (
     ParsedTerm,
     UnrecognizedElectricalToken,
     classify_terms,
+    demand_in_cmo_diagnostic,
     evaluate_terms,
     parse_linear_expression,
     term_text,
@@ -1013,6 +1015,9 @@ def _electric_limit(value: object, cod: int, path: Path) -> float | None:
 
 #: The demand terms of restricao-eletrica.csv formulas, folded into the
 #: limits at the case's own block load.
+# TRACKED NOVOMODELO-GAP (C36): the case has no load term in a generic
+# constraint, so a bare demanda/demanda_sin multiplier is not added to the
+# CMO as the source model does; electric-constraint-demand-in-cmo lists them.
 _BUS_DEMAND_TOKENS = frozenset({"demanda", "val_demanda"})
 _SYSTEM_DEMAND_TOKENS = frozenset({"demanda_sin", "val_demanda_sin"})
 
@@ -1480,6 +1485,7 @@ def convert_electric_constraints(
     # converters/thermal.py's _GtminRecord idiom).
     elec_term_skips: list[_ElectricTermSkip] = []
     elec_constraint_skips: list[_ElectricConstraintSkip] = []
+    demand_in_cmo: list[tuple[int, str]] = []
 
     data_context = partial(_demand_context, block_loads, id_map)
     for cod in sorted(set(sources.formulas) | set(sources.re_conjuntos)):
@@ -1498,9 +1504,22 @@ def convert_electric_constraints(
         _add_electric_constraint(
             builder, cod, expression, slack_config, bounds, grid, data_context
         )
+        demand_in_cmo.extend(
+            (cod, term_text(term))
+            for term in expression.data_terms
+            if term.token in CMO_DEMAND_TOKENS
+        )
 
     _emit_electric_term_skips(elec_term_skips)
     _emit_electric_constraint_skips(elec_constraint_skips)
+    if demand_in_cmo:
+        emit(
+            demand_in_cmo_diagnostic(
+                "electric-constraint-demand-in-cmo",
+                demand_in_cmo,
+                source="restricao-eletrica.csv",
+            )
+        )
 
     result = builder.result()
     if result is None:

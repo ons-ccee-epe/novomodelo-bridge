@@ -37,6 +37,14 @@ links are cobre-bridge's.
   name) is left out with an `electric-constraint-term-unsupported` warning,
   and a term on a thermal outside the case is left out of its sum with an
   `electric-constraint-thermal-unmapped` note.
+- **`convert newave` and `convert decomp` warn about electric constraints
+  whose demand term the source model prices in the CMO**: a constraint
+  written with `demanda` or `demanda_sin` in `restricao-eletrica.csv` or the
+  `RESTRICAO-ELETRICA-ESPECIAL` file is listed in
+  `electric-constraint-demand-in-cmo` or `decomp-electrical-demand-in-cmo`,
+  because the case's CMO leaves out its multiplier wherever it binds. Write
+  the term as `val_demanda` or `val_demanda_sin` where the multiplier should
+  not count.
 
 ### Changed
 

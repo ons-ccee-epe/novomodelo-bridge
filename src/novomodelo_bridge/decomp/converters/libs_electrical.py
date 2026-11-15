@@ -1205,6 +1205,10 @@ def build_data_context(
     )
     n_submarkets = len(id_map.bus_codes)
 
+    # TRACKED NOVOMODELO-GAP (C36): the case has no load term in a generic
+    # constraint, so the demand is folded into the bound and a bare
+    # demanda/demanda_sin multiplier is not added to the CMO as the source
+    # model does; decomp-electrical-demand-in-cmo lists them.
     def context_for_cell(stage_index: int, block_index: int) -> DataContext:
         def resolve(term: ParsedTerm) -> float:
             if term.token == CONST_TOKEN:
