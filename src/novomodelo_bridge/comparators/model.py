@@ -51,13 +51,6 @@ class PercentileData:
     line_meta: list[dict] = field(default_factory=list)
     nw_line_means: pl.DataFrame = field(default_factory=pl.DataFrame)
 
-    # --- per-hydro derived flow variables ---
-    # Novomodelo per-(hydro_id, stage_id) total_inflow_m3s (incremental +
-    # upstream turbined+spilled) and total_outflow_m3s (turbined + spilled).
-    # Outflow comes directly from the parquet ``outflow_m3s`` column when
-    # present.
-    hydro_total_flows: pl.DataFrame = field(default_factory=pl.DataFrame)
-
     # --- Per-stage hydro operational bounds (dashboard overlay) ---
     # Per-(entity_id, stage_id) optional bound columns from
     # ``constraints/hydro_bounds.parquet`` — read by

@@ -1423,7 +1423,7 @@ class TestCompareResultsReturnsDataset:
         )
 
         monkeypatch.setattr(
-            "novomodelo_bridge.comparators.constraints.load_resolved_generic_constraints",
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_resolved_generic_constraints",
             lambda *_a: resolve_generic_constraints([], None, {}),
         )
 
@@ -2215,8 +2215,8 @@ class TestGenericConstraintF3Loaders:
     """The constraints loader consumes sense-free JSON."""
 
     def test_constraints_loader_parses_sense_free_json(self, tmp_path: Path) -> None:
-        from novomodelo_bridge.comparators.constraints import (
-            load_generic_constraints,
+        from novomodelo_bridge.novomodelo.readers import (
+            read_novomodelo_generic_constraints,
         )
 
         constraints_dir = tmp_path / "constraints"
@@ -2237,7 +2237,7 @@ class TestGenericConstraintF3Loaders:
             encoding="utf-8",
         )
 
-        constraints = load_generic_constraints(tmp_path)
+        constraints = read_novomodelo_generic_constraints(tmp_path)
         assert len(constraints) == 1
         assert "sense" not in constraints[0]
         assert constraints[0]["name"] == "RE_1"

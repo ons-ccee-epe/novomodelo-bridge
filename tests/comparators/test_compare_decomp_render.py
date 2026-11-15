@@ -412,9 +412,9 @@ class TestCompareDecompCommand:
         decomp_mini_deck: Path,
         tmp_path: Path,
     ) -> None:
-        """Regression: NovomodeloPartitionMissingError extends
-        BridgeError, a hierarchy disjoint from NovomodeloReadError (RuntimeError)
-        and FileNotFoundError/ValueError. The compare decomp CLI handler
+        """Regression: NovomodeloPartitionMissingError is neither a
+        NovomodeloOutputError, unlike NovomodeloReadError, nor a
+        FileNotFoundError/ValueError. The compare decomp CLI handler
         must catch it too -- a clean ERROR line + exit 2, not an unhandled
         traceback -- mirroring the compare newave fix and this class's own
         NovomodeloReadError-analogue test above."""

@@ -252,10 +252,10 @@ def _run_newave_comparison(args: CompareArgs) -> None:
     tolerance: float = args.tolerance
     formats = _resolve_compare_formats("compare newave", args)
 
-    # NovomodeloPartitionMissingError (a BridgeError; output predates a partition
-    # this compare needs) and NovomodeloReadError (a RuntimeError; a malformed
-    # output file) are disjoint hierarchies — both must stay in the ``except``,
-    # or the dropped one crashes with a bare traceback instead of exit 2.
+    # NovomodeloPartitionMissingError (output predates a partition this compare
+    # needs) is not a NovomodeloOutputError, unlike NovomodeloReadError (a
+    # malformed output file): both must stay in the ``except``, or the dropped
+    # one crashes with a bare traceback instead of exit 2.
     with dx.collect() as compare_diagnostics:
         case, id_map, alignment, _lines_json = _load_compare_context(
             newave_dir, novomodelo_output_dir, command="compare newave", args=args

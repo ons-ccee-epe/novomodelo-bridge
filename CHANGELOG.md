@@ -138,10 +138,15 @@ links are cobre-bridge's.
   as `electric-constraint-malformed-term`. `convert decomp`
   now reads a LIBS coefficient written before a space or a parenthesis, and
   stops on a function given the wrong number of arguments.
-- **`compare` and `dashboard` no longer stop on a `system/lines.json` they
-  cannot read**: they treat the case as having no lines, leave out the
-  interchange and the Network tab's lines, and say so in a
-  `report-file-unreadable` warning.
+- **`dashboard` no longer stops on a file it can go without and cannot read,
+  nor `compare` on such a `system/lines.json` or `system/hydros.json`**, where
+  `compare newave` exited 2 and `dashboard` stopped with a traceback: a
+  `report-file-unreadable` warning says what the report leaves out, and a
+  hydro plant without unit groups is left out of the per-bus charts with a new
+  `hydro-unit-groups-missing` warning. `dashboard` still needs `stages.json`
+  and exits 1 with `novomodelo-output-unreadable` when it is missing or
+  unusable, as it does with the new `output-write-failed` on an output path it
+  cannot write.
 - **`export dessem` reports a missing DECOMP deck directory as
   `source-file-missing` and a missing case directory as
   `novomodelo-output-unreadable`**, as `convert` and `dashboard` do, instead
@@ -151,6 +156,9 @@ links are cobre-bridge's.
   trained cuts or an output directory it cannot write as
   `dessem-fcf-export-failed` naming the failed step, where all of these
   ended as `unexpected-error`.
+- **`compare` and `dashboard` report a Novomodelo output file they cannot read
+  as `novomodelo-output-unreadable`** instead of `unexpected-error`, with the
+  same exit codes as before.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.

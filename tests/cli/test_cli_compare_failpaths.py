@@ -281,6 +281,7 @@ class TestCompareDecompReadError:
         document = json.loads(stdout)
         assert document["command"] == "compare decomp"
         assert document["status"] == "error"
+        assert document["diagnostics"][0]["code"] == "novomodelo-output-unreadable"
         assert "bad parquet partition" in document["diagnostics"][0]["summary"]
         assert stderr == ""
 
@@ -475,5 +476,5 @@ class TestCompareNewaveSetupFindings:
         document = json.loads(stdout)
         assert [(d["code"], d["severity"]) for d in document["diagnostics"]] == [
             ("line-bus-unmapped", "warning"),
-            ("unexpected-error", "error"),
+            ("novomodelo-output-unreadable", "error"),
         ]
