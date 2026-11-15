@@ -749,9 +749,14 @@ class TestBoundAccumulatorWiring:
         assert source.count("concat_tables") == 1
         assert "pa.concat_tables(generic_bound_tables)" in source
 
-    def test_re_ceiling_above_capacity_is_capped_naming_the_constraint(
+    def test_over_declared_bound_is_clamped_with_a_note_not_errored(
         self, tmp_path: Path
     ) -> None:
+        """An RE ceiling above the plant's declared capacity is capped at it and
+        reported as a note naming the RE, so the convert verdict stays "ok"
+        instead of erroring on novomodelo rule 43."""
+        from novomodelo_bridge.cli.verdict import _convert_status
+
         diagnostics: list[Diagnostic] = []
         dst = _run_cadastro_pipeline(
             tmp_path,
@@ -766,11 +771,15 @@ class TestBoundAccumulatorWiring:
         capacity = hydro["generation"]["max_generation_mw"]
         table = pq.read_table(dst / "constraints" / "hydro_bounds.parquet")
         assert set(table["max_generation_mw"].drop_null().to_pylist()) == {capacity}
+        assert "hydro-bounds-raises-declared-capacity" not in {
+            d.code for d in diagnostics
+        }
         (capped,) = [
             d
             for d in diagnostics
             if d.code == "hydro-bounds-clamped-to-declared-capacity"
         ]
+        assert capped.severity is Severity.INFO
         assert capped.table is not None
         assert capped.table.rows == [
             [
@@ -783,10 +792,12 @@ class TestBoundAccumulatorWiring:
                 round(capacity, 6),
             ]
         ]
+        assert _convert_status(diagnostics, success="ok") == "ok"
 
     def test_re_ceiling_below_the_plant_minimum_stays(self, tmp_path: Path) -> None:
         """A ceiling below the plant's declared minimum is written as the deck
-        has it, not raised to the minimum."""
+        has it, not raised: the source model violates whichever soft limit is
+        cheaper."""
         negated = ConstraintRecord(
             family="RE",
             constraint_id=12,

@@ -17,6 +17,7 @@ dropping a bound.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import TYPE_CHECKING
 
 from novomodelo_bridge.core.diagnostics import (
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
+_LOG = logging.getLogger(__name__)
 
 #: RHQ ``CQ.tipo`` flow -> novomodelo hydro bound axis, mirroring the reader's
 #: ``constraint_registers._BOUNDS_AXIS`` QDEF/QTUR/QDES/QVER entries. Keep the
@@ -187,7 +189,7 @@ def _re_generation_contributions(
     """One RE single-hydro-generation constraint -> hydro ``generation`` bounds.
 
     The ceiling can sit above the plant's declared ``max_generation_mw``
-    (BELO MONTE's RE writes 11000 MW over 10999.998 MW of units); the
+    (BELO MONTE's RE writes 11000 MW over 10999.9984 MW of units); the
     pipeline holds the merged bound to that capacity afterwards
     (:func:`~novomodelo_bridge.core.emission_checks.clamp_hydro_bounds_to_declared`).
     """
@@ -270,7 +272,7 @@ def split_plant_group_contributions(
                 clamped.items()
             )
         ]
-        emit(_unit_group_clamp_diagnostic(rows))
+        emit(_unit_group_clamp_diagnostic(rows), logger=_LOG)
     return by_hydro
 
 

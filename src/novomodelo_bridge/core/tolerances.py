@@ -29,11 +29,12 @@ def floats_differ(value: float, reference: float) -> bool:
     return abs(value - reference) > relative_tolerance(reference)
 
 
-#: Relative gap within which a deck limit and a declared capacity are the same
-#: number written at different precision. ``hidr.dat`` stores unit power as a
-#: float32 of a value typed to a few decimals: BELO MONTE's 18 units of 611.111
-#: MW (11000 / 18 cut to three decimals) sum to 10999.9984 MW, 1.4e-7 below
-#: the 11000 MW its RE ceiling writes.
+#: Gap, relative to the plant's declared value, within which a deck limit and
+#: that value count as the same number. It covers BELO MONTE, whose 18 units
+#: of 611.111 MW, read from ``hidr.dat``'s float32, sum to 10999.9984 MW, 1.4e-7
+#: below the 11000 MW its RE ceiling writes. It does not cover unit power
+#: rounded to three decimals in general: that error reaches 0.0005 MW per unit,
+#: more than 1e-6 of a unit under 500 MW.
 WRITTEN_PRECISION_TOLERANCE: float = 1e-6
 
 

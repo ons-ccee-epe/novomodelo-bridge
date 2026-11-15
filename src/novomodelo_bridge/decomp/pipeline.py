@@ -1663,21 +1663,42 @@ def _resolve_line_bounds(
 
 
 #: Contributor prefix of a special-constraint bound -> the register its
-#: report names.
-_SPECIAL_CONSTRAINT_REGISTERS: dict[str, str] = {"RE": "RE", "HQ": "RHQ"}
+#: report names, followed by the constraint id.
+_SPECIAL_CONSTRAINT_REGISTERS: dict[str, str] = {"RE": "RE", "HQ": "RHQ", "HV": "RHV"}
+
+#: Every other hydro bound contributor -> the deck record or limit a report
+#: names.
+_BOUND_SOURCE_LABELS: dict[str, str] = {
+    "RQ": "RQ",
+    "UH": "UH",
+    "UH_vert": "UH",
+    "VE": "VE",
+    "storage-envelope": "AC VOLMIN/VOLMAX",
+    "turbine_limit": "turbined-flow limit",
+    "split_plant_availability": "available power",
+}
 
 
-def _special_constraint_labels(
+def _bound_source_label(contributor: str) -> str:
+    """The deck constraint or limit a bound *contributor* stands for, as a
+    report names it."""
+    prefix, _, constraint_id = contributor.partition("_")
+    register = _SPECIAL_CONSTRAINT_REGISTERS.get(prefix)
+    if register is not None and constraint_id.isdigit():
+        return f"{register} {constraint_id}"
+    return _BOUND_SOURCE_LABELS[contributor]
+
+
+def _hydro_bound_labels(
     contribs: Sequence[bounds_accumulator.BoundContribution],
 ) -> emission_checks.BoundLabels:
-    """The RE and RHQ constraints behind each ``hydro_bounds`` cell, each with
-    the value it sets, for the capacity clamp's report."""
+    """The deck constraints and limits behind each ``hydro_bounds`` cell, each
+    with the value it sets, for the capacity clamp's report."""
     labels: dict[tuple[int, int, int | None, str], list[tuple[str, float]]] = {}
     for contrib in contribs:
-        prefix, _, constraint_id = contrib.contributor.partition("_")
-        register = _SPECIAL_CONSTRAINT_REGISTERS.get(prefix)
-        if contrib.family != "hydro" or register is None:
+        if contrib.family != "hydro":
             continue
+        source = _bound_source_label(contrib.contributor)
         spec = bounds_accumulator.axis_spec("hydro", contrib.axis)
         for column, value in (
             (spec.lower_column, contrib.lower),
@@ -1687,7 +1708,7 @@ def _special_constraint_labels(
                 labels.setdefault(
                     (contrib.entity_id, contrib.stage_id, contrib.block_id, column),
                     [],
-                ).append((f"{register} {constraint_id}", value))
+                ).append((source, value))
     return labels
 
 
@@ -1764,12 +1785,15 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     )
     # An RE or RHQ QTUR ceiling can sit above the plant's declared capacity
     # (BELO MONTE's RE does on both real decks); novomodelo rule 43 rejects it.
+    # A ceiling below the stage's floor is not raised: the source model treats
+    # both limits as soft and violates whichever is cheaper, so the case keeps
+    # both and novomodelo prices the shortfall.
     hydro_bounds = emission_checks.clamp_hydro_bounds_to_declared(
         hydros_dict,
         bound_tables.hydro.sort_by([("hydro_id", "ascending"), *_BOUND_SORT_KEYS]),
         source_codes={id_map.hydro_id(code): code for code in id_map.hydro_codes},
         raise_to_minimum=False,
-        labels=_special_constraint_labels(contribs),
+        labels=_hydro_bound_labels(contribs),
     )
     assert hydro_bounds is not None
     # Fold in the TI irrigation withdrawal (a consumptive water use novomodelo reads
