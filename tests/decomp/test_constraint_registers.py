@@ -27,7 +27,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
     drop_unknown_entities,
     lowers_to_bound,
     read_constraints,
-    read_screened_constraints,
+    screen_constraints,
 )
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.constraints import (
@@ -881,7 +881,7 @@ def test_bound_conflicts_diagnostic_is_none_without_conflicts() -> None:
     assert bound_conflicts_diagnostic([], {118: "BILLINGS"}) is None
 
 
-def test_read_screened_constraints_reports_unknown_entities_then_conflicts() -> None:
+def test_screen_constraints_reports_unknown_entities_then_conflicts() -> None:
     """A QDEF conflict on plant 118 and an HQ on a missing pumping station."""
     dadger = _FakeDadger(
         hq=_decl((116, 1, 2), (170, 1, 2), (180, 1, 2)),
@@ -898,9 +898,10 @@ def test_read_screened_constraints_reports_unknown_entities_then_conflicts() -> 
         ),
     )
 
-    census, diagnostics = read_screened_constraints(
-        dadger,
+    census, diagnostics = screen_constraints(
+        read_constraints(dadger),
         hydro_codes=(118,),
+        coupling_only_codes=(),
         thermal_codes=(),
         pumping_codes=(),
         plant_names={118: "BILLINGS"},
@@ -960,7 +961,11 @@ def _screen(*records: ConstraintRecord) -> tuple[ConstraintCensus, list]:
         to_generic=tuple(r for r in records if not lowers_to_bound(r)),
     )
     return drop_unknown_entities(
-        census, hydro_codes=(5, 6), thermal_codes=(20,), pumping_codes=(2,)
+        census,
+        hydro_codes=(5, 6),
+        coupling_only_codes=(7,),
+        thermal_codes=(20,),
+        pumping_codes=(2,),
     )
 
 
@@ -1055,9 +1060,63 @@ def test_drop_unknown_entities_leaves_out_their_bound_conflicts() -> None:
     assert census.bound_conflicts
 
     screened, diagnostics = drop_unknown_entities(
-        census, hydro_codes=(118,), thermal_codes=(), pumping_codes=()
+        census,
+        hydro_codes=(118,),
+        coupling_only_codes=(),
+        thermal_codes=(),
+        pumping_codes=(),
     )
 
     assert screened.bound_conflicts == ()
     assert screened.to_generic == ()
     assert [d.code for d in diagnostics] == ["decomp-rhq-qbom-no-station"]
+
+
+def _fu(code: int, coefficient: float = 1.0) -> ConstraintTerm:
+    return ConstraintTerm(code=code, coefficient=coefficient, variable="generation")
+
+
+def test_drop_unknown_entities_leaves_a_coupling_only_plant_out_of_the_sum() -> None:
+    """Plant 7's UH record gives no initial volume, so DECOMP does not operate
+    it and its FU term adds nothing: the term is left out and the rest of
+    each constraint is kept, lowered anew, so constraint 1 becomes a bound."""
+    to_bound = _record("RE", 1, _fu(5), _fu(7))
+    still_generic = _record("RE", 2, _fu(5), _fu(6), _fu(7, 2.0))
+
+    census, diagnostics = _screen(to_bound, still_generic)
+
+    assert census.to_bounds == (_record("RE", 1, _fu(5)),)
+    assert census.to_generic == (_record("RE", 2, _fu(5), _fu(6)),)
+    [diagnostic] = diagnostics
+    assert diagnostic.code == "decomp-re-term-coupling-only-plant"
+    assert diagnostic.severity is Severity.INFO
+    assert diagnostic.table is not None
+    assert diagnostic.table.columns == ["Constraint", "Plant code"]
+    assert diagnostic.table.rows == [[1, 7], [2, 7]]
+
+
+def test_a_constraint_only_on_coupling_only_plants_is_left_out() -> None:
+    census, diagnostics = _screen(_record("RE", 1, _fu(7)))
+
+    assert (*census.to_bounds, *census.to_generic) == ()
+    [diagnostic] = diagnostics
+    assert diagnostic.code == "decomp-re-plant-not-operated"
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[1, 7]]
+
+
+def test_a_constraint_left_out_reports_only_the_term_that_left_it_out() -> None:
+    census, diagnostics = _screen(
+        _record(
+            "RE",
+            1,
+            _fu(7),
+            ConstraintTerm(code=30, coefficient=1.0, variable="thermal_generation"),
+        )
+    )
+
+    assert (*census.to_bounds, *census.to_generic) == ()
+    assert [(d.code, d.table.rows if d.table else None) for d in diagnostics] == [
+        ("decomp-re-thermal-not-normal", [[1, 30]])
+    ]

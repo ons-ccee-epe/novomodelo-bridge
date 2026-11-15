@@ -31,6 +31,7 @@ from novomodelo_bridge.core.diagnostics import (
 from novomodelo_bridge.core.errors import (
     BridgeError,
     FieldParseError,
+    UnsupportedSourceError,
     diagnostic_from_exception,
 )
 from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
@@ -61,7 +62,7 @@ from novomodelo_bridge.decomp.files import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from idecomp.decomp import Dadger, Vazoes
 
@@ -354,6 +355,9 @@ def _special_constraint_coverage(
     id_map: DecompIdMap,
     pumping_ids: Mapping[int, int],
     *,
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]] | None = None,
+    dadger_path: str,
+    dadgnl_path: str | None,
     libs_long_form: bool | None = False,
     plant_names: Mapping[int, str] | None = None,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
@@ -362,13 +366,18 @@ def _special_constraint_coverage(
     entity the case lacks) and deferred (RHA/LIBs-electrical), without
     running a conversion.
 
-    Counts the census ``convert decomp`` consumes,
-    :func:`~novomodelo_bridge.decomp.constraint_registers.read_screened_constraints`
-    against *id_map* and the ``UE`` codes of *pumping_ids*. Always returns
-    exactly one passing summary :class:`CheckItem` (coverage never blocks
-    conversion), an ``INFO`` for the converted split when any constraint
-    converts, and, verbatim as ``convert decomp`` raises them, the screen's
-    WARNINGs (conflicting restrictions under *plant_names*), the one of
+    Counts the census ``convert decomp`` consumes:
+    :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`
+    with the GNL terms of *gnl_generation* folded by
+    :func:`~novomodelo_bridge.decomp.converters.constraints.fold_commanded_gnl_terms`,
+    screened by
+    :func:`~novomodelo_bridge.decomp.constraint_registers.screen_constraints`
+    against *id_map* and the ``UE`` codes of *pumping_ids*. Returns one
+    summary :class:`CheckItem`, failed only when the fold stops the
+    conversion, an ``INFO`` for the converted split when any constraint
+    converts, and, verbatim as ``convert decomp`` raises them, the fold's and
+    the screen's diagnostics (conflicting restrictions under *plant_names*),
+    the one of
     :func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`
     and, when *libs_long_form* is ``False`` (the LIBS file has no long-form
     card ``convert decomp`` reads; ``None`` when the read failed, which its own
@@ -376,9 +385,28 @@ def _special_constraint_coverage(
     :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`.
     :func:`_libs_electrical_read` raises the LIBS file's own WARNINGs.
     """
-    census, screened = constraint_registers.read_screened_constraints(
-        dadger,
+    from novomodelo_bridge.decomp.converters.constraints import (
+        fold_commanded_gnl_terms,
+    )
+
+    census = constraint_registers.read_constraints(dadger)
+    try:
+        census, gnl_only = fold_commanded_gnl_terms(
+            census,
+            gnl_generation or {},
+            thermal_codes=id_map.thermal_codes,
+            dadger_path=dadger_path,
+            dadgnl_path=dadgnl_path,
+        )
+    except (FieldParseError, UnsupportedSourceError) as exc:
+        failed = CheckItem(
+            label="Special-constraint coverage", passed=False, detail=str(exc)
+        )
+        return [failed], [diagnostic_from_exception(exc, context=_CONTEXT)]
+    census, screened = constraint_registers.screen_constraints(
+        census,
         hydro_codes=id_map.hydro_codes,
+        coupling_only_codes=id_map.coupling_only_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
         plant_names={} if plant_names is None else plant_names,
@@ -439,7 +467,7 @@ def _special_constraint_coverage(
                 ),
             )
         )
-    diagnostics.extend(screened)
+    diagnostics.extend((*gnl_only, *screened))
 
     rha_diagnostic = constraint_registers.detect_unconverted_rha(dadger)
     if rha_diagnostic is not None:
@@ -488,6 +516,36 @@ def _libs_electrical_read(
             [*found, diagnostic_from_exception(exc, context=_CONTEXT)],
         )
     return model is not None, [], found
+
+
+def _gnl_generation_read(
+    case: DecompCase, calendar: list[OperativeStage]
+) -> tuple[
+    Mapping[int, Sequence[Sequence[float] | None]] | None,
+    list[CheckItem],
+    list[Diagnostic],
+]:
+    """Each GNL plant's commanded generation per stage and block, read from
+    ``dadgnl`` as ``convert decomp`` does; empty without the file.
+
+    A file it cannot read gives ``None`` and a failed check, since
+    ``convert decomp`` stops on it.
+    """
+    from novomodelo_bridge.decomp.converters.anticipated import (
+        gnl_block_commitments,
+        read_gnl_model,
+    )
+
+    try:
+        dadgnl = case.dadgnl
+        model = read_gnl_model(dadgnl) if dadgnl is not None else None
+        generation = gnl_block_commitments(model, calendar) if model is not None else {}
+    except Exception as exc:
+        failed = CheckItem(
+            label="GNL commitments readable", passed=False, detail=str(exc)
+        )
+        return None, [failed], [diagnostic_from_exception(exc, context=_CONTEXT)]
+    return generation, [], []
 
 
 def run_decomp_preflight(src: Path) -> PreflightResult:
@@ -638,11 +696,18 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         checks.extend(electrical_checks)
         diagnostics.extend(electrical_diags)
 
+        gnl_generation, gnl_checks, gnl_diags = _gnl_generation_read(case, calendar)
+        checks.extend(gnl_checks)
+        diagnostics.extend(gnl_diags)
+
         sc_checks, sc_diags = _special_constraint_coverage(
             dadger,
             files.libs_restricao_eletrica,
             id_map,
             pumping_station_id_map(dadger),
+            gnl_generation=gnl_generation,
+            dadger_path=str(files.dadger),
+            dadgnl_path=str(files.dadgnl) if files.dadgnl is not None else None,
             libs_long_form=libs_long_form,
             plant_names=plant_names,
         )

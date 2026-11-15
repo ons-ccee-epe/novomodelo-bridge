@@ -6,6 +6,7 @@ import inspect
 import shutil
 from contextlib import ExitStack
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -20,7 +21,7 @@ from idecomp.decomp.modelos.dadger import (
     ACVOLMIN,
 )
 
-from novomodelo_bridge.core.diagnostics import Severity, collect
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
 from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
 from novomodelo_bridge.core.preflight import (
@@ -55,8 +56,10 @@ from novomodelo_bridge.decomp.pipeline import (
 )
 from novomodelo_bridge.decomp.preflight import (
     _ac_coverage,
+    _gnl_generation_read,
     _load_factor_check,
     _special_constraint_coverage,
+    _SpecialConstraintRegisters,
     run_decomp_preflight,
 )
 from tests.conftest import branching_vazoes, make_decomp_case
@@ -65,7 +68,9 @@ from tests.decomp.test_constraint_registers import (
     _cm,
     _coeff,
     _decl,
+    _ft,
     _he,
+    _lu,
     _lv,
     _qdef_ceiling_and_floor,
 )
@@ -458,10 +463,34 @@ class TestAcCoverage:
 _SC_ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(21, 31, 40))
 
 
+def _coverage(
+    dadger: _SpecialConstraintRegisters,
+    libs_file: Path | None,
+    id_map: DecompIdMap,
+    pumping_ids: dict[int, int],
+    *,
+    gnl_generation: dict[int, list[tuple[float, ...] | None]] | None = None,
+    libs_long_form: bool | None = False,
+    plant_names: dict[int, str] | None = None,
+) -> tuple[list[CheckItem], list[Diagnostic]]:
+    """``_special_constraint_coverage`` with the deck's file names filled in."""
+    return _special_constraint_coverage(
+        dadger,
+        libs_file,
+        id_map,
+        pumping_ids,
+        gnl_generation=gnl_generation,
+        dadger_path="dadger.rv0",
+        dadgnl_path="dadgnl.rv0",
+        libs_long_form=libs_long_form,
+        plant_names=plant_names,
+    )
+
+
 class TestSpecialConstraintCoverage:
     """``_special_constraint_coverage``'s converted (RE/HQ/HV/HE,
     bounds-lowered vs generic-emitted) vs deferred (RHA/LIBs-electrical)
-    classification, and its always-passing summary ``CheckItem``.
+    classification, and its summary ``CheckItem``.
     """
 
     @staticmethod
@@ -500,7 +529,7 @@ class TestSpecialConstraintCoverage:
         dadger = self._rha_dadger()
         census = read_constraints(dadger)
 
-        checks, diagnostics = _special_constraint_coverage(dadger, None, _SC_ID_MAP, {})
+        checks, diagnostics = _coverage(dadger, None, _SC_ID_MAP, {})
 
         assert len(checks) == 1
         assert checks[0].label == "Special-constraint coverage"
@@ -526,9 +555,7 @@ class TestSpecialConstraintCoverage:
         dadger = self._synthetic_dadger()
         census = read_constraints(dadger)
 
-        _checks, diagnostics = _special_constraint_coverage(
-            dadger, None, _SC_ID_MAP, {}
-        )
+        _checks, diagnostics = _coverage(dadger, None, _SC_ID_MAP, {})
 
         converted = next(
             d for d in diagnostics if d.code == "decomp-special-constraints-converted"
@@ -552,11 +579,15 @@ class TestSpecialConstraintCoverage:
         WARNING, as ``convert decomp`` does."""
         dadger = self._synthetic_dadger()
         _, expected = drop_unknown_entities(
-            read_constraints(dadger), hydro_codes=(), thermal_codes=(), pumping_codes=()
+            read_constraints(dadger),
+            hydro_codes=(),
+            coupling_only_codes=(),
+            thermal_codes=(),
+            pumping_codes=(),
         )
         no_plants = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
 
-        checks, diagnostics = _special_constraint_coverage(dadger, None, no_plants, {})
+        checks, diagnostics = _coverage(dadger, None, no_plants, {})
 
         converted, *unknown = diagnostics
         assert unknown == expected
@@ -582,9 +613,17 @@ class TestSpecialConstraintCoverage:
         hidr.index.name = "codigo_usina"
         effective = EffectiveCadastro(base=hidr, n_stages=2, stage_varying={})
         with collect() as converted:
-            _read_constraint_census(dadger, effective, id_map, {})
+            _read_constraint_census(
+                dadger,
+                effective,
+                id_map,
+                {},
+                {},
+                dadger_path="dadger.rv0",
+                dadgnl_path=None,
+            )
 
-        _checks, diagnostics = _special_constraint_coverage(
+        _checks, diagnostics = _coverage(
             dadger, None, id_map, {}, plant_names={118: "BILLINGS"}
         )
 
@@ -595,7 +634,7 @@ class TestSpecialConstraintCoverage:
     def test_a_conflict_on_a_missing_pumping_station_is_not_reported(self) -> None:
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(118,))
 
-        _checks, diagnostics = _special_constraint_coverage(
+        _checks, diagnostics = _coverage(
             _qdef_ceiling_and_floor(variable="QBOM"), None, id_map, {}
         )
 
@@ -608,9 +647,7 @@ class TestSpecialConstraintCoverage:
         expected = detect_unconverted_rha(dadger)
         assert expected is not None
 
-        _checks, diagnostics = _special_constraint_coverage(
-            dadger, None, _SC_ID_MAP, {}
-        )
+        _checks, diagnostics = _coverage(dadger, None, _SC_ID_MAP, {})
 
         rha_diagnostic = next(
             d for d in diagnostics if d.code == "decomp-rha-family-unconverted"
@@ -625,16 +662,14 @@ class TestSpecialConstraintCoverage:
         expected = detect_libs_electrical(libs_file)
         assert expected is not None  # sanity: the fixture trips the LIBs token
 
-        _checks, diagnostics = _special_constraint_coverage(
-            dadger, libs_file, _SC_ID_MAP, {}
-        )
+        _checks, diagnostics = _coverage(dadger, libs_file, _SC_ID_MAP, {})
 
         assert diagnostics == [expected]
 
     def test_a_libs_file_with_a_long_form_card_raises_no_libs_warning(
         self, tmp_path: Path
     ) -> None:
-        _checks, diagnostics = _special_constraint_coverage(
+        _checks, diagnostics = _coverage(
             _ConstraintFakeDadger(),
             tmp_path / "lib_restricao-eletrica-especial.csv",
             _SC_ID_MAP,
@@ -644,12 +679,53 @@ class TestSpecialConstraintCoverage:
 
         assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics}
 
+    def _gnl_dadger(self) -> _ConstraintFakeDadger:
+        """The synthetic deck with an FT term on GNL plant 86, which has no CT
+        record, beside the FU term of RE 10."""
+        return self._synthetic_dadger(
+            ft=_ft((10, 1, 86, 1.0, 1)),
+            lu=_lu((10, 1, None, 900.0, None, 900.0, None, 900.0)),
+        )
+
+    def test_a_gnl_term_is_folded_as_convert_does(self) -> None:
+        checks, diagnostics = _coverage(
+            self._gnl_dadger(),
+            None,
+            _SC_ID_MAP,
+            {},
+            gnl_generation={86: [(100.0, 200.0, 300.0), (100.0, 200.0, 300.0)]},
+        )
+
+        assert checks[0].passed is True
+        assert checks[0].detail == (
+            "3 records lowered to bounds, 1 emitted as generic constraints, "
+            "4 families present in the deck"
+        )
+        assert [d.code for d in diagnostics] == ["decomp-special-constraints-converted"]
+
+    def test_an_uncommanded_gnl_term_fails_the_check_as_convert_stops(self) -> None:
+        checks, diagnostics = _coverage(
+            self._gnl_dadger(),
+            None,
+            _SC_ID_MAP,
+            {},
+            gnl_generation={86: [(100.0, 200.0, 300.0), None]},
+        )
+
+        [check] = checks
+        assert check.passed is False
+        assert check.detail is not None
+        assert "no dadgnl GL week starts in stage 2" in check.detail
+        [diagnostic] = diagnostics
+        assert diagnostic.code == "source-field-parse"
+        assert diagnostic.severity is Severity.ERROR
+
     def test_no_special_constraints_deck_emits_only_the_passing_summary(
         self,
     ) -> None:
         dadger = _ConstraintFakeDadger()
 
-        checks, diagnostics = _special_constraint_coverage(dadger, None, _SC_ID_MAP, {})
+        checks, diagnostics = _coverage(dadger, None, _SC_ID_MAP, {})
 
         assert len(checks) == 1
         assert checks[0].passed is True
@@ -658,6 +734,42 @@ class TestSpecialConstraintCoverage:
             "0 families present in the deck"
         )
         assert diagnostics == []
+
+
+class _UnreadableDadgnl:
+    @property
+    def dadgnl(self) -> None:
+        raise ValueError("gl declares a committed dispatch for code 99")
+
+
+class _NoDadgnl:
+    dadgnl = None
+
+
+class TestGnlGenerationRead:
+    """``check decomp`` reads the GNL commitments ``convert decomp`` folds
+    into the ``RE`` limits, and fails when it cannot, as ``convert decomp``
+    stops."""
+
+    def test_a_deck_without_dadgnl_commands_nothing(self) -> None:
+        generation, checks, diagnostics = _gnl_generation_read(
+            cast("DecompCase", _NoDadgnl()), []
+        )
+
+        assert (generation, checks, diagnostics) == ({}, [], [])
+
+    def test_an_unreadable_dadgnl_fails_the_check(self) -> None:
+        generation, checks, diagnostics = _gnl_generation_read(
+            cast("DecompCase", _UnreadableDadgnl()), []
+        )
+
+        assert generation is None
+        [check] = checks
+        assert check.passed is False
+        assert check.detail is not None
+        assert "code 99" in check.detail
+        [diagnostic] = diagnostics
+        assert diagnostic.severity is Severity.ERROR
 
 
 class TestLibsElectricalWarning:

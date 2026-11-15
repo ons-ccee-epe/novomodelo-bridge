@@ -64,6 +64,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     soft_slack,
 )
 from novomodelo_bridge.core.generic_constraint_format import render_expression
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.decomp.constraint_registers import ConstraintRecord, StageBounds
 from novomodelo_bridge.decomp.converters.constraints import (
     Unresolved,
@@ -95,6 +96,8 @@ if TYPE_CHECKING:
 
 _OUTSIDE_CASE = "decomp-electrical-bucket-a-unresolved"
 _ENER_COMERC = "decomp-electrical-ener-comerc-deferred"
+_COUPLING_ONLY = "decomp-electrical-term-coupling-only-plant"
+_TERM_NO_LINE = "decomp-electrical-term-interchange-no-line"
 
 _TERM_FINDINGS: dict[str, tuple[str, str, list[str]]] = {
     _OUTSIDE_CASE: (
@@ -115,8 +118,37 @@ _TERM_FINDINGS: dict[str, tuple[str, str, list[str]]] = {
 }
 
 
+#: ``(cause, title, summary, missing)`` of each kind of term left out of a
+#: kept restriction; *missing* names the entity when no other term is left.
+_LEFT_OUT_FINDINGS: dict[str, tuple[OutsideTerm, str, str, str]] = {
+    _COUPLING_ONLY: (
+        OutsideTerm.NOT_GENERATING,
+        "Electrical-restriction terms on plants DECOMP does not operate left out",
+        "The listed electrical restrictions in the LIBS file name a plant "
+        "whose UH record in dadger.rvN gives no initial volume: DECOMP "
+        "does not operate the plant, so the term adds nothing there "
+        "either. The conversion leaves the term out and keeps the rest "
+        "of the restriction.",
+        "hydro plant",
+    ),
+    _TERM_NO_LINE: (
+        OutsideTerm.NO_LINE,
+        "Electrical-restriction terms on submarkets without interchange left out",
+        "The listed electrical restrictions in the LIBS file have an "
+        "ener_interc term between two submarkets no IA record of dadger.rvN "
+        "joins, so no flow runs between them. The conversion leaves the "
+        "term out and keeps the rest of the restriction.",
+        "line",
+    ),
+}
+
+
 def _outside_case(term: ParsedTerm, missing: str) -> Unresolved:
-    return Unresolved(_OUTSIDE_CASE, (term_text(term), missing))
+    return Unresolved(_OUTSIDE_CASE, (term_text(term), missing), OutsideTerm.ABSENT)
+
+
+def _left_out(code: str, term: ParsedTerm) -> Unresolved:
+    return Unresolved(code, (term_text(term),), _LEFT_OUT_FINDINGS[code][0])
 
 
 def _emit_unresolved_term(restriction: int, unresolved: Unresolved) -> None:
@@ -135,6 +167,28 @@ def _emit_unresolved_term(restriction: int, unresolved: Unresolved) -> None:
             ),
         )
     )
+
+
+def _emit_left_out_terms(restriction: int, left_out: Sequence[Unresolved]) -> None:
+    """Emit one diagnostic per kind of term left out of the kept
+    *restriction*, at its cause's severity."""
+    for code, (cause, title, summary, _) in _LEFT_OUT_FINDINGS.items():
+        found = [u for u in left_out if u.code == code]
+        if not found:
+            continue
+        emit(
+            Diagnostic(
+                code=code,
+                severity=cause.severity,
+                category="Special constraints",
+                title=title,
+                summary=summary,
+                table=DiagnosticTable(
+                    columns=["Restriction", "Term"],
+                    rows=[[restriction, *u.cells] for u in found],
+                ),
+            )
+        )
 
 
 def _emit_unrecognized_token(restriction: int, name: str) -> None:
@@ -174,8 +228,8 @@ def _resolve_interc_bus(code: int, id_map: DecompIdMap) -> int:
 
     This never raises: the caller's two-probe ``line_map`` lookup is what
     keeps the fallback safe — a genuinely-unknown code that is NOT the IV
-    node resolves here but still has no matching line, so it still drops via
-    the existing skip-not-partial path.
+    node resolves here but still has no matching line, so it still drops its
+    whole restriction.
     """
     if code in id_map.bus_codes:
         return id_map.bus_id(code)
@@ -212,7 +266,12 @@ def _novomodelo_token(
 
     Returns an ``Unresolved`` naming the finding when *term*'s plant,
     thermal, park, bus, or line is absent from its map, or when *term* is
-    ``ener_comerc``.
+    ``ener_comerc``. Two of them leave out only the term, which is zero in
+    DECOMP too: a ``ger_usih`` or ``ger_conjh`` on a plant of
+    ``id_map.coupling_only_codes``, which generates nothing, and an
+    ``ener_interc`` between two SB submarkets no line joins. An operand that
+    fell back to the IV bus may be an undeclared code, so its missing line
+    still leaves the whole restriction out.
 
     Raises
     ------
@@ -224,6 +283,8 @@ def _novomodelo_token(
     """
     if term.token == "ger_usih":
         code = term.args[0]
+        if code in id_map.coupling_only_codes:
+            return _left_out(_COUPLING_ONLY, term)
         try:
             hydro_id = id_map.hydro_id(code)
         except KeyError:
@@ -248,6 +309,8 @@ def _novomodelo_token(
 
     if term.token == "ger_conjh":
         code, group = term.args
+        if code in id_map.coupling_only_codes:
+            return _left_out(_COUPLING_ONLY, term)
         try:
             hydro_id = id_map.hydro_id(code)
         except KeyError:
@@ -266,6 +329,8 @@ def _novomodelo_token(
             return f"line_direct({line_map[(bus_a, bus_b)]})"
         if (bus_b, bus_a) in line_map:
             return f"line_reverse({line_map[(bus_b, bus_a)]})"
+        if submarket_a in id_map.bus_codes and submarket_b in id_map.bus_codes:
+            return _left_out(_TERM_NO_LINE, term)
         return _outside_case(term, "line")
 
     if term.token == "ener_comerc":
@@ -280,25 +345,39 @@ def build_electrical_expression(
     ncs_id_by_pee_code: Mapping[int, int],
     conjh_bus_by_code_group: Mapping[tuple[int, int], int],
     line_map: Mapping[tuple[int, int], int],
+    left_out: list[Unresolved],
 ) -> str | Unresolved | None:
     """Render *assembled*'s sign-canonical bucket-A terms into one novomodelo
     expression string.
 
     Maps every term via :func:`_novomodelo_token` to ``(term.coefficient,
     token)`` and joins the result with :func:`~novomodelo_bridge.core.
-    generic_constraint_format.render_expression`. The first unresolved term
-    (:func:`_novomodelo_token` returning an ``Unresolved``) drops the **whole**
+    generic_constraint_format.render_expression`. The first term that drops
+    its constraint (:attr:`Unresolved.drops_constraint`) drops the **whole**
     expression, skip-not-partial: never a partial string built from only the
-    resolvable terms. ``None`` when *assembled* has no decision term.
+    resolvable terms. A term that is zero in DECOMP too is left out of the
+    sum and its finding added to *left_out*; when no other term is left, the
+    restriction is unresolved under ``decomp-electrical-bucket-a-unresolved``
+    on the first of them. ``None`` when *assembled* has no decision term.
     """
     resolved: list[tuple[float, str]] = []
+    zero: list[Unresolved] = []
     for term in assembled.terms:
         token = _novomodelo_token(
             term, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map
         )
-        if isinstance(token, Unresolved):
+        if isinstance(token, str):
+            resolved.append((term.coefficient, token))
+        elif token.drops_constraint:
             return token
-        resolved.append((term.coefficient, token))
+        else:
+            zero.append(token)
+    if zero and not resolved:
+        first = zero[0]
+        return Unresolved(
+            _OUTSIDE_CASE, (*first.cells, _LEFT_OUT_FINDINGS[first.code][3])
+        )
+    left_out.extend(zero)
     return render_expression(resolved)
 
 
@@ -423,7 +502,9 @@ def emit_libs_electrical_generics(
       other active cell's terms are asserted equal to it — a mismatch is a
       resolver bug and raises ``ValueError`` naming the restriction (fail
       loud, never silently pick one). An unresolved bucket-A token (already
-      WARNED) drops the whole restriction — ``deferred["unresolved-bucket-a"]``.
+      WARNED) drops the whole restriction — ``deferred["unresolved-bucket-a"]``;
+      a term on a coupling-only plant is only left out of the sum, and a kept
+      restriction's such terms are reported in one INFO.
     - A well-formed but undeclared identifier anywhere in the restriction's
       (expanded) formula OR its activation rule (:class:`~novomodelo_bridge.
       core.electrical_expression.UnrecognizedElectricalToken`, raised from
@@ -603,6 +684,7 @@ def _emit_restriction(
     *demand_in_cmo*."""
     demand_terms: set[str] = set()
     card = _RULE_CARD
+    left_out: list[Unresolved] = []
     try:
         cells = active_cells(restriction, model, context_factory, calendar)
         if not cells:
@@ -643,12 +725,20 @@ def _emit_restriction(
             ncs_id_by_pee_code,
             conjh_bus_by_code_group,
             line_map,
+            left_out,
         )
     except UnrecognizedElectricalToken as err:
         _emit_unrecognized_token(code, err.name)
         deferred["unrecognized-token"].append(code)
         return False
     except (MalformedElectricalExpression, FieldParseError) as err:
+        if isinstance(err, FieldParseError) and err.path is not None:
+            # A field of another file, such as an uncommanded GNL plant's dadgnl GL.
+            raise FieldParseError(
+                f"{source.name}: restriction {code}: {err}",
+                path=err.path,
+                field=err.field,
+            ) from err
         field = err.field if isinstance(err, FieldParseError) else None
         raise FieldParseError(
             f"{source.name}: restriction {code} is malformed: {err}",
@@ -688,6 +778,7 @@ def _emit_restriction(
         slots=slots_from_record(record, calendar),
     )
     demand_in_cmo.extend((code, term) for term in demand_terms)
+    _emit_left_out_terms(code, left_out)
     return True
 
 

@@ -420,6 +420,43 @@ def gnl_block_commitments(
     return commitments
 
 
+def commanded_gnl_generation(
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    code: int,
+    stage_index: int,
+    *,
+    reference: str,
+    dadgnl_path: str | None,
+) -> Sequence[float]:
+    """GNL plant *code*'s commanded MW per block at 0-based *stage_index*,
+    from :func:`gnl_block_commitments`, for the constraint term *reference*
+    names.
+
+    Raises
+    ------
+    FieldParseError
+        When the plant's generation is not commanded at the stage (no ``gl``
+        week starts in it), on the ``gl`` field of *dadgnl_path*: DECOMP
+        stops on such a term too.
+    """
+    # TRACKED NOVOMODELO-GAP (C24): the anticipated ring holds one MW per slot,
+    # so the case holds the plant's stage energy, not these per-block values; a
+    # limit folded with them is exact only where the case dispatches each block
+    # at its GL value.
+    per_stage = gnl_generation.get(code)
+    blocks = per_stage[stage_index] if per_stage is not None else None
+    if blocks is None:
+        raise FieldParseError(
+            f"{reference} is on GNL thermal {code}, but no dadgnl GL week "
+            f"starts in stage {stage_index + 1}, so the thermal has no "
+            "commanded generation there to move into the limits; DECOMP stops "
+            "on such a term too",
+            path=dadgnl_path,
+            field="GL",
+        )
+    return blocks
+
+
 def _read_weeks_per_month(dadgnl: _GnlRegisters) -> dict[int, int]:
     """The ``gs`` weeks-per-month map ``{mes: semanas}`` (empty when absent)."""
     frame = as_frame(dadgnl.gs(df=True))

@@ -78,7 +78,13 @@ from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from tests.conftest import _FakeDadger, make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
-from tests.decomp.test_constraint_registers import _qdef_ceiling_and_floor
+from tests.decomp.test_constraint_registers import (
+    _coeff,
+    _decl,
+    _ft,
+    _lu,
+    _qdef_ceiling_and_floor,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -661,7 +667,15 @@ class TestConstraintCensusConflictDiagnostic:
 
     def _census(self, dadger: _FakeDadger) -> list[Diagnostic]:
         with collect() as collected:
-            _read_constraint_census(dadger, self._effective(), self._ID_MAP, {})
+            _read_constraint_census(
+                dadger,
+                self._effective(),
+                self._ID_MAP,
+                {},
+                {},
+                dadger_path="dadger.rv0",
+                dadgnl_path=None,
+            )
         return collected
 
     def test_conflicting_restrictions_are_reported_by_plant_name(self) -> None:
@@ -681,6 +695,30 @@ class TestConstraintCensusConflictDiagnostic:
         conflicting."""
         diagnostics = self._census(_qdef_ceiling_and_floor(variable="QBOM"))
         assert [d.code for d in diagnostics] == ["decomp-rhq-qbom-no-station"]
+
+    def test_a_gnl_term_is_folded_before_the_entity_check(self) -> None:
+        """An FT term on GNL plant 86, which has no CT record, is moved into
+        the limits instead of leaving its constraint out."""
+        dadger = _FakeDadger(
+            re=_decl((10, 1, 1)),
+            fu=_coeff((10, 118, 1.0, 1)),
+            ft=_ft((10, 1, 86, 1.0, 1)),
+            lu=_lu((10, 1, None, 900.0, None, 900.0, None, 900.0)),
+        )
+        with collect() as collected:
+            census = _read_constraint_census(
+                cast("Dadger", dadger),
+                self._effective(),
+                self._ID_MAP,
+                {},
+                {86: [(100.0, 200.0, 300.0)]},
+                dadger_path="dadger.rv0",
+                dadgnl_path="dadgnl.rv0",
+            )
+        assert collected == []
+        [bound] = census.to_bounds
+        assert bound.constraint_id == 10
+        assert bound.bounds[0].upper == (800.0, 700.0, 600.0)
 
 
 class TestEmissionCheckWiring:
@@ -1428,6 +1466,9 @@ def _run_cadastro_pipeline(
         patches[
             "novomodelo_bridge.decomp.pipeline.anticipated_conv.fill_undeclared_block_hours"
         ] = gnl_model
+        patches[
+            "novomodelo_bridge.decomp.pipeline.anticipated_conv.gnl_block_commitments"
+        ] = {}
         patches["novomodelo_bridge.decomp.pipeline.anticipated_conv.convert_gnl"] = (
             gnl_emission
         )

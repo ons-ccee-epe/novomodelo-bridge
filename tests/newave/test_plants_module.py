@@ -14,6 +14,7 @@ from novomodelo_bridge.newave.plants import (
     existing_hydros,
     fictitious_codes,
     filling_hydro_codes,
+    unit_only_ne_codes,
 )
 
 
@@ -204,6 +205,28 @@ def test_filling_hydro_codes_excludes_nc() -> None:
     )
     # 3 is NC (excluded), 4 is NE but bare (no filling row) -> only {2}.
     assert filling_hydro_codes(confhd_df, exph_df) == {2}
+
+
+def test_unit_only_ne_codes_are_the_ne_plants_listed_without_filling() -> None:
+    confhd_df = _confhd(
+        [
+            {"codigo_usina": 1, "nome_usina": "EE_UNIT", "usina_existente": "EE"},
+            {"codigo_usina": 2, "nome_usina": "NE_FILL", "usina_existente": "NE"},
+            {"codigo_usina": 4, "nome_usina": "NE_UNIT", "usina_existente": "NE"},
+            {"codigo_usina": 5, "nome_usina": "NE_NONE", "usina_existente": "NE"},
+        ]
+    )
+    exph_df = _exph(
+        [
+            {"codigo_usina": 1, "data_inicio_enchimento": None},
+            {"codigo_usina": 2, "data_inicio_enchimento": "2024-10-01"},
+            {"codigo_usina": 2, "data_inicio_enchimento": None},
+            {"codigo_usina": 4, "data_inicio_enchimento": None},
+        ]
+    )
+
+    assert unit_only_ne_codes(confhd_df, exph_df) == {4}
+    assert unit_only_ne_codes(confhd_df, None) == set()
 
 
 def test_filling_hydro_codes_none_exph() -> None:

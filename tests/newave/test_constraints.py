@@ -657,13 +657,15 @@ class TestElectricFormula:
     """A restricao-eletrica.csv formula read and laid on the case's entities."""
 
     # Ids follow the sorted codes: hydros 66 -> 0, 204 -> 1, ..., 287 -> 5;
-    # thermal 7 -> 0; lines number the sorted subsystem pairs.
+    # thermal 7 -> 0; lines number the sorted subsystem pairs. Plant 300 is a
+    # confhd.dat plant that generates nothing, left out of the id map.
     _ID_MAP = NewaveIdMap(
         subsystem_ids=[1, 2, 3, 4, 11],
         hydro_codes=[66, 204, 261, 284, 285, 287],
         thermal_codes=[7],
     )
     _LINES = {(1, 2): 0, (1, 3): 1, (1, 4): 2, (1, 11): 3, (3, 11): 4, (4, 11): 5}
+    _IDLE = frozenset({300})
 
     def _translate(
         self, formula: str, **others: str
@@ -677,7 +679,10 @@ class TestElectricFormula:
         if isinstance(read, _ElectricConstraintSkip):
             return read, []
         skips: list[_ElectricTermSkip] = []
-        return _formula_expression(1, read, self._ID_MAP, self._LINES, skips), skips
+        expression = _formula_expression(
+            1, read, self._ID_MAP, self._LINES, self._IDLE, skips
+        )
+        return expression, skips
 
     def _text(self, formula: str, **others: str) -> str:
         expression, skips = self._translate(formula, **others)
@@ -739,22 +744,46 @@ class TestElectricFormula:
             ("thermal-unmapped", "ger_usit(8)", 8),
         ],
     )
-    def test_a_plant_outside_the_case_is_left_out_of_the_sum(
+    def test_a_plant_absent_from_the_deck_leaves_the_constraint_out(
         self, kind: str, formula: str, code: int
     ) -> None:
         expression, skips = self._translate(f"ger_usih(66) + {formula}")
 
-        assert isinstance(expression, _ElectricExpression)
-        assert expression.text == "hydro_generation(0)"
+        assert expression == _ElectricConstraintSkip(1, "outside")
         assert [(s.constraint_code, s.kind, s.plant_code, s.source) for s in skips] == [
             (1, kind, code, "restricao-eletrica.csv")
         ]
 
     def test_a_pair_without_interchange_is_left_out_of_the_sum(self) -> None:
-        expression, skips = self._translate("ener_interc(2,3)")
+        expression, skips = self._translate("ger_usih(66) + ener_interc(2,3)")
+
+        assert isinstance(expression, _ElectricExpression)
+        assert expression.text == "hydro_generation(0)"
+        assert [(s.kind, s.sys_from, s.sys_to) for s in skips] == [("no-line", 2, 3)]
+
+    def test_a_pair_without_interchange_alone_leaves_no_sum(self) -> None:
+        expression, _ = self._translate("ener_interc(2,3)")
 
         assert expression == _ElectricConstraintSkip(1, "termless")
-        assert [(s.kind, s.sys_from, s.sys_to) for s in skips] == [("no-line", 2, 3)]
+
+    def test_a_plant_that_generates_nothing_is_left_out_of_the_sum(self) -> None:
+        expression, skips = self._translate("ger_usih(66) + 2ger_usih(300)")
+
+        assert isinstance(expression, _ElectricExpression)
+        assert expression.text == "hydro_generation(0)"
+        assert [(s.constraint_code, s.kind, s.plant_code, s.source) for s in skips] == [
+            (1, "hydro-idle", 300, "restricao-eletrica.csv")
+        ]
+
+    def test_a_constraint_left_out_reports_only_the_term_that_left_it_out(
+        self,
+    ) -> None:
+        expression, skips = self._translate(
+            "ger_usih(300) + ener_interc(2,3) + ger_usih(9999)"
+        )
+
+        assert expression == _ElectricConstraintSkip(1, "outside")
+        assert [(s.kind, s.plant_code) for s in skips] == [("hydro-unmapped", 9999)]
 
     @pytest.mark.parametrize(
         ("formula", "term", "reason"),
@@ -854,12 +883,14 @@ def _make_electric_re_case(
     patamar: MagicMock | None = None,
     re_dat: MagicMock | None = None,
     ree: MagicMock | None = None,
+    idle: frozenset[int] = frozenset(),
 ) -> tuple[NewaveCase, NewaveIdMap]:
     """Return a ``(case, id_map)`` pair whose ``restricao-eletrica.csv`` is
     *re_text*, by default a two-sided ``[50, 200]`` limit on ``ger_usih(10)``
     over 2020, with ``dger``/``sistema`` mocked to a 1-year 2020 study carrying
     no exchange/deficit data. *patamar*, *re_dat* and *ree* replace the
-    one-block patamar.dat, the absent re.dat and the REE-less ree.dat.
+    one-block patamar.dat, the absent re.dat and the REE-less ree.dat; *idle*
+    are the confhd.dat plants the case leaves out as generating nothing.
     """
     re_path = tmp_path / "restricao-eletrica.csv"
     re_path.write_text(re_text, encoding="latin-1")
@@ -874,7 +905,12 @@ def _make_electric_re_case(
     sistema.limites_intercambio = None
     sistema.custo_deficit = None
 
-    parsed: dict[str, object] = {"dger": dger, "sistema": sistema, "re_dat": re_dat}
+    parsed: dict[str, object] = {
+        "dger": dger,
+        "sistema": sistema,
+        "re_dat": re_dat,
+        "idle_hydro_codes": idle,
+    }
     if patamar is not None:
         parsed["patamar"] = patamar
     if ree is not None:
@@ -1070,20 +1106,12 @@ def _valid_ree_reader():
 class TestConvertElectricConstraintsEmission:
     """Emission-shape coverage for convert_electric_constraints' diagnostics."""
 
-    def test_hydro_unmapped_from_formula_and_re_dat_sources(
-        self, tmp_path: Path
-    ) -> None:
-        """One hydro-unmapped term from a formula and one from an
-        RE.DAT-only constraint both land in the same diagnostic, with the
-        Source column distinguishing them."""
-        re_path = tmp_path / "restricao-eletrica.csv"
-        re_path.write_text(
-            "RE;1;1.0ger_usih(10) + 1.0ger_usih(9999)\n"
-            "RE-HORIZ-PER;1;2020/01;2020/12\n"
-            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
-            encoding="latin-1",
-        )
-
+    @staticmethod
+    def _two_source_case(
+        tmp_path: Path, idle: frozenset[int]
+    ) -> tuple[NewaveCase, NewaveIdMap]:
+        """Constraint 1, a formula on plants 10 and 9999, and constraint 2, an
+        RE.DAT set of plants 10 and 9998, in a case holding only plant 10."""
         re_dat_reader = MagicMock()
         re_dat_reader.usinas_conjuntos = pd.DataFrame(
             {"conjunto": [2, 2], "codigo_usina": [10, 9998]}
@@ -1099,76 +1127,76 @@ class TestConvertElectricConstraintsEmission:
                 "restricao": [500.0],
             }
         )
-
-        dger = MagicMock()
-        dger.mes_inicio_estudo = 1
-        dger.ano_inicio_estudo = 2020
-        dger.num_anos_estudo = 1
-        dger.num_anos_pos_estudo = 0
-
-        sistema = MagicMock()
-        sistema.limites_intercambio = None
-        sistema.custo_deficit = None
-
-        files = make_nw_files(
-            tmp_path, re_dat=tmp_path / "RE.DAT", restricao_eletrica=re_path
-        )
-        case = make_case(
-            files,
-            dger=dger,
-            sistema=sistema,
+        return _make_electric_re_case(
+            tmp_path,
+            "RE;1;1.0ger_usih(10) + 1.0ger_usih(9999)\n"
+            "RE-HORIZ-PER;1;2020/01;2020/12\n"
+            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
             re_dat=re_dat_reader,
             ree=_valid_ree_reader(),
+            idle=idle,
         )
-        id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
+
+    def test_hydro_unmapped_from_formula_and_re_dat_sources(
+        self, tmp_path: Path
+    ) -> None:
+        """A hydro term on a plant confhd.dat does not declare leaves its
+        constraint out, whether a formula or an RE.DAT set names the plant;
+        both land in one warning, with the Source column telling them apart."""
+        case, id_map = self._two_source_case(tmp_path, frozenset())
 
         with dx.collect() as collected:
             result = convert_electric_constraints(case, id_map, block_loads={})
 
-        assert result is not None
+        assert result is None
         by_code = {d.code: d for d in collected}
         diag = by_code["electric-constraint-hydro-unmapped"]
-        assert diag.severity is Severity.INFO
+        assert diag.severity is Severity.WARNING
         assert diag.category == "Special constraints"
         assert diag.table is not None
         assert diag.table.columns == ["Constraint", "Plant code", "Source"]
-        rows = {(r[1], r[2]) for r in diag.table.rows}
-        assert rows == {(9999, "restricao-eletrica.csv"), (9998, "re.dat")}
+        rows = {(r[0], r[1], r[2]) for r in diag.table.rows}
+        assert rows == {(1, 9999, "restricao-eletrica.csv"), (2, 9998, "re.dat")}
+        assert "electric-constraint-skipped" not in by_code
 
         _assert_no_repo_internal_leaks(collected)
 
-    def test_interchange_no_line_recorded(self, tmp_path: Path) -> None:
-        re_path = tmp_path / "restricao-eletrica.csv"
-        re_path.write_text(
-            "RE;1;1.0ger_usih(10) + 1.0ener_interc(2,3)\n"
-            "RE-HORIZ-PER;1;2020/01;2020/12\n"
-            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
-            encoding="latin-1",
-        )
-
-        dger = MagicMock()
-        dger.mes_inicio_estudo = 1
-        dger.ano_inicio_estudo = 2020
-        dger.num_anos_estudo = 1
-        dger.num_anos_pos_estudo = 0
-
-        sistema = MagicMock()
-        sistema.limites_intercambio = None
-        sistema.custo_deficit = None
-
-        case = make_case(
-            make_nw_files(tmp_path, restricao_eletrica=re_path),
-            dger=dger,
-            sistema=sistema,
-            re_dat=None,
-            ree=_valid_ree_reader(),
-        )
-        id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
+    def test_idle_plant_from_formula_and_re_dat_sources(self, tmp_path: Path) -> None:
+        """A term on a plant that generates nothing is left out of its sum and
+        the rest of the constraint is kept, whichever source names the plant."""
+        case, id_map = self._two_source_case(tmp_path, frozenset({9998, 9999}))
 
         with dx.collect() as collected:
             result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
+        assert {c["name"] for c in result.constraints} == {"RE_1", "RE_2"}
+        assert {c["expression"] for c in result.constraints} == {"hydro_generation(0)"}
+        by_code = {d.code: d for d in collected}
+        diag = by_code["electric-constraint-term-idle-plant"]
+        assert diag.severity is Severity.INFO
+        assert diag.table is not None
+        assert diag.table.columns == ["Constraint", "Plant code", "Source"]
+        rows = {(r[0], r[1], r[2]) for r in diag.table.rows}
+        assert rows == {(1, 9999, "restricao-eletrica.csv"), (2, 9998, "re.dat")}
+        assert "electric-constraint-hydro-unmapped" not in by_code
+
+        _assert_no_repo_internal_leaks(collected)
+
+    def test_interchange_no_line_is_left_out_of_the_sum(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            "RE;1;1.0ger_usih(10) + 1.0ener_interc(2,3)\n"
+            "RE-HORIZ-PER;1;2020/01;2020/12\n"
+            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
+            ree=_valid_ree_reader(),
+        )
+
+        with dx.collect() as collected:
+            result = convert_electric_constraints(case, id_map, block_loads={})
+
+        assert result is not None
+        assert {c["expression"] for c in result.constraints} == {"hydro_generation(0)"}
         by_code = {d.code: d for d in collected}
         diag = by_code["electric-constraint-interchange-no-line"]
         assert diag.table is not None
@@ -1366,7 +1394,7 @@ class TestConvertElectricConstraintsEmission:
             for b in range(3)
         ]
 
-    def test_thermal_outside_the_case_is_left_out_of_the_sum(
+    def test_thermal_absent_from_the_deck_leaves_the_constraint_out(
         self, tmp_path: Path
     ) -> None:
         case, id_map = _make_electric_re_case(
@@ -1379,12 +1407,11 @@ class TestConvertElectricConstraintsEmission:
         with dx.collect() as collected:
             result = convert_electric_constraints(case, id_map, block_loads={})
 
-        assert result is not None
-        assert {c["expression"] for c in result.constraints} == {"hydro_generation(0)"}
+        assert result is None
         diag = {d.code: d for d in collected}["electric-constraint-thermal-unmapped"]
-        assert diag.severity is Severity.INFO
-        assert (
-            diag.title == "Electric-constraint terms on thermals outside the case (1)"
+        assert diag.severity is Severity.WARNING
+        assert diag.title == (
+            "Electric constraints on thermals outside the case not converted (1)"
         )
         assert diag.table is not None
         assert diag.table.rows == [[1, 5, "restricao-eletrica.csv"]]
@@ -1395,7 +1422,8 @@ class TestConvertElectricConstraintsEmission:
         self, tmp_path: Path
     ) -> None:
         """Two constraint codes hit the two ``electric-constraint-skipped``
-        reasons: code 1 has only an unmapped hydro term (no valid terms);
+        reasons: code 1 has only a term on a plant that generates nothing
+        (no valid terms);
         code 2 has a valid expression but a horizon carrying no bound rows."""
         re_path = tmp_path / "restricao-eletrica.csv"
         re_path.write_text(
@@ -1423,6 +1451,7 @@ class TestConvertElectricConstraintsEmission:
             sistema=sistema,
             re_dat=None,
             ree=_valid_ree_reader(),
+            idle_hydro_codes=frozenset({9999}),
         )
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
@@ -1478,6 +1507,7 @@ class TestConvertElectricConstraintsEmission:
             re_dat=None,
             penalid=_BadPenalid(),
             ree=_valid_ree_reader(),
+            idle_hydro_codes=frozenset(),
         )
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
@@ -1519,6 +1549,7 @@ class TestConvertElectricConstraintsEmission:
         case.__dict__["dger"] = dger
         case.__dict__["sistema"] = sistema
         case.__dict__["ree"] = _valid_ree_reader()
+        case.__dict__["idle_hydro_codes"] = frozenset()
         case.__dict__["hidr"] = MagicMock(cadastro=pd.DataFrame())
         # ``case.re_dat`` is a cached_property; deleting the pre-seeded slot and
         # patching the class descriptor to raise reproduces a genuine read
@@ -1567,6 +1598,7 @@ class TestConvertElectricConstraintsEmission:
             sistema=sistema,
             re_dat=None,
             ree=empty_ree,
+            idle_hydro_codes=frozenset(),
         )
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
@@ -2509,6 +2541,7 @@ def test_restricao_eletrica_bounds_stop_at_the_declared_end(tmp_path: Path) -> N
         dger=dger,
         sistema=sistema,
         ree=_valid_ree_reader(),
+        idle_hydro_codes=frozenset(),
     )
     id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 

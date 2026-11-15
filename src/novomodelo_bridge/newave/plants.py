@@ -136,6 +136,29 @@ def filling_hydro_codes(
     return ne_codes & filling
 
 
+def unit_only_ne_codes(
+    confhd_df: pd.DataFrame, exph_df: pd.DataFrame | None
+) -> set[int]:
+    """Return codes of ``NE`` plants with ``exph`` unit rows but no filling row.
+
+    NEWAVE runs such a plant once its units enter, but the Novomodelo LP does not
+    admit it (:func:`filling_hydro_codes`). Returns an empty set when *exph_df* is
+    ``None`` or lacks ``codigo_usina``, or confhd lacks ``usina_existente``.
+    """
+    if (
+        exph_df is None
+        or "codigo_usina" not in exph_df.columns
+        or "usina_existente" not in confhd_df.columns
+    ):
+        return set()
+    ne_codes = {
+        int(code)
+        for code in confhd_df.loc[confhd_df["usina_existente"] == "NE", "codigo_usina"]
+    }
+    listed = {int(code) for code in exph_df["codigo_usina"]}
+    return (ne_codes & listed) - filling_hydro_codes(confhd_df, exph_df)
+
+
 def active_hydros(
     confhd_df: pd.DataFrame,
     *,

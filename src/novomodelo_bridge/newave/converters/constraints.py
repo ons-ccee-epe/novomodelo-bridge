@@ -69,6 +69,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
 )
 from novomodelo_bridge.core.generic_constraint_format import render_expression
 from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.core.pandas_utils import as_float, as_int, as_timestamp, is_na
 from novomodelo_bridge.core.productivity import (
     compute_productivity,
@@ -122,27 +123,44 @@ class _VminopPenaltyClamp:
     applied: float
 
 
+_TermSkipKind = Literal["hydro-idle", "hydro-unmapped", "thermal-unmapped", "no-line"]
+
+_TERM_SKIP_CAUSE: dict[_TermSkipKind, OutsideTerm] = {
+    "hydro-idle": OutsideTerm.NOT_GENERATING,
+    "hydro-unmapped": OutsideTerm.ABSENT,
+    "thermal-unmapped": OutsideTerm.ABSENT,
+    "no-line": OutsideTerm.NO_LINE,
+}
+
+
 @dataclass
 class _ElectricTermSkip:
-    """One electric-constraint term on an entity outside the case, left out of
-    its constraint."""
+    """One electric-constraint term on an entity outside the case, treated
+    by its cause (:data:`_TERM_SKIP_CAUSE`): a *hydro-idle* plant of
+    confhd.dat the case leaves out or a *no-line* subsystem pair leaves out
+    only the term; an *-unmapped* plant leaves out the whole constraint."""
 
     constraint_code: int
-    kind: Literal["hydro-unmapped", "thermal-unmapped", "no-line"]
+    kind: _TermSkipKind
     source: Literal["restricao-eletrica.csv", "re.dat"]
     plant_code: int | None = None
     sys_from: int | None = None
     sys_to: int | None = None
 
+    @property
+    def drops_constraint(self) -> bool:
+        return _TERM_SKIP_CAUSE[self.kind].drops_constraint
+
 
 @dataclass
 class _ElectricConstraintSkip:
     """One electric constraint left out: no term the case can carry
-    (*termless*), no limit (*unbounded*), or a *term* the case cannot carry,
-    for *reason* (*unsupported*)."""
+    (*termless*), no limit (*unbounded*), a *term* the case cannot carry, for
+    *reason* (*unsupported*), or a term outside the case whose cause leaves
+    the constraint out (*outside*, reported by its :class:`_ElectricTermSkip`)."""
 
     constraint_code: int
-    kind: Literal["termless", "unbounded", "unsupported"]
+    kind: Literal["termless", "unbounded", "unsupported", "outside"]
     term: str | None = None
     reason: str | None = None
 
@@ -1131,11 +1149,12 @@ def _formula_expression(
     partition: dict[Bucket, list[ParsedTerm]],
     id_map: NewaveIdMap,
     line_id_map: dict[tuple[int, int], int],
+    idle_hydros: AbstractSet[int],
     term_skips: list[_ElectricTermSkip],
 ) -> _ElectricExpression | _ElectricConstraintSkip:
     """Constraint ``cod``'s formula with every term on the case's entities,
-    or its skip: no decision term is left, or a demand term names a subsystem
-    the case lacks."""
+    or its skip (:func:`_expression_or_skip`), also when a demand term names
+    a subsystem the case lacks."""
     data_terms = partition[Bucket.B]
     declared = set(id_map.all_bus_ids)
     for term in data_terms:
@@ -1146,16 +1165,43 @@ def _formula_expression(
                 term_text(term),
                 "names a subsystem sistema.dat does not declare",
             )
+    skips: list[_ElectricTermSkip] = []
     variables = [
         (term.coefficient, variable)
         for term in partition[Bucket.A]
-        if (variable := _decision_variable(cod, term, id_map, line_id_map, term_skips))
+        if (
+            variable := _decision_variable(
+                cod, term, id_map, line_id_map, idle_hydros, skips
+            )
+        )
         is not None
     ]
+    return _expression_or_skip(cod, variables, skips, term_skips, tuple(data_terms))
+
+
+def _expression_or_skip(
+    cod: int,
+    variables: list[tuple[float, str]],
+    skips: list[_ElectricTermSkip],
+    term_skips: list[_ElectricTermSkip],
+    data_terms: tuple[ParsedTerm, ...] = (),
+) -> _ElectricExpression | _ElectricConstraintSkip:
+    """Constraint ``cod``'s expression over *variables*, or its skip: a term
+    in *skips* whose cause drops the constraint leaves it out (*outside*),
+    and so does an empty sum (*termless*).
+
+    The skips the outcome reports move to *term_skips*: those that left the
+    constraint out, or every one of a constraint kept.
+    """
+    outside = [skip for skip in skips if skip.drops_constraint]
+    if outside:
+        term_skips.extend(outside)
+        return _ElectricConstraintSkip(cod, "outside")
     text = render_expression(variables)
     if text is None:
         return _ElectricConstraintSkip(cod, "termless")
-    return _ElectricExpression(text, tuple(data_terms))
+    term_skips.extend(skips)
+    return _ElectricExpression(text, data_terms)
 
 
 def _directional_flow(
@@ -1177,6 +1223,7 @@ def _decision_variable(
     term: ParsedTerm,
     id_map: NewaveIdMap,
     line_id_map: dict[tuple[int, int], int],
+    idle_hydros: AbstractSet[int],
     term_skips: list[_ElectricTermSkip],
 ) -> str | None:
     """*term*'s novomodelo variable, or ``None``, with the skip recorded on
@@ -1197,8 +1244,13 @@ def _decision_variable(
         return variable
 
     (plant_code,) = term.args
+    kind: _TermSkipKind
     if term.token == "ger_usih":
-        lookup, kind, variable = id_map.hydro_id, "hydro-unmapped", "hydro_generation"
+        lookup, kind, variable = (
+            id_map.hydro_id,
+            _unmapped_hydro_kind(plant_code, idle_hydros),
+            "hydro_generation",
+        )
     else:
         lookup, kind, variable = (
             id_map.thermal_id,
@@ -1215,6 +1267,12 @@ def _decision_variable(
         )
         return None
     return f"{variable}({entity_id})"
+
+
+def _unmapped_hydro_kind(
+    plant_code: int, idle_hydros: AbstractSet[int]
+) -> _TermSkipKind:
+    return "hydro-idle" if plant_code in idle_hydros else "hydro-unmapped"
 
 
 def _demand_context(
@@ -1480,6 +1538,7 @@ def convert_electric_constraints(
         return None
 
     line_id_map = line_ids(case)
+    idle_hydros = case.idle_hydro_codes
 
     eletri_penalty = _resolve_eletri_penalty(case)
     slack_config = (
@@ -1501,7 +1560,7 @@ def convert_electric_constraints(
     data_context = partial(_demand_context, block_loads, id_map)
     for cod in sorted(set(sources.formulas) | set(sources.re_conjuntos)):
         expression = _electric_expression(
-            cod, sources, id_map, line_id_map, elec_term_skips
+            cod, sources, id_map, line_id_map, idle_hydros, elec_term_skips
         )
         if isinstance(expression, _ElectricConstraintSkip):
             elec_constraint_skips.append(expression)
@@ -1693,39 +1752,37 @@ def _electric_expression(
     sources: _ElectricSources,
     id_map: NewaveIdMap,
     line_id_map: dict[tuple[int, int], int],
+    idle_hydros: AbstractSet[int],
     term_skips: list[_ElectricTermSkip],
 ) -> _ElectricExpression | _ElectricConstraintSkip:
     """Constraint ``cod``'s expression, from its restricao-eletrica.csv formula
     when it has one, else the sum of its RE.DAT plants' ``hydro_generation``,
-    or the constraint's skip.
-
-    Every term left out is recorded on *term_skips*.
-    """
+    or the constraint's skip (:func:`_expression_or_skip`)."""
     formula = sources.formulas.get(cod)
     if isinstance(formula, _ElectricConstraintSkip):
         return formula
     if formula is not None:
-        return _formula_expression(cod, formula, id_map, line_id_map, term_skips)
+        return _formula_expression(
+            cod, formula, id_map, line_id_map, idle_hydros, term_skips
+        )
 
+    skips: list[_ElectricTermSkip] = []
     terms: list[tuple[float, str]] = []
     for plant_code in sorted(sources.re_conjuntos[cod]):
         try:
             novomodelo_id = id_map.hydro_id(plant_code)
         except KeyError:
-            term_skips.append(
+            skips.append(
                 _ElectricTermSkip(
                     constraint_code=cod,
-                    kind="hydro-unmapped",
+                    kind=_unmapped_hydro_kind(plant_code, idle_hydros),
                     source="re.dat",
                     plant_code=plant_code,
                 )
             )
             continue
         terms.append((1.0, f"hydro_generation({novomodelo_id})"))
-    text = render_expression(terms)
-    if text is None:
-        return _ElectricConstraintSkip(cod, "termless")
-    return _ElectricExpression(text)
+    return _expression_or_skip(cod, terms, skips, term_skips)
 
 
 def _electric_bounds(
@@ -1831,49 +1888,61 @@ def _add_electric_constraint(
                 )
 
 
+#: ``(code, title, summary)`` of each kind of plant term outside the case,
+#: worded for what its cause's treatment does with the constraint.
+_PLANT_TERM_SKIPS: dict[_TermSkipKind, tuple[str, str, str]] = {
+    "hydro-idle": (
+        "electric-constraint-term-idle-plant",
+        "Electric-constraint terms on hydro plants that generate nothing left out",
+        "The listed electric-constraint terms name a confhd.dat plant the case "
+        "leaves out because it generates nothing: a fictitious plant, an NC "
+        "plant or an NE plant with no row in exph.dat. The conversion leaves "
+        "the term out and keeps the rest of the constraint.",
+    ),
+    "hydro-unmapped": (
+        "electric-constraint-hydro-unmapped",
+        "Electric constraints on hydro plants outside the case not converted",
+        "The listed electric constraints have a term on a hydro plant the "
+        "case does not hold: one confhd.dat does not declare, or an NE plant "
+        "with unit rows but no filling row in exph.dat. The conversion leaves "
+        "each constraint out rather than convert it without the term, so the "
+        "case runs without these limits.",
+    ),
+    "thermal-unmapped": (
+        "electric-constraint-thermal-unmapped",
+        "Electric constraints on thermals outside the case not converted",
+        "The listed electric constraints have a term on a thermal plant "
+        "conft.dat does not declare. The conversion leaves each constraint "
+        "out rather than convert it without the term, so the case runs "
+        "without these limits.",
+    ),
+}
+
+
 def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
-    """Emit one diagnostic per kind of electric-constraint term left out."""
+    """Emit one diagnostic per kind of electric-constraint term outside the
+    case, at its cause's severity."""
     if not skips:
         return
-    by_kind: dict[str, list[_ElectricTermSkip]] = defaultdict(list)
+    by_kind: dict[_TermSkipKind, list[_ElectricTermSkip]] = defaultdict(list)
     for skip in skips:
         by_kind[skip.kind].append(skip)
 
-    for kind, code, plants, plant in (
-        (
-            "hydro-unmapped",
-            "electric-constraint-hydro-unmapped",
-            "plants",
-            "hydro plant",
-        ),
-        (
-            "thermal-unmapped",
-            "electric-constraint-thermal-unmapped",
-            "thermals",
-            "thermal plant",
-        ),
-    ):
-        unmapped = by_kind.get(kind, [])
-        if unmapped:
+    for kind, (code, title, summary) in _PLANT_TERM_SKIPS.items():
+        plant_skips = by_kind.get(kind, [])
+        if plant_skips:
             emit(
                 Diagnostic(
                     code=code,
-                    severity=Severity.INFO,
+                    severity=_TERM_SKIP_CAUSE[kind].severity,
                     category=_CATEGORY,
-                    title=(
-                        f"Electric-constraint terms on {plants} outside the case "
-                        f"({len(unmapped)})"
-                    ),
-                    summary=(
-                        f"The listed electric-constraint terms name a {plant} "
-                        "that is not in the case, so it generates nothing and "
-                        "the conversion leaves the term out."
-                    ),
+                    title=f"{title} ({len(plant_skips)})",
+                    summary=summary,
                     table=DiagnosticTable(
                         columns=["Constraint", "Plant code", "Source"],
                         rows=[
                             [s.constraint_code, s.plant_code, s.source]
-                            for s in unmapped
+                            for s in plant_skips
                         ],
                         justify=["right", "right", "left"],
                     ),
@@ -1886,7 +1955,7 @@ def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
         emit(
             Diagnostic(
                 code="electric-constraint-interchange-no-line",
-                severity=Severity.INFO,
+                severity=OutsideTerm.NO_LINE.severity,
                 category=_CATEGORY,
                 title=(
                     "Electric-constraint terms on subsystems without interchange "

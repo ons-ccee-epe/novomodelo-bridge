@@ -1291,14 +1291,17 @@ def test_build_data_context_gnl_reads_commanded_generation_per_block() -> None:
     assert factory(0, 1)(term) == 400.0
 
 
-def test_build_data_context_gnl_uncommanded_stage_is_unsupported() -> None:
+def test_build_data_context_gnl_uncommanded_stage_is_a_gl_field_error() -> None:
     term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
     with pytest.raises(
-        UnsupportedSourceError,
-        match=r"^ger_usit\(86\) names a GNL plant that no dadgnl GL record commands "
-        "in período 2$",
-    ):
+        FieldParseError,
+        match=r"^ger_usit\(86\) is on GNL thermal 86, but no dadgnl GL week starts "
+        "in stage 2, so the thermal has no commanded generation there to move "
+        "into the limits; DECOMP stops on such a term too$",
+    ) as raised:
         _gnl_factory()(1, 0)(term)
+
+    assert raised.value.field == "GL"
 
 
 def test_assemble_bound_abates_gnl_commanded_generation() -> None:

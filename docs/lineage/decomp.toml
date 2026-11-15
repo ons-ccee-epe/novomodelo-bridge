@@ -950,6 +950,7 @@ reads = [
   { file = "dadger", register = "UH" },
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "DT" },
+  { file = "dadgnl", register = "GL" },
 ]
 summary = "Limites de geração e CVU de cada térmica de `CT` em cada estágio (estágios não declarados herdam o último; estágio 1 obrigatório), intersectados com as restrições elétricas `RE` de termo único sobre uma térmica (`FT` com coeficiente ±1 e limites `LU`). Térmicas GNL não recebem linhas. Um piso acima do teto, que o Novomodelo imporia dos dois lados, para a conversão com `source-field-parse`, nomeando os registros."
 
@@ -973,13 +974,13 @@ summary = "Limites de geração e CVU de cada térmica de `CT` em cada estágio 
 
   [[output.field]]
   path = "min_generation_mw"
-  from = [ { file = "dadger", register = "CT", item = "inflexibilidade" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadger", register = "LU", item = "limite_inferior" }, { file = "dadger", register = "FT", item = "coeficiente" } ]
-  how = "Inflexibilidade por patamar de `CT` (ponderada por horas na linha de base, exata por patamar); quando uma `RE` de termo único `FT` limita a térmica, o maior entre os limites inferiores (coeficiente −1 troca e inverte os lados). Nulo nas linhas que só carregam custo: a linha de estágio quando os limites são por patamar e as linhas de patamar quando só o CVU varia."
+  from = [ { file = "dadger", register = "CT", item = "inflexibilidade" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadger", register = "LU", item = "limite_inferior" }, { file = "dadger", register = "FT", item = "coeficiente" }, { file = "dadgnl", register = "GL", item = "geracao" } ]
+  how = "Inflexibilidade por patamar de `CT` (ponderada por horas na linha de base, exata por patamar); quando uma `RE` de termo único `FT` limita a térmica, o maior entre os limites inferiores (coeficiente −1 troca e inverte os lados); um outro termo `FT` da `RE` sobre térmica GNL do `dadgnl` não conta como termo, e a sua geração comandada no `GL` vezes o coeficiente sai dos limites. Nulo nas linhas que só carregam custo: a linha de estágio quando os limites são por patamar e as linhas de patamar quando só o CVU varia."
 
   [[output.field]]
   path = "max_generation_mw"
-  from = [ { file = "dadger", register = "CT", item = "disponibilidade" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadger", register = "LU", item = "limite_superior" }, { file = "dadger", register = "FT", item = "coeficiente" } ]
-  how = "Disponibilidade por patamar de `CT` (ponderada por horas na linha de base, exata por patamar); com `RE`/`FT`, o menor entre os limites superiores. Nulo nas linhas que só carregam custo: a linha de estágio quando os limites são por patamar e as linhas de patamar quando só o CVU varia."
+  from = [ { file = "dadger", register = "CT", item = "disponibilidade" }, { file = "dadger", register = "DP", item = "duracao" }, { file = "dadger", register = "LU", item = "limite_superior" }, { file = "dadger", register = "FT", item = "coeficiente" }, { file = "dadgnl", register = "GL", item = "geracao" } ]
+  how = "Disponibilidade por patamar de `CT` (ponderada por horas na linha de base, exata por patamar); com `RE`/`FT`, o menor entre os limites superiores, com o mesmo desconto da geração GNL comandada. Nulo nas linhas que só carregam custo: a linha de estágio quando os limites são por patamar e as linhas de patamar quando só o CVU varia."
 
   [[output.field]]
   path = "cost_per_mwh"
@@ -2032,6 +2033,7 @@ reads = [
   { file = "hidr" },
   { file = "polinjus" },
   { file = "vazoes" },
+  { file = "dadgnl", register = "GL" },
 ]
 summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ/RHV de termo único e coeficiente ±1, canal de desvio de base, limite de turbinamento de Itaipu) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único. Um piso acima do teto: em turbinamento, geração, defluência e armazenamento, ambos ficam como no deck, com o aviso `decomp-bound-floor-above-ceiling` (o DECOMP viola o que for mais barato e o Novomodelo cobra a violação), ou o piso é reduzido ao teto sem diagnóstico dentro da precisão escrita do deck; em vertimento e desvio, que o Novomodelo impõe dos dois lados, a conversão para com `source-field-parse`, nomeando os registros. Um piso mantido assim que também passa do máximo declarado da usina leva só esse aviso, sem `hydro-bounds-floor-above-declared-capacity`."
 
@@ -2126,8 +2128,10 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "LU", item = "limite_inferior" },
     { file = "dadger", register = "FU", item = "codigo_usina" },
     { file = "dadger", register = "FU", item = "coeficiente" },
+    { file = "dadger", register = "FT", item = "coeficiente" },
+    { file = "dadgnl", register = "GL", item = "geracao" },
   ]
-  how = "Piso de geração de uma RE de termo único com `FU` de coeficiente ±1 (sem termos `FT`/`FI`): `limite_inferior` do `LU` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]. Um `FU` com `frequencia` (meia-usina de 50 ou 60 Hz de Itaipu) não entra aqui: vai para o grupo da frequência em `constraints/hydro_unit_group_bounds.parquet`. Acima do máximo declarado da usina, fica como no deck, com o aviso `hydro-bounds-floor-above-declared-capacity` (ou só com `decomp-bound-floor-above-ceiling`, se também estiver acima de um teto do estágio): o Novomodelo cobra o que falta como violação."
+  how = "Piso de geração de uma RE de termo único com `FU` de coeficiente ±1 (sem termos `FT`/`FI`, salvo `FT` de térmica GNL, cuja geração comandada no `GL` vezes o coeficiente sai do limite): `limite_inferior` do `LU` por patamar, herdado entre estágios dentro de [`estagio_inicial`, `estagio_final`]. Um `FU` com `frequencia` (meia-usina de 50 ou 60 Hz de Itaipu) não entra aqui: vai para o grupo da frequência em `constraints/hydro_unit_group_bounds.parquet`. Acima do máximo declarado da usina, fica como no deck, com o aviso `hydro-bounds-floor-above-declared-capacity` (ou só com `decomp-bound-floor-above-ceiling`, se também estiver acima de um teto do estágio): o Novomodelo cobra o que falta como violação."
 
   [[output.field]]
   path = "max_generation_mw"
@@ -2138,11 +2142,13 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "LU", item = "limite_superior" },
     { file = "dadger", register = "FU", item = "codigo_usina" },
     { file = "dadger", register = "FU", item = "coeficiente" },
+    { file = "dadger", register = "FT", item = "coeficiente" },
+    { file = "dadgnl", register = "GL", item = "geracao" },
     { file = "hidr", item = "potencia_nominal_conjunto_1..5" },
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "Teto de geração de uma RE de termo único com `FU` de coeficiente ±1: `limite_superior` do `LU` por patamar. Um `FU` com `frequencia` limita o grupo dessa frequência em `constraints/hydro_unit_group_bounds.parquet`, não a usina. Para Itaipu (código 66), também a potência disponível da usina em todos os estágios: a soma, sobre os dois grupos, da potência do conjunto × `MP` × `FD` da sua frequência, a mesma Pdisp que o DECOMP reporta para a usina. Fica acima ou igual à soma dos tetos dos grupos em cada patamar e não limita além deles. Vale o menor dos tetos; acima do `generation.max_generation_mw` declarado da usina, é reduzido ao declarado (o Novomodelo rejeita um teto acima da capacidade), com o diagnóstico `hydro-bounds-clamped-to-declared-capacity` quando a diferença passa da precisão escrita do deck (1e-6 relativo ao declarado). BELO MONTE tem RE de 11000 MW sobre 10999,9984 MW de máquinas (18 de 611,111 MW, lidas em float32 do `hidr.dat`), 1,4e-7 abaixo, dentro dessa precisão: o teto é reduzido sem diagnóstico."
+  how = "Teto de geração de uma RE de termo único com `FU` de coeficiente ±1 (com o mesmo desconto da geração GNL comandada que o piso): `limite_superior` do `LU` por patamar. Um `FU` com `frequencia` limita o grupo dessa frequência em `constraints/hydro_unit_group_bounds.parquet`, não a usina. Para Itaipu (código 66), também a potência disponível da usina em todos os estágios: a soma, sobre os dois grupos, da potência do conjunto × `MP` × `FD` da sua frequência, a mesma Pdisp que o DECOMP reporta para a usina. Fica acima ou igual à soma dos tetos dos grupos em cada patamar e não limita além deles. Vale o menor dos tetos; acima do `generation.max_generation_mw` declarado da usina, é reduzido ao declarado (o Novomodelo rejeita um teto acima da capacidade), com o diagnóstico `hydro-bounds-clamped-to-declared-capacity` quando a diferença passa da precisão escrita do deck (1e-6 relativo ao declarado). BELO MONTE tem RE de 11000 MW sobre 10999,9984 MW de máquinas (18 de 611,111 MW, lidas em float32 do `hidr.dat`), 1,4e-7 abaixo, dentro dessa precisão: o teto é reduzido sem diagnóstico."
 
   [[output.field]]
   path = "min_storage_hm3"
@@ -2805,7 +2811,7 @@ reads = [
   { file = "libs_restricao_eletrica" },
   { file = "renovaveis" },
 ]
-summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`/`FE`) ou com termo de contrato (`FE`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `FE` sem um único contrato `CI`/`CE` com o seu número no seu submercado, `QBOM`/`VBOM` sem estação `UE`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem."
+summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`/`FE`) ou com termo de contrato (`FE`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Um termo nulo também no DECOMP sai da soma e o resto da restrição é mantido, com nota: `FU` de uma `RE`, ou `ger_usih`/`ger_conjh` de uma restrição LIBs, sobre usina cujo `UH` não traz volume inicial, que o DECOMP não opera (uma `RE` que fica com um só termo vira limite de entidade), e `FI` de uma `RE`, ou `ener_interc` de uma restrição LIBs entre dois submercados `SB`, sobre par que nenhum `IA` liga; uma restrição sem termo restante é pulada inteira, com aviso. Um termo `FT` de uma `RE` sobre térmica GNL do `dadgnl` sai da soma, e o seu coeficiente vezes a geração comandada no `GL` em cada estágio e patamar é descontado dos limites, como faz o DECOMP e como a conversão faz com o `ger_usit` da mesma térmica numa restrição LIBs; uma `RE` que fica sem termo é pulada, com nota, e um estágio em que o termo vale sem semana `GL` interrompe a conversão, como interrompe o DECOMP. Uma restrição com termo não resolvível (`FU` de usina sem `UH`, `FU` por frequência, `FT` de térmica sem `CT` nem `TG`, `FI` com submercado sem `SB`, `ener_interc` com operando fora do `SB` sem linha, `FE` sem um único contrato `CI`/`CE` com o seu número no seu submercado, `QBOM`/`VBOM` sem estação `UE`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem."
 
   [[output.field]]
   path = "constraints[].id"
@@ -3010,6 +3016,7 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
   path = "bound_lower"
   from = [
     { file = "dadger", register = "LU", item = "limite_inferior" },
+    { file = "dadger", register = "FT", item = "coeficiente" },
     { file = "dadger", register = "LQ", item = "limite_inferior" },
     { file = "dadger", register = "LV", item = "limite_inferior" },
     { file = "dadger", register = "CV", item = "coeficiente" },
@@ -3033,12 +3040,13 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "`RE`/`HQ`: `limite_inferior` do patamar (nulo quando em branco). `HV`: `limite_inferior` do `LV` mais `Σ cᵢ·volume_minimo` efetivo das usinas com termo `VARM` no estágio, pois o `LV` é relativo ao volume útil e `hydro_storage` é absoluto; os termos `VDEF`/`VDES`/`VBOM` não deslocam o limite. `HE`: `limite` (MWmês, potência média do estágio) vezes as horas do estágio, em MWh, quando `tipo_limite` = 1 (outro valor trata como absoluto, com aviso); 0.0 com `tipo_limite` = 2, cujo limite está na expressão, nos estágios do registro. LIBs: `limite_inferior` da fórmula (sentinela ±1E+31 vira nulo) ou o lado constante da inequação com os termos de dados avaliados na célula (`demanda`, `carga_ande`, aliases, `disp_usih` = potência disponível `MP`×`FD`, e `peq_<nome>_<submercado>` = geração da série `PQ` desse nome no submercado, com o sufixo dado pela sigla do `SB` ou por `SECO` = `SE` e `SUL` = `S`; um `peq_` sem série correspondente descarta a restrição com aviso; `ger_usit` de uma térmica GNL do `dadgnl` = geração comandada no `GL` em cada patamar, média das semanas `GL` do estágio ponderada pela `duracao` do patamar; um estágio ativo sem semana `GL` interrompe a conversão). O modelo de origem soma o multiplicador de uma restrição LIBs com `demanda` ou `demanda_sin` ao CMO dos submercados cuja carga o termo lê, e o caso não representa essa parcela: o aviso `decomp-electrical-demand-in-cmo` lista essas restrições (as formas `val_` não entram no CMO)."
+  how = "`RE`/`HQ`: `limite_inferior` do patamar (nulo quando em branco); numa `RE`, menos o coeficiente vezes a geração comandada de cada termo `FT` sobre térmica GNL do `dadgnl` (média das semanas `GL` do estágio ponderada pela `duracao` do patamar), termo que sai da soma; um estágio em que o termo vale sem semana `GL` interrompe a conversão. `HV`: `limite_inferior` do `LV` mais `Σ cᵢ·volume_minimo` efetivo das usinas com termo `VARM` no estágio, pois o `LV` é relativo ao volume útil e `hydro_storage` é absoluto; os termos `VDEF`/`VDES`/`VBOM` não deslocam o limite. `HE`: `limite` (MWmês, potência média do estágio) vezes as horas do estágio, em MWh, quando `tipo_limite` = 1 (outro valor trata como absoluto, com aviso); 0.0 com `tipo_limite` = 2, cujo limite está na expressão, nos estágios do registro. LIBs: `limite_inferior` da fórmula (sentinela ±1E+31 vira nulo) ou o lado constante da inequação com os termos de dados avaliados na célula (`demanda`, `carga_ande`, aliases, `disp_usih` = potência disponível `MP`×`FD`, e `peq_<nome>_<submercado>` = geração da série `PQ` desse nome no submercado, com o sufixo dado pela sigla do `SB` ou por `SECO` = `SE` e `SUL` = `S`; um `peq_` sem série correspondente descarta a restrição com aviso; `ger_usit` de uma térmica GNL do `dadgnl` = geração comandada no `GL` em cada patamar, média das semanas `GL` do estágio ponderada pela `duracao` do patamar; um estágio ativo sem semana `GL` interrompe a conversão). O modelo de origem soma o multiplicador de uma restrição LIBs com `demanda` ou `demanda_sin` ao CMO dos submercados cuja carga o termo lê, e o caso não representa essa parcela: o aviso `decomp-electrical-demand-in-cmo` lista essas restrições (as formas `val_` não entram no CMO)."
 
   [[output.field]]
   path = "bound_upper"
   from = [
     { file = "dadger", register = "LU", item = "limite_superior" },
+    { file = "dadger", register = "FT", item = "coeficiente" },
     { file = "dadger", register = "LQ", item = "limite_superior" },
     { file = "dadger", register = "LV", item = "limite_superior" },
     { file = "dadger", register = "CV", item = "coeficiente" },
@@ -3058,7 +3066,7 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "`RE`/`HQ`: `limite_superior` do patamar (nulo quando em branco). `HV`: `limite_superior` do `LV` mais o mesmo deslocamento `Σ cᵢ·volume_minimo` efetivo. `HE`: sempre nulo, o `limite` é só inferior. LIBs: `limite_superior` da fórmula ou o lado constante da inequação, como em `bound_lower`; um lado com magnitude ≥ 1e21 também lê nulo."
+  how = "`RE`/`HQ`: `limite_superior` do patamar (nulo quando em branco), com o mesmo desconto da geração GNL comandada que `bound_lower` numa `RE`. `HV`: `limite_superior` do `LV` mais o mesmo deslocamento `Σ cᵢ·volume_minimo` efetivo. `HE`: sempre nulo, o `limite` é só inferior. LIBs: `limite_superior` da fórmula ou o lado constante da inequação, como em `bound_lower`; um lado com magnitude ≥ 1e21 também lê nulo."
 
 # ---------------------------------------------------------------------------
 # boundary/ (checkpoint da função de custo futuro de fronteira)

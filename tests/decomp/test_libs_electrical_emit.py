@@ -21,6 +21,7 @@ from novomodelo_bridge.core.electrical_expression import (
     DataContext,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    term_text,
 )
 from novomodelo_bridge.core.errors import (
     FieldParseError,
@@ -31,6 +32,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     soft_slack,
 )
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.decomp.converters.constraints import Unresolved
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     AvailablePower,
@@ -111,12 +113,20 @@ def test_novomodelo_token_ener_interc_reverse_orientation() -> None:
     assert _novomodelo_token(term, id_map, {}, {}, line_map) == "line_reverse(5)"
 
 
-def test_novomodelo_token_ener_interc_no_line_is_unresolved() -> None:
+def test_novomodelo_token_ener_interc_no_line_leaves_the_term_out() -> None:
+    """SE and S are SB submarkets no line joins, so no flow runs between
+    them in DECOMP either."""
     id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2))
-    assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
-        "decomp-electrical-bucket-a-unresolved", ("ener_interc(1, 2)", "line")
+    token = _novomodelo_token(term, id_map, {}, {}, {})
+
+    assert token == Unresolved(
+        "decomp-electrical-term-interchange-no-line",
+        ("ener_interc(1, 2)",),
+        OutsideTerm.NO_LINE,
     )
+    assert isinstance(token, Unresolved)
+    assert not token.drops_constraint
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +186,9 @@ def test_novomodelo_token_ener_interc_unknown_code_no_transshipment_line_drops()
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     term = ParsedTerm(coefficient=1.0, token="ener_interc", args=(6, 1))
     assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
-        "decomp-electrical-bucket-a-unresolved", ("ener_interc(6, 1)", "line")
+        "decomp-electrical-bucket-a-unresolved",
+        ("ener_interc(6, 1)", "line"),
+        OutsideTerm.ABSENT,
     )
 
 
@@ -192,7 +204,9 @@ def test_novomodelo_token_ger_usih_outside_the_case_is_unresolved() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,))
     term = ParsedTerm(coefficient=1.0, token="ger_usih", args=(999,))
     assert _novomodelo_token(term, id_map, {}, {}, {}) == Unresolved(
-        "decomp-electrical-bucket-a-unresolved", ("ger_usih(999)", "hydro plant")
+        "decomp-electrical-bucket-a-unresolved",
+        ("ger_usih(999)", "hydro plant"),
+        OutsideTerm.ABSENT,
     )
 
 
@@ -233,7 +247,7 @@ def test_build_electrical_expression_all_token_kinds_exact_string() -> None:
         upper=None,
     )
     result = build_electrical_expression(
-        assembled, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map
+        assembled, id_map, ncs_id_by_pee_code, conjh_bus_by_code_group, line_map, []
     )
     assert result == (
         "hydro_generation(0) + thermal_generation(0) + "
@@ -255,9 +269,116 @@ def test_build_electrical_expression_unresolved_token_drops_whole_expression() -
         lower=None,
         upper=100.0,
     )
-    assert build_electrical_expression(assembled, id_map, {}, {}, {}) == Unresolved(
-        "decomp-electrical-bucket-a-unresolved", ("ger_usih(999)", "hydro plant")
+    assert build_electrical_expression(assembled, id_map, {}, {}, {}, []) == Unresolved(
+        "decomp-electrical-bucket-a-unresolved",
+        ("ger_usih(999)", "hydro plant"),
+        OutsideTerm.ABSENT,
     )
+
+
+_COUPLING_ONLY_MAP = DecompIdMap(
+    bus_codes=(1,), bus_names=("SE",), hydro_codes=(66,), coupling_only_codes=(46,)
+)
+
+
+@pytest.mark.parametrize(
+    "term",
+    [
+        ParsedTerm(coefficient=1.0, token="ger_usih", args=(46,)),
+        ParsedTerm(coefficient=1.0, token="ger_conjh", args=(46, 1)),
+    ],
+)
+def test_novomodelo_token_on_a_coupling_only_plant_leaves_the_term_out(
+    term: ParsedTerm,
+) -> None:
+    token = _novomodelo_token(term, _COUPLING_ONLY_MAP, {}, {}, {})
+
+    assert token == Unresolved(
+        "decomp-electrical-term-coupling-only-plant",
+        (term_text(term),),
+        OutsideTerm.NOT_GENERATING,
+    )
+    assert isinstance(token, Unresolved)
+    assert not token.drops_constraint
+
+
+def test_build_electrical_expression_leaves_a_coupling_only_plant_out() -> None:
+    """Plant 46's UH record gives no initial volume, so DECOMP does not
+    operate it and its term adds nothing: the rest of the sum is kept."""
+    on_46 = ParsedTerm(coefficient=2.0, token="ger_usih", args=(46,))
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(66,)), on_46),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[Unresolved] = []
+
+    expression = build_electrical_expression(
+        assembled, _COUPLING_ONLY_MAP, {}, {}, {}, left_out
+    )
+
+    assert expression == "hydro_generation(0)"
+    assert [u.cells for u in left_out] == [(term_text(on_46),)]
+
+
+_TWO_SUBMARKETS = DecompIdMap(
+    bus_codes=(1, 2), bus_names=("SE", "S"), hydro_codes=(66,)
+)
+
+
+def test_build_electrical_expression_leaves_an_interchange_on_no_line_out() -> None:
+    on_no_line = ParsedTerm(coefficient=-1.0, token="ener_interc", args=(1, 2))
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(66,)), on_no_line),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[Unresolved] = []
+
+    expression = build_electrical_expression(
+        assembled, _TWO_SUBMARKETS, {}, {}, {}, left_out
+    )
+
+    assert expression == "hydro_generation(0)"
+    assert [(u.code, u.cells) for u in left_out] == [
+        ("decomp-electrical-term-interchange-no-line", (term_text(on_no_line),))
+    ]
+
+
+def test_a_sum_only_on_interchanges_without_a_line_is_unresolved() -> None:
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ener_interc", args=(1, 2)),),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[Unresolved] = []
+
+    expression = build_electrical_expression(
+        assembled, _TWO_SUBMARKETS, {}, {}, {}, left_out
+    )
+
+    assert expression == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ener_interc(1, 2)", "line")
+    )
+    assert left_out == []
+
+
+def test_a_sum_only_on_coupling_only_plants_is_unresolved() -> None:
+    assembled = AssembledBound(
+        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(46,)),),
+        lower=None,
+        upper=100.0,
+    )
+    left_out: list[Unresolved] = []
+
+    expression = build_electrical_expression(
+        assembled, _COUPLING_ONLY_MAP, {}, {}, {}, left_out
+    )
+
+    assert expression == Unresolved(
+        "decomp-electrical-bucket-a-unresolved", ("ger_usih(46)", "hydro plant")
+    )
+    assert left_out == []
 
 
 # ---------------------------------------------------------------------------
@@ -763,6 +884,51 @@ def test_emit_merges_one_finding_across_restrictions_into_one_table() -> None:
     assert finding.table.rows == [
         [705, "ger_usih(998)", "hydro plant"],
         [706, "ger_usit(7)", "thermal"],
+    ]
+
+
+def test_emit_reports_the_coupling_only_terms_of_kept_restrictions() -> None:
+    id_map = DecompIdMap(
+        bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,), coupling_only_codes=(46,)
+    )
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            707: _restriction(707, "ger_usih(1) + ger_usih(46)", "<=", "500"),
+            708: _restriction(708, "ger_usih(46) + ger_usit(7)", "<=", "500"),
+        },
+        rules={},
+    )
+
+    with dx.collect() as sink:
+        result = emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
+        )
+
+    assert result.converted_codes == (707,)
+    assert result.generic is not None
+    assert [c["expression"] for c in result.generic.constraints] == [
+        "hydro_generation(0)"
+    ]
+    by_code = {d.code: d for d in sink}
+    note = by_code["decomp-electrical-term-coupling-only-plant"]
+    assert note.severity is dx.Severity.INFO
+    assert note.title.endswith(" (1)")
+    assert note.table is not None
+    assert note.table.rows == [[707, "ger_usih(46)"]]
+    assert by_code["decomp-electrical-bucket-a-unresolved"].table is not None
+    assert by_code["decomp-electrical-bucket-a-unresolved"].table.rows == [
+        [708, "ger_usit(7)", "thermal"]
     ]
 
 
