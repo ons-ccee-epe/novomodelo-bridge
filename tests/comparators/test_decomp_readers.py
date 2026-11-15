@@ -773,12 +773,12 @@ class TestResolveRelato2:
 
 class TestReadRelato2Costs:
     """`read_relato2_costs`: the fan-stage per-(stage, scenario) cost table
-    from relato2.rvN, or an empty frame when relato2 is absent (optional)."""
+    from relato2.rvN, raising like every other reader when it is absent or
+    has no cost table."""
 
-    def test_absent_relato2_returns_empty(self, tmp_path: Path) -> None:
-        result = read_relato2_costs(tmp_path)
-        assert isinstance(result, pl.DataFrame)
-        assert result.is_empty()
+    def test_absent_relato2_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError, match=r"relato2\.rvN"):
+            read_relato2_costs(tmp_path)
 
     def test_reads_fan_stage_costs_with_probabilities(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -807,7 +807,7 @@ class TestReadRelato2Costs:
         assert set(result["estagio"].to_list()) == {4}
         assert "probabilidade" in result.columns
 
-    def test_empty_table_returns_empty(
+    def test_empty_table_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         (tmp_path / "relato2.rv2").touch()
@@ -816,7 +816,8 @@ class TestReadRelato2Costs:
             "read",
             staticmethod(lambda _path: _StubRelatoFile(relatorio_operacao_custos=None)),
         )
-        assert read_relato2_costs(tmp_path).is_empty()
+        with pytest.raises(ValueError, match="relatorio_operacao_custos"):
+            read_relato2_costs(tmp_path)
 
 
 class TestReadRelatoExpectedCost:

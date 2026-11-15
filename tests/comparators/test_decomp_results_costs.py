@@ -149,11 +149,6 @@ class TestCostFrames:
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
             lambda *_args, **_kwargs: relato,
         )
-        # No scenario-fan stage by default -- relato2 is optional.
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
-            lambda *_args, **_kwargs: pl.DataFrame(),
-        )
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_args, **_kwargs: sist,
@@ -216,7 +211,7 @@ class TestCostFrames:
     ) -> None:
         """A deck with no relato2 (empty frame) contributes no extra stage --
         the cost frames cover exactly relato's weeks."""
-        self._patch(monkeypatch)  # read_relato2_costs stubbed to empty
+        self._patch(monkeypatch)
 
         _nw_costs, nw_sin = _cost_frames(tmp_path, {})
 
@@ -616,10 +611,6 @@ class TestScenarioProbabilities:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
         )
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
-            lambda *_a, **_k: pl.DataFrame(),
-        )
 
         result = _scenario_probabilities(tmp_path)
 
@@ -646,6 +637,83 @@ class TestScenarioProbabilities:
         result = _scenario_probabilities(tmp_path)
 
         assert set(result["estagio"].unique().to_list()) == {3}
+
+    @staticmethod
+    def _patch_relato2(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        relato2: str,
+        sist: pl.DataFrame,
+    ) -> None:
+        """relato's weeks, *sist* as the operation, and a relato2 that is
+        ``"absent"`` or ``"without its cost table"``."""
+        if relato2 == "without its cost table":
+            (tmp_path / "relato2.rv2").touch()
+            monkeypatch.setattr(
+                Relato,
+                "read",
+                staticmethod(
+                    lambda _path: SimpleNamespace(relatorio_operacao_custos=None)
+                ),
+            )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs",
+            lambda *_a, **_k: _relato_costs_frame(),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
+            lambda *_a, **_k: sist,
+        )
+
+    @pytest.mark.parametrize(
+        ("relato2", "code", "title"),
+        [
+            ("absent", "report-file-missing", "relato2.rvN not found"),
+            (
+                "without its cost table",
+                "report-file-unreadable",
+                "relato2.rvN could not be read",
+            ),
+        ],
+    )
+    def test_on_a_scenario_fan_an_unavailable_relato2_is_one_finding(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        relato2: str,
+        code: str,
+        title: str,
+    ) -> None:
+        """Both readers of relato2's cost table share the finding; the fan
+        stage is left to the unweighted mean and out of the costs."""
+        fan = _dec_oper_sist_frame(
+            [(1, 1, None, 1, 168.0, 0.0), (2, 1, None, 1, 528.0, 0.0)]
+            + [(3, c, None, 1, 744.0, 0.0) for c in (1, 2)]
+        )
+        self._patch_relato2(monkeypatch, tmp_path, relato2, fan)
+
+        with dx.collect() as collected:
+            probabilities = _scenario_probabilities(tmp_path)
+            _nw_costs, nw_sin = _cost_frames(tmp_path, {})
+
+        assert set(probabilities["estagio"].to_list()) == {1, 2}
+        assert set(nw_sin["stage"].to_list()) == {1, 2}
+        assert len(collected) == 2
+        [finding] = dx.finalize_diagnostics(collected)
+        assert (finding.code, finding.title) == (code, title)
+        assert "equal weights" in finding.summary
+
+    @pytest.mark.parametrize("relato2", ["absent", "without its cost table"])
+    def test_without_a_scenario_fan_an_unavailable_relato2_is_no_finding(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, relato2: str
+    ) -> None:
+        self._patch_relato2(monkeypatch, tmp_path, relato2, _no_deficit_frame())
+
+        with dx.collect() as collected:
+            _scenario_probabilities(tmp_path)
+            _cost_frames(tmp_path, {})
+
+        assert collected == []
 
     @pytest.mark.parametrize(
         ("error", "code", "title"),
@@ -675,10 +743,6 @@ class TestScenarioProbabilities:
 
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
-        )
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
-            lambda *_a, **_k: pl.DataFrame(),
         )
 
         with dx.collect() as collected:

@@ -7,16 +7,14 @@ column names (1-based ``estagio``, node/scenario indices as written).
 Alignment onto Novomodelo entity ids and stage indices happens in the
 comparison layer, not here.
 
-Reader-failure contract: every reader but ``read_relato2_costs`` raises
-``FileNotFoundError`` for an absent file and ``ValueError`` for a file that
-parses empty -- never a silent empty, since an empty frame from real-but-broken
-data fabricates a false zero-vs-zero match, and silent-empty frames are
-idecomp's characteristic failure mode on unexpected syntax (reads route
-through this layer per ``.claude/rules/bridge.md`` §5). The comparison turns
-either raise into a report-file finding with :func:`read_or_note`, so a
-missing or broken file costs the sections it feeds, never the comparison.
-``read_relato2_costs`` is the one deliberate exception, an optional
-per-realization report that degrades to an empty frame when absent.
+Reader-failure contract: every reader raises ``FileNotFoundError`` for an
+absent file and ``ValueError`` for a file that parses empty -- never a silent
+empty, since an empty frame from real-but-broken data fabricates a false
+zero-vs-zero match, and silent-empty frames are idecomp's characteristic
+failure mode on unexpected syntax (reads route through this layer per
+``.claude/rules/bridge.md`` §5). The comparison turns either raise into a
+report-file finding, most through :func:`read_or_note`, so a missing or
+broken file costs the sections it feeds, never the comparison.
 """
 
 from __future__ import annotations
@@ -409,21 +407,19 @@ def read_relato2_costs(case_dir: Path) -> pl.DataFrame:
     per row. Parsed with idecomp's ``Relato`` reader, which reads ``relato2``
     with the same block format as ``relato``.
 
-    **Optional** -- returns an empty frame (not an error) when ``relato2`` is
-    absent, so a caller can fall back to ``relato`` alone: a deck with no
-    scenario fan has no second report. This is the one deliberately
-    silent-empty reader (a missing optional file is not a degraded input),
-    unlike the other readers here, which raise.
+    A deck with no scenario fan has no second report, so the comparison
+    reports this one missing or without its cost table only when DECOMP's
+    operation has a fan stage.
 
     Costs are **native k$**, unconverted -- converted once in the analysis
     layer, see `results.reconcile_kdollars_to_reais`.
     """
     path = _resolve_relato2(case_dir)
     if path is None:
-        return pl.DataFrame()
+        raise FileNotFoundError(f"no relato2.rvN found in {case_dir}")
     table = Relato.read(str(path)).relatorio_operacao_custos
     if table is None or table.empty:
-        return pl.DataFrame()
+        raise ValueError(f"{path} has no relatorio_operacao_custos table")
     return pl.from_pandas(table)
 
 

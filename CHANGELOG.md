@@ -275,8 +275,10 @@ links are cobre-bridge's.
   now leaves out what the file feeds, such as DECOMP's cost breakdown, and
   says so in a `report-file-missing` note or a `report-file-unreadable`
   warning. It also warns when `avl_cortesfpha_dec.rvN`, `eco_fpha_.rvN`,
-  `dec_desvfpha.rvN` or `dec_oper_rhesoft.csv` cannot be read, where the
-  Productivity and Constraints tabs left out what they feed without saying so.
+  `dec_desvfpha.rvN` or `dec_oper_rhesoft.csv` cannot be read, and reports a
+  missing or unreadable `relato2.rvN` on a deck with a scenario fan; before, it
+  left out what these feed without saying so, such as the probabilities of
+  DECOMP's fan stage.
 
 ## [0.20.0] - 2026-11-03
 

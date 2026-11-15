@@ -123,6 +123,13 @@ _RELATO_COSTS_UNREADABLE_EFFECT = (
 )
 #: The same for its REE membership table, shared with ``dec_oper_ree.csv``.
 _REE_ENERGY_EFFECT = "the report leaves out the REE energy comparison."
+#: What the report loses without ``relato2.rvN``'s cost table on a deck with a
+#: scenario fan: it is the only source of that stage's probabilities and costs.
+_RELATO2_EFFECT = (
+    "the report averages the scenarios of DECOMP's fan stage with equal "
+    "weights instead of their probabilities, and leaves that stage out of "
+    "DECOMP's cost breakdown and stage costs."
+)
 _DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
 _DEC_OPER_RHESOFT_EFFECT = "the report leaves out DECOMP's side of the RHE constraints."
 
@@ -316,6 +323,41 @@ _SCENARIO_PROBABILITY_SCHEMA: dict[str, type[pl.DataType]] = {
 }
 
 
+def _relato2_costs(decomp_dir: Path) -> pl.DataFrame:
+    """``relato2``'s cost rows, or empty without them.
+
+    A deck with no scenario fan writes no ``relato2``, so its absence or a
+    missing cost table is a finding only when :func:`_has_scenario_fan`.
+    """
+    try:
+        return read_relato2_costs(decomp_dir)
+    except FileNotFoundError as exc:
+        if _has_scenario_fan(decomp_dir):
+            _emit_missing("relato2.rvN", decomp_dir, _RELATO2_EFFECT)
+        else:
+            _LOG.info("No relato2.rvN, and no scenario fan: %s", exc)
+    except ValueError as exc:
+        if _has_scenario_fan(decomp_dir):
+            _emit_unreadable("relato2.rvN", decomp_dir, _RELATO2_EFFECT, exc)
+        else:
+            _LOG.info("relato2.rvN unread, and no scenario fan: %s", exc)
+    return pl.DataFrame()
+
+
+def _has_scenario_fan(decomp_dir: Path) -> bool:
+    """Whether a stage of DECOMP's operation holds more than one scenario.
+
+    Read off ``dec_oper_sist.csv``, whose parse the comparison reuses;
+    ``False`` without that table, which its own readers note.
+    """
+    try:
+        sist = read_dec_oper_sist(decomp_dir)
+    except (FileNotFoundError, ValueError):
+        return False
+    scenarios = sist.group_by("estagio").agg(pl.col("cenario").n_unique())
+    return bool((scenarios["cenario"] > 1).any())
+
+
 def _union_relato_reports(raw: pl.DataFrame, monthly: pl.DataFrame) -> pl.DataFrame:
     """Union ``relato``/``relato2`` -- relato2 wins for stages it covers."""
     if monthly.is_empty():
@@ -367,7 +409,7 @@ def _scenario_probabilities(decomp_dir: Path) -> pl.DataFrame:
         _emit_unreadable("relato.rvN", decomp_dir, _RELATO_COSTS_UNREADABLE_EFFECT, exc)
         raw = pl.DataFrame()
 
-    monthly = read_relato2_costs(decomp_dir)
+    monthly = _relato2_costs(decomp_dir)
 
     if raw.is_empty() and monthly.is_empty():
         return pl.DataFrame(schema=_SCENARIO_PROBABILITY_SCHEMA)
@@ -1468,7 +1510,7 @@ def _stage_cost_rows(
     irrigation) the report does not itemize. It is a sum of non-negative
     penalties, so a negative value is print rounding and reads as zero.
     """
-    combined = _union_relato_reports(relato, read_relato2_costs(decomp_dir))
+    combined = _union_relato_reports(relato, _relato2_costs(decomp_dir))
     rows = combined.with_columns(
         (
             pl.col("contrato_importacao")
@@ -1528,7 +1570,7 @@ def _cost_frames(
 
     A ``relato`` that is missing or has no cost table leaves both frames empty
     after its note, so a ``relato2`` alone never yields partial costs; a missing
-    ``relato2`` only drops the fan stage(s).
+    or unreadable ``relato2`` only drops the fan stage(s).
     """
     try:
         relato = read_relato_costs(decomp_dir)
