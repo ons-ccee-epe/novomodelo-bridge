@@ -563,6 +563,14 @@ summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalid
   how = "GHMIN (sem registro, 10 × maior custo de déficit), em R$/MWh sem fator de produtibilidade: a folga é no domínio de energia."
 
   [[output.field]]
+  path = "hydro.fpha_violation_cost"
+  from = [
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "penalid", item = "GHMIN · valor_R$_MWh" },
+  ]
+  how = "Sem variável em `penalid.dat`: a folga da FPHA do manual (p.87, 10 × maior custo de déficit), elevada a 1,01 × (maior custo de déficit + GHMIN) quando esse valor é maior, para que gerar acima de um plano nunca alivie um déficit e uma violação de GHMIN por menos do que custa. Sem registro GHMIN dá 11,11 × maior custo de déficit. Em R$/MWh, sem fator de produtibilidade."
+
+  [[output.field]]
   path = "hydro.water_withdrawal_violation_cost"
   from = [
     { file = "penalid", item = "DESVIO · valor_R$_MWh" },

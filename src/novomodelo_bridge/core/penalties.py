@@ -39,19 +39,19 @@ _PCDESV = 0.000300  # volume desviado → hydro.diversion_cost
 # doubles as the PENALID fallback below, and `_ELETRI_HIGH_MULT` reuses the same
 # magnitude).
 _EVAPORATION_MULT = 10.0
+#: Margin of ``hydro.fpha_violation_cost`` over the deficit plus the GHMIN floor.
+_FPHA_ABOVE_FLOOR_MULT = 1.01
 
 # NOTE: when PENALID supplies TURBMN, VAZMIN, TURBMX with the same R$/MWh value
 # (typical the source model convention), the resulting
 # turbined/outflow-below/outflow-above slack costs share an LP coefficient. Reintroduce
 # distinct spacing here if HiGHS degeneracy resurfaces.
 
-# --- Novomodelo Family-D fields not yet wired into the LP -----------------------
-# Storage-floor and filling-target violation costs are declared on novomodelo's schema
-# but `lp_builder/matrix.rs` does NOT use them in the objective (all 0.0 at build
-# time). We still emit faithful values so the case is ready for the day novomodelo
-# wires them in — DERIVED from the deficit cost via ρ_max_acum (energy-equivalent,
-# × HM3_TO_MWH_PER_RHO), exactly like `evaporation_violation_cost`, rather than
-# hard-coded placeholders.
+# --- Storage-floor and filling-target slacks of a filling plant -------------------
+# Novomodelo prices these two storage slacks (R$/hm³) only on a plant with a filling
+# schedule: the filling target while it fills, the storage floor once it operates.
+# Both derive from the deficit cost via ρ_max_acum (energy-equivalent,
+# × HM3_TO_MWH_PER_RHO), exactly like `evaporation_violation_cost`.
 #
 # storage_violation_below_cost is priced at the evaporation / FPHA-folga tier —
 # the manual p.87 hard-physical-violation level, 10 × MAX_CUSTO_DEFICIT — so its
@@ -132,11 +132,17 @@ def hydro_penalty_costs(
     turbined_below_cost = turbmn_mwh * rho_avg
     generation_below_cost = ghmin_mwh  # energy-domain, no productivity factor
 
-    # Storage floor / filling target: novomodelo's Family-D slots are dormant in the
-    # LP today (priced 0.0) but we still populate them with faithful, DERIVED
-    # values so the case is ready when novomodelo wires them in.
-    #
-    # Conversion from the source model R$/MWh to novomodelo R$/hm³ is purely volumetric:
+    # The manual p.87 FPHA folga tier, raised above the deficit plus the GHMIN
+    # floor where that is higher (GHMIN defaults to the same tier): generating
+    # above a plane must never relieve a deficit and a floor more cheaply than
+    # it costs. Novomodelo warns on such a price (semantic.5b.54).
+    fpha_cost = max(
+        evaporation_tier_mwh,
+        _FPHA_ABOVE_FLOOR_MULT * (max_deficit_cost + generation_below_cost),
+    )
+
+    # Storage floor / filling target: the conversion from the source model R$/MWh to
+    # novomodelo R$/hm³ is purely volumetric:
     # 1 hm³ of stored water released through the cascade yields
     #   1e6 m³ × ρ MW/(m³/s) × 1/3600 s/h = (1e6/3600) × ρ MWh
     # so novomodelo_coef = P_R$_MWh × ρ × HM3_TO_MWH_PER_RHO. The 730h/month assumption
@@ -146,7 +152,7 @@ def hydro_penalty_costs(
     #
     # ⚠️ This volumetric (730-cancelling) form is correct ONLY because novomodelo
     # prices these Family-D slots with NO time multiplier (`objective = penalty`).
-    # If they are ever wired into the LP with a `× block_hours` term (like the
+    # If novomodelo ever prices them with a `× block_hours` term (like the
     # generic/VminOP slack), this conversion becomes wrong: the slack would then
     # need per-stage hours, exactly like the VminOP per-stage penalty in
     # `convert_vminop_constraints`. Keep these two facts in lockstep.
@@ -208,6 +214,7 @@ def hydro_penalty_costs(
         "outflow_violation_below_cost": outflow_below_cost,
         "outflow_violation_above_cost": outflow_above_cost,
         "generation_violation_below_cost": generation_below_cost,
+        "fpha_violation_cost": fpha_cost,
         "evaporation_violation_cost": evaporation_cost,
         "water_withdrawal_violation_cost": water_withdrawal_cost,
         "inflow_nonnegativity_cost": inflow_nonnegativity_cost,

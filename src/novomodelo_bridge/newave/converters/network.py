@@ -55,8 +55,9 @@ _LOG = logging.getLogger(__name__)
 #   Novomodelo: `objective[col] = penalty × block_hours`
 #   Cost  = (penalty × block_h) × MW = penalty × MWh → penalty unit R$/MWh.
 #   Affected: bus.deficit_segments[].cost, bus.excess_cost, line.exchange_cost,
-# ncs.curtailment_cost, hydro.generation_violation_below_cost. → Conversion from the
-# source model R$/MWh: **direct** (no productivity factor).
+# ncs.curtailment_cost, hydro.generation_violation_below_cost,
+# hydro.fpha_violation_cost. → Conversion from the source model R$/MWh: **direct**
+# (no productivity factor).
 #
 # Family B — Flow columns (m³/s), per block. Variable carries m³/s for one block.
 #   Novomodelo: `objective[col] = penalty × block_hours`
@@ -83,7 +84,7 @@ _LOG = logging.getLogger(__name__)
 #   Novomodelo: `objective[col] = penalty` (no time multiplier).
 #   Cost  = penalty × hm³ = R$ → penalty unit R$/hm³.
 #   Affected: hydro.storage_violation_below_cost, hydro.filling_target_violation_cost
-#   (both currently NOT wired into the LP — slot is dormant).
+#   (priced only on a plant with a filling schedule).
 #   Conversion: 1 hm³ × ρ → MWh of energy-equivalent is `(1e6 m³ / 3600 s/h) × ρ`
 #   = 277.78 × ρ MWh (purely volumetric — 730h convention cancels). So
 #     novomodelo_coef [R$/hm³] = source_R$/MWh × ρ × HM3_TO_MWH_PER_RHO
@@ -649,9 +650,9 @@ def convert_penalties(
       source are DERIVED from the deficit cost via ``ρ_max_acum``: evaporation and
       storage at ``10 × MAX_CUSTO_DEFICIT × ρ_max_acum`` (the manual p.87 level;
       storage additionally ``× HM3_TO_MWH_PER_RHO`` for its R$/hm³ slot) and
-      filling at ``0.9 × MAX_CUSTO_DEFICIT × ρ_max_acum × HM3_TO_MWH_PER_RHO``. The
-      storage and filling slots are dormant in novomodelo's LP today but emitted so the
-      file is ready when novomodelo wires them in.
+      filling at ``0.9 × MAX_CUSTO_DEFICIT × ρ_max_acum × HM3_TO_MWH_PER_RHO``.
+    - ``hydro.fpha_violation_cost`` has no PENALID source either: the manual p.87
+      FPHA folga tier, raised above the deficit plus GHMIN where that is higher.
 
     Parameters
     ----------

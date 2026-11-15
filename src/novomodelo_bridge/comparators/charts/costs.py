@@ -46,6 +46,7 @@ _SOURCE_PARCELS: dict[str, list[str]] = {
     "Filling Target": ["VIOLACAO EVMIN"],
     "Evaporation": ["VIOL. EVAP. UHE"],
     "Water Withdrawal": ["VIOLACAO RETIRADA"],
+    "FPHA Planes": ["VIOLACAO FPHA"],
     "Inflow Penalty": [],
     # The source model reports the risk-aversion curve and surface (CAR/SAR),
     # electric (RESTELETRICA), interchange-group (INTERC. MIN.), hydraulic
@@ -77,8 +78,6 @@ _SOURCE_PARCELS: dict[str, list[str]] = {
 #: colour)``, shown on the source side so they are not hidden. Their grays mark
 #: them as having no Novomodelo counterpart.
 _SOURCE_ONLY_SLACKS: list[tuple[str, list[str], str]] = [
-    # The source model's FPHA folga slack; Novomodelo has no direct analogue.
-    ("FPHA Slack", ["VIOLACAO FPHA"], "#b3b2ad"),
     # DECOMP-only: its unmet water-diversion parcel, and the part of the stage
     # cost its report does not itemize once deficit is priced (the RHQ/RHE/RHV,
     # evaporation and irrigation slacks), which Novomodelo spreads over its

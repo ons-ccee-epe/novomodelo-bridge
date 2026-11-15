@@ -975,6 +975,19 @@ class TestOverviewCostCharts:
         assert cats["Storage Bounds"][0] == pytest.approx(0.0)
         assert cats["Storage Bounds"][1] == pytest.approx(1.0e7)
 
+    def test_fpha_violation_compares_with_the_source_model_fpha_parcela(
+        self,
+    ) -> None:
+        from novomodelo_bridge.comparators.charts import _resolve_cost_categories
+
+        cats = {
+            label: (nw, cb)
+            for label, nw, cb, _ in _resolve_cost_categories(
+                {"VIOLACAO FPHA": 3.0e6}, {"fpha_violation_cost": 2.0e6}
+            )
+        }
+        assert cats == {"FPHA Planes": pytest.approx((3.0e6, 2.0e6))}
+
 
 class TestNetOfPenaltiesTable:
     """Overview table of each model's lower bound net of its expected

@@ -752,6 +752,7 @@ class TestConvertPenalties:
             "outflow_violation_below_cost",
             "outflow_violation_above_cost",
             "generation_violation_below_cost",
+            "fpha_violation_cost",
             "evaporation_violation_cost",
             "water_withdrawal_violation_cost",
             "inflow_nonnegativity_cost",

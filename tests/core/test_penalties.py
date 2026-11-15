@@ -53,6 +53,7 @@ def test_hydro_block_key_order_is_unchanged() -> None:
         "outflow_violation_below_cost",
         "outflow_violation_above_cost",
         "generation_violation_below_cost",
+        "fpha_violation_cost",
         "evaporation_violation_cost",
         "water_withdrawal_violation_cost",
         "inflow_nonnegativity_cost",
@@ -60,3 +61,23 @@ def test_hydro_block_key_order_is_unchanged() -> None:
 
     assert list(_costs()) == expected
     assert list(_costs(FlowMicroCosts(1.0, 2.0, 3.0))) == expected
+
+
+def test_fpha_violation_cost_is_the_manual_tier_over_a_cheaper_floor() -> None:
+    costs = hydro_penalty_costs(
+        rho_avg=0.634,
+        rho_max_acum=0.9,
+        penalid_costs={"GHMIN": 1000.0},
+        max_deficit_cost=8291.25,
+    )
+
+    assert costs["fpha_violation_cost"] == 10 * 8291.25
+
+
+def test_fpha_violation_cost_exceeds_the_deficit_plus_a_floor_at_the_tier() -> None:
+    costs = _costs()
+
+    floor = 8291.25 + costs["generation_violation_below_cost"]
+    assert costs["generation_violation_below_cost"] == 10 * 8291.25
+    assert costs["fpha_violation_cost"] > floor
+    assert costs["fpha_violation_cost"] == 1.01 * floor
