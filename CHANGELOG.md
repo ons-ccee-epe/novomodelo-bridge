@@ -26,6 +26,17 @@ links are cobre-bridge's.
   stages where the run used the constraint's slack. It and `compare decomp`
   also evaluate constraints with thermal, outflow, diversion, pumping or
   stage-volume terms, and the tab's type filter lists the families the case has.
+- **`convert newave` converts `ger_usit`, `re(X)`, demand and constant terms
+  of `restricao-eletrica.csv` formulas**, and a coefficient over parentheses.
+  `demanda(X)`, `val_demanda(X)`, `demanda_sin`, `val_demanda_sin` and
+  constants move onto the limits at the case's load on each block. These
+  terms were dropped without notice, so the constraints that have them bound
+  the wrong sum; reconvert those decks. A
+  constraint with a term the case cannot carry (`ener_comerc`, `ger_pee`,
+  `ger_conjh`, `disp_usih`, `carga_ande`, `peq_`, `se(...)` or an undeclared
+  name) is left out with an `electric-constraint-term-unsupported` warning,
+  and a term on a thermal outside the case is left out of its sum with an
+  `electric-constraint-thermal-unmapped` note.
 
 ### Changed
 
@@ -94,6 +105,12 @@ links are cobre-bridge's.
 - **`convert decomp` reports RE ceilings capped at a unit group's capacity as
   `decomp-re-unit-group-generation-clamped`**, apart from the plant ceilings
   that `decomp-re-generation-clamped` reports.
+- **`convert newave` stops on a malformed `restricao-eletrica.csv` formula**
+  with a `conversion-error` naming the constraint, where it left the
+  malformed part out and reported only an `ener_interc` with one subsystem,
+  as `electric-constraint-malformed-term`. `convert decomp`
+  now reads a LIBS coefficient written before a space or a parenthesis, and
+  stops on a function given the wrong number of arguments.
 - **`compare` and `dashboard` no longer stop on a `system/lines.json` they
   cannot read**: they treat the case as having no lines, leave out the
   interchange and the Network tab's lines, and say so in a

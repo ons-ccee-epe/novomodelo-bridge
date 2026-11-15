@@ -22,8 +22,8 @@ the shared :class:`~novomodelo_bridge.core.generic_constraint_builder.
 GenericConstraintBuilder`), plus the multi-term ``RE`` emitter
 (``emit_re_generics``) and the ``RHQ``/``RHV`` emitter (
 ``emit_rhq_rhv_generics``) built on top of it. This module mirrors — but
-never imports — the sibling ``converters/constraints.py`` emitter's
-``_parse_formula`` pattern; both tracks share one
+never imports — the ``newave/converters/constraints.py`` emitter's
+``_decision_variable`` and ``_render_signed_expression``; both tracks share one
 ``GenericConstraintBuilder``/``GenericConstraintResult``
 (:mod:`novomodelo_bridge.core.generic_constraint_builder`).
 
@@ -273,8 +273,8 @@ def resolve_fi_term(
     novomodelo has no submarket-pair variable, only per-line directional
     ``line_direct(id)``/``line_reverse(id)`` variables, so — mirroring the
     source model precedent's ``ener_interc`` resolution
-    (``converters/constraints.py::_parse_formula``) — the term's direction is
-    encoded by *which* directional variable is chosen, never by negating the
+    (``newave/converters/constraints.py::_decision_variable``) — the term's direction
+    is encoded by *which* directional variable is chosen, never by negating the
     coefficient (a negated coefficient would dilute the bound when the LP
     routes the non-canonical direction).
 
@@ -363,8 +363,8 @@ def resolve_fe_term(
 def _format_expression(terms: Sequence[tuple[Weight, str]]) -> str | None:
     """Join ``(weight, token)`` pairs into a novomodelo expression string.
 
-    Mirrors ``converters/constraints.py::_parse_formula``'s coefficient-
-    formatting rules: a unit (``|coeff| == 1.0``) term is the bare token
+    Mirrors ``newave/converters/constraints.py::_render_signed_expression``'s
+    coefficient-formatting rules: a unit (``|coeff| == 1.0``) term is the bare token
     (or ``- token`` when negative); a fractional term is ``{abs_coeff} *
     {token}`` (or ``- {abs_coeff} * {token}`` when negative). A parameter
     weight is ``@{name} * {token}``, its sign carried by the parameter's

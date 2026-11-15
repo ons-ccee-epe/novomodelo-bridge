@@ -15,6 +15,17 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.electrical_expression import (
+    GNL_TOKEN,
+    AssembledBound,
+    Bucket,
+    DataContext,
+    ParsedTerm,
+    UnrecognizedElectricalToken,
+    classify_term,
+    classify_terms,
+    parse_linear_expression,
+)
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -24,20 +35,14 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     GnlThermal,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
-    _GNL_TOKEN,
     ActivationRule,
-    AssembledBound,
     AvailablePower,
-    Bucket,
     Comparison,
-    DataContext,
     ElectricalAlias,
     ElectricalExpression,
     ElectricalRestriction,
     LibsElectricalModel,
-    ParsedTerm,
     PeriodPatamarOverride,
-    UnrecognizedElectricalToken,
     ViolationTreatment,
     _effective_inequacao_sides,
     _fold_formula_bound,
@@ -49,13 +54,10 @@ from novomodelo_bridge.decomp.converters.libs_electrical import (
     assemble_bound,
     build_available_power,
     build_data_context,
-    classify_term,
-    classify_terms,
     evaluate_rule,
     evaluate_se,
     is_always_active,
     parse_activation_rule,
-    parse_linear_expression,
     read_carga_ande,
     read_libs_electrical,
     resolve_disp_usih,
@@ -1180,21 +1182,21 @@ def _gnl_factory():
 def test_parse_ger_usit_of_gnl_plant_is_input_data() -> None:
     model = replace(_model(), gnl_thermal_codes=frozenset({86}))
     gnl, ct = parse_linear_expression("0.5*ger_usit(86) + ger_usit(1)", model)
-    assert gnl == ParsedTerm(coefficient=0.5, token=_GNL_TOKEN, args=(86,))
+    assert gnl == ParsedTerm(coefficient=0.5, token=GNL_TOKEN, args=(86,))
     assert classify_term(gnl) is Bucket.B
     assert ct == ParsedTerm(coefficient=1.0, token="ger_usit", args=(1,))
     assert classify_term(ct) is Bucket.A
 
 
 def test_build_data_context_gnl_reads_commanded_generation_per_block() -> None:
-    term = ParsedTerm(coefficient=1.0, token=_GNL_TOKEN, args=(86,))
+    term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
     factory = _gnl_factory()
     assert factory(0, 0)(term) == 500.0
     assert factory(0, 1)(term) == 400.0
 
 
 def test_build_data_context_gnl_uncommanded_stage_aborts() -> None:
-    term = ParsedTerm(coefficient=1.0, token=_GNL_TOKEN, args=(86,))
+    term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
     with pytest.raises(ValueError, match="not commanded at stage 1"):
         _gnl_factory()(1, 0)(term)
 
