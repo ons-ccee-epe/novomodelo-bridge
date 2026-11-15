@@ -235,7 +235,7 @@ def _emit_inflow_lag_drop_warning(audit: InflowLagAudit) -> None:
     )
 
 
-#: mapcut record 10's cost parcels other than the committed GNL cost, with
+#: mapcut register 10's cost parcels other than the committed GNL cost, with
 #: the names docs/dessem.md gives them.
 _ZERO_COST_PARCELS = {
     "parcela_custo_geracao_termica_minima": "thermal minimum-generation cost",
@@ -491,7 +491,7 @@ def _emit_gnl_committed_cost(
     costs: Sequence[GnlCommittedCost],
     source_plants: Sequence[SourceGnlThermal],
 ) -> None:
-    """Report each stage's committed GNL cost as read back from `mapcut` record 10."""
+    """Report each stage's committed GNL cost as read back from `mapcut` register 10."""
     if not source_plants:
         return
     value_field = COST_FIELDS.index("geracao_termica_minima_gerada_gnl")

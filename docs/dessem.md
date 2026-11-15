@@ -52,7 +52,7 @@ second stage (premise P14). The export finds that delivery in the policy
 checkpoint by its start date, divides the plant's coefficient by the sum of
 that stage's load-block hours in `stages.json`, changes its sign, and writes
 the result in R$/MWh, the same on every load block. Only the cuts of the
-first cut-building node carry it, and `mapcut` record 9 carries the same
+first cut-building node carry it, and `mapcut` register 9 carries the same
 load-block hours for every GNL plant. A plant for which the policy holds no
 coefficient for that delivery, or a coefficient of exactly zero, is written
 as 0.0 with a warning. The export is refused when a plant has two delivery
@@ -60,7 +60,7 @@ slots for that stage, when a slot's dates disagree with the stage's
 load-block hours, when a case with GNL plants has a single stage, or when
 the first cut-building node is not at the case's first stage.
 
-`mapcut` record 10 carries, for each study stage, the cost of the GNL
+`mapcut` register 10 carries, for each study stage, the cost of the GNL
 generation committed before the study (premise P11). For every GNL plant, the
 export takes the commitment windows in the case's `initial_conditions.json`.
 It multiplies the MW of each window that covers the whole stage by the sum of
@@ -102,10 +102,10 @@ coefficients are written in R$/MWh and are not divided.
 
 | Artifact | Description |
 |----------|-------------|
-| `mapcut.<rev>` | DECOMP cut-header binary: iteration and cut counts, hydro plant codes in Novomodelo's plant order, each plant's downstream plant (as its 1-based position in that list, as DECOMP writes it), the node tree, discount factors, the per-node cut-chain heads, and, per travel-time plant, the share of each stage's release that arrives in each later stage. Per GNL plant it also holds the submarket, the lag in months and the load-block hours of the delivery the GNL coefficients price. Each stage's record 10 holds the discount factor and the cost of the GNL generation committed before the study, in 10³ R$. |
+| `mapcut.<rev>` | DECOMP cut-header binary: iteration and cut counts, hydro plant codes in Novomodelo's plant order, each plant's downstream plant (as its 1-based position in that list, as DECOMP writes it), the node tree, discount factors, the per-node cut-chain heads, and, per travel-time plant, the share of each stage's release that arrives in each later stage. Per GNL plant it also holds the submarket, the lag in months and the load-block hours of the delivery the GNL coefficients price. Each stage's register 10 holds the discount factor and the cost of the GNL generation committed before the study, in 10³ R$. |
 | `cortdeco.<rev>` | DECOMP cut binary: one record per cut with its right-hand side, storage coefficients, coefficients of the water released and still in transit, and GNL coefficients. |
 | `eco/*.csv` | With `--audit-csv`: one CSV per pool with every cut as read from the checkpoint, already converted to R$. |
-| `content/*.csv` | With `--audit-csv`: the values actually written to `mapcut` and `cortdeco`, read back from the binaries. `mapcut` record 9's GNL hours take one row per GNL plant and load block. |
+| `content/*.csv` | With `--audit-csv`: the values actually written to `mapcut` and `cortdeco`, read back from the binaries. `mapcut` register 9's GNL hours take one row per GNL plant and load block. |
 | `export_manifest.json` | Provenance: tool and library versions, the case and deck paths, settings, the full text of every premise applied, output paths, and status. |
 
 A successful export writes `export_manifest.json` with `"status": "ok"`. A
@@ -179,7 +179,7 @@ and every export copies it into `export_manifest.json`. In brief:
    then differs from DECOMP's on those stages. How DESSEM uses this field is
    not documented, so matching DECOMP's value does not show an effect on
    dispatch.
-5. **The GNL hours basis is not confirmed (P12).** `mapcut` record 9
+5. **The GNL hours basis is not confirmed (P12).** `mapcut` register 9
    carries the load-block hours of the delivery stage, where a `mapcut`
    written by DECOMP carries those of an average month. How DESSEM combines
    these hours with the GNL coefficients is not documented.
