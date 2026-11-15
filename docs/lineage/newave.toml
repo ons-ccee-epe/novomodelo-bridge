@@ -41,7 +41,7 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   path = "estimation.history_years.from"
   from = [ { file = "confhd", item = "usinas · ano_inicio_historico" } ]
   when = "somente quando toda usina convertida preenche `ano_inicio_historico` e `ano_fim_historico`"
-  how = "Primeiro ano, inclusive, da janela em que o modelo de afluências é ajustado. O Novomodelo ajusta todas as usinas numa só janela, então o deck é recusado quando as usinas convertidas trazem janelas diferentes, quando a janela termina antes de começar ou quando sai do histórico de `vazoes.dat` anterior ao início do estudo. Com um ano em branco o campo é omitido e o ajuste usa todo o histórico, com o aviso `hydro-fit-window-blank`: o NEWAVE leria esses anos do `postos.dat`, que o bridge não lê."
+  how = "Primeiro ano, inclusive, da janela em que o modelo de afluências é ajustado. O Novomodelo ajusta todas as usinas numa só janela, então o deck é recusado quando as usinas convertidas trazem janelas diferentes, quando a janela termina antes de começar ou quando sai dos anos completos do histórico de `vazoes.dat` anterior ao início do estudo. Com um ano em branco o campo é omitido e o ajuste usa todo o histórico, com o aviso `hydro-fit-window-blank`: o NEWAVE leria esses anos do `postos.dat`, que o bridge não lê."
 
   [[output.field]]
   path = "estimation.history_years.to"

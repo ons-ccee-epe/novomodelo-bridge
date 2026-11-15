@@ -23,7 +23,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.newave.converters.stochastic import _posto_count, _read_vazoes
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files
@@ -1246,6 +1246,15 @@ def _history(first_year: int, last_year: int) -> pa.Table:
     return pa.table({"start_date": pa.array(starts, type=pa.date32())})
 
 
+def _history_until_october(last_year: int) -> pa.Table:
+    """January 1931 through October of *last_year*: a study starting in November."""
+    starts = [
+        *_history(1931, last_year - 1).column("start_date").to_pylist(),
+        *(datetime.date(last_year, m, 1) for m in range(1, 11)),
+    ]
+    return pa.table({"start_date": pa.array(starts, type=pa.date32())})
+
+
 class TestConvertHistoryYears:
     def _convert(
         self,
@@ -1285,21 +1294,37 @@ class TestConvertHistoryYears:
             (12, "PEIXOTO  ", 1931, 2022),
         ]
 
-        with pytest.raises(FieldParseError) as raised:
+        with pytest.raises(UnsupportedSourceError) as raised:
             self._convert(tmp_path, rows, _history(1931, 2025))
 
         assert str(raised.value) == (
             "confhd.dat gives the converted plants different fit windows: "
             "1931-2024 for 2 plants; 1931-2022 for PEIXOTO. The case fits the "
-            "inflow model on one window for every plant."
+            "inflow model on one window for every plant, so give them all the "
+            "same INIC.HIST and FIM HIST."
         )
         assert raised.value.field == "INIC.HIST/FIM HIST"
 
     def test_a_window_beyond_the_history_refuses_the_deck(self, tmp_path) -> None:
         rows = [(6, "FURNAS", 1931, 2025)]
 
-        with pytest.raises(FieldParseError, match="covers 1931-2024"):
+        with pytest.raises(FieldParseError, match="covers the full years 1931-2024"):
             self._convert(tmp_path, rows, _history(1931, 2024))
+
+    def test_a_window_into_the_partial_study_year_refuses_the_deck(
+        self, tmp_path
+    ) -> None:
+        rows = [(6, "FURNAS", 1931, 2026)]
+
+        with pytest.raises(FieldParseError, match="covers the full years 1931-2025"):
+            self._convert(tmp_path, rows, _history_until_october(2026))
+
+    def test_a_window_ending_on_the_last_full_year_is_kept(self, tmp_path) -> None:
+        rows = [(6, "FURNAS", 1931, 2025)]
+
+        years = self._convert(tmp_path, rows, _history_until_october(2026))
+
+        assert years == {"from": 1931, "to": 2025}
 
     def test_a_window_before_the_history_refuses_the_deck(self, tmp_path) -> None:
         rows = [(6, "FURNAS", 1930, 2024)]

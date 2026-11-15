@@ -139,11 +139,13 @@ links are cobre-bridge's.
   to the end of that month. A travel time longer than that stage fails the
   conversion, naming the plant. The converted cases need the paired novomodelo
   revision; convert a deck again to update it.
-- **`convert newave` fits the inflow model on the years `confhd.dat` gives the
-  plants** instead of on the whole inflow history, refuses plants with
-  different windows or a window outside the history, and warns with
-  `hydro-fit-window-blank` when a plant leaves a year blank. Results change;
-  convert NEWAVE cases again and run them with the paired novomodelo revision.
+- **BREAKING: `convert newave` fits the inflow model on the years `confhd.dat`
+  gives the plants** instead of on the whole inflow history. It refuses plants
+  with different windows (`source-unsupported`) or a window outside the full
+  years of the history, and warns with `hydro-fit-window-blank` when a plant
+  leaves a year blank. Give the converted plants one window in `confhd.dat`.
+  Results change; convert NEWAVE cases again and run them with the paired
+  novomodelo revision.
 
 ### Removed
 

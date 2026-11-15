@@ -24,7 +24,7 @@ from novomodelo_bridge.core.diagnostics import (
     counted,
     emit,
 )
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.penalties import INFLOW_NON_NEGATIVITY_METHOD
 from novomodelo_bridge.core.run_config import SIMULATION_CUT_SET
 from novomodelo_bridge.core.season_calendar import (
@@ -833,14 +833,21 @@ def convert_history_years(
 
     Raises
     ------
+    UnsupportedSourceError
+        The converted plants give different windows.
     FieldParseError
-        The converted plants give different windows, or the window ends before
-        it starts or reaches outside the years of *inflow_history*.
+        The window ends before it starts, or reaches outside the full years of
+        *inflow_history*.
     """
     if inflow_history.num_rows == 0:
         return None
-    years = {d.year for d in inflow_history.column("start_date").unique().to_pylist()}
+    dates = inflow_history.column("start_date").unique().to_pylist()
+    years = {d.year for d in dates}
     first, last = min(years), max(years)
+    # The history stops at the month before the study start.
+    last_full = (
+        last if any(d.year == last and d.month == 12 for d in dates) else last - 1
+    )
 
     plants = hydro_plant_table(case.confhd)
     plants = plants[plants["codigo_usina"].isin(id_map.all_hydro_codes)]
@@ -858,10 +865,11 @@ def convert_history_years(
     ):
         windows.setdefault((int(start), int(end)), []).append(str(name).strip())
     if len(windows) > 1:
-        raise FieldParseError(
+        raise UnsupportedSourceError(
             "confhd.dat gives the converted plants different fit windows: "
             f"{_describe_windows(windows)}. The case fits the inflow model on "
-            "one window for every plant.",
+            "one window for every plant, so give them all the same INIC.HIST "
+            "and FIM HIST.",
             path="confhd.dat",
             field=_FIT_WINDOW_FIELD,
         )
@@ -874,11 +882,11 @@ def convert_history_years(
             path="confhd.dat",
             field=_FIT_WINDOW_FIELD,
         )
-    if start < first or end > last:
+    if start < first or end > last_full:
         raise FieldParseError(
             f"confhd.dat fits the inflow model on {start}-{end}, but the inflow "
-            f"history in vazoes.dat before the study start covers {first}-{last}, "
-            "so the case cannot fit on those years.",
+            "history in vazoes.dat before the study start covers the full years "
+            f"{first}-{last_full}, so the case cannot fit on those years.",
             path="confhd.dat",
             field=_FIT_WINDOW_FIELD,
         )
