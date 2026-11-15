@@ -145,7 +145,12 @@ links are cobre-bridge's.
 - **`export dessem` reports a missing DECOMP deck directory as
   `source-file-missing` and a missing case directory as
   `novomodelo-output-unreadable`**, as `convert` and `dashboard` do, instead
-  of `conversion-error`.
+  of `conversion-error`. It and `convert decomp` report an empty `hidr.dat`
+  and a malformed `GL`, `GS` or `NL` record in `dadgnl.rvN` as
+  `source-field-parse`, and `export dessem` reports a checkpoint with no
+  trained cuts or an output directory it cannot write as
+  `dessem-fcf-export-failed` naming the failed step, where all of these
+  ended as `unexpected-error`.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.
@@ -268,6 +273,16 @@ links are cobre-bridge's.
 - **`compare` dropped the warnings its HTML report raised.** They now reach the
   comparison notes, the `--json` output and `comparison.json`, and a bad
   `--format` value now stops `compare` before it runs the comparison.
+- **`compare decomp` stopped with `unexpected-error` when `relato.rvN`,
+  `dec_oper_usih.csv`, `dec_oper_usit.csv` or `dec_oper_sist.csv` was missing
+  or could not be read**, such as a `relato.rvN` without its cost table. It
+  now leaves out what the file feeds, such as DECOMP's cost breakdown, and
+  says so in a `report-file-missing` note or a `report-file-unreadable`
+  warning. It also warns when `avl_cortesfpha_dec.rvN`, `eco_fpha_.rvN`,
+  `dec_desvfpha.rvN` or `dec_oper_rhesoft.csv` cannot be read, and reports a
+  missing or unreadable `relato2.rvN` on a deck with a scenario fan; before, it
+  left out what these feed without saying so, such as the probabilities of
+  DECOMP's fan stage.
 
 ## [0.20.0] - 2026-11-03
 

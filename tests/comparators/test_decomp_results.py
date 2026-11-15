@@ -11,6 +11,7 @@ stay in the mega file pending their own carve.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -26,13 +27,18 @@ from novomodelo_bridge.comparators.decomp.results import (
     _THERMAL_VARIABLES,
     _AlignedDecompFrames,
     _bus_side,
+    _dec_oper_hydro_stage_frame,
+    _energy_balance_frames,
+    _hydro_side,
     _map_entities,
     _result_comparisons,
     _scenario_mean,
     _stage_rows,
+    _thermal_side,
     _weighted_group_mean,
     build_decomp_dataset,
 )
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
 from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.files import DecompFiles
@@ -691,10 +697,6 @@ class TestBuildDecompDatasetSingleParse:
             lambda *_a, **_k: _minimal_sist_frame(),
         )
         monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results._cost_frames",
-            lambda *_a, **_k: ({}, pl.DataFrame()),
-        )
-        monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
             "read_novomodelo_bus_aggregates",
             lambda *_a, **_k: pl.DataFrame(),
@@ -820,3 +822,198 @@ class TestBuildDecompDatasetSingleParse:
         assert nw_row["lhs_value"] == pytest.approx(2951.58 * MEAN_MONTH_HOURS)
         cb_row = dataset.render.gc_lhs_novomodelo.row(0, named=True)
         assert cb_row == {"constraint_id": 0, "stage_id": 0, "lhs_value": 3000.0}
+
+
+_OPERATION_SIDES = [
+    ("read_dec_oper_usih", "dec_oper_usih.csv", _hydro_side),
+    ("read_dec_oper_usit", "dec_oper_usit.csv", _thermal_side),
+    ("read_dec_oper_sist", "dec_oper_sist.csv", _bus_side),
+]
+_READ_FAILURES = [
+    (FileNotFoundError("not found"), "report-file-missing", "not found"),
+    (ValueError("parsed empty"), "report-file-unreadable", "could not be read"),
+]
+
+
+class TestUnavailableOperationTables:
+    """A missing or unreadable ``dec_oper_*.csv`` leaves what it feeds empty,
+    after one note per table."""
+
+    @pytest.mark.parametrize(("error", "code", "verb"), _READ_FAILURES)
+    @pytest.mark.parametrize(("reader", "file_name", "side"), _OPERATION_SIDES)
+    def test_result_side_is_empty_after_the_note(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        reader: str,
+        file_name: str,
+        side: Callable[[Path, dict[int, int]], tuple[pl.DataFrame, list[int]]],
+        error: Exception,
+        code: str,
+        verb: str,
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise error
+
+        monkeypatch.setattr(
+            f"novomodelo_bridge.comparators.decomp.results.{reader}", _boom
+        )
+
+        with dx.collect() as collected:
+            frame, unmapped = side(tmp_path, {1: 0})
+
+        assert frame.is_empty()
+        assert unmapped == []
+        assert [(d.code, d.title) for d in collected] == [(code, f"{file_name} {verb}")]
+
+    @pytest.mark.parametrize(("error", "code", "verb"), _READ_FAILURES)
+    def test_energy_balance_is_empty_after_the_sist_note(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        error: Exception,
+        code: str,
+        verb: str,
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise error
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist", _boom
+        )
+
+        with dx.collect() as collected:
+            frames = _energy_balance_frames(tmp_path, {1: 0}, stage_hours={1: 168.0})
+
+        assert all(frame.is_empty() for frame in frames)
+        assert [(d.code, d.title) for d in collected] == [
+            (code, f"dec_oper_sist.csv {verb}")
+        ]
+
+    def test_every_reader_of_one_table_shares_its_note(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
+            _hydro_side(tmp_path, {})
+            _dec_oper_hydro_stage_frame(tmp_path)
+            _bus_side(tmp_path, {})
+            _energy_balance_frames(tmp_path, {}, stage_hours={})
+
+        assert len(collected) == 4
+        assert [(d.code, d.title) for d in dx.finalize_diagnostics(collected)] == [
+            ("report-file-missing", "dec_oper_usih.csv not found"),
+            ("report-file-missing", "dec_oper_sist.csv not found"),
+        ]
+
+
+_PRESENT_OPERATION_TABLES: dict[str, Callable[[], pl.DataFrame]] = {
+    "read_dec_oper_usih": lambda: _usih_frame([{"codigo_usina": 999, "estagio": 1}]),
+    "read_dec_oper_usit": lambda: _usih_frame([{"codigo_usina": 998, "estagio": 1}]),
+    "read_dec_oper_sist": _minimal_sist_frame,
+}
+
+
+class TestBuildDecompDatasetWithoutSourceOutput:
+    """A deck directory missing DECOMP's output files still builds, with one
+    note per missing file. Runs the real ``_read_aligned_frames`` and
+    ``_cost_frames``, like `TestBuildDecompDatasetSingleParse`."""
+
+    @staticmethod
+    def _bare_deck(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> tuple[Path, Path]:
+        decomp_dir = tmp_path / "deck"
+        decomp_dir.mkdir()
+        constraints = [
+            {
+                "id": 0,
+                "name": "VminOP_1",
+                "description": "reads the constraint-side operation tables",
+                "expression": "",
+                "slack": {"enabled": True, "penalty": 1000.0},
+            }
+        ]
+        output_dir = _write_generic_constraints_case(tmp_path / "case", constraints, [])
+        dadger = _ConstraintFakeDadger(
+            sb=pd.DataFrame({"codigo_submercado": [1], "nome_submercado": ["SE"]}),
+            dp=pd.DataFrame(
+                {
+                    "estagio": [1, 2],
+                    "codigo_submercado": [1, 1],
+                    "numero_patamares": [1, 1],
+                    "duracao_1": [168.0, 528.0],
+                }
+            ),
+        )
+        setattr(dadger, "dt", SimpleNamespace(ano=2026, mes=1, dia=3))
+        monkeypatch.setattr("idecomp.decomp.Dadger.read", lambda *_a, **_k: dadger)
+        monkeypatch.setattr(
+            "novomodelo_bridge.decomp.case.discover_decomp_files",
+            lambda _src: _decomp_files_stub(decomp_dir),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_bus_aggregates",
+            lambda *_a, **_k: pl.DataFrame(),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+            "read_novomodelo_hydro_bus_labels",
+            lambda *_a, **_k: {},
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.constraints.evaluate_lhs_novomodelo",
+            lambda *_a, **_k: pl.DataFrame(),
+        )
+        return decomp_dir, output_dir
+
+    def test_every_missing_file_is_one_note_and_the_build_completes(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        decomp_dir, output_dir = self._bare_deck(monkeypatch, tmp_path)
+
+        with dx.collect() as collected:
+            dataset = build_decomp_dataset(decomp_dir, output_dir)
+
+        notes = dx.finalize_diagnostics(collected)
+        titles = [d.title for d in notes]
+        for file_name in (
+            "relato.rvN",
+            "dec_oper_usih.csv",
+            "dec_oper_usit.csv",
+            "dec_oper_sist.csv",
+        ):
+            assert titles.count(f"{file_name} not found") == 1
+        [relato] = [d for d in notes if d.title == "relato.rvN not found"]
+        assert relato.severity is dx.Severity.INFO
+        assert "cost breakdown" in relato.summary
+        assert dataset.render.nw_costs == {}
+        assert dataset.render.results == []
+
+    @pytest.mark.parametrize("missing", sorted(_PRESENT_OPERATION_TABLES))
+    def test_one_missing_operation_table_is_its_note_alone(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing: str
+    ) -> None:
+        """The operating-point comparison, which needs the deck's plant
+        registry, is stubbed out; its own module tests its notes."""
+        decomp_dir, output_dir = self._bare_deck(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.compare_operating_points",
+            lambda *_a, **_k: None,
+        )
+        for reader, frame in _PRESENT_OPERATION_TABLES.items():
+            if reader != missing:
+                table = frame()
+                monkeypatch.setattr(
+                    f"novomodelo_bridge.comparators.decomp.results.{reader}",
+                    lambda *_a, table=table, **_k: table,
+                )
+
+        with dx.collect() as collected:
+            build_decomp_dataset(decomp_dir, output_dir)
+
+        def note(reader: str) -> str:
+            return f"{reader.removeprefix('read_')}.csv not found"
+
+        core_notes = {note(reader) for reader in _PRESENT_OPERATION_TABLES}
+        assert [
+            d.title for d in dx.finalize_diagnostics(collected) if d.title in core_notes
+        ] == [note(missing)]

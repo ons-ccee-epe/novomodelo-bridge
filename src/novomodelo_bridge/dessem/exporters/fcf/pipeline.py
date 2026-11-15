@@ -793,7 +793,7 @@ class _ExportProgress:
     """The step an export run is in, which ``run_export``'s failure handlers read."""
 
     on_phase: Callable[[str], None] | None
-    current_step: str = "initialize"
+    current_step: str = "create the output directory"
     unvalidated_pair_published: bool = False
 
     @contextmanager
@@ -850,6 +850,11 @@ def _plan_export(
             checkpoint, pool_ids, include_terminal=settings.include_terminal_pool
         )
         trunk_pool_ids = cut_building_pools(pools)
+        if not trunk_pool_ids:
+            raise PolicyFormatError(
+                "no pool of the policy checkpoint holds cuts past its warm-start "
+                "slots, so the run trained no cuts and there is no trunk to export"
+            )
         _emit_cut_pool_mismatch(trunk_pool_ids, len(pool_ids) - 1)
         terminal_pool_id = pool_ids[-1]
 
@@ -1063,11 +1068,11 @@ def run_export(
 
     Returns exit code: 0 success, non-zero failure.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
     paths = _resolve_output_paths(output_dir, source.revision, settings)
     progress = _ExportProgress(on_phase)
 
     try:
+        output_dir.mkdir(parents=True, exist_ok=True)
         plan = _plan_export(case_dir, source, output_dir, settings, progress)
         mapcut_contents, cortdeco_contents = _write_validated_pair(
             plan, paths, progress
@@ -1085,7 +1090,13 @@ def run_export(
         _LOG.info("export completed successfully")
         return 0
 
-    except (InputReadError, LayoutError, MappingError, PolicyFormatError) as exc:
+    except (
+        InputReadError,
+        LayoutError,
+        MappingError,
+        PolicyFormatError,
+        OSError,
+    ) as exc:
         rejected = (
             reject_pair(paths.mapcut, paths.cortdeco)
             if progress.unvalidated_pair_published

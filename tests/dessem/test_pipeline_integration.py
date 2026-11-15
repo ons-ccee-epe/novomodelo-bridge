@@ -1660,6 +1660,51 @@ class TestFailureManifest:
         assert manifest["failed_step"] == "read settings-derived inputs"
         assert not (output_dir / "mapcut.rv0").exists()
 
+    def test_a_policy_with_only_warm_start_cuts_fails_the_export(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "dessem_fcf"
+        slots = _make_slots(3)
+        pools = {
+            i: _make_pool(i, i, i, slots, n_pieces=2, warm_start=2) for i in range(3)
+        }
+
+        result, diagnostics = _run_export_on_policy(
+            synthetic_case_dir, synthetic_source, output_dir, pools, _make_manifest()
+        )
+
+        assert result == 1
+        [failed] = _with_code(diagnostics, "dessem-fcf-export-failed")
+        assert "trained no cuts" in failed.summary
+        assert failed.notes == ["Failed step: select the trunk pools"]
+        assert _with_code(diagnostics, "dessem-fcf-cut-pools-unexpected") == []
+        manifest: dict[str, Any] = json.loads(
+            (output_dir / "export_manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["failed_step"] == "select the trunk pools"
+
+    def test_an_output_path_that_is_a_file_fails_the_export(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "dessem_fcf"
+        output_dir.write_text("not a directory", encoding="utf-8")
+
+        result, diagnostics = _run_export_on_policy(
+            synthetic_case_dir,
+            synthetic_source,
+            output_dir,
+            _make_pools_dict(),
+            _make_manifest(),
+        )
+
+        assert result == 1
+        [failed] = _with_code(diagnostics, "dessem-fcf-export-failed")
+        assert str(output_dir) in failed.summary
+        assert failed.notes == ["Failed step: create the output directory"]
+        [unwritten] = _with_code(diagnostics, "dessem-fcf-failure-manifest-unwritten")
+        assert unwritten.severity is dx.Severity.WARNING
+        assert output_dir.read_text(encoding="utf-8") == "not a directory"
+
 
 class TestExportFindings:
     """What the exported pair leaves out is reported, never only logged."""

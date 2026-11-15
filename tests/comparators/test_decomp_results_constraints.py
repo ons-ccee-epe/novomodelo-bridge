@@ -17,6 +17,7 @@ from novomodelo_bridge.comparators.decomp.results import (
     _CONSTRAINT_NAME_RE,
     _GC_LHS_SCHEMA,
     _UNSUPPORTED_TERM_VARIABLES,
+    _dec_oper_rhesoft_frame,
     _DecompConstraintLookups,
     _generic_constraint_lhs_decomp,
     _rhe_lhs_lookup,
@@ -26,6 +27,7 @@ from novomodelo_bridge.comparators.decomp.results import (
     build_decomp_dataset,
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -228,6 +230,33 @@ class TestRheLhsLookup:
 
     def test_empty_frame_returns_empty_dict(self) -> None:
         assert _rhe_lhs_lookup(pl.DataFrame()) == {}
+
+
+class TestDecOperRhesoftFrame:
+    """A deck without RHE constraints has no ``dec_oper_rhesoft.csv``; only a
+    file that does not parse is a finding."""
+
+    def test_an_absent_file_is_no_finding(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
+            frame = _dec_oper_rhesoft_frame(tmp_path)
+
+        assert frame.is_empty()
+        assert collected == []
+
+    def test_an_unreadable_file_is_a_warning(self, tmp_path: Path) -> None:
+        (tmp_path / "dec_oper_rhesoft.csv").touch()
+
+        with dx.collect() as collected:
+            frame = _dec_oper_rhesoft_frame(tmp_path)
+
+        assert frame.is_empty()
+        [warning] = collected
+        assert (warning.code, warning.severity, warning.summary) == (
+            "report-file-unreadable",
+            dx.Severity.WARNING,
+            "dec_oper_rhesoft.csv could not be read, so the report leaves out "
+            "DECOMP's side of the RHE constraints.",
+        )
 
 
 class TestGenericConstraintLhsDecomp:

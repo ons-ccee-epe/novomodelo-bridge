@@ -11,6 +11,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.hydro import (
@@ -23,6 +24,7 @@ from novomodelo_bridge.decomp.converters.hydro import (
     convert_initial_storage,
     convert_production_models,
     outage_stage_model,
+    read_hidr,
 )
 from novomodelo_bridge.decomp.converters.thermal import (
     convert_thermal_bounds,
@@ -339,6 +341,21 @@ def _itaipu_frequency_frame() -> pd.DataFrame:
             {"codigo_usina": 66, "frequencia": 60.0},
         ]
     )
+
+
+def test_hidr_without_plant_records_is_a_field_parse_error(tmp_path: Path) -> None:
+    """An empty ``hidr.dat`` names the file, as ``source-field-parse``."""
+    path = tmp_path / "hidr.dat"
+    path.write_bytes(b"")
+
+    with (
+        pytest.warns(UserWarning),
+        pytest.raises(FieldParseError, match="hidr.dat holds no hydro plant") as raised,
+    ):
+        read_hidr(path)
+
+    assert raised.value.path == str(path)
+    assert raised.value.field == "hidr.dat"
 
 
 class TestConvertHydros:

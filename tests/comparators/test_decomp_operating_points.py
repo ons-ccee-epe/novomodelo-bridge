@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
@@ -24,6 +25,8 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_avl_cortesfpha,
     read_dec_desvfpha,
 )
+from novomodelo_bridge.comparators.decomp.results import _bus_side, _hydro_side
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import (
@@ -36,6 +39,7 @@ _MODULE = "novomodelo_bridge.comparators.decomp.operating_points"
 _HOURS = (30.0, 74.0, 64.0)
 _CAMARGOS, _ITUTINGA = 1, 2
 _PIMENTAL, _BELO_MONTE = 314, 288
+_FPHA_REPORTS = ("avl_cortesfpha_dec.rv2", "eco_fpha_.rv2", "dec_desvfpha.rv2")
 
 
 @dataclasses.dataclass
@@ -228,11 +232,17 @@ def _compare(
     runs: _Runs,
     names: dict[int, str] | None = None,
     fit_config: dict[str, list[float]] | None = None,
+    *,
+    without: str | None = None,
+    emptied: str | None = None,
 ):
     decomp_dir = tmp_path / "decomp"
     decomp_dir.mkdir(exist_ok=True)
-    for name in ("avl_cortesfpha_dec.rv2", "eco_fpha_.rv2", "dec_desvfpha.rv2"):
-        shutil.copy(_EXCERPT / name, decomp_dir / name)
+    for name in _FPHA_REPORTS:
+        if name == emptied:
+            (decomp_dir / name).touch()
+        elif name != without:
+            shutil.copy(_EXCERPT / name, decomp_dir / name)
     monkeypatch.setattr(f"{_MODULE}.read_dec_oper_usih", lambda _d: runs.usih)
     monkeypatch.setattr(f"{_MODULE}.read_dec_oper_sist", lambda _d: runs.sist)
     readers = f"{_MODULE}.novomodelo_readers"
@@ -272,6 +282,12 @@ def _compare(
     )
 
 
+def _report_findings(collected: list[dx.Diagnostic]) -> list[tuple[str, str]]:
+    return [
+        (d.code, d.title) for d in collected if d.category == dx.REPORT_FILES_CATEGORY
+    ]
+
+
 def _with_cmo(sist: pl.DataFrame, **match: int) -> pl.DataFrame:
     """*sist* with a zero CMO on the rows matching every ``column=value``."""
     hit = pl.all_horizontal(pl.col(k) == v for k, v in match.items())
@@ -308,6 +324,138 @@ class TestComparisonInputs:
             assert frame.is_empty()
         assert not result.tie_share.is_empty()
         assert not result.masked_hydro.is_empty()
+
+
+class TestUnavailableSourceReports:
+    """A missing or unreadable DECOMP report costs what it feeds, after the
+    finding every other reader of that file shares."""
+
+    @pytest.mark.parametrize(
+        ("present", "file_name", "results_side"),
+        [
+            (None, "dec_oper_usih.csv", _hydro_side),
+            ("read_dec_oper_usih", "dec_oper_sist.csv", _bus_side),
+        ],
+    )
+    def test_a_missing_operation_table_is_the_results_note(
+        self,
+        decomp_mini_case: DecompCase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        present: str | None,
+        file_name: str,
+        results_side: Callable[[Path, dict[int, int]], object],
+    ) -> None:
+        if present is not None:
+            usih = _camargos_runs(decomp_mini_case).usih
+            monkeypatch.setattr(f"{_MODULE}.{present}", lambda _d: usih)
+
+        with dx.collect() as collected:
+            result = compare_operating_points(
+                tmp_path, decomp_mini_case, tmp_path, pl.DataFrame(), {}
+            )
+            results_side(tmp_path, {})
+
+        assert result is None
+        assert len(collected) == 2
+        assert _report_findings(dx.finalize_diagnostics(collected)) == [
+            ("report-file-missing", f"{file_name} not found")
+        ]
+
+    def test_an_unreadable_operation_table_is_a_warning(
+        self,
+        decomp_mini_case: DecompCase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def _boom(_d: Path) -> pl.DataFrame:
+            raise ValueError("dec_oper_usih.csv parsed empty")
+
+        monkeypatch.setattr(f"{_MODULE}.read_dec_oper_usih", _boom)
+
+        with dx.collect() as collected:
+            result = compare_operating_points(
+                tmp_path, decomp_mini_case, tmp_path, pl.DataFrame(), {}
+            )
+
+        assert result is None
+        assert _report_findings(collected) == [
+            ("report-file-unreadable", "dec_oper_usih.csv could not be read")
+        ]
+
+    @pytest.mark.parametrize("report", _FPHA_REPORTS)
+    def test_an_absent_fpha_report_is_no_finding(
+        self,
+        decomp_mini_case: DecompCase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        report: str,
+    ) -> None:
+        runs = _camargos_runs(decomp_mini_case)
+
+        with dx.collect() as collected:
+            result = _compare(
+                monkeypatch, tmp_path, decomp_mini_case, runs, without=report
+            )
+
+        assert result is not None
+        assert _report_findings(collected) == []
+
+    @pytest.mark.parametrize(
+        ("report", "file_name", "effect"),
+        [
+            (
+                "avl_cortesfpha_dec.rv2",
+                "avl_cortesfpha_dec.rvN",
+                "the comparison with DECOMP's production function",
+            ),
+            ("eco_fpha_.rv2", "eco_fpha_.rvN", "DECOMP's fitting windows"),
+            ("dec_desvfpha.rv2", "dec_desvfpha.rvN", "DECOMP's printed deviations"),
+        ],
+    )
+    def test_an_unreadable_fpha_report_is_a_warning(
+        self,
+        decomp_mini_case: DecompCase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        report: str,
+        file_name: str,
+        effect: str,
+    ) -> None:
+        runs = _camargos_runs(decomp_mini_case)
+
+        with dx.collect() as collected:
+            result = _compare(
+                monkeypatch, tmp_path, decomp_mini_case, runs, emptied=report
+            )
+
+        assert result is not None
+        [warning] = [d for d in collected if d.category == dx.REPORT_FILES_CATEGORY]
+        assert (warning.code, warning.title) == (
+            "report-file-unreadable",
+            f"{file_name} could not be read",
+        )
+        assert effect in warning.summary
+
+    def test_without_source_planes_only_the_fpha_frames_are_empty(
+        self,
+        decomp_mini_case: DecompCase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        runs = _camargos_runs(decomp_mini_case)
+
+        result = _compare(
+            monkeypatch,
+            tmp_path,
+            decomp_mini_case,
+            runs,
+            emptied="avl_cortesfpha_dec.rv2",
+        )
+
+        assert result is not None
+        assert result.metrics.is_empty()
+        assert not result.tie_share.is_empty()
 
 
 class TestSourceModelConventions:
