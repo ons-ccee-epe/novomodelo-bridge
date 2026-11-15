@@ -40,6 +40,15 @@ links are cobre-bridge's.
 
 ### Changed
 
+- **BREAKING: `check decomp` raises the warnings `convert decomp` raises for
+  the special constraints and `AC` registers it leaves out**
+  (`decomp-re-thermal-not-normal`, `decomp-rhq-qbom-no-station`,
+  `decomp-rhv-vbom-no-station`, `decomp-rhv-varm-plant-uncadastred`,
+  `decomp-ac-topology-varies`), so it exits 1 on such decks and
+  `decomp-special-constraints-converted` no longer counts those constraints;
+  `convert decomp` in turn warns about the `AC` registers it does not read
+  with `decomp-ac-overrides-deferred`. Update scripts that expect `check
+  decomp` to exit 0 on these decks.
 - **Every command prints a note on one line and keeps the full panel for
   warnings and errors**; `-v` prints the notes in full. `convert decomp`
   reports the conversion and the boundary FCF import under one roll-up and
@@ -190,6 +199,11 @@ links are cobre-bridge's.
   plant in `hidr.dat` with no `UH` record.** It now leaves the constraint out
   with a `decomp-rhv-varm-plant-uncadastred` warning, as for a plant missing
   from `hidr.dat`.
+- **`check decomp` reported `AC NPOSNW` as not converted**
+  (`decomp-ac-overrides-deferred`), although `convert decomp` applies it.
+- **`convert decomp` listed `HQ` restrictions on a missing `UE` pumping
+  station in `decomp-conflicting-flow-restrictions`**, although it leaves them
+  out with `decomp-rhq-qbom-no-station`.
 - **`convert decomp` listed in `decomp-electrical-disp-usih-substituted` LIBS
   restrictions it then left out.** The note now lists only the restrictions
   the case keeps.
