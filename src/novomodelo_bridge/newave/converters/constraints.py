@@ -1782,41 +1782,36 @@ def _add_electric_constraint(
         is_post_indiv = stage_id >= grid.cutoff
 
         for block_id in range(grid.num_patamares):
-            # Upper bound.
+            cell = (stage_id, block_id)
+            sup_val: float | None = None
             if sup_id is not None:
-                sup_val: float | None = None
-                if is_post_indiv and (stage_id, block_id) in bounds.re_sup:
-                    sup_val = bounds.re_sup[(stage_id, block_id)]
-                elif (stage_id, block_id) in bounds.csv_sup:
-                    sup_val = bounds.csv_sup[(stage_id, block_id)]
-                if sup_val is not None:
-                    builder.add_bound_row(
-                        sup_id,
-                        stage_id=stage_id,
-                        block_id=block_id,
-                        lower=None,
-                        upper=sup_val
-                        - evaluate_terms(
-                            expression.data_terms, data_context(stage_id, block_id)
-                        ),
-                    )
-
-            # Lower bound.
-            if inf_id is not None:
-                inf_val: float | None = None
-                if (stage_id, block_id) in bounds.csv_inf:
-                    inf_val = bounds.csv_inf[(stage_id, block_id)]
-                if inf_val is not None:
-                    builder.add_bound_row(
-                        inf_id,
-                        stage_id=stage_id,
-                        block_id=block_id,
-                        lower=inf_val
-                        - evaluate_terms(
-                            expression.data_terms, data_context(stage_id, block_id)
-                        ),
-                        upper=None,
-                    )
+                sup_val = (
+                    bounds.re_sup[cell]
+                    if is_post_indiv and cell in bounds.re_sup
+                    else bounds.csv_sup.get(cell)
+                )
+            inf_val = bounds.csv_inf.get(cell) if inf_id is not None else None
+            if sup_val is None and inf_val is None:
+                continue
+            offset = evaluate_terms(
+                expression.data_terms, data_context(stage_id, block_id)
+            )
+            if sup_id is not None and sup_val is not None:
+                builder.add_bound_row(
+                    sup_id,
+                    stage_id=stage_id,
+                    block_id=block_id,
+                    lower=None,
+                    upper=sup_val - offset,
+                )
+            if inf_id is not None and inf_val is not None:
+                builder.add_bound_row(
+                    inf_id,
+                    stage_id=stage_id,
+                    block_id=block_id,
+                    lower=inf_val - offset,
+                    upper=None,
+                )
 
 
 def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
