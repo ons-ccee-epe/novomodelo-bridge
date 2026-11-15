@@ -58,6 +58,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     hard_slack,
     soft_slack,
 )
+from novomodelo_bridge.core.generic_constraint_format import render_expression
 from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
 from novomodelo_bridge.core.pandas_utils import as_float, as_int, as_timestamp, is_na
 from novomodelo_bridge.core.productivity import (
@@ -1010,28 +1011,6 @@ def _electric_limit(value: object, cod: int, path: Path) -> float | None:
     return None if limit <= _UNBOUNDED_THRESHOLD else limit
 
 
-def _render_signed_expression(parsed_terms: list[tuple[float, str]]) -> str:
-    """Render (coefficient, variable) pairs into a signed sum expression string.
-
-    - Positive coefficient 1.0:  ``variable(id)``
-    - Positive coefficient other: ``coeff * variable(id)``
-    - Negative coefficient -1.0: ``- variable(id)``
-    - Negative coefficient other: ``- abs(coeff) * variable(id)``
-    - First term omits leading ``+``; subsequent positive terms use ``+ ``;
-      negative terms use ``- `` as binary subtraction.
-    """
-    parts: list[str] = []
-    for i, (coeff, var) in enumerate(parsed_terms):
-        abs_coeff = abs(coeff)
-        is_negative = coeff < 0.0
-        term_body = var if abs_coeff == 1.0 else f"{abs_coeff} * {var}"
-        if i == 0:
-            parts.append(f"- {term_body}" if is_negative else term_body)
-        else:
-            parts.append(f"- {term_body}" if is_negative else f"+ {term_body}")
-    return " ".join(parts)
-
-
 #: The demand terms of restricao-eletrica.csv formulas, folded into the
 #: limits at the case's own block load.
 _BUS_DEMAND_TOKENS = frozenset({"demanda", "val_demanda"})
@@ -1157,9 +1136,24 @@ def _formula_expression(
         if (variable := _decision_variable(cod, term, id_map, line_id_map, term_skips))
         is not None
     ]
-    if not variables:
+    text = render_expression(variables)
+    if text is None:
         return _ElectricConstraintSkip(cod, "termless")
-    return _ElectricExpression(_render_signed_expression(variables), tuple(data_terms))
+    return _ElectricExpression(text, tuple(data_terms))
+
+
+def _directional_flow(
+    line_id_map: dict[tuple[int, int], int], a: int, b: int
+) -> str | None:
+    """The source model's non-negative flow from subsystem *a* to *b* as a
+    novomodelo line variable, or ``None`` when no line joins the pair."""
+    line_id = line_id_map.get((min(a, b), max(a, b)))
+    if line_id is None:
+        return None
+    # The direction is the variable choice, never a negated coefficient or a
+    # signed ``line_exchange``: either lets the sum go negative when a term
+    # flows in its non-canonical direction, diluting the bound.
+    return f"line_direct({line_id})" if a < b else f"line_reverse({line_id})"
 
 
 def _decision_variable(
@@ -1173,8 +1167,8 @@ def _decision_variable(
     *term_skips*, when it names a plant or a subsystem pair outside the case."""
     if term.token == "ener_interc":
         sys_from, sys_to = term.args
-        line_id = line_id_map.get((min(sys_from, sys_to), max(sys_from, sys_to)))
-        if line_id is None:
+        variable = _directional_flow(line_id_map, sys_from, sys_to)
+        if variable is None:
             term_skips.append(
                 _ElectricTermSkip(
                     cod,
@@ -1184,16 +1178,7 @@ def _decision_variable(
                     sys_to=sys_to,
                 )
             )
-            return None
-        # The source model's ``ener_interc(A, B)`` is the directional flow from A to
-        # B as a non-negative variable.  Map to Novomodelo's
-        # ``line_direct``/``line_reverse`` so the sign is encoded by the variable
-        # choice rather than by negating the coefficient (the latter would dilute
-        # the bound when LP solutions route in the non-canonical direction).  See
-        # ``_agrint_expression`` for the same rule applied to AGRINT terms.
-        if sys_from < sys_to:
-            return f"line_direct({line_id})"
-        return f"line_reverse({line_id})"
+        return variable
 
     (plant_code,) = term.args
     if term.token == "ger_usih":
@@ -1691,7 +1676,7 @@ def _electric_expression(
     if formula is not None:
         return _formula_expression(cod, formula, id_map, line_id_map, term_skips)
 
-    terms: list[str] = []
+    terms: list[tuple[float, str]] = []
     for plant_code in sorted(sources.re_conjuntos[cod]):
         try:
             novomodelo_id = id_map.hydro_id(plant_code)
@@ -1705,10 +1690,11 @@ def _electric_expression(
                 )
             )
             continue
-        terms.append(f"hydro_generation({novomodelo_id})")
-    if not terms:
+        terms.append((1.0, f"hydro_generation({novomodelo_id})"))
+    text = render_expression(terms)
+    if text is None:
         return _ElectricConstraintSkip(cod, "termless")
-    return _ElectricExpression(" + ".join(terms))
+    return _ElectricExpression(text)
 
 
 def _electric_bounds(
@@ -1782,41 +1768,36 @@ def _add_electric_constraint(
         is_post_indiv = stage_id >= grid.cutoff
 
         for block_id in range(grid.num_patamares):
-            # Upper bound.
+            cell = (stage_id, block_id)
+            sup_val: float | None = None
             if sup_id is not None:
-                sup_val: float | None = None
-                if is_post_indiv and (stage_id, block_id) in bounds.re_sup:
-                    sup_val = bounds.re_sup[(stage_id, block_id)]
-                elif (stage_id, block_id) in bounds.csv_sup:
-                    sup_val = bounds.csv_sup[(stage_id, block_id)]
-                if sup_val is not None:
-                    builder.add_bound_row(
-                        sup_id,
-                        stage_id=stage_id,
-                        block_id=block_id,
-                        lower=None,
-                        upper=sup_val
-                        - evaluate_terms(
-                            expression.data_terms, data_context(stage_id, block_id)
-                        ),
-                    )
-
-            # Lower bound.
-            if inf_id is not None:
-                inf_val: float | None = None
-                if (stage_id, block_id) in bounds.csv_inf:
-                    inf_val = bounds.csv_inf[(stage_id, block_id)]
-                if inf_val is not None:
-                    builder.add_bound_row(
-                        inf_id,
-                        stage_id=stage_id,
-                        block_id=block_id,
-                        lower=inf_val
-                        - evaluate_terms(
-                            expression.data_terms, data_context(stage_id, block_id)
-                        ),
-                        upper=None,
-                    )
+                sup_val = (
+                    bounds.re_sup[cell]
+                    if is_post_indiv and cell in bounds.re_sup
+                    else bounds.csv_sup.get(cell)
+                )
+            inf_val = bounds.csv_inf.get(cell) if inf_id is not None else None
+            if sup_val is None and inf_val is None:
+                continue
+            offset = evaluate_terms(
+                expression.data_terms, data_context(stage_id, block_id)
+            )
+            if sup_id is not None and sup_val is not None:
+                builder.add_bound_row(
+                    sup_id,
+                    stage_id=stage_id,
+                    block_id=block_id,
+                    lower=None,
+                    upper=sup_val - offset,
+                )
+            if inf_id is not None and inf_val is not None:
+                builder.add_bound_row(
+                    inf_id,
+                    stage_id=stage_id,
+                    block_id=block_id,
+                    lower=inf_val - offset,
+                    upper=None,
+                )
 
 
 def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
@@ -2142,30 +2123,14 @@ def _agrint_expression(
     Every term whose subsystem pair has no line is recorded on *term_skips*;
     ``None`` when none is left.
     """
-    # The source model's ``Interc(A→B)`` is the *non-negative directional* flow from
-    # A to B (zero whenever physical flow goes B→A).  Novomodelo's ``line_direct(id)`` /
-    # ``line_reverse(id)`` are the matching non-negative LP variables:
-    # ``line_direct`` is the flow in the canonical (src<tgt) direction,
-    # ``line_reverse`` the flow in the opposite direction.
-    #
-    # The naive substitution ``-line_exchange`` (signed net flow,
-    # negated when reversed) would let the LHS go negative when one
-    # term is flowing in its non-canonical direction — diluting the
-    # bound at fictitious hubs and producing incorrect dispatch.
     parsed_terms: list[tuple[float, str]] = []
     for a, b, coeff in terms_raw:
-        src, tgt = (a, b) if a < b else (b, a)
-        line_id = line_id_map.get((src, tgt))
-        if line_id is None:
+        var = _directional_flow(line_id_map, a, b)
+        if var is None:
             term_skips.append(_AgrintTermSkip(group_id=group_id, sys_a=a, sys_b=b))
             continue
-        var = f"line_direct({line_id})" if a < b else f"line_reverse({line_id})"
         parsed_terms.append((coeff, var))
-
-    if not parsed_terms:
-        return None
-
-    return _render_signed_expression(parsed_terms)
+    return render_expression(parsed_terms)
 
 
 def _agrint_slots(

@@ -1848,6 +1848,9 @@ def _flip_operator(sense: str) -> str:
     raise ValueError(f"_flip_operator: unknown operator {sense!r}")
 
 
+DISP_USIH_SUBSTITUTED = "decomp-electrical-disp-usih-substituted"
+
+
 def _emit_disp_usih_substitution(
     restriction_code: int,
     plant_code: int,
@@ -1858,7 +1861,7 @@ def _emit_disp_usih_substitution(
     plant code, the stage, and the ``A_h`` value used."""
     emit(
         Diagnostic(
-            code="decomp-electrical-disp-usih-substituted",
+            code=DISP_USIH_SUBSTITUTED,
             severity=Severity.INFO,
             category="Special constraints",
             title="Available power held constant in reserve restrictions",
