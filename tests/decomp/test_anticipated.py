@@ -22,6 +22,7 @@ import pytest
 from idecomp.decomp import Dadgnl
 
 from novomodelo_bridge.core.diagnostics import Severity, collect
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.converters import anticipated
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlClass4Window,
@@ -35,6 +36,7 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     _build_post_study_calendar,
     _month_end_duration_hours,
     classify_gnl_windows,
+    commanded_gnl_generation,
     convert_gnl,
     fill_undeclared_block_hours,
     gnl_block_commitments,
@@ -182,6 +184,36 @@ def test_gnl_block_commitments_block_count_mismatch_raises() -> None:
 
     with pytest.raises(ValueError, match="declares 2 block"):
         gnl_block_commitments(model, _two_stage_calendar())
+
+
+def test_commanded_gnl_generation_reads_the_stage_blocks() -> None:
+    generation = {86: [(100.0, 200.0), None]}
+
+    assert commanded_gnl_generation(
+        generation, 86, 0, reference="x", dadgnl_path="dadgnl.rv0"
+    ) == (100.0, 200.0)
+
+
+@pytest.mark.parametrize(("code", "stage"), [(86, 1), (99, 0)])
+def test_commanded_gnl_generation_without_a_gl_week_names_the_term(
+    code: int, stage: int
+) -> None:
+    generation = {86: [(100.0, 200.0), None]}
+
+    with pytest.raises(
+        FieldParseError,
+        match=rf"^ger_usit\({code}\) is on GNL thermal {code}, but no dadgnl GL "
+        rf"week starts in stage {stage + 1},",
+    ) as raised:
+        commanded_gnl_generation(
+            generation,
+            code,
+            stage,
+            reference=f"ger_usit({code})",
+            dadgnl_path="dadgnl.rv0",
+        )
+
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rv0", "GL")
 
 
 def test_gate_on_for_a_tg_plant_without_gl() -> None:

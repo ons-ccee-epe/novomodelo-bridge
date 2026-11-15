@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.anticipated import commitment_clamped_diagnostic
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, require_frame
 from novomodelo_bridge.core.policy_dates import hours_between
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
@@ -398,6 +399,39 @@ def gnl_block_commitments(
             )
         commitments[thermal.code] = per_stage
     return commitments
+
+
+def commanded_gnl_generation(
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    code: int,
+    stage_index: int,
+    *,
+    reference: str,
+    dadgnl_path: str | None,
+) -> Sequence[float]:
+    """GNL plant *code*'s commanded MW per block at 0-based *stage_index*,
+    from :func:`gnl_block_commitments`, for the constraint term *reference*
+    names.
+
+    Raises
+    ------
+    FieldParseError
+        When the plant's generation is not commanded at the stage (no ``gl``
+        week starts in it), on the ``gl`` field of *dadgnl_path*: DECOMP
+        stops on such a term too.
+    """
+    per_stage = gnl_generation.get(code)
+    blocks = per_stage[stage_index] if per_stage is not None else None
+    if blocks is None:
+        raise FieldParseError(
+            f"{reference} is on GNL thermal {code}, but no dadgnl GL week "
+            f"starts in stage {stage_index + 1}, so the thermal has no "
+            "commanded generation there to move into the limits; DECOMP stops "
+            "on such a term too",
+            path=dadgnl_path,
+            field="GL",
+        )
+    return blocks
 
 
 def _read_weeks_per_month(dadgnl: _GnlRegisters) -> dict[int, int]:

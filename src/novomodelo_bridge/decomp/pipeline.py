@@ -1468,18 +1468,30 @@ def _read_constraint_census(
     effective: cadastro_conv.EffectiveCadastro,
     id_map: DecompIdMap,
     pumping_ids: Mapping[int, int],
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    *,
+    dadger_path: str,
+    dadgnl_path: str | None,
 ) -> constraint_registers.ConstraintCensus:
-    """The deck's special constraints split by lowering target, without the
-    ones on an entity the case lacks, reporting those and any conflicting
+    """The deck's special constraints split by lowering target, with the
+    commanded generation of GNL thermals moved into their limits and without
+    the ones on an entity the case lacks, reporting those and any conflicting
     bounds as diagnostics."""
-    census, unknown = constraint_registers.drop_unknown_entities(
+    census, gnl_only = constraints_conv.fold_commanded_gnl_terms(
         constraint_registers.read_constraints(dadger),
+        gnl_generation,
+        thermal_codes=id_map.thermal_codes,
+        dadger_path=dadger_path,
+        dadgnl_path=dadgnl_path,
+    )
+    census, unknown = constraint_registers.drop_unknown_entities(
+        census,
         hydro_codes=id_map.hydro_codes,
         coupling_only_codes=id_map.coupling_only_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
     )
-    for diagnostic in unknown:
+    for diagnostic in (*gnl_only, *unknown):
         dx.emit(diagnostic, logger=_LOG)
     if census.bound_conflicts:
         names = {
@@ -1684,7 +1696,17 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     assert turbine_limits is not None
 
     pumping_ids = network_conv.pumping_station_id_map(dadger)
-    census = _read_constraint_census(dadger, effective, id_map, pumping_ids)
+    census = _read_constraint_census(
+        dadger,
+        effective,
+        id_map,
+        pumping_ids,
+        anticipated_conv.gnl_block_commitments(artifacts.gnl_model, calendar)
+        if artifacts.gnl_model is not None
+        else {},
+        dadger_path=str(case.files.dadger),
+        dadgnl_path=str(case.files.dadgnl) if case.files.dadgnl is not None else None,
+    )
     thermal_generation_contribs, thermal_cost_table = (
         thermal_conv.convert_thermal_bounds(case, id_map)
     )

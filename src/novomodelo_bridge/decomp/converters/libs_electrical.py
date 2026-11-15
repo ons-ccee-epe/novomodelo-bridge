@@ -91,7 +91,10 @@ from novomodelo_bridge.core.electrical_expression import (
 )
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
-from novomodelo_bridge.decomp.converters.anticipated import gnl_block_commitments
+from novomodelo_bridge.decomp.converters.anticipated import (
+    commanded_gnl_generation,
+    gnl_block_commitments,
+)
 from novomodelo_bridge.decomp.converters.hydro import (
     _ITAIPU_CODE,
     plant_available_power,
@@ -1114,33 +1117,6 @@ def _peq_block_generation(
     return series[stage_index][block_index]
 
 
-def _gnl_block_generation(
-    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
-    term: ParsedTerm,
-    stage_index: int,
-    block_index: int,
-) -> float:
-    """A GNL plant's ``ger_usit`` at one cell: its ``gl`` commanded generation (MW).
-
-    Raises
-    ------
-    ValueError
-        When the plant's generation is not commanded at the cell's stage
-        (no ``gl`` week starts in it): the term would be a decision the
-        abatement cannot represent, so the conversion aborts.
-    """
-    code = term.args[0]
-    per_stage = gnl_generation.get(code)
-    blocks = per_stage[stage_index] if per_stage is not None else None
-    if blocks is None:
-        raise ValueError(
-            f"ger_usit({code}) names a GNL plant whose generation is not "
-            f"commanded at stage {stage_index} (no dadgnl GL week starts in "
-            "it); an uncommanded GNL term cannot be abated into the bound"
-        )
-    return blocks[block_index]
-
-
 def build_data_context(
     case: DecompCase,
     id_map: DecompIdMap,
@@ -1173,7 +1149,7 @@ def build_data_context(
     - a ``peq_<name>_<sub>`` token — that ``PQ`` series' block generation
       (:func:`_peq_block_generation`);
     - a GNL plant's ``ger_usit`` — its commanded ``gl`` generation at the
-      cell (:func:`_gnl_block_generation`), read from *gnl_model*;
+      cell (:func:`commanded_gnl_generation`), read from *gnl_model*;
     - an ``alias`` token — the model alias's value
       (:func:`_resolve_alias_value`: stage-inherited, ``NA``-patamar applies
       to all blocks);
@@ -1192,9 +1168,9 @@ def build_data_context(
         before the cell. :func:`assemble_bound` is the sole catcher —
         turning this into a ``Severity.WARNING`` diagnostic and dropping the
         constraint (skip-not-partial), never a silently wrong bound.
-    ValueError
+    FieldParseError
         From the returned per-cell context, when a GNL plant's ``ger_usit``
-        is not commanded at the cell (:func:`_gnl_block_generation`).
+        is not commanded at the cell (:func:`commanded_gnl_generation`).
     """
     calendar = case.calendar
     demand = _per_stage_block_loads(case.dadger, id_map, calendar)
@@ -1203,6 +1179,7 @@ def build_data_context(
     gnl_generation = (
         gnl_block_commitments(gnl_model, calendar) if gnl_model is not None else {}
     )
+    dadgnl_path = str(case.files.dadgnl) if case.files.dadgnl is not None else None
     n_submarkets = len(id_map.bus_codes)
 
     # TRACKED NOVOMODELO-GAP (C36): the case has no load term in a generic
@@ -1244,9 +1221,14 @@ def build_data_context(
                     pq_generation, id_map, term, stage_index, block_index
                 )
             if term.token == GNL_TOKEN:
-                return _gnl_block_generation(
-                    gnl_generation, term, stage_index, block_index
-                )
+                code = term.args[0]
+                return commanded_gnl_generation(
+                    gnl_generation,
+                    code,
+                    stage_index,
+                    reference=f"ger_usit({code})",
+                    dadgnl_path=dadgnl_path,
+                )[block_index]
             if term.token == SE_TOKEN:
                 return evaluate_se(term, model, stage_index, block_index, resolve)
             raise ValueError(

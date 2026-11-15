@@ -103,6 +103,18 @@ with no term left. An `ener_interc` operand that is not an `SB` code is read
 as the `IV` node, so a missing line on it also leaves the whole restriction
 out: the conversion cannot tell the `IV` node from an undeclared code.
 
+An `FT` term in an `RE` constraint on a fuel-constrained thermal of
+`dadgnl.rvN` is handled as DECOMP handles it, and as the conversion handles
+`ger_usit` on such a plant in the LIBS file: the generation its `GL` records
+command at each stage and patamar, times the term's coefficient, is taken off
+the limits, and the term leaves the sum. An `RE` left with one plant term
+becomes a plant bound, and one left with no other term bounds nothing in the
+case and is left out with a note. A plant with no `GL` week in a stage where
+its term applies stops the conversion, as it stops DECOMP, and `check decomp`
+reports it for an `RE` constraint. So does an `FT` term on a thermal with
+both a `CT` record and a `TG` record, which cannot be told apart as a
+decision or a commanded generation.
+
 Incremental inflows are converted as the inflow file gives them, negative
 values included. DECOMP reports a negative incremental inflow as zero in its
 operation output; Novomodelo's water balance removes that water unless its priced

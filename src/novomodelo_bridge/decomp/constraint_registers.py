@@ -942,10 +942,10 @@ _ENTITY_CHECKS = (
         diagnostic_code="decomp-re-thermal-not-normal",
         title="RE constraints on thermals without a CT record",
         summary=(
-            "The listed RE constraints have an FT term on a thermal with no CT "
-            "record in dadger.rvN, such as a GNL thermal of dadgnl.rvN. The "
-            "conversion leaves each constraint out, so the case runs without "
-            "the limits DECOMP applies."
+            "The listed RE constraints have an FT term on a thermal with "
+            "neither a CT record in dadger.rvN nor a TG record in dadgnl.rvN. "
+            "The conversion leaves each constraint out, so the case runs "
+            "without the limits DECOMP applies."
         ),
         code_column="Thermal code",
         remediation=(

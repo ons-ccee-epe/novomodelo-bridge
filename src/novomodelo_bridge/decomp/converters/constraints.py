@@ -22,12 +22,12 @@ generic_constraint_builder.GenericConstraintBuilder`), plus the multi-term
 ``RE`` emitter (``emit_re_generics``) and the ``RHQ``/``RHV`` emitter
 (``emit_rhq_rhv_generics``) built on top of it.
 
-GNL pre-processing (abating commanded generation, aborting on uncommanded)
-is out of scope here: a constraint whose ``thermal_generation`` term names a
-thermal outside ``id_map.thermal_codes`` (a GNL thermal of ``dadgnl``) never
-reaches these emitters, because
+An ``RE`` ``FT`` term on a GNL thermal of ``dadgnl`` never reaches these
+emitters: :func:`fold_commanded_gnl_terms` moves its commanded generation into
+the constraint's limits first, and
 :func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`
-leaves it out of the census with a ``WARNING``.
+leaves out, with a ``WARNING``, a constraint on any other thermal outside
+``id_map.thermal_codes``.
 
 A coefficient that changes over a constraint's stages, or a term that joins
 after its first stage, reads a ``per_stage`` parameter
@@ -58,6 +58,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -72,7 +73,8 @@ from novomodelo_bridge.core.stored_energy import (
     stored_energy_floor,
     stored_energy_lhs,
 )
-from novomodelo_bridge.decomp.constraint_registers import StageBounds
+from novomodelo_bridge.decomp.constraint_registers import StageBounds, lowers_to_bound
+from novomodelo_bridge.decomp.converters.anticipated import commanded_gnl_generation
 from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
 from novomodelo_bridge.decomp.converters.rhe_shares import (
     build_rhe_shares,
@@ -80,7 +82,7 @@ from novomodelo_bridge.decomp.converters.rhe_shares import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     import pyarrow as pa
 
@@ -664,6 +666,157 @@ def _offset_if_bounded(value: float | None, offset: float) -> float | None:
     if value is None or not is_bounded(value):
         return value
     return value + offset
+
+
+def fold_commanded_gnl_terms(
+    census: ConstraintCensus,
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    *,
+    thermal_codes: Collection[int],
+    dadger_path: str,
+    dadgnl_path: str | None,
+) -> tuple[ConstraintCensus, list[Diagnostic]]:
+    """*census* with every ``RE`` ``FT`` term on a GNL plant moved into its
+    constraint's limits, as the source model does.
+
+    *gnl_generation* is
+    :func:`~novomodelo_bridge.decomp.converters.anticipated.gnl_block_commitments`.
+    At each stage and block, the term's coefficient times the plant's
+    commanded ``gl`` generation is subtracted from both limits, and the term
+    leaves the sum. The rest of the constraint is lowered anew, so one left
+    with a single unit term becomes an entity bound. A constraint left with
+    no term bounds no case variable: it is left out and reported in one
+    INFO. ``by_family`` keeps every record read.
+
+    Raises
+    ------
+    FieldParseError
+        When a GNL plant's generation is not commanded at a stage its term is
+        in (:func:`~novomodelo_bridge.decomp.converters.anticipated.commanded_gnl_generation`),
+        where the source model stops too.
+    UnsupportedSourceError
+        When the plant's code also has a ``CT`` record in *thermal_codes*, so
+        the term cannot be told apart as a decision or a commanded generation.
+    """
+    ct_codes = set(thermal_codes)
+    folded: dict[int, ConstraintRecord | None] = {}
+    rows: list[list[object]] = []
+    for record in (*census.to_bounds, *census.to_generic):
+        if record.family != "RE":
+            continue
+        gnl_terms = [
+            term
+            for term in record.terms
+            if term.variable == "thermal_generation" and term.code in gnl_generation
+        ]
+        if not gnl_terms:
+            continue
+        for term in gnl_terms:
+            if term.code in ct_codes:
+                raise UnsupportedSourceError(
+                    f"RE {record.constraint_id} has an FT term on thermal "
+                    f"{term.code}, which has both a CT record in dadger and a "
+                    "TG record in dadgnl; such a term is not converted yet, "
+                    "since it cannot be told apart as a decision or a "
+                    "commanded GNL generation",
+                    path=dadger_path,
+                    field="RE/FT",
+                )
+        bounds = {
+            stage_index: _without_commanded_generation(
+                record.constraint_id,
+                stage_index,
+                stage_bounds,
+                gnl_terms,
+                gnl_generation,
+                dadgnl_path,
+            )
+            for stage_index, stage_bounds in record.bounds.items()
+        }
+        kept = tuple(term for term in record.terms if term not in gnl_terms)
+        if kept:
+            folded[record.constraint_id] = dataclasses.replace(
+                record, terms=kept, bounds=bounds
+            )
+        else:
+            folded[record.constraint_id] = None
+            rows.extend([record.constraint_id, term.code] for term in gnl_terms)
+    if not folded:
+        return census, []
+    to_bounds: list[ConstraintRecord] = []
+    to_generic: list[ConstraintRecord] = []
+    for bucket, records in (
+        (to_bounds, census.to_bounds),
+        (to_generic, census.to_generic),
+    ):
+        for record in records:
+            if record.family != "RE" or record.constraint_id not in folded:
+                bucket.append(record)
+                continue
+            kept_record = folded[record.constraint_id]
+            if kept_record is not None:
+                target = to_bounds if lowers_to_bound(kept_record) else to_generic
+                target.append(kept_record)
+    screened = dataclasses.replace(
+        census, to_bounds=tuple(to_bounds), to_generic=tuple(to_generic)
+    )
+    return screened, [_gnl_terms_only_diagnostic(rows)] if rows else []
+
+
+def _without_commanded_generation(
+    constraint_id: int,
+    stage_index: int,
+    stage_bounds: StageBounds,
+    gnl_terms: Sequence[ConstraintTerm],
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    dadgnl_path: str | None,
+) -> StageBounds:
+    """*stage_bounds* less each GNL term's coefficient times its plant's
+    commanded MW, per block; a term absent at the stage reads no commitment."""
+    offsets = [0.0] * len(stage_bounds.lower)
+    for term in gnl_terms:
+        coefficient = term.coefficient_at(stage_index)
+        if coefficient == 0.0:
+            continue
+        blocks = commanded_gnl_generation(
+            gnl_generation,
+            term.code,
+            stage_index,
+            reference=f"the FT term of RE {constraint_id} on thermal {term.code}",
+            dadgnl_path=dadgnl_path,
+        )
+        for block, mw in enumerate(blocks[: len(offsets)]):
+            offsets[block] += coefficient * mw
+    return StageBounds(
+        lower=tuple(
+            _offset_if_bounded(value, -offset)
+            for value, offset in zip(stage_bounds.lower, offsets, strict=True)
+        ),
+        upper=tuple(
+            _offset_if_bounded(value, -offset)
+            for value, offset in zip(stage_bounds.upper, offsets, strict=True)
+        ),
+    )
+
+
+def _gnl_terms_only_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-re-gnl-terms-only",
+        severity=Severity.INFO,
+        category="Special constraints",
+        title=f"RE constraints only on GNL thermals left out ({len(rows)})",
+        summary=(
+            "The listed RE constraints have FT terms only on GNL thermals of "
+            "dadgnl.rvN. As in DECOMP, the generation their GL records command "
+            "is moved into the limits, which leaves no case variable to bound, "
+            "so the conversion leaves each constraint out."
+        ),
+        table=DiagnosticTable(
+            columns=["Constraint", "Thermal code"],
+            rows=sorted(rows),
+            justify=["right", "right"],
+        ),
+    )
 
 
 def _resolve_hv_terms(

@@ -49,8 +49,8 @@ links are cobre-bridge's.
 ### Changed
 
 - **`convert newave` and `convert decomp` treat a constraint term outside
-  the case by its cause**: a term that is zero in the source model too, an
-  interchange between submarkets no line joins or a plant that generates
+  the case by its cause**: a term that is zero in the source model too, on an
+  interchange between submarkets no line joins or on a plant that generates
   nothing (fictitious, `NC`, `NE` with no `exph.dat` row, or a DECOMP plant
   kept only for the NEWAVE coupling), is left out with a note and the rest of
   the constraint is kept, where DECOMP left the whole constraint out with a
@@ -67,6 +67,20 @@ links are cobre-bridge's.
   `check decomp` reports a term on a plant DECOMP does not operate as a note,
   no longer as `decomp-re-plant-not-operated`, unless the constraint has no
   other term.
+- **`convert decomp` takes the commanded generation of a GNL thermal off an
+  `RE` constraint's limits**: an `FT` term on a fuel-constrained thermal of
+  `dadgnl.rvN` leaves the sum, and its coefficient times the generation the
+  `GL` records command at each stage and patamar is subtracted from the
+  limits, as DECOMP does and as the conversion already did for `ger_usit` in
+  the LIBS file, instead of leaving the whole constraint out with the
+  `decomp-re-thermal-not-normal` warning. A constraint left with no other term
+  is left out with the new note `decomp-re-gnl-terms-only`. A plant with no
+  `GL` week in a stage where its term applies stops the conversion with
+  `source-field-parse`, as it stops DECOMP, where a LIBS `ger_usit` term
+  stopped it with `unexpected-error`, and an `FT` term on a thermal with both
+  a `CT` and a `TG` record stops it with `source-unsupported`; `check decomp`
+  now reads `dadgnl.rvN` and reports both for an `RE` constraint. Results
+  change for decks with such terms, so reconvert them.
 - **BREAKING: `check decomp` raises the warnings `convert decomp` raises for
   the special constraints and `AC` registers it leaves out**
   (`decomp-re-thermal-not-normal`, `decomp-re-plant-not-operated`,

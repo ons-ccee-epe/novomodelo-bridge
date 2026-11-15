@@ -26,6 +26,7 @@ from novomodelo_bridge.core.electrical_expression import (
     classify_terms,
     parse_linear_expression,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -1197,8 +1198,15 @@ def test_build_data_context_gnl_reads_commanded_generation_per_block() -> None:
 
 def test_build_data_context_gnl_uncommanded_stage_aborts() -> None:
     term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
-    with pytest.raises(ValueError, match="not commanded at stage 1"):
+    with pytest.raises(
+        FieldParseError,
+        match=r"^ger_usit\(86\) is on GNL thermal 86, but no dadgnl GL week starts "
+        "in stage 2, so the thermal has no commanded generation there to move "
+        "into the limits; DECOMP stops on such a term too$",
+    ) as raised:
         _gnl_factory()(1, 0)(term)
+
+    assert raised.value.field == "GL"
 
 
 def test_assemble_bound_abates_gnl_commanded_generation() -> None:
