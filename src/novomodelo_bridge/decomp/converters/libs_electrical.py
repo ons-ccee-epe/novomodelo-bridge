@@ -437,29 +437,30 @@ def _read_formula_limits(
 
 _INEQUACAO_CARD = "RESTRICAO-ELETRICA-INEQUACAO"
 _INEQUACAO_PERIOD_CARD = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
-_INEQUACAO_OPERATORS = (">=", "<=", "==")
+_INEQUACAO_OPERATORS = (">=", "<=")
+_OPERATOR_FIELD = "operador"
 
 
 def _inequacao_operator(value: object, code: int, card: str, source: Path) -> str:
-    """One inequality row's ``operador``.
+    """One inequality row's ``operador``, stripped.
 
     Raises
     ------
     FieldParseError
         When the row has no operator, or one other than
-        :data:`_INEQUACAO_OPERATORS`.
+        :data:`_INEQUACAO_OPERATORS`, the two the source model defines.
     """
-    if pd.isna(value):
-        problem = "no comparison operator"
-    elif (operator := str(value)) in _INEQUACAO_OPERATORS:
+    operator = "" if pd.isna(value) else str(value).strip()
+    if operator in _INEQUACAO_OPERATORS:
         return operator
-    else:
-        problem = f"the unknown comparison operator {operator!r}"
+    problem = (
+        f"the {_OPERATOR_FIELD} {operator!r}" if operator else f"no {_OPERATOR_FIELD}"
+    )
     raise FieldParseError(
         f"{source.name}: restriction {code} has {problem} in its {card} row; "
-        f"an inequality compares with {', '.join(_INEQUACAO_OPERATORS)}",
+        "an inequality compares with >= or <=",
         path=str(source),
-        field=card,
+        field=_OPERATOR_FIELD,
     )
 
 
@@ -1497,7 +1498,7 @@ def _fold_inequacao_bound(
     ``bound = Σ_{B∩RHS} − Σ_{B∩LHS}``. :func:`~novomodelo_bridge.
     generic_constraint_format.sense_to_interval` then maps *restriction*'s
     operator onto the ``(lower, upper)`` shape (``>=`` lower-only, ``<=``
-    upper-only, ``==`` both endpoints equal to *bound*).
+    upper-only).
 
     *lhs_partition*/*rhs_partition* are already-parsed-and-classified sides
     (:func:`assemble_bound` computes them once and passes them to every
@@ -1906,22 +1907,20 @@ def resolve_disp_usih(term: ParsedTerm, stage_index: int, a_h: AvailablePower) -
 def _flip_operator(sense: str) -> str:
     """The sense-flipped counterpart of one INEQUACAO comparison operator.
 
-    Multiplying an inequality by ``-1`` swaps ``>=``/``<=`` and leaves
-    ``==`` unchanged — exactly the operator-side half of the reserve->gen-cap
-    rewrite (:func:`_fold_reserve_disp_usih`).
+    Multiplying an inequality by ``-1`` swaps ``>=``/``<=`` — exactly the
+    operator-side half of the reserve->gen-cap rewrite
+    (:func:`_fold_reserve_disp_usih`).
 
     Raises
     ------
     ValueError
-        When *sense* is not one of ``">="``, ``"<="``, ``"=="`` — mirroring
-        :func:`~novomodelo_bridge.core.generic_constraint_format.sense_to_interval`.
+        When *sense* is not one of :data:`_INEQUACAO_OPERATORS`, which the
+        reader already refuses.
     """
     if sense == ">=":
         return "<="
     if sense == "<=":
         return ">="
-    if sense == "==":
-        return "=="
     raise ValueError(f"_flip_operator: unknown operator {sense!r}")
 
 

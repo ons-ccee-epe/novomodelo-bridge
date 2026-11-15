@@ -667,7 +667,7 @@ class TestLibsElectricalWarning:
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
         cards = _StubRestricoes(
-            restricao_eletrica_inequacao=_re_inequacao((7, "ger_usih(1)", "<", "0")),
+            restricao_eletrica_inequacao=_re_inequacao((7, "ger_usih(1)", "==", "0")),
         )
 
         result = self._run(decomp_mini_deck, tmp_path, cards)
@@ -681,8 +681,9 @@ class TestLibsElectricalWarning:
         [failure] = [d for d in result.diagnostics if d.code == "source-field-parse"]
         assert failure.notes == [
             f"file: {tmp_path / 'deck' / self._LIBS_FILE}",
-            "field: RESTRICAO-ELETRICA-INEQUACAO",
+            "field: operador",
         ]
+        assert "RESTRICAO-ELETRICA-INEQUACAO row" in failure.summary
         assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
 
 

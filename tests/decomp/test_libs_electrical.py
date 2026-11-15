@@ -354,14 +354,16 @@ def test_horizonte_period_out_of_range_raises_value_error() -> None:
     assert "6" in message
 
 
-@pytest.mark.parametrize("operator", [">=", "<=", "=="])
-def test_an_inequality_reads_the_operators_the_conversion_carries(
-    operator: str,
+@pytest.mark.parametrize(
+    ("operador", "operator"), [(">=", ">="), ("<=", "<="), (" >= ", ">=")]
+)
+def test_an_inequality_reads_the_operators_the_source_model_defines(
+    operador: str, operator: str
 ) -> None:
     stub = _StubRestricoes(
-        restricao_eletrica_inequacao=_re_inequacao((98, "ger_usih(1)", operator, "0")),
+        restricao_eletrica_inequacao=_re_inequacao((98, "ger_usih(1)", operador, "0")),
         restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
-            (98, 1, 1, None, "ger_usih(1)", operator, "5"),
+            (98, 1, 1, None, "ger_usih(1)", operador, "5"),
         ),
     )
     model = read_libs_electrical(stub, _calendar(1), source=_LIBS)
@@ -371,47 +373,61 @@ def test_an_inequality_reads_the_operators_the_conversion_carries(
     assert [row.operator for row in restriction.overrides] == [operator]
 
 
+_INEQUACAO_ROW_LOCATIONS = {
+    "constant row": (
+        lambda op: {
+            "restricao_eletrica_inequacao": _re_inequacao((97, "ger_usih(1)", op, "0"))
+        },
+        "RESTRICAO-ELETRICA-INEQUACAO",
+    ),
+    "period row": (
+        lambda op: {
+            "restricao_eletrica_inequacao": _re_inequacao(
+                (97, "ger_usih(1)", "<=", "0")
+            ),
+            "restricao_eletrica_inequacao_periodo_patamar": _re_inequacao_per_pat(
+                (97, 1, 1, None, "ger_usih(1)", op, "5")
+            ),
+        },
+        "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+    ),
+    "period row alone, outside the horizon": (
+        lambda op: {
+            "restricao_eletrica_inequacao_periodo_patamar": _re_inequacao_per_pat(
+                (97, 1, 1, None, "ger_usih(1)", "<=", "5"),
+                (97, 2, 2, None, "ger_usih(1)", op, "5"),
+            ),
+            "restricao_eletrica_horizonte_periodo": _horizonte((97, 1, 1)),
+        },
+        "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+    ),
+}
+
+
+@pytest.mark.parametrize("location", list(_INEQUACAO_ROW_LOCATIONS))
 @pytest.mark.parametrize(
-    ("inequacao", "per_pat", "card", "problem"),
+    ("operador", "problem"),
     [
-        (
-            [(97, "ger_usih(1)", "<", "0")],
-            [],
-            "RESTRICAO-ELETRICA-INEQUACAO",
-            "the unknown comparison operator '<'",
-        ),
-        (
-            [(97, "ger_usih(1)", None, "0")],
-            [],
-            "RESTRICAO-ELETRICA-INEQUACAO",
-            "no comparison operator",
-        ),
-        (
-            [(97, "ger_usih(1)", "<=", "0")],
-            [(97, 1, 1, None, "ger_usih(1)", "=", "5")],
-            "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
-            "the unknown comparison operator '='",
-        ),
+        ("==", "the operador '=='"),
+        ("<>", "the operador '<>'"),
+        ("=", "the operador '='"),
+        (None, "no operador"),
+        ("  ", "no operador"),
     ],
 )
-def test_an_inequality_with_an_operator_the_conversion_cannot_read_is_refused(
-    inequacao: list[tuple],
-    per_pat: list[tuple],
-    card: str,
-    problem: str,
+def test_an_inequality_with_an_operator_the_source_model_does_not_define_is_refused(
+    location: str, operador: str | None, problem: str
 ) -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_inequacao=_re_inequacao(*inequacao),
-        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(*per_pat),
-    )
+    frames, card = _INEQUACAO_ROW_LOCATIONS[location]
+    stub = _StubRestricoes(**frames(operador))
     with pytest.raises(FieldParseError) as exc_info:
-        read_libs_electrical(stub, _calendar(1), source=_LIBS)
+        read_libs_electrical(stub, _calendar(2), source=_LIBS)
     assert str(exc_info.value) == (
         f"lib_restricao-eletrica-especial.csv: restriction 97 has {problem} in "
-        f"its {card} row; an inequality compares with >=, <=, =="
+        f"its {card} row; an inequality compares with >= or <="
     )
     assert exc_info.value.path == str(_LIBS)
-    assert exc_info.value.field == card
+    assert exc_info.value.field == "operador"
 
 
 def test_no_electrical_cards_returns_none() -> None:

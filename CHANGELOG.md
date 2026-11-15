@@ -134,8 +134,8 @@ links are cobre-bridge's.
   `electric-constraint-malformed-term` and `convert decomp` stopped with an
   `unexpected-error`. `convert decomp` refuses a malformed activation rule,
   a `RESTRICAO-ELETRICA-HABILITA` naming an undeclared rule and a LIBS
-  inequality whose operator is missing or not `>=`, `<=` or `==` the same
-  way (`check decomp` reports the operator too), and now reads a LIBS
+  inequality whose operator is missing or not `>=` or `<=` the same way
+  (`check decomp` reports the operator too), and now reads a LIBS
   coefficient written before a space or a parenthesis.
 - **`compare` and `dashboard` no longer stop on a `system/lines.json` they
   cannot read**: they treat the case as having no lines, leave out the
