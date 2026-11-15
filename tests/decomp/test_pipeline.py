@@ -700,7 +700,8 @@ class TestConstraintCensusConflictDiagnostic:
 
     def test_a_gnl_term_is_folded_before_the_entity_check(self) -> None:
         """An FT term on GNL plant 86, which has no CT record, is moved into
-        the limits instead of leaving its constraint out."""
+        the limits instead of leaving its constraint out, and the stage its
+        generation differs by patamar in is listed."""
         dadger = _FakeDadger(
             re=_decl((10, 1, 1)),
             fu=_coeff((10, 118, 1.0, 1)),
@@ -719,7 +720,10 @@ class TestConstraintCensusConflictDiagnostic:
                 dadger_path="dadger.rv0",
                 dadgnl_path="dadgnl.rv0",
             )
-        assert collected == []
+        [note] = collected
+        assert note.code == "decomp-re-gnl-patamar-values"
+        assert note.table is not None
+        assert note.table.rows == [[10, 86, "0"]]
         [bound] = census.to_bounds
         assert bound.constraint_id == 10
         assert bound.bounds[0].upper == (800.0, 700.0, 600.0)

@@ -17,6 +17,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.electrical_expression import (
+    SE_TOKEN,
     AssembledBound,
     DataContext,
     ParsedTerm,
@@ -41,6 +42,7 @@ from novomodelo_bridge.decomp.converters.libs_electrical import (
     PeriodPatamarOverride,
     ViolationTreatment,
     _UnresolvableBucketBTerm,
+    evaluate_se,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical_emit import (
     LibsElectricalResult,
@@ -1678,6 +1680,57 @@ def test_emit_lists_kept_restrictions_with_a_bare_demand_term() -> None:
     assert finding.table.rows == [[801, "demanda(1)"]]
     assert finding.remediation is not None
     assert "RESTRICAO-ELETRICA-ESPECIAL" in finding.remediation
+
+
+def test_emit_lists_kept_restrictions_reading_a_gnl_generation_by_patamar() -> None:
+    # 903 reads the plant inside a se(...); the dropped 902 is not listed,
+    # and stage 1, where the plant commands one MW for both patamares, is not.
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            901: _restriction(901, "ger_usih(1)", "<=", "ger_usit(86) + 100"),
+            902: _restriction(
+                902, "ger_usih(1) + ener_comerc(1)", "<=", "ger_usit(86)"
+            ),
+            903: _restriction(
+                903, "ger_usih(1)", "<=", "se(demanda_sin >= 0, ger_usit(86), 0)"
+            ),
+        },
+        rules={},
+        gnl_thermal_codes=frozenset({86}),
+    )
+    generation = {(0, 0): 500.0, (0, 1): 400.0, (1, 0): 300.0, (1, 1): 300.0}
+
+    def factory(stage_index: int, block_index: int) -> DataContext:
+        values = _dict_context(
+            {
+                "__ger_usit_gnl__(86)": generation[(stage_index, block_index)],
+                "demanda_sin": 10.0,
+            }
+        )
+
+        def resolve(term: ParsedTerm) -> float:
+            if term.token == SE_TOKEN:
+                return evaluate_se(term, model, resolve)
+            return values(term)
+
+        return resolve
+
+    result, sink = _emit_findings(
+        model, calendar=_emit_calendar(2, n_blocks=2), factory=factory
+    )
+
+    assert result.converted_codes == (901, 903)
+    assert result.deferred["unresolved-bucket-a"] == (902,)
+    [finding] = [d for d in sink if d.code == "decomp-electrical-gnl-patamar-values"]
+    assert finding.severity is dx.Severity.INFO
+    assert finding.title == (
+        "Electrical restrictions reading a GNL generation that differs by patamar (2)"
+    )
+    assert finding.table is not None
+    assert finding.table.columns == ["Restriction", "Thermal code", "Stages"]
+    assert finding.table.rows == [[901, 86, "0"], [903, 86, "0"]]
 
 
 def test_emit_undeclared_names_in_formula_and_rule_are_one_warning() -> None:

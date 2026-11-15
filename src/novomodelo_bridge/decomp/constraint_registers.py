@@ -202,6 +202,10 @@ class ConstraintRecord:
     #: side selector — ``limite`` is always the lower side regardless of it.
     tipo_limite: int | None = None
     he_meta: HeMeta | None = None  # HE productivity/penalty columns
+    #: ``(thermal code, 0-based stage)`` of each GNL ``FT`` term
+    #: :func:`~novomodelo_bridge.decomp.converters.constraints.fold_commanded_gnl_terms`
+    #: moved into the limits.
+    gnl_folds: tuple[tuple[int, int], ...] = ()
 
     @property
     def n_entities(self) -> int:

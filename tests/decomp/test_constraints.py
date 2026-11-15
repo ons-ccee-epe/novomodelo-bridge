@@ -49,6 +49,7 @@ from novomodelo_bridge.decomp.converters.constraints import (
     emit_re_generics,
     emit_rhq_rhv_generics,
     fold_commanded_gnl_terms,
+    re_gnl_patamar_diagnostic,
     resolve_fe_term,
     resolve_fi_term,
     slots_from_record,
@@ -1233,6 +1234,20 @@ def test_a_gnl_term_absent_at_a_stage_reads_no_commitment_there() -> None:
         lower=(None, -150.0, -290.0), upper=(1e21, 800.0, 700.0)
     )
     assert bound.bounds[1] == record.bounds[1]
+    assert bound.gnl_folds == ((86, 0),)
+
+
+def test_the_kept_gnl_folds_are_listed_where_the_generation_differs() -> None:
+    """RE 4, left out for having only GNL terms, is not listed."""
+    hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
+    folded, _ = _fold(_split(_re_record(1, hydro, _gnl_ft()), _re_record(4, _gnl_ft())))
+
+    note = re_gnl_patamar_diagnostic(folded, _GNL_GENERATION)
+
+    assert note is not None
+    assert note.code == "decomp-re-gnl-patamar-values"
+    assert note.table is not None
+    assert note.table.rows == [[1, 86, "0"]]
 
 
 def test_a_gnl_number_a_ct_record_gives_in_its_subsystem_is_a_parse_error() -> None:

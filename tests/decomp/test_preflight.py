@@ -694,6 +694,7 @@ class TestSpecialConstraintCoverage:
         )
 
     def test_a_gnl_term_is_folded_as_convert_does(self) -> None:
+        """The fold also lists the stage its generation differs by patamar in."""
         checks, diagnostics = _coverage(
             self._gnl_dadger(),
             None,
@@ -707,7 +708,11 @@ class TestSpecialConstraintCoverage:
             "3 records lowered to bounds, 1 emitted as generic constraints, "
             "4 families present in the deck"
         )
-        assert [d.code for d in diagnostics] == ["decomp-special-constraints-converted"]
+        converted, note = diagnostics
+        assert converted.code == "decomp-special-constraints-converted"
+        assert note.code == "decomp-re-gnl-patamar-values"
+        assert note.table is not None
+        assert note.table.rows == [[10, 86, "0-1"]]
 
     def test_an_uncommanded_gnl_term_fails_the_check_as_convert_stops(self) -> None:
         checks, diagnostics = _coverage(

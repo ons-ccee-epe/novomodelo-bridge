@@ -384,6 +384,8 @@ def _special_constraint_coverage(
     converts, and, verbatim as ``convert decomp`` raises them, the fold's and
     the screen's diagnostics (conflicting restrictions under *plant_names*),
     the one of
+    :func:`~novomodelo_bridge.decomp.converters.constraints.re_gnl_patamar_diagnostic`,
+    the one of
     :func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`
     and, when *libs_long_form* is ``False`` (the LIBS file has no long-form
     card ``convert decomp`` reads; ``None`` when the read failed, which its own
@@ -393,6 +395,7 @@ def _special_constraint_coverage(
     """
     from novomodelo_bridge.decomp.converters.constraints import (
         fold_commanded_gnl_terms,
+        re_gnl_patamar_diagnostic,
     )
 
     census = constraint_registers.read_constraints(dadger)
@@ -475,6 +478,9 @@ def _special_constraint_coverage(
             )
         )
     diagnostics.extend((*gnl_only, *screened))
+    patamar_values = re_gnl_patamar_diagnostic(census, gnl_generation or {})
+    if patamar_values is not None:
+        diagnostics.append(patamar_values)
 
     rha_diagnostic = constraint_registers.detect_unconverted_rha(dadger)
     if rha_diagnostic is not None:

@@ -75,7 +75,10 @@ from novomodelo_bridge.core.stored_energy import (
     stored_energy_lhs,
 )
 from novomodelo_bridge.decomp.constraint_registers import StageBounds, lowers_to_bound
-from novomodelo_bridge.decomp.converters.anticipated import commanded_gnl_generation
+from novomodelo_bridge.decomp.converters.anticipated import (
+    commanded_gnl_generation,
+    gnl_patamar_values_diagnostic,
+)
 from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
 from novomodelo_bridge.decomp.converters.rhe_shares import (
     build_rhe_shares,
@@ -746,7 +749,15 @@ def fold_commanded_gnl_terms(
         kept = tuple(term for term in record.terms if term not in gnl_terms)
         if kept:
             folded[record.constraint_id] = dataclasses.replace(
-                record, terms=kept, bounds=bounds
+                record,
+                terms=kept,
+                bounds=bounds,
+                gnl_folds=tuple(
+                    (term.code, stage_index)
+                    for stage_index in record.bounds
+                    for term in gnl_terms
+                    if term.coefficient_at(stage_index) != 0.0
+                ),
             )
         else:
             folded[record.constraint_id] = None
@@ -771,6 +782,28 @@ def fold_commanded_gnl_terms(
         census, to_bounds=tuple(to_bounds), to_generic=tuple(to_generic)
     )
     return screened, [_gnl_terms_only_diagnostic(rows)] if rows else []
+
+
+def re_gnl_patamar_diagnostic(
+    census: ConstraintCensus,
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+) -> Diagnostic | None:
+    """The INFO for the ``RE`` constraints *census* keeps that
+    :func:`fold_commanded_gnl_terms` folded with a GNL generation of
+    *gnl_generation* differing by patamar
+    (:func:`~novomodelo_bridge.decomp.converters.anticipated.gnl_patamar_values_diagnostic`)."""
+    reads: list[tuple[int, int, int, Sequence[float]]] = []
+    for record in (*census.to_bounds, *census.to_generic):
+        for thermal_code, stage_index in record.gnl_folds:
+            blocks = gnl_generation[thermal_code][stage_index]
+            assert blocks is not None  # the fold stops on an uncommanded stage
+            reads.append((record.constraint_id, thermal_code, stage_index, blocks))
+    return gnl_patamar_values_diagnostic(
+        "decomp-re-gnl-patamar-values",
+        reads,
+        noun="RE constraints",
+        column="Constraint",
+    )
 
 
 def _refuse_shared_thermal_number(

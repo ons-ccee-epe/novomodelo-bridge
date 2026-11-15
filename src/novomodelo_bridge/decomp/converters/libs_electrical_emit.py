@@ -49,6 +49,8 @@ from novomodelo_bridge.core.diagnostics import (
 )
 from novomodelo_bridge.core.electrical_expression import (
     CMO_DEMAND_TOKENS,
+    GNL_TOKEN,
+    SE_TOKEN,
     AssembledBound,
     DataContext,
     MalformedElectricalExpression,
@@ -67,6 +69,9 @@ from novomodelo_bridge.core.generic_constraint_builder import (
 from novomodelo_bridge.core.generic_constraint_format import render_expression
 from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.decomp.constraint_registers import ConstraintRecord, StageBounds
+from novomodelo_bridge.decomp.converters.anticipated import (
+    gnl_patamar_values_diagnostic,
+)
 from novomodelo_bridge.decomp.converters.constraints import (
     Unresolved,
     _hydro_generation_token,
@@ -79,6 +84,7 @@ from novomodelo_bridge.decomp.converters.libs_electrical import (
     _effective_inequacao_sides,
     active_cells,
     assemble_bound,
+    evaluate_se,
 )
 
 if TYPE_CHECKING:
@@ -510,7 +516,9 @@ def emit_libs_electrical_generics(
       loud, never silently pick one). An unresolved bucket-A token (already
       WARNED) drops the whole restriction — ``deferred["unresolved-bucket-a"]``;
       a term on a coupling-only plant is only left out of the sum, and a kept
-      restriction's such terms are reported in one INFO.
+      restriction's such terms are reported in one INFO. So are the stages
+      where a kept restriction reads a GNL plant's generation that differs
+      by patamar.
     - A well-formed but undeclared identifier anywhere in the restriction's
       (expanded) formula OR its activation rule (:class:`~novomodelo_bridge.
       core.electrical_expression.UnrecognizedElectricalToken`, raised from
@@ -593,6 +601,7 @@ def _emit_restrictions(
     builder = GenericConstraintBuilder(allocator)
     converted: list[int] = []
     demand_in_cmo: list[tuple[int, str]] = []
+    gnl_folds: list[tuple[int, int, int, Sequence[float]]] = []
     deferred: dict[str, list[int]] = {
         "inactive": [],
         "unresolved-bucket-bc": [],
@@ -620,6 +629,7 @@ def _emit_restrictions(
                     builder,
                     deferred,
                     demand_in_cmo,
+                    gnl_folds,
                     source,
                 )
         finally:
@@ -638,6 +648,14 @@ def _emit_restrictions(
             ),
             logger=_LOG,
         )
+    patamar_values = gnl_patamar_values_diagnostic(
+        "decomp-electrical-gnl-patamar-values",
+        gnl_folds,
+        noun="electrical restrictions",
+        column="Restriction",
+    )
+    if patamar_values is not None:
+        emit(patamar_values, logger=_LOG)
     return LibsElectricalResult(
         generic=builder.result(),
         converted_codes=tuple(converted),
@@ -682,14 +700,17 @@ def _emit_restriction(
     builder: GenericConstraintBuilder,
     deferred: dict[str, list[int]],
     demand_in_cmo: list[tuple[int, str]],
+    gnl_folds: list[tuple[int, int, int, Sequence[float]]],
     source: Path,
 ) -> bool:
     """Add restriction *code* to *builder* and return ``True``, or record on
     *deferred* why it is dropped and return ``False``.
 
     A kept restriction's bound terms in :data:`CMO_DEMAND_TOKENS` are added to
-    *demand_in_cmo*."""
+    *demand_in_cmo*, and each GNL plant's generation it reads to *gnl_folds*
+    as ``(code, thermal code, stage, MW per patamar)``."""
     demand_terms: set[str] = set()
+    gnl_reads: dict[tuple[int, int], ParsedTerm] = {}
     card = _RULE_CARD
     left_out: list[Unresolved] = []
     try:
@@ -707,7 +728,13 @@ def _emit_restriction(
                 stage_index,
                 block_index,
                 _recording_demand_terms(
-                    context_factory(stage_index, block_index), demand_terms
+                    _recording_gnl_reads(
+                        context_factory(stage_index, block_index),
+                        model,
+                        stage_index,
+                        gnl_reads,
+                    ),
+                    demand_terms,
                 ),
                 a_h,
             )
@@ -785,6 +812,18 @@ def _emit_restriction(
         slots=slots_from_record(record, calendar),
     )
     demand_in_cmo.extend((code, term) for term in demand_terms)
+    gnl_folds.extend(
+        (
+            code,
+            thermal_code,
+            stage_index,
+            [
+                context_factory(stage_index, block_index)(term)
+                for block_index in range(len(calendar[stage_index].block_hours))
+            ],
+        )
+        for (thermal_code, stage_index), term in sorted(gnl_reads.items())
+    )
     _emit_left_out_terms(code, left_out)
     return True
 
@@ -795,6 +834,25 @@ def _recording_demand_terms(ctx: DataContext, seen: set[str]) -> DataContext:
     def resolve(term: ParsedTerm) -> float:
         if term.token in CMO_DEMAND_TOKENS:
             seen.add(term_text(term))
+        return ctx(term)
+
+    return resolve
+
+
+def _recording_gnl_reads(
+    ctx: DataContext,
+    model: LibsElectricalModel,
+    stage_index: int,
+    seen: dict[tuple[int, int], ParsedTerm],
+) -> DataContext:
+    """*ctx*, adding to *seen*, under ``(thermal code, stage_index)``, each
+    GNL plant's ``ger_usit`` term it values, inside a ``se(...)`` too."""
+
+    def resolve(term: ParsedTerm) -> float:
+        if term.token == SE_TOKEN:
+            return evaluate_se(term, model, resolve)
+        if term.token == GNL_TOKEN and term.coefficient != 0.0:
+            seen.setdefault((term.args[0], stage_index), term)
         return ctx(term)
 
     return resolve

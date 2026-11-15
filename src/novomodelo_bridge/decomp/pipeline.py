@@ -1485,8 +1485,9 @@ def _read_constraint_census(
 ) -> constraint_registers.ConstraintCensus:
     """The deck's special constraints split by lowering target, with the
     commanded generation of GNL thermals moved into their limits and without
-    the ones on an entity the case lacks, reporting those and any conflicting
-    bounds as diagnostics."""
+    the ones on an entity the case lacks, reporting those, any conflicting
+    bounds and the GNL generations folded that differ by patamar as
+    diagnostics."""
     census, gnl_only = constraints_conv.fold_commanded_gnl_terms(
         constraint_registers.read_constraints(dadger),
         gnl_generation,
@@ -1506,8 +1507,11 @@ def _read_constraint_census(
             for code, name in effective.base["nome_usina"].items()
         },
     )
+    patamar_values = constraints_conv.re_gnl_patamar_diagnostic(census, gnl_generation)
     for diagnostic in (*gnl_only, *screened):
         dx.emit(diagnostic, logger=_LOG)
+    if patamar_values is not None:
+        dx.emit(patamar_values, logger=_LOG)
     return census
 
 

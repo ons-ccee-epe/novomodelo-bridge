@@ -82,7 +82,7 @@ from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
 from novomodelo_bridge.decomp.temporal import hours_weighted, weekly_stage_count
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
     import pandas as pd
 
@@ -425,6 +425,54 @@ def gnl_submarkets(model: GnlCommitmentModel) -> dict[int, int]:
     return {thermal.code: thermal.submarket_code for thermal in model.thermals}
 
 
+def gnl_patamar_values_diagnostic(
+    code: str,
+    reads: Iterable[tuple[int, int, int, Sequence[float]]],
+    *,
+    noun: str,
+    column: str,
+) -> dx.Diagnostic | None:
+    """The INFO for the kept constraints that read a GNL plant's commanded
+    generation at a stage where it differs by patamar, or ``None`` when none
+    does.
+
+    *reads* holds each ``(constraint, thermal code, 0-based stage, MW per
+    patamar)`` a kept constraint reads; *noun* names the constraints, plural,
+    and *column* their table column.
+    """
+    stages: dict[tuple[int, int], set[int]] = {}
+    for constraint, thermal_code, stage_index, blocks in reads:
+        if max(blocks) - min(blocks) > _NONZERO_TOLERANCE:
+            stages.setdefault((constraint, thermal_code), set()).add(stage_index)
+    if not stages:
+        return None
+    return dx.Diagnostic(
+        code=code,
+        severity=dx.Severity.INFO,
+        category="Special constraints",
+        title=(
+            f"{noun[:1].upper()}{noun[1:]} reading a GNL generation that "
+            f"differs by patamar ({len(stages)})"
+        ),
+        summary=(
+            f"In the listed stages, the listed {noun} read a GNL plant's GL "
+            "generation patamar by patamar, as DECOMP does, and that generation "
+            "differs by patamar. DECOMP also holds the plant to it in each "
+            "patamar; the case holds the plant only to its commitment for the "
+            "stage, so its dispatch in a patamar can differ from the generation "
+            "the constraint read there."
+        ),
+        table=dx.DiagnosticTable(
+            columns=[column, "Thermal code", "Stages"],
+            rows=[
+                [constraint, thermal_code, dx.format_stage_ranges(found)]
+                for (constraint, thermal_code), found in sorted(stages.items())
+            ],
+            justify=["right", "right", "left"],
+        ),
+    )
+
+
 def commanded_gnl_generation(
     gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
     code: int,
@@ -447,7 +495,7 @@ def commanded_gnl_generation(
     # TRACKED NOVOMODELO-GAP (C24): the anticipated ring holds one MW per slot,
     # so the case holds the plant's stage energy, not these per-block values; a
     # limit folded with them is exact only where the case dispatches each block
-    # at its GL value.
+    # at its GL value. gnl_patamar_values_diagnostic lists where they differ.
     per_stage = gnl_generation.get(code)
     blocks = per_stage[stage_index] if per_stage is not None else None
     if blocks is None:

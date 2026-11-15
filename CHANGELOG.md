@@ -79,7 +79,9 @@ links are cobre-bridge's.
   `ger_usit` term stopped it with `unexpected-error`. A GNL term on a plant
   whose number a `CT` record of the same subsystem also gives stops it with
   `source-field-parse` too, since DECOMP requires distinct thermal numbers
-  within a subsystem.
+  within a subsystem. The new notes `decomp-re-gnl-patamar-values` and
+  `decomp-electrical-gnl-patamar-values` list the stages where a folded GNL
+  generation differs by patamar, which the case holds only per stage.
 - **BREAKING: `convert decomp` stops with `source-unsupported` on an `RE`
   constraint with an `FT` term on a GNL thermal whose number a `CT` record
   gives in another subsystem**, which it converted as a normal thermal; give

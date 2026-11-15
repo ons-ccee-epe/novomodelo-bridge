@@ -1785,3 +1785,40 @@ def test_convert_gnl_keeps_a_plant_whose_gl_commits_nothing() -> None:
     assert all(p["value_mw"] == 0.0 for p in e.past_anticipated_commitments)
     assert e.post_study_stages is not None
     assert e.post_study_stages["thermal_bounds"]
+
+
+def test_gnl_patamar_values_lists_the_stages_the_generation_differs_in() -> None:
+    note = anticipated.gnl_patamar_values_diagnostic(
+        "decomp-re-gnl-patamar-values",
+        [
+            (10, 86, 0, (500.0, 400.0)),
+            (10, 86, 1, (300.0, 300.0)),
+            (10, 86, 2, (1.0, 2.0)),
+            (10, 86, 3, (1.0, 2.0)),
+            (10, 87, 0, (1.0, 2.0)),
+            (12, 86, 1, (300.0, 300.0)),
+        ],
+        noun="RE constraints",
+        column="Constraint",
+    )
+
+    assert note is not None
+    assert note.code == "decomp-re-gnl-patamar-values"
+    assert note.severity is Severity.INFO
+    assert note.title == (
+        "RE constraints reading a GNL generation that differs by patamar (2)"
+    )
+    assert note.table is not None
+    assert note.table.columns == ["Constraint", "Thermal code", "Stages"]
+    assert note.table.rows == [[10, 86, "0, 2-3"], [10, 87, "0"]]
+
+
+def test_gnl_patamar_values_is_none_where_every_patamar_reads_alike() -> None:
+    note = anticipated.gnl_patamar_values_diagnostic(
+        "decomp-electrical-gnl-patamar-values",
+        [(901, 86, 0, (300.0, 300.0, 300.0))],
+        noun="electrical restrictions",
+        column="Restriction",
+    )
+
+    assert note is None
