@@ -737,6 +737,20 @@ def _patch_policy_boundary(writer: CaseWriter, config: dict) -> None:
     writer.write_json("config.json", config)
 
 
+def cut_files_absent_diagnostic() -> dx.Diagnostic:
+    """The note for a deck that declares no cut files."""
+    return dx.Diagnostic(
+        code="boundary-fcf-cut-files-absent",
+        severity=dx.Severity.INFO,
+        category="Boundary FCF",
+        title="Boundary cost-to-go not imported: the deck has no cut files",
+        summary=(
+            "The deck declares no cortes or cortesh file, so the case is "
+            "converted without a boundary cost-to-go."
+        ),
+    )
+
+
 def import_boundary_fcf(
     case_dir: Path,
     case: DecompCase,
@@ -808,7 +822,7 @@ def import_boundary_fcf(
         coefficient vector length mismatch).
     """
     if case.files.cortesh is None or case.files.cortes is None:
-        _LOG.info("boundary FCF skipped — no cut files")
+        dx.emit(cut_files_absent_diagnostic(), logger=_LOG)
         return None
     if config is None or initial_conditions is None:
         raise ValueError(

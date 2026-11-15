@@ -83,8 +83,10 @@ links are cobre-bridge's.
   `adterm-lag-beyond-horizon`. DECOMP gains `decomp-ac-topology-varies`,
   `decomp-cascade-link-invalid`, `decomp-vi-travel-time-unused`,
   `decomp-energy-chain-loop`, `decomp-ncs-zero-block-factor`,
-  `decomp-pee-generation-spread`, `decomp-gnl-lag-nonuniform` and
-  `decomp-dead-volume-filling-unconverted`. Both tracks gain
+  `decomp-pee-generation-spread`, `decomp-gnl-lag-nonuniform`,
+  `decomp-dead-volume-filling-unconverted`, and
+  `boundary-fcf-cut-files-absent` for a deck without cut files, which was a
+  console line only. Both tracks gain
   `anticipated-commitment-clamped`, `fpha-efficiency-capped` and
   `hydro-forebay-curve-missing`, and DECOMP's `cadastro-topology-relinked`
   also lists the plants relinked through a plant left out of the case.

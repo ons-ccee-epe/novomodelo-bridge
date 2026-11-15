@@ -1672,7 +1672,11 @@ class TestCliInProcess:
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         assert set(payload) == {"summary", "diagnostics"}
         assert payload["summary"]["hydros"] == 3
-        assert [d["code"] for d in payload["diagnostics"]] == ["decomp-some-warning"]
+        # The fake deck declares no cut files, so the importer's note joins in.
+        assert [d["code"] for d in payload["diagnostics"]] == [
+            "decomp-some-warning",
+            "boundary-fcf-cut-files-absent",
+        ]
 
     def test_convert_decomp_diagnostics_json_coexists_with_json(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2203,8 +2207,8 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A deck that declares no cortes files converts with exit 0 and an
-        INFO note (not an error): the importer never runs and no ``boundary/``
-        directory is written."""
+        INFO diagnostic in the verdict: the importer never runs and no
+        ``boundary/`` directory is written."""
         from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir(tmp_path)  # no cortesh/cortes files
@@ -2223,20 +2227,26 @@ class TestCliInProcess:
                 "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf"
             ) as mock_import,
         ):
-            code, _stdout, stderr = self._invoke_main(
-                ["convert", "decomp", str(src), str(dst)],
+            code, stdout, _stderr = self._invoke_main(
+                ["convert", "decomp", str(src), str(dst), "--json"],
                 monkeypatch,
             )
 
         assert code == 0
-        assert "no cortes/cortesh files" in stderr
+        doc = json.loads(stdout)
+        assert doc["status"] == "ok"
+        assert [d["code"] for d in doc["diagnostics"]] == [
+            "boundary-fcf-cut-files-absent"
+        ]
         mock_import.assert_not_called()
         assert not (dst / "boundary").exists()
 
     def test_convert_decomp_boundary_fcf_capability_guard_failure_exits_1(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A failing capability probe exits 1 with the install remediation."""
+        """A failing capability probe exits 1 with the install remediation,
+        and the converted case keeps a manifest that records the failure."""
+        from novomodelo_bridge.cli.conversion_manifest import ConversionManifest
         from novomodelo_bridge.core.conversion import ConversionReport
         from novomodelo_bridge.decomp.fcf.capability import REMEDIATION
 
@@ -2268,6 +2278,9 @@ class TestCliInProcess:
         assert code == 1
         assert "novomodelo-python" in stderr
         mock_import.assert_not_called()
+        manifest = ConversionManifest.from_json(dst / "conversion_manifest.json")
+        assert manifest.diagnostics_summary.get("error") == 1
+        assert manifest.diagnostics[-1]["code"] == "unexpected-error"
 
     def test_convert_decomp_boundary_fcf_runs_before_validate(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
