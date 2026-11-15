@@ -27,6 +27,7 @@ from novomodelo_bridge.core.electrical_expression import (
     classify_terms,
     parse_linear_expression,
 )
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -1192,9 +1193,11 @@ def test_build_data_context_gnl_reads_commanded_generation_per_block() -> None:
     assert factory(0, 1)(term) == 400.0
 
 
-def test_build_data_context_gnl_uncommanded_stage_aborts() -> None:
+def test_build_data_context_gnl_uncommanded_stage_is_unsupported() -> None:
     term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
-    with pytest.raises(ValueError, match="not commanded at stage 1"):
+    with pytest.raises(
+        UnsupportedSourceError, match="no dadgnl GL record commands in período 2"
+    ):
         _gnl_factory()(1, 0)(term)
 
 
@@ -1437,14 +1440,17 @@ def test_evaluate_se_folds_a_pure_bucket_b_selected_branch() -> None:
     assert evaluate_se(term, model, 0, 0, ctx) == 300.0
 
 
-def test_evaluate_se_raises_on_decision_bearing_selected_branch() -> None:
+def test_evaluate_se_refuses_a_decision_bearing_selected_branch() -> None:
     # a se(...) selected branch carrying
     # a bucket-A/-C term cannot be folded to a float without silently
     # dropping that term from the LP -- fail loud instead.
     model = _model()
     term = parse_linear_expression("se(demanda_sin > 1000, ger_usih(1), 0)", model)[0]
     ctx = _dict_context({"demanda_sin": 1500.0})
-    with pytest.raises(ValueError, match="ger_usih"):
+    with pytest.raises(
+        UnsupportedSourceError,
+        match="in período 1, patamar 1, se\\(...\\) takes the branch 'ger_usih\\(1\\)'",
+    ):
         evaluate_se(term, model, 0, 0, ctx)
 
 
@@ -1706,52 +1712,71 @@ def test_assemble_bound_disp_usih_without_available_power_raises_value_error() -
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
 
 
-def test_assemble_bound_disp_usih_on_rhs_raises_value_error() -> None:
-    # CRITICAL pitfall guard: the reserve pattern requires disp_usih paired
-    # with ger_usih on the LHS -- a disp_usih on the RHS is outside it.
-    restriction = _inequacao(405, "ger_usih(1)", ">=", "disp_usih(1)")
+@pytest.mark.parametrize(
+    ("lhs", "rhs", "expected"),
+    [
+        (
+            "ger_usih(1)",
+            "disp_usih(1)",
+            "^the right-hand side carries a decision or disp_usih term",
+        ),
+        (
+            "disp_usih(1) - ger_usih(1) + ger_usih(2)",
+            "0",
+            "^ger_usih\\(2\\) has no disp_usih\\(2\\) beside it",
+        ),
+        (
+            "disp_usih(1) - 2*ger_usih(1)",
+            "0",
+            "^disp_usih\\(1\\) has no ger_usih\\(1\\) of the opposite coefficient",
+        ),
+        (
+            "disp_usih(1) - ger_usit(5)",
+            "0",
+            "^the decision term ger_usit\\(5\\) sits beside disp_usih",
+        ),
+        (
+            "disp_usih(1) - ger_usih(1) - ger_usih(1)",
+            "0",
+            "^two ger_usih terms beside disp_usih name the same plant",
+        ),
+    ],
+)
+def test_assemble_bound_disp_usih_outside_the_reserve_pattern_is_unsupported(
+    lhs: str, rhs: str, expected: str
+) -> None:
+    # CRITICAL pitfall guard: a shape outside the documented reserve pattern
+    # is refused, never silently mis-rewritten.
+    restriction = _inequacao(405, lhs, ">=", rhs)
     a_h = AvailablePower(overlay={(1, 0): 100.0})
-    with pytest.raises(ValueError, match="RHS"):
+    with pytest.raises(UnsupportedSourceError, match=expected) as exc_info:
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
+    assert str(exc_info.value).endswith(
+        "the conversion rewrites disp_usih only in the reserve pattern "
+        "disp_usih(h) - ger_usih(h) >= R"
+    )
+    assert exc_info.value.field is None
 
 
-def test_assemble_bound_disp_usih_unpaired_ger_usih_raises_value_error() -> None:
-    # CRITICAL pitfall guard: a ger_usih term with no matching disp_usih is
-    # outside the documented reserve pattern.
-    restriction = _inequacao(406, "disp_usih(1) - ger_usih(1) + ger_usih(2)", ">=", "0")
-    a_h = AvailablePower(overlay={(1, 0): 500.0})
-    with pytest.raises(ValueError, match="ger_usih\\(2\\)"):
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-
-def test_assemble_bound_disp_usih_mismatched_coefficient_raises_value_error() -> None:
-    # CRITICAL pitfall guard: the paired ger_usih coefficient must be the
-    # exact opposite of disp_usih's -- a magnitude mismatch is outside the
-    # documented sign structure, not silently rewritten.
-    restriction = _inequacao(410, "disp_usih(1) - 2*ger_usih(1)", ">=", "0")
-    a_h = AvailablePower(overlay={})
-    with pytest.raises(ValueError, match="disp_usih\\(1\\)"):
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-
-def test_assemble_bound_disp_usih_non_ger_usih_decision_term_raises_value_error() -> (
-    None
-):
-    # CRITICAL pitfall guard: the documented pattern only pairs disp_usih
-    # with ger_usih -- a different bucket-A token alongside it is outside
-    # the pattern, not silently folded.
-    restriction = _inequacao(411, "disp_usih(1) - ger_usit(5)", ">=", "0")
-    a_h = AvailablePower(overlay={(1, 0): 100.0})
-    with pytest.raises(ValueError, match="ger_usit"):
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-
-def test_assemble_bound_formula_with_disp_usih_raises_value_error() -> None:
+def test_assemble_bound_formula_with_disp_usih_is_unsupported() -> None:
     # The documented reserve->gen-cap rewrite only covers the INEQUACAO
     # shape; a FORMULA restriction carrying disp_usih is out of pattern.
     restriction = _formula(420, "disp_usih(1)", {(0, None): (None, 100.0)})
-    with pytest.raises(ValueError, match="FORMULA"):
+    with pytest.raises(UnsupportedSourceError, match="RESTRICAO-ELETRICA-FORMULA"):
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
+
+
+def test_assemble_bound_formula_without_a_limit_on_an_active_cell_is_unsupported() -> (
+    None
+):
+    restriction = _formula(422, "ger_usih(1)", {(0, None): (None, 100.0)})
+    with pytest.raises(
+        UnsupportedSourceError,
+        match="^no RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR row covers "
+        "período 2, patamar 1",
+    ) as exc_info:
+        assemble_bound(restriction, _model(), 1, 0, _dict_context({}))
+    assert exc_info.value.field == "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"
 
 
 # ---------------------------------------------------------------------------

@@ -56,7 +56,7 @@ from novomodelo_bridge.core.electrical_expression import (
     demand_in_cmo_diagnostic,
     term_text,
 )
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -435,7 +435,10 @@ def emit_libs_electrical_generics(
       FieldParseError` naming *source* (the LIBS electrical file), the
       restriction and the card: ``RESTRICAO-ELETRICA-REGRA-ATIVACAO`` for the
       activation rule, else the card that declares the failing cell's
-      formula.
+      formula. A valid restriction the conversion cannot carry stops it as
+      an :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError`
+      naming the same file, restriction and card, or the card the refusal
+      itself names (the formula's limits, or the period rows).
     - The surviving expression and per-active-cell bound values feed a
       synthesized :class:`~novomodelo_bridge.decomp.constraint_registers.
       ConstraintRecord` (``family="LIBS_ELEC"``, ``per_block=True``,
@@ -548,6 +551,13 @@ def _emit_restrictions(
 
 
 _RULE_CARD = "RESTRICAO-ELETRICA-REGRA-ATIVACAO"
+_PERIOD_ROW_CARD = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
+
+
+def _cell_text(cell: tuple[int, int]) -> str:
+    """A ``(stage_index, block_index)`` cell as the deck numbers it."""
+    stage_index, block_index = cell
+    return f"período {stage_index + 1}, patamar {block_index + 1}"
 
 
 def _cell_card(
@@ -560,7 +570,7 @@ def _cell_card(
     sides = _effective_inequacao_sides(restriction, stage_index, block_index + 1)
     if sides == (restriction.lhs, restriction.operator, restriction.rhs):
         return "RESTRICAO-ELETRICA-INEQUACAO"
-    return "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
+    return _PERIOD_ROW_CARD
 
 
 def _emit_restriction(
@@ -614,10 +624,11 @@ def _emit_restriction(
         reference_cell, reference_assembled = next(iter(assembled_by_cell.items()))
         for cell, assembled in assembled_by_cell.items():
             if assembled.terms != reference_assembled.terms:
-                raise ValueError(
-                    f"restriction {code}: AssembledBound.terms differ "
-                    f"between active cell {reference_cell} and {cell} — "
-                    "the structural expression must be cell-invariant"
+                raise UnsupportedSourceError(
+                    f"its decision terms in {_cell_text(reference_cell)} differ "
+                    f"from those in {_cell_text(cell)}; the conversion carries "
+                    "one set of decision terms per restriction",
+                    field=_PERIOD_ROW_CARD,
                 )
 
         expression = build_electrical_expression(
@@ -636,6 +647,12 @@ def _emit_restriction(
             f"{source.name}: restriction {code} is malformed: {err}",
             path=str(source),
             field=card,
+        ) from err
+    except UnsupportedSourceError as err:
+        raise UnsupportedSourceError(
+            f"{source.name}: restriction {code} cannot be converted: {err}",
+            path=str(source),
+            field=err.field or card,
         ) from err
 
     if isinstance(expression, Unresolved):

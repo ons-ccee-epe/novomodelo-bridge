@@ -90,6 +90,7 @@ from novomodelo_bridge.core.electrical_expression import (
     parse_linear_expression,
     term_text,
 )
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.decomp.converters.anticipated import gnl_block_commitments
@@ -1014,10 +1015,9 @@ class _UnresolvableBucketBTerm(Exception):
     reference to an unknown submarket, or an ``alias`` reference with no
     value at or before the cell.
 
-    Deliberately not a :class:`ValueError`: :func:`evaluate_se` raises a
-    genuine ``ValueError`` for an unrecognized/decision-bearing ``se(...)``
-    shape, and that failure must propagate (fail loud), never be caught and
-    turned into a drop. :func:`assemble_bound` is the only place that
+    Deliberately its own type: :func:`evaluate_se`'s refusal of a malformed or
+    decision-bearing ``se(...)`` branch must propagate (fail loud), never be
+    caught and turned into a drop. :func:`assemble_bound` is the only place that
     catches this signal, converting it into a ``Severity.WARNING``
     :class:`Diagnostic` and dropping the whole constraint (skip-not-partial)
     rather than emitting a partial bound.
@@ -1129,7 +1129,7 @@ def _gnl_block_generation(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         When the plant's generation is not commanded at the cell's stage
         (no ``gl`` week starts in it): the term would be a decision the
         abatement cannot represent, so the conversion aborts.
@@ -1138,10 +1138,11 @@ def _gnl_block_generation(
     per_stage = gnl_generation.get(code)
     blocks = per_stage[stage_index] if per_stage is not None else None
     if blocks is None:
-        raise ValueError(
-            f"ger_usit({code}) names a GNL plant whose generation is not "
-            f"commanded at stage {stage_index} (no dadgnl GL week starts in "
-            "it); an uncommanded GNL term cannot be abated into the bound"
+        raise UnsupportedSourceError(
+            f"ger_usit({code}) names a GNL plant whose generation no dadgnl GL "
+            f"record commands in período {stage_index + 1}; the conversion "
+            "folds a GNL plant's generation into the bound only where GL "
+            "commands it"
         )
     return blocks[block_index]
 
@@ -1197,7 +1198,7 @@ def build_data_context(
         before the cell. :func:`assemble_bound` is the sole catcher —
         turning this into a ``Severity.WARNING`` diagnostic and dropping the
         constraint (skip-not-partial), never a silently wrong bound.
-    ValueError
+    UnsupportedSourceError
         From the returned per-cell context, when a GNL plant's ``ger_usit``
         is not commanded at the cell (:func:`_gnl_block_generation`).
     """
@@ -1297,11 +1298,13 @@ def evaluate_se(
     ------
     MalformedElectricalExpression
         When the condition or either branch is malformed.
+    UnsupportedSourceError
+        When the selected branch carries any non-bucket-B term (naming it and
+        the cell).
     ValueError
         When *term* is not a ``se`` term or is missing its condition/branch
         text (a caller contract violation — the parser always populates all
-        three for a ``se`` token), or when the selected branch carries any
-        non-bucket-B term (naming it and the cell).
+        three for a ``se`` token).
     """
     if term.token != SE_TOKEN:
         raise ValueError(f"evaluate_se: expected a 'se' term, got {term.token!r}")
@@ -1321,15 +1324,20 @@ def evaluate_se(
     decision_terms = partition[Bucket.A] + partition[Bucket.C]
     if decision_terms:
         offender = decision_terms[0]
-        raise ValueError(
-            f"evaluate_se: at stage {stage_index}, block {block_index}, "
-            f"se(...) selected branch {selected_text!r} carries a decision "
-            f"term ({offender.token!r}, bucket {classify_term(offender).name}); "
-            "folding a decision-bearing branch to a number would silently "
-            "drop it from the LP — structural handling of a decision-bearing "
-            "se branch is out of scope here (fail loud instead)"
+        raise UnsupportedSourceError(
+            f"in período {stage_index + 1}, patamar {block_index + 1}, se(...) "
+            f"takes the branch {selected_text!r}, which carries the decision "
+            f"term {term_text(offender)}; the conversion folds a se(...) "
+            "branch into the bound only when it reads input data alone"
         )
     return evaluate_terms(partition[Bucket.B], ctx)
+
+
+_FORMULA_LIMITS_CARD = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"
+_RESERVE_PATTERN_ONLY = (
+    "the conversion rewrites disp_usih only in the reserve pattern "
+    "disp_usih(h) - ger_usih(h) >= R"
+)
 
 
 def _fold_formula_bound(
@@ -1359,18 +1367,18 @@ def _fold_formula_bound(
 
     Raises
     ------
-    ValueError
-        When *restriction* declares no limit at all for this cell (a
-        caller-contract violation — *stage_index* should always fall inside
-        the restriction's active horizon).
+    UnsupportedSourceError
+        When *restriction* declares no limit at all for this active cell.
     """
     limit = restriction.limits.get((stage_index, patamar))
     if limit is None:
         limit = restriction.limits.get((stage_index, None))
     if limit is None:
-        raise ValueError(
-            f"restriction {restriction.code}: no FORMULA limit declared for "
-            f"stage {stage_index}, patamar {patamar}"
+        raise UnsupportedSourceError(
+            f"no {_FORMULA_LIMITS_CARD} row covers período {stage_index + 1}, "
+            f"patamar {patamar}, where the restriction is active, and the "
+            "conversion does not know how DECOMP bounds it there",
+            field=_FORMULA_LIMITS_CARD,
         )
     lower, upper = limit
     return fold_formula_bound(lhs_partition, lower, upper, ctx)
@@ -1515,17 +1523,19 @@ def assemble_bound(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         When a FORMULA restriction carries no limit at all for this cell,
         when a FORMULA restriction carries a bucket-C term (out of the
-        documented pattern's scope), when an INEQUACAO restriction carries a
-        bucket-C term but *a_h* is ``None``, when a restriction uses
-        ``disp_usih`` outside the documented reserve sign structure
-        (:func:`_fold_reserve_disp_usih`'s CRITICAL-pitfall guard), or
-        propagated from :func:`~novomodelo_bridge.core.generic_constraint_format.
-        sense_to_interval` on an unrecognized INEQUACAO operator — none of
-        these is the resolver-unresolvable case this function otherwise
-        catches.
+        documented pattern's scope), when a restriction uses ``disp_usih``
+        outside the documented reserve sign structure
+        (:func:`_fold_reserve_disp_usih`'s CRITICAL-pitfall guard), or from
+        the cell's data context.
+    ValueError
+        When an INEQUACAO restriction carries a bucket-C term but *a_h* is
+        ``None``, or propagated from :func:`~novomodelo_bridge.core.
+        generic_constraint_format.sense_to_interval` on an unrecognized
+        INEQUACAO operator — none of these is the resolver-unresolvable case
+        this function otherwise catches.
     """
     patamar = block_index + 1
     try:
@@ -1535,11 +1545,9 @@ def assemble_bound(
                 parse_linear_expression(restriction.lhs, model)
             )
             if lhs_partition[Bucket.C]:
-                raise ValueError(
-                    f"restriction {restriction.code}: a FORMULA restriction "
-                    "carries a disp_usih term; the reserve->gen-cap rewrite "
-                    "only covers the documented INEQUACAO "
-                    "reserve pattern"
+                raise UnsupportedSourceError(
+                    f"its RESTRICAO-ELETRICA-FORMULA carries a disp_usih term; "
+                    f"{_RESERVE_PATTERN_ONLY} of a RESTRICAO-ELETRICA-INEQUACAO"
                 )
             return _fold_formula_bound(
                 restriction, stage_index, patamar, ctx, lhs_partition
@@ -1929,7 +1937,7 @@ def _fold_reserve_disp_usih(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         When *restriction* uses ``disp_usih`` outside this documented
         pattern: a bucket-C or bucket-A term on the RHS, a bucket-A term on
         the LHS that is not ``ger_usih``, more than one ``ger_usih`` term
@@ -1946,27 +1954,25 @@ def _fold_reserve_disp_usih(
     assert restriction.operator is not None  # INEQUACAO invariant
 
     if rhs_partition[Bucket.C] or rhs_partition[Bucket.A]:
-        raise ValueError(
-            f"restriction {restriction.code}: the disp_usih reserve pattern "
-            "requires its ger_usih/disp_usih pair on the LHS; the RHS "
-            "carries a decision or disp_usih term"
+        raise UnsupportedSourceError(
+            "the right-hand side carries a decision or disp_usih term; "
+            f"{_RESERVE_PATTERN_ONLY}"
         )
 
     disp_terms = lhs_partition[Bucket.C]
     ger_terms = lhs_partition[Bucket.A]
     non_ger_terms = [term for term in ger_terms if term.token != "ger_usih"]
     if non_ger_terms:
-        raise ValueError(
-            f"restriction {restriction.code}: the disp_usih reserve pattern "
-            "requires every paired decision term to be ger_usih; found "
-            f"{non_ger_terms[0].token!r}"
+        raise UnsupportedSourceError(
+            f"the decision term {term_text(non_ger_terms[0])} sits beside "
+            f"disp_usih; {_RESERVE_PATTERN_ONLY}"
         )
 
     ger_by_plant = {term.args[0]: term for term in ger_terms}
     if len(ger_by_plant) != len(ger_terms):
-        raise ValueError(
-            f"restriction {restriction.code}: the disp_usih reserve pattern "
-            "requires at most one ger_usih term per plant"
+        raise UnsupportedSourceError(
+            "two ger_usih terms beside disp_usih name the same plant; "
+            f"{_RESERVE_PATTERN_ONLY}"
         )
 
     reserve_sum = 0.0
@@ -1974,10 +1980,9 @@ def _fold_reserve_disp_usih(
         code = disp_term.args[0]
         ger_term = ger_by_plant.pop(code, None)
         if ger_term is None or ger_term.coefficient != -disp_term.coefficient:
-            raise ValueError(
-                f"restriction {restriction.code}: disp_usih({code}) is not "
-                "paired with a ger_usih term of the exact opposite "
-                "coefficient — outside the documented reserve pattern"
+            raise UnsupportedSourceError(
+                f"disp_usih({code}) has no ger_usih({code}) of the opposite "
+                f"coefficient; {_RESERVE_PATTERN_ONLY}"
             )
         a_h_value = a_h.resolve(code, stage_index)
         reserve_sum += disp_term.coefficient * a_h_value
@@ -1985,10 +1990,9 @@ def _fold_reserve_disp_usih(
 
     if ger_by_plant:
         leftover_code = next(iter(ger_by_plant))
-        raise ValueError(
-            f"restriction {restriction.code}: ger_usih({leftover_code}) has "
-            "no paired disp_usih term — outside the documented reserve "
-            "pattern"
+        raise UnsupportedSourceError(
+            f"ger_usih({leftover_code}) has no disp_usih({leftover_code}) "
+            f"beside it; {_RESERVE_PATTERN_ONLY}"
         )
 
     lhs_b_sum = evaluate_terms(lhs_partition[Bucket.B], ctx)

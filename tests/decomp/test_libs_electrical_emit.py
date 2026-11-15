@@ -22,7 +22,11 @@ from novomodelo_bridge.core.electrical_expression import (
     ParsedTerm,
     UnrecognizedElectricalToken,
 )
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import (
+    FieldParseError,
+    UnsupportedSourceError,
+    diagnostic_from_exception,
+)
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     soft_slack,
@@ -799,50 +803,92 @@ def test_emit_unresolved_bucket_bc_term_defers_whole_restriction() -> None:
     assert sink[0].severity is dx.Severity.WARNING
 
 
-def test_emit_cell_inconsistent_terms_raises_value_error_naming_restriction() -> None:
-    # Error Handling: a resolver bug producing different AssembledBound.terms
-    # across a restriction's active cells must fail loud, never silently
-    # pick one cell's expression.
+def test_period_rows_that_change_the_decision_terms_are_unsupported() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 2))
-    calendar = _emit_calendar(1, n_blocks=2)
-    restriction = _restriction(706, "ger_usih(1)", "<=", "500")
+    restriction = ElectricalRestriction(
+        code=706,
+        lhs="ger_usih(1)",
+        operator="<=",
+        rhs="500",
+        is_formula=False,
+        limits={},
+        overrides=(PeriodPatamarOverride(0, 0, 2, "ger_usih(2)", "<=", "100"),),
+    )
     model = LibsElectricalModel(
         expressions={}, aliases={}, restrictions={706: restriction}, rules={}
     )
-    a_h = AvailablePower(overlay={})
 
-    def _stub_assemble_bound(
-        restriction: ElectricalRestriction,
-        model: LibsElectricalModel,
-        stage_index: int,
-        block_index: int,
-        ctx: DataContext,
-        a_h: AvailablePower | None = None,
-    ) -> AssembledBound:
-        code = 1 if block_index == 0 else 2
-        return AssembledBound(
-            terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(code,)),),
-            lower=None,
-            upper=100.0,
+    with pytest.raises(UnsupportedSourceError) as exc_info:
+        emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=2),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
         )
 
-    with patch(
-        "novomodelo_bridge.decomp.converters.libs_electrical_emit.assemble_bound",
-        side_effect=_stub_assemble_bound,
-    ):
-        with pytest.raises(ValueError, match="706"):
-            emit_libs_electrical_generics(
-                model,
-                id_map,
-                lambda s, b: _dict_context({}),
-                a_h,
-                calendar,
-                {},
-                {},
-                {},
-                big_m=999.0,
-                source=_LIBS,
-            )
+    assert str(exc_info.value) == (
+        "lib_restricao-eletrica-especial.csv: restriction 706 cannot be "
+        "converted: its decision terms in período 1, patamar 1 differ from "
+        "those in período 1, patamar 2; the conversion carries one set of "
+        "decision terms per restriction"
+    )
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
+
+
+@pytest.mark.parametrize(
+    ("limits", "lhs", "card"),
+    [
+        ({(0, None): (None, 100.0)}, "disp_usih(1)", "RESTRICAO-ELETRICA-FORMULA"),
+        ({}, "ger_usih(1)", "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"),
+    ],
+)
+def test_a_restriction_the_conversion_cannot_carry_stops_it_naming_the_card(
+    limits: dict[tuple[int, int | None], tuple[float | None, float | None]],
+    lhs: str,
+    card: str,
+) -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    restriction = ElectricalRestriction(
+        code=707,
+        lhs=lhs,
+        operator=None,
+        rhs=None,
+        is_formula=True,
+        limits=limits,
+        overrides=(),
+    )
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={707: restriction}, rules={}
+    )
+
+    with pytest.raises(UnsupportedSourceError) as exc_info:
+        emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
+        )
+
+    assert str(exc_info.value).startswith(
+        "lib_restricao-eletrica-especial.csv: restriction 707 cannot be converted: "
+    )
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == card
+    diagnostic = diagnostic_from_exception(exc_info.value, context="Conversion")
+    assert diagnostic.code == "source-unsupported"
 
 
 def test_emit_sorted_restriction_codes_deterministic_ids() -> None:
