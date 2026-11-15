@@ -937,10 +937,10 @@ def _discover(src: Path) -> DecompCaseArtifacts:
         case.files.fixed_column_files, comment_prefix=REGISTER_COMMENT_PREFIX
     )
     if tabs is not None:
-        dx.emit(tabs)
+        dx.emit(tabs, logger=_LOG)
     unindexed = unindexed_libs_diagnostic(case.files)
     if unindexed is not None:
-        dx.emit(unindexed)
+        dx.emit(unindexed, logger=_LOG)
     id_map = case.id_map
     dadger = case.dadger
     calendar = case.calendar

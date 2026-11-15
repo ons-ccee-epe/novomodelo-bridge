@@ -48,6 +48,7 @@ rather than a per-plant limit read off the register.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -98,6 +99,8 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.converters.rhe_shares import RheCoupling
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
+
+_LOG = logging.getLogger(__name__)
 
 
 #: The source model's ``num_max_iteracoes``-style deficit multiplier: the
@@ -564,7 +567,8 @@ def _emit_re_unresolved(rows_by_code: Mapping[str, Sequence[list[object]]]) -> N
                 ),
                 table=DiagnosticTable(columns=columns, rows=list(rows)),
                 remediation=_RE_UNRESOLVED_REMEDIATION.get(code),
-            )
+            ),
+            logger=_LOG,
         )
 
 
@@ -587,7 +591,8 @@ def _emit_re_terms_left_out(rows: Sequence[list[object]]) -> None:
             table=DiagnosticTable(
                 columns=["Constraint", "From", "To"], rows=list(rows)
             ),
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -994,7 +999,8 @@ def _emit_rhe_hydraulic_coupling(
                 ],
                 justify=["right", "left", "right", "right", "right", "right", "right"],
             ),
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -1026,7 +1032,8 @@ def _emit_rhe_findings(
                     "Map each listed REE to an operated reservoir through its "
                     "UH records in dadger.rvN, or remove the HE constraint."
                 ),
-            )
+            ),
+            logger=_LOG,
         )
     if default_penalty:
         emit(
@@ -1048,7 +1055,8 @@ def _emit_rhe_findings(
                     justify=["right", "right", "right"],
                 ),
                 remediation="Give each listed HE record a positive penalty in dadger.rvN.",
-            )
+            ),
+            logger=_LOG,
         )
     if unknown_tipo:
         emit(
@@ -1068,7 +1076,8 @@ def _emit_rhe_findings(
                     justify=["right", "right"],
                 ),
                 remediation="Give each listed HE record a limit type of 1 or 2 in dadger.rvN.",
-            )
+            ),
+            logger=_LOG,
         )
     if ez_cap_unmodeled:
         emit(
@@ -1089,7 +1098,8 @@ def _emit_rhe_findings(
                     rows=list(ez_cap_unmodeled),
                     caption="Stage ids are 0-based.",
                 ),
-            )
+            ),
+            logger=_LOG,
         )
 
 

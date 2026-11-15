@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,6 +27,8 @@ import pytest
 
 if TYPE_CHECKING:
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
+
+_LOG = logging.getLogger(__name__)
 
 
 def _invoke_main(
@@ -371,7 +374,8 @@ def _report_that_emits(_dataset: object, *, reference_label: str) -> str:
             category="Compare data",
             title="Report note",
             summary=_REPORT_NOTE,
-        )
+        ),
+        logger=_LOG,
     )
     return f"<html>{reference_label}</html>"
 
@@ -504,7 +508,8 @@ class TestCompareNewaveSetupFindings:
                     category="Compare data",
                     title="Lines to buses with no NEWAVE submarket (1)",
                     summary="A line ends at an unmatched bus.",
-                )
+                ),
+                logger=_LOG,
             )
             return MagicMock()
 

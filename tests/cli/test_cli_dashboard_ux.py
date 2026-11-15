@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import sys
 import typing
 import webbrowser
@@ -27,6 +28,8 @@ from novomodelo_bridge.cli import app
 from novomodelo_bridge.cli.args import DashboardArgs
 from novomodelo_bridge.cli.dashboard import _run_dashboard
 from tests.cli.conftest import _run_cli_subprocess
+
+_LOG = logging.getLogger(__name__)
 
 
 def _invoke(argv: list[str]) -> Result:
@@ -463,7 +466,8 @@ class TestDashboardReadFailure:
                     category="c",
                     title="t",
                     summary="lines.json could not be read.",
-                )
+                ),
+                logger=_LOG,
             )
             raise NovomodeloReadError("hydros partition is corrupt")
 

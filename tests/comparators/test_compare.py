@@ -8,6 +8,7 @@ alignment, computation, comparison, and report generation.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
     from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
     from novomodelo_bridge.core.diagnostics import Diagnostic
+
+_LOG = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------
 # Horizon bounds-helper unit tests
@@ -603,7 +606,7 @@ class TestCompareDiagnosticsWiring:
         diagnostic = _dropped_plant_diagnostic()
 
         def _compare_results_with_diagnostic(**_kwargs: object) -> ComparisonDataset:
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
             return _fake_results_dataset()
 
         monkeypatch.setattr(
@@ -633,7 +636,7 @@ class TestCompareDiagnosticsWiring:
         def _build_decomp_dataset_with_diagnostic(
             *_args: object, **_kwargs: object
         ) -> ComparisonDataset:
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
             return _fake_decomp_dataset()
 
         monkeypatch.setattr(
@@ -659,7 +662,7 @@ class TestCompareDiagnosticsWiring:
         diagnostic = _dropped_plant_diagnostic()
 
         def _compare_results_with_diagnostic(**_kwargs: object) -> ComparisonDataset:
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
             return _fake_results_dataset()
 
         monkeypatch.setattr(
@@ -687,7 +690,7 @@ class TestCompareDiagnosticsWiring:
         def _build_decomp_dataset_with_diagnostic(
             *_args: object, **_kwargs: object
         ) -> ComparisonDataset:
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
             return _fake_decomp_dataset()
 
         monkeypatch.setattr(

@@ -7,6 +7,8 @@ never imports either pipeline, matching emission_checks.py's own contract.
 
 from __future__ import annotations
 
+import logging
+
 import pyarrow as pa
 import pytest
 
@@ -27,6 +29,8 @@ from novomodelo_bridge.core.emission_checks import (
 )
 from novomodelo_bridge.core.errors import EmissionCheckError
 from novomodelo_bridge.core.tolerances import WRITTEN_PRECISION_TOLERANCE
+
+_LOG = logging.getLogger(__name__)
 
 
 def _hydros(*entries: dict) -> dict:
@@ -1330,7 +1334,8 @@ class TestRunAndGate:
                     category="Emission self-checks",
                     title="Synthetic error",
                     summary="a synthetic ERROR finding for run_and_gate",
-                )
+                ),
+                logger=_LOG,
             )
 
         with pytest.raises(EmissionCheckError) as exc_info:
@@ -1347,7 +1352,8 @@ class TestRunAndGate:
                     category="Emission self-checks",
                     title="Synthetic warning",
                     summary="a synthetic WARNING finding for run_and_gate",
-                )
+                ),
+                logger=_LOG,
             )
             dx.emit(
                 dx.Diagnostic(
@@ -1356,7 +1362,8 @@ class TestRunAndGate:
                     category="Emission self-checks",
                     title="Synthetic info",
                     summary="a synthetic INFO finding for run_and_gate",
-                )
+                ),
+                logger=_LOG,
             )
 
         assert run_and_gate(run_checks) is None

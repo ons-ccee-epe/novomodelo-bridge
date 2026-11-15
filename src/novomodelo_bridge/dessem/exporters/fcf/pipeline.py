@@ -144,7 +144,8 @@ def _emit_travel_time_info(
                 f"in, up to {counted(max_lag(plants), 'stage')} back."
             ),
             notes=notes,
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -181,7 +182,8 @@ def _emit_undated_bucket_warning(undated: UndatedBucketAudit) -> None:
                 "Such coefficients usually mean the case's boundary future-cost "
                 "function prices water that arrives after the study ends.",
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -205,7 +207,8 @@ def _emit_cut_pool_mismatch(trunk_pool_ids: tuple[int, ...], expected: int) -> N
                 "Pools holding cuts: "
                 f"{', '.join(str(pool_id) for pool_id in trunk_pool_ids) or 'none'}."
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -231,7 +234,8 @@ def _emit_inflow_lag_drop_warning(audit: InflowLagAudit) -> None:
                 if count
             ]
             + ["Premise P8: inflow-lag coefficients are dropped and counted."],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -341,7 +345,8 @@ def _emit_gnl_delivery_missing(
             notes=[
                 note for cause, note in _GNL_MISSING_NOTES.items() if cause in causes
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -441,7 +446,8 @@ def _emit_gnl_coefficients_exported(
                 justify=["right", "left", "right", "left", "right", "right", "right"],
             ),
             notes=notes,
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -482,7 +488,8 @@ def _emit_gnl_coefficient_zero(
                 justify=["right", "left", "right", "right"],
             ),
             notes=["A commitment at the plant's capacity is a known cause."],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -531,7 +538,8 @@ def _emit_gnl_committed_cost(
                 "plant's unit cost in the case, in 10³ R$ and not discounted.",
                 "A stage no commitment window covers is written as 0.0.",
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -565,7 +573,8 @@ def _emit_gnl_submarket_repeated(
                 "Each plant keeps its own entry in the file. Readers that key the "
                 "GNL block by submarket code merge the plants of a submarket."
             ],
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -672,7 +681,8 @@ def _write_failure_manifest(
                     "describes an earlier export."
                 ),
                 notes=[f"Reason: {exception_reason(exc)}"],
-            )
+            ),
+            logger=_LOG,
         )
 
 
@@ -1077,7 +1087,7 @@ def run_export(
         mapcut_contents, cortdeco_contents = _write_validated_pair(
             plan, paths, progress
         )
-        emit(_mapcut_zero_fields_diagnostic(paths.mapcut.name))
+        emit(_mapcut_zero_fields_diagnostic(paths.mapcut.name), logger=_LOG)
         _emit_gnl_reports(plan, source.gnl_thermals, mapcut_contents, cortdeco_contents)
 
         with progress.step("write content CSVs", 11):
@@ -1115,7 +1125,8 @@ def run_export(
                     "cannot read it by mistake."
                     for path in rejected
                 ],
-            )
+            ),
+            logger=_LOG,
         )
         _write_failure_manifest(
             case_dir, source, settings, paths, progress.current_step

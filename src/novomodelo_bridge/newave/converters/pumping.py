@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -23,6 +24,8 @@ from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 if TYPE_CHECKING:
     from novomodelo_bridge.newave.case import NewaveCase
     from novomodelo_bridge.newave.id_map import NewaveIdMap
+
+_LOG = logging.getLogger(__name__)
 
 
 class PumpingInputs(NamedTuple):
@@ -181,6 +184,7 @@ def convert_pumping_stations(
                 justify=["right", "left", "right", "right", "right"],
             ),
         ),
+        logger=_LOG,
     )
 
     return {

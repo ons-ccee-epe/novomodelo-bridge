@@ -234,10 +234,10 @@ def _discover(src: Path) -> tuple[NewaveCase, NewaveIdMap]:
     case = NewaveCase.from_directory(src)
     tabs = tab_character_diagnostic(case.files.fixed_column_files)
     if tabs is not None:
-        dx.emit(tabs)
+        dx.emit(tabs, logger=logger)
     unindexed = unindexed_libs_diagnostic(case.files)
     if unindexed is not None:
-        dx.emit(unindexed)
+        dx.emit(unindexed, logger=logger)
 
     logger.debug("Building NewaveIdMap from %s", src)
     return case, case.id_map

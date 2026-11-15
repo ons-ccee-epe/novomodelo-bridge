@@ -1588,7 +1588,8 @@ def convert_electric_constraints(
                 "electric-constraint-demand-in-cmo",
                 demand_in_cmo,
                 source="restricao-eletrica.csv",
-            )
+            ),
+            logger=_LOG,
         )
 
     result = builder.result()

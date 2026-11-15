@@ -23,6 +23,8 @@ from novomodelo_bridge.core.diagnostics import (
 )
 from novomodelo_bridge.core.errors import BridgeError
 
+_LOG = logging.getLogger(__name__)
+
 
 class TestSeverity:
     def test_rank_orders_info_warning_error(self) -> None:
@@ -60,8 +62,8 @@ class TestCollectAndEmit:
 
     def test_emit_inside_collect_appends_to_sink(self) -> None:
         with collect() as sink:
-            emit(self._diag())
-            emit(self._diag(Severity.INFO))
+            emit(self._diag(), logger=_LOG)
+            emit(self._diag(Severity.INFO), logger=_LOG)
         assert len(sink) == 2
         assert [d.severity for d in sink] == [Severity.WARNING, Severity.INFO]
 
@@ -85,10 +87,10 @@ class TestCollectAndEmit:
 
     def test_collect_restores_previous_sink(self) -> None:
         with collect() as outer:
-            emit(self._diag())
+            emit(self._diag(), logger=_LOG)
             with collect() as inner:
-                emit(self._diag(Severity.ERROR))
-            emit(self._diag(Severity.INFO))
+                emit(self._diag(Severity.ERROR), logger=_LOG)
+            emit(self._diag(Severity.INFO), logger=_LOG)
         assert len(inner) == 1
         assert len(outer) == 2
 

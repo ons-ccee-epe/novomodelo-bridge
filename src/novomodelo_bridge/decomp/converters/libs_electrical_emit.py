@@ -35,6 +35,7 @@ mirrors).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -92,6 +93,8 @@ if TYPE_CHECKING:
     )
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
+
+_LOG = logging.getLogger(__name__)
 
 
 _OUTSIDE_CASE = "decomp-electrical-bucket-a-unresolved"
@@ -165,7 +168,8 @@ def _emit_unresolved_term(restriction: int, unresolved: Unresolved) -> None:
             table=DiagnosticTable(
                 columns=columns, rows=[[restriction, *unresolved.cells]]
             ),
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -187,7 +191,8 @@ def _emit_left_out_terms(restriction: int, left_out: Sequence[Unresolved]) -> No
                     columns=["Restriction", "Term"],
                     rows=[[restriction, *u.cells] for u in found],
                 ),
-            )
+            ),
+            logger=_LOG,
         )
 
 
@@ -212,7 +217,8 @@ def _emit_unrecognized_token(restriction: int, name: str) -> None:
                 "Declare each listed name in the LIBS electrical file, or "
                 "correct it in the restriction."
             ),
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -564,7 +570,7 @@ def emit_libs_electrical_generics(
             )
     finally:
         for diagnostic in merge_tables(found):
-            emit(diagnostic)
+            emit(diagnostic, logger=_LOG)
     return result
 
 
@@ -619,7 +625,7 @@ def _emit_restrictions(
         finally:
             for diagnostic in local:
                 if kept or diagnostic.code != DISP_USIH_SUBSTITUTED:
-                    emit(diagnostic)
+                    emit(diagnostic, logger=_LOG)
         if kept:
             converted.append(code)
 
@@ -629,7 +635,8 @@ def _emit_restrictions(
                 "decomp-electrical-demand-in-cmo",
                 demand_in_cmo,
                 source="the RESTRICAO-ELETRICA-ESPECIAL file",
-            )
+            ),
+            logger=_LOG,
         )
     return LibsElectricalResult(
         generic=builder.result(),

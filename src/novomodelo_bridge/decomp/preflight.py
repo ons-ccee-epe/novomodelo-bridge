@@ -17,6 +17,7 @@ mirror, never a substitute.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -73,6 +74,8 @@ if TYPE_CHECKING:
     )
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
+
+_LOG = logging.getLogger(__name__)
 
 _CONTEXT = "Preflight"
 
@@ -500,7 +503,7 @@ def _libs_electrical_read(
             if path is not None and restricoes is not None:
                 unread = unread_lines_diagnostic(path, restricoes.data)
                 if unread is not None:
-                    emit(unread)
+                    emit(unread, logger=_LOG)
                 model = libs_electrical.read_libs_electrical(
                     restricoes, calendar, source=path
                 )

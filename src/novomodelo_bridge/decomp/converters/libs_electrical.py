@@ -57,6 +57,7 @@ get a bound row at all, as distinct from what that bound's value is.
 
 from __future__ import annotations
 
+import logging
 import operator
 import re
 from collections.abc import Callable
@@ -115,6 +116,8 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
+
+_LOG = logging.getLogger(__name__)
 
 #: DECOMP's unbounded-side sentinel on two-sided limit columns is exactly
 #: ``-1E+31``/``+1E+31``; anything at or beyond this magnitude means "no bound
@@ -675,7 +678,8 @@ def _emit_unused_period_rows(rows: Sequence[tuple[str, int]]) -> None:
                 "Move each listed row to the card that fits its restriction, or "
                 "remove it."
             ),
-        )
+        ),
+        logger=_LOG,
     )
 
 
@@ -1626,7 +1630,8 @@ def assemble_bound(
                 "decomp-electrical-bucket-b-unresolved",
                 "a data term the conversion cannot evaluate",
                 [restriction.code, stage_index, block_index, str(err)],
-            )
+            ),
+            logger=_LOG,
         )
         return None
     except _UnresolvableDispUsih as err:
@@ -1635,7 +1640,8 @@ def assemble_bound(
                 "decomp-electrical-disp-usih-unresolved",
                 "a disp_usih term whose available power the conversion cannot compute",
                 [restriction.code, stage_index, block_index, str(err)],
-            )
+            ),
+            logger=_LOG,
         )
         return None
 
@@ -1810,7 +1816,8 @@ def active_cells(
                     justify=["right", "right", "right"],
                     caption="Stage ids are 0-based.",
                 ),
-            )
+            ),
+            logger=_LOG,
         )
     return cells
 
@@ -1948,7 +1955,8 @@ def _emit_disp_usih_substitution(
                 justify=["right", "right", "right", "right"],
                 caption="Stage ids are 0-based.",
             ),
-        )
+        ),
+        logger=_LOG,
     )
 
 
