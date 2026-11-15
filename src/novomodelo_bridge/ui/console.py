@@ -58,7 +58,7 @@ DEFAULT_WIDTH = 100
 
 #: Cap on detail-table rows actually printed; the overflow is summarised in a caption
 #: so a case with hundreds of affected entities does not flood the terminal. The full
-#: set is always available via ``--diagnostics-json``.
+#: set is always available via ``--json``, which every command accepts.
 MAX_TABLE_ROWS = 20
 
 #: Severity → Rich style. Amber/red track the dashboard palette; INFO is muted.
@@ -315,8 +315,8 @@ def render_diagnostics(
 ) -> None:
     """Render a roll-up line, the warning and error panels, then the notes.
 
-    The roll-up under *heading* (``⚠ Conversion notes: 2 warning(s) · 1
-    note(s)``) counts every diagnostic. Warnings and errors follow as panels,
+    The roll-up under *heading* (``⚠ Conversion notes: 2 warnings · 1
+    note``) counts every diagnostic. Warnings and errors follow as panels,
     grouped by category; INFO notes come last, one title line each, or as
     full panels with *verbose*. *quiet* suppresses the notes entirely. Does
     nothing when there are no diagnostics.
@@ -390,7 +390,7 @@ def _diagnostic_panel(diag: Diagnostic) -> Panel:
 
     if diag.table is not None:
         rows = diag.table.rows
-        body.add_row("")
+        # The table's own blank top edge separates it from the summary.
         body.add_row(
             make_table(
                 diag.table.columns,
@@ -401,9 +401,7 @@ def _diagnostic_panel(diag: Diagnostic) -> Panel:
         )
         if len(rows) > MAX_TABLE_ROWS:
             overflow = len(rows) - MAX_TABLE_ROWS
-            body.add_row(
-                Text(f"… and {overflow} more (see --diagnostics-json)", style="dim")
-            )
+            body.add_row(Text(f"… and {overflow} more (see --json)", style="dim"))
 
     for note in diag.notes:
         body.add_row(Text(f"• {note}", style="dim"))

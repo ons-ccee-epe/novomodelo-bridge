@@ -437,7 +437,7 @@ class TestLineResultComparisons:
         assert results == []
         assert unresolved == []
 
-    def test_missing_source_interchange_table_degrades_to_empty(
+    def test_missing_source_interchange_table_is_noted_and_degrades_to_empty(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         id_map = _decomp_id_map_three_subsystems()
@@ -449,10 +449,39 @@ class TestLineResultComparisons:
             "novomodelo_bridge.comparators.decomp.results.read_dec_oper_interc", _boom
         )
 
-        results, unresolved = _line_result_comparisons(tmp_path, tmp_path, id_map, [])
+        with dx.collect() as collected:
+            results, unresolved = _line_result_comparisons(
+                tmp_path, tmp_path, id_map, []
+            )
 
         assert results == []
         assert unresolved == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-missing", "dec_oper_interc.csv not found")
+        ]
+
+    def test_unreadable_source_interchange_table_is_reported_and_degrades_to_empty(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        id_map = _decomp_id_map_three_subsystems()
+
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise ValueError("dec_oper_interc.csv parsed empty")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_interc", _boom
+        )
+
+        with dx.collect() as collected:
+            results, unresolved = _line_result_comparisons(
+                tmp_path, tmp_path, id_map, []
+            )
+
+        assert results == []
+        assert unresolved == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "dec_oper_interc.csv could not be read")
+        ]
 
     def test_joins_source_and_novomodelo_into_result_comparison_rows(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

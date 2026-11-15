@@ -1680,11 +1680,14 @@ class TestExportFindings:
         assert zeros.severity is dx.Severity.WARNING
         assert zeros.title == "mapcut.rv0 fields written as zeros"
         assert zeros.table is not None
-        assert zeros.table.rows[0] == ["4-17", "physical hydro data", "P1"]
+        assert zeros.table.rows[0] == ["records 4-17", "physical hydro data", "P1"]
         assert [row[2] for row in zeros.table.rows[1:]] == ["P11"] * 4
+        assert {row[0] for row in zeros.table.rows[1:]} == {
+            "reg 10, one record per stage"
+        }
         assert _with_code(diagnostics, "dessem-fcf-cut-pools-unexpected") == []
 
-    def test_the_zero_cost_parcels_are_record_10s_other_fields(self) -> None:
+    def test_the_zero_cost_parcels_are_reg_10s_other_fields(self) -> None:
         assert set(_ZERO_COST_PARCELS) == set(COST_FIELDS) - {
             "taxa_desconto",
             "geracao_termica_minima_gerada_gnl",
@@ -1761,4 +1764,4 @@ class TestExportFindings:
         assert result == 1
         [unwritten] = _with_code(diagnostics, "dessem-fcf-failure-manifest-unwritten")
         assert unwritten.title == "export_manifest.json could not be written"
-        assert unwritten.notes == ["Reason: disk full"]
+        assert unwritten.notes == ["Reason: OSError: disk full"]

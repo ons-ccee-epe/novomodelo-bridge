@@ -101,7 +101,7 @@ _FormatOpt = Annotated[
         metavar="FORMAT",
         envvar="NOVOMODELO_BRIDGE_FORMAT",
         help=(
-            "Output format(s): console,html,csv,parquet,json,all. "
+            "Output formats: console,html,csv,parquet,json,all. "
             "Comma-separated and/or repeatable. Overridable via "
             "NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. "
             "(default: console,parquet,json)"
@@ -207,7 +207,10 @@ def _convert_newave(
         typer.Option(
             "--diagnostics-json",
             metavar="PATH",
-            help="Also write the conversion diagnostics (counts + findings) as JSON.",
+            help=(
+                "Also write the conversion diagnostics (counts + findings) as "
+                "JSON once the conversion completes."
+            ),
         ),
     ] = None,
     json_output: _JsonOpt = False,
@@ -272,7 +275,10 @@ def _convert_decomp(
         typer.Option(
             "--diagnostics-json",
             metavar="PATH",
-            help="Also write the conversion diagnostics (counts + findings) as JSON.",
+            help=(
+                "Also write the conversion diagnostics (counts + findings) as "
+                "JSON once the conversion completes."
+            ),
         ),
     ] = None,
     json_output: _JsonOpt = False,

@@ -202,7 +202,7 @@ class TestRenderDiagnostics:
         )
         render_diagnostics([diag], heading="Conversion notes", console=console)
         text = buf.getvalue()
-        assert "… and 5 more (see --diagnostics-json)" in text
+        assert "… and 5 more (see --json)" in text
         assert "P0" in text
         assert f"P{MAX_TABLE_ROWS + 4}" not in text  # last row not printed
 

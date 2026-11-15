@@ -1024,6 +1024,75 @@ class TestGtminAboveCapacityDiagnostic:
         assert diag.table.rows == [[10, "TERMO_A", "2-3", 478.03, 477.96, 0.07]]
 
 
+class TestExptWithoutPotefDiagnostic:
+    _ID_MAP = NewaveIdMap(
+        subsystem_ids=[1, 2], hydro_codes=[], thermal_codes=[10, 20, 30]
+    )
+
+    def _case(self, tmp_path, statuses: dict[int, str]):
+        import datetime
+
+        conft, clast, term = _thermal_readers()
+        for code, status in statuses.items():
+            conft.usinas.loc[
+                conft.usinas["codigo_usina"] == code, "usina_existente"
+            ] = status
+        expt = MagicMock()
+        expt.expansoes = pd.DataFrame(
+            {
+                "codigo_usina": [10],
+                "tipo": ["POTEF"],
+                "modificacao": [100.0],
+                "data_inicio": [datetime.datetime(2023, 1, 1)],
+                "data_fim": [None],
+            }
+        )
+        return make_case(
+            make_nw_files(tmp_path, expt=tmp_path / "expt.dat"),
+            conft=conft,
+            clast=clast,
+            term=term,
+            dger=_make_thermal_dger(),
+            expt=expt,
+        )
+
+    def test_ee_and_ne_plants_without_potef_are_listed_and_generate_nothing(
+        self, tmp_path
+    ) -> None:
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core.diagnostics import Severity
+        from novomodelo_bridge.newave.converters.thermal import (
+            convert_thermal_bounds,
+            thermal_generation_bounds,
+        )
+
+        case = self._case(tmp_path, {10: "EE", 20: "NE", 30: "EE"})
+
+        with dx.collect() as collected:
+            convert_thermal_bounds(case, self._ID_MAP)
+
+        [diag] = [d for d in collected if d.code == "thermal-expt-without-potef"]
+        assert diag.severity is Severity.INFO
+        assert diag.title == "EE and NE thermals without a POTEF record (2)"
+        assert diag.table is not None
+        assert diag.table.rows == [[20, "TERMO_B"], [30, "TERMO_C"]]
+        bounds = thermal_generation_bounds(case)
+        assert bounds[20] == (0.0, 0.0)
+        assert bounds[30] == (0.0, 0.0)
+        assert bounds[10][1] > 0.0
+
+    def test_an_ee_plant_with_potef_is_not_listed(self, tmp_path) -> None:
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.newave.converters.thermal import convert_thermal_bounds
+
+        case = self._case(tmp_path, {10: "EE"})
+
+        with dx.collect() as collected:
+            convert_thermal_bounds(case, self._ID_MAP)
+
+        assert "thermal-expt-without-potef" not in {d.code for d in collected}
+
+
 class TestThermalGenerationBounds:
     """``thermal_generation_bounds`` returns the static ``[min_mw, max_mw]``."""
 

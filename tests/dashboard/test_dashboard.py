@@ -124,6 +124,34 @@ def test_load_names_multiple_entity_types(tmp_path: Path) -> None:
     assert result[("buses", 0)] == "B0"
 
 
+def test_load_names_reads_line_names(tmp_path: Path) -> None:
+    _write_json(
+        tmp_path / "system" / "lines.json",
+        {"lines": [{"id": 0, "name": "SE-S"}, {"id": 1}]},
+    )
+
+    result = load_names(tmp_path)
+
+    assert result == {("lines", 0): "SE-S", ("lines", 1): "1"}
+
+
+def test_load_names_without_a_readable_lines_json_keeps_the_other_names(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "system" / "hydros.json", {"hydros": [{"id": 0, "name": "H0"}]}
+    )
+    (tmp_path / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+
+    with dx.collect() as found:
+        result = load_names(tmp_path)
+
+    assert result == {("hydros", 0): "H0"}
+    assert [(d.code, d.title) for d in found] == [
+        ("report-file-unreadable", "system/lines.json could not be read")
+    ]
+
+
 # ---------------------------------------------------------------------------
 # load_stage_labels
 # ---------------------------------------------------------------------------
@@ -688,7 +716,7 @@ def test_get_renderable_tabs_shows_placeholder_when_render_raises() -> None:
     assert diag.severity is dx.Severity.WARNING
     assert diag.title == "Dashboard tabs that could not be built (1)"
     assert diag.table is not None
-    assert diag.table.rows == [["Bad", "rendering <failed>"]]
+    assert diag.table.rows == [["Bad", "RuntimeError: rendering <failed>"]]
 
     by_id = {tab_id: html for tab_id, _label, html in result}
     assert "tab-bad" in by_id  # not dropped

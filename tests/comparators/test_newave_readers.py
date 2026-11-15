@@ -547,6 +547,6 @@ class TestNwlistopBlockCmo:
         assert diag.title == "Marginal cost tables that could not be read (2)"
         assert diag.table is not None
         assert diag.table.rows == [
-            ["cmarg002.out", "bad table"],
-            ["cmarg001.out", "bad table"],
+            ["cmarg002.out", "ValueError: bad table"],
+            ["cmarg001.out", "ValueError: bad table"],
         ]

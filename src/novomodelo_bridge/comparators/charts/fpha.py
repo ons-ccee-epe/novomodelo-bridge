@@ -247,7 +247,7 @@ def fpha_detail_chart(
         fphaShow('fpha-line-card', !reservoir);
         if (reservoir) {{
             // One full-width 3D view; NEWAVE/Novomodelo/Both/Difference toggle buttons
-            // switch which surface(s) show (the two nearly coincide at S=0, so an
+            // switch which surfaces show (the two nearly coincide at S=0, so an
             // always-on overlay reads as a blob — toggling isolates the signal).
             var zdiff = d.zcb.map(function(row, i) {{
                 return row.map(function(val, j) {{ return val - d.znw[i][j]; }});

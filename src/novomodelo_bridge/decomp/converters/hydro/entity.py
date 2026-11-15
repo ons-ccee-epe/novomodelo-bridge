@@ -173,9 +173,9 @@ def _downstream_operated(
     NUMJUS``) cascade at *stage_index*, or ``None`` at the sink.
 
     Every caller reads the first stage: the case has one cascade for the
-    whole horizon, and the pipeline reports the plants whose ``AC NUMJUS``
-    changes it on later stages
-    (:func:`novomodelo_bridge.decomp.pipeline._topology_varies_diagnostic`).
+    whole horizon, and the plants whose ``AC NUMJUS`` changes it on later
+    stages are reported
+    (:func:`novomodelo_bridge.decomp.converters.cadastro.topology_varies_diagnostic`).
     """
     return _cascade_walk(effective, code, operated, stage_index)[0]
 
@@ -409,8 +409,9 @@ def _fpha_fields(code: int, effective: EffectiveCadastro) -> dict:
 
 class _PlantEntry(NamedTuple):
     """A plant's ``hydros.json`` entry, whether ``storage_envelope``
-    collapsed its run-of-river registry band to the reference volume, and its
-    capped FPHA efficiency report row."""
+    collapsed its run-of-river registry band to the reference volume, and the
+    rows it adds to :func:`convert_hydros`'s capped-FPHA-efficiency and
+    invalid-cascade-link reports."""
 
     entry: dict
     runofriver_collapsed: bool

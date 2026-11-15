@@ -618,7 +618,9 @@ def test_frequency_tagged_re_clamps_to_group_capacity_with_one_note_row_per_grou
         )
 
     assert [c.upper for c in groups[1]] == [7_000.0, 7_000.0]
-    (clamped,) = [d for d in collected if d.code == "decomp-re-generation-clamped"]
+    (clamped,) = [
+        d for d in collected if d.code == "decomp-re-unit-group-generation-clamped"
+    ]
     assert clamped.severity is Severity.INFO
     assert clamped.table is not None
     assert clamped.table.rows == [

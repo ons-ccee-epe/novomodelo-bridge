@@ -125,7 +125,7 @@ class OutputExistsError(BridgeError, FileExistsError):
 _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
     SourceFileError: (
         "source-file-missing",
-        "Check the named file exists in the case directory.",
+        "Check the named file or directory exists.",
     ),
     FieldParseError: (
         "source-field-parse",

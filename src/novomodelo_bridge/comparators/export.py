@@ -112,7 +112,7 @@ def write_artifacts(
     unknown = sorted(set(formats) - _VALID_FORMATS)
     if unknown:
         allowed = sorted(_VALID_FORMATS)
-        msg = f"unknown export format(s) {unknown}; allowed formats are {allowed}"
+        msg = f"export formats not recognized: {unknown}; allowed formats are {allowed}"
         raise ValueError(msg)
 
     out_dir.mkdir(parents=True, exist_ok=True)

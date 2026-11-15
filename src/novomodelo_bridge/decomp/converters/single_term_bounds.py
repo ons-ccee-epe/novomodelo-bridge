@@ -93,8 +93,9 @@ def _clamp_upper_to_capacity(
     whose upper is already at or below *cap* passes through unchanged;
     one above it is replaced (:func:`dataclasses.replace`) with *cap*.
 
-    A ceiling above *cap* is **always** clamped (novomodelo rule 43 rejects any
-    upper above the declared capacity, even by a float ULP), but its original
+    A ceiling above *cap* is **always** clamped (novomodelo rule 43 rejects an
+    upper above the declared capacity beyond
+    :data:`~novomodelo_bridge.core.tolerances.RELATIVE_TOLERANCE`), but its original
     contribution is only returned in the reported list — the caller's
     diagnostic trigger — when it exceeds *cap* by more than
     ``_CLAMP_REPORT_REL_TOL`` relative. So a genuine cross-source mismatch (a
@@ -276,8 +277,8 @@ def split_plant_group_contributions(
     half's limit. Each upper is clamped to the group's declared
     ``max_generation_mw`` in *group_capacities*, keyed ``(hydro_id,
     group_id)``, since novomodelo rejects a group bound above it; one
-    ``decomp-re-generation-clamped`` note names, by *plant_names*, every
-    group whose ceiling was capped.
+    ``decomp-re-unit-group-generation-clamped`` note names, by *plant_names*,
+    every group whose ceiling was capped.
 
     Returns the contributions keyed by hydro id, because a group id is scoped
     within its plant.
@@ -335,9 +336,9 @@ def split_plant_group_contributions(
         ]
         emit(
             _ceiling_clamp_diagnostic(
-                code="decomp-re-generation-clamped",
+                code="decomp-re-unit-group-generation-clamped",
                 title="RE ceilings above unit-group capacity capped",
-                constraint_kind="RE generation",
+                constraint_kind="RE unit-group generation",
                 unit="MW",
                 rows=rows,
             )

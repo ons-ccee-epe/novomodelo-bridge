@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 from novomodelo_bridge.decomp.converters.cadastro.overrides import (
-    _SCALAR_AC_SPECS,
     AcRegisters,
     DiversionChannel,
     MachineSet,
@@ -158,20 +157,6 @@ class EffectiveCadastro:
             return int(self.base.loc[code, "codigo_usina_jusante"])
         return self.downstream_links[code][stage_index]
 
-    def downstream_plant_varies(self, code: int) -> bool:
-        """Whether *code*'s effective downstream link varies across stages
-        (a temporal ``AC NUMJUS``) — the tracked-gap trigger:
-        :func:`~novomodelo_bridge.decomp.converters.hydro.entity.
-        _downstream_operated` reads one stage-representative link for the
-        whole horizon (stage 0 by default), so a caller checks this to warn
-        rather than silently picking a stage. ``False`` for a plant with no
-        override at all.
-        """
-        if code not in self.downstream_links:
-            return False
-        series = self.downstream_links[code]
-        return any(value != series[0] for value in series)
-
     def energy_link(self, code: int, stage_index: int) -> int | None:
         """The ``AC JUSENA`` plant below *code* at *stage_index*, if one is in force.
 
@@ -182,13 +167,6 @@ class EffectiveCadastro:
         """
         series = self.energy_links.get(code)
         return None if series is None else series[stage_index]
-
-    def energy_link_varies(self, code: int) -> bool:
-        """Whether *code*'s ``AC JUSENA`` link varies across stages."""
-        if code not in self.energy_links:
-            return False
-        series = self.energy_links[code]
-        return any(value != series[0] for value in series)
 
     def inflow_gauge(self, code: int, stage_index: int) -> int:
         """The effective inflow-gauge (``posto``) for *code* at *stage_index*.
@@ -211,16 +189,6 @@ class EffectiveCadastro:
         if code not in self.coupling_gauges:
             return int(self.base.loc[code, "posto"])
         return self.coupling_gauges[code][-1]
-
-    def inflow_gauge_varies(self, code: int) -> bool:
-        """Whether *code*'s effective inflow gauge varies across stages (a
-        temporal ``AC NUMPOS``) — the gauge sibling of
-        :meth:`downstream_plant_varies`.
-        """
-        if code not in self.inflow_gauges:
-            return False
-        series = self.inflow_gauges[code]
-        return any(value != series[0] for value in series)
 
 
 def effective_storage_range(
@@ -365,26 +333,6 @@ class CadastroResolutionReport:
 
     applied: Mapping[str, int]
     out_of_horizon: tuple[OutOfHorizon, ...]
-
-
-#: The ``AC`` register behind each :attr:`CadastroResolutionReport.applied` key.
-AC_REGISTER_BY_PARAM: Mapping[str, str] = {
-    **{
-        spec.param: spec.ac_class.__name__.removeprefix("AC")
-        for spec in _SCALAR_AC_SPECS
-    },
-    "diversion": "DESVIO",
-    "numero_conjuntos": "NUMCON",
-    "numero_maquinas": "NUMMAQ",
-    "potencia": "POTEFE",
-    "vazao": "VAZEFE",
-    "altura": "ALTEFE",
-    "cota_volume": "COTVOL",
-    "codigo_usina_jusante": "NUMJUS",
-    "posto": "NUMPOS",
-    "posto_acoplamento": "NPOSNW",
-    "jusante_energia": "JUSENA",
-}
 
 
 def _require_cadastro_row(hidr: pd.DataFrame, code: int) -> None:
@@ -681,7 +629,8 @@ def build_effective_cadastro(
     (:func:`~novomodelo_bridge.decomp.scenarios._incremental_context`) read one
     stage-representative (stage 0) value off these, never per-stage, so a
     temporal ``NUMJUS``/``NUMPOS`` is a tracked gap
-    (:meth:`EffectiveCadastro.downstream_plant_varies`/``inflow_gauge_varies``),
+    (reported by
+    :func:`novomodelo_bridge.decomp.converters.cadastro.topology_varies_diagnostic`),
     not a silent per-stage cascade. ``energy_links`` holds the ``AC JUSENA``
     stored-energy links (:meth:`EffectiveCadastro.energy_link`),
     seeded with ``None`` (follow the water-routing link). ``coupling_gauges``

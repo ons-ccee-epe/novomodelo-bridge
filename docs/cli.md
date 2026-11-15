@@ -86,7 +86,7 @@ $ novomodelo-bridge convert newave [OPTIONS] {src} {dst}
 
 * `--validate`: After conversion, validate the output with the novomodelo package.
 * `--force`: Overwrite destination directory if it already contains files.
-* `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON.
+* `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON once the conversion completes.
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `--dry-run`: Run the full conversion in memory and report what would be written, without creating or modifying the destination directory.
 * `--json-float-digits N`: Write every float in the case&#x27;s JSON files with N significant digits (1-17); 17 keeps full precision. Parquet files are unaffected. Below 10 digits novomodelo may reject the case, since it cross-checks JSON values against Parquet tables and unit-group sums to a 1e-9 relative tolerance.  [default: 15; 1&lt;=x&lt;=17]
@@ -120,7 +120,7 @@ $ novomodelo-bridge convert decomp [OPTIONS] {src} {dst}
 
 * `--force`: Overwrite destination directory if it already contains files.
 * `--validate`: After conversion, validate the output with the novomodelo package.
-* `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON.
+* `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON once the conversion completes.
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `--dry-run`: Run the full conversion in memory and report what would be written, without creating or modifying the destination directory.
 * `--json-float-digits N`: Write every float in the case&#x27;s JSON files with N significant digits (1-17); 17 keeps full precision. Parquet files are unaffected. Below 10 digits novomodelo may reject the case, since it cross-checks JSON values against Parquet tables and unit-group sums to a 1e-9 relative tolerance.  [default: 15; 1&lt;=x&lt;=17]
@@ -178,7 +178,7 @@ $ novomodelo-bridge compare decomp [OPTIONS] {decomp_dir} {novomodelo_output_dir
 **Options**:
 
 * `--tolerance <float>`: Largest gap, as a fraction, at which a variable counts as close (default 0.05); beyond four times it a variable is far. Overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml.  [env var: NOVOMODELO_BRIDGE_RESULTS_TOLERANCE]
-* `--format FORMAT`: Output format(s): console,html,csv,parquet,json,all. Comma-separated and/or repeatable. Overridable via NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. (default: console,parquet,json)  [env var: NOVOMODELO_BRIDGE_FORMAT]
+* `--format FORMAT`: Output formats: console,html,csv,parquet,json,all. Comma-separated and/or repeatable. Overridable via NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. (default: console,parquet,json)  [env var: NOVOMODELO_BRIDGE_FORMAT]
 * `--out-dir <path>`: Directory for file artifacts. Overridable via NOVOMODELO_BRIDGE_OUT_DIR or novomodelo-bridge.toml. (default: &lt;novomodelo_output_dir&gt;/comparison_artifacts).  [env var: NOVOMODELO_BRIDGE_OUT_DIR]
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `-v, --verbose`: Print notes in full and raise the console log level (-v INFO, -vv DEBUG).  [default: 0]
@@ -208,7 +208,7 @@ $ novomodelo-bridge compare newave [OPTIONS] {newave_dir} {novomodelo_output_dir
 **Options**:
 
 * `--tolerance <float>`: Largest gap, as a fraction, at which a variable counts as close (default 0.05); beyond four times it a variable is far. Overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml.  [env var: NOVOMODELO_BRIDGE_RESULTS_TOLERANCE]
-* `--format FORMAT`: Output format(s): console,html,csv,parquet,json,all. Comma-separated and/or repeatable. Overridable via NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. (default: console,parquet,json)  [env var: NOVOMODELO_BRIDGE_FORMAT]
+* `--format FORMAT`: Output formats: console,html,csv,parquet,json,all. Comma-separated and/or repeatable. Overridable via NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. (default: console,parquet,json)  [env var: NOVOMODELO_BRIDGE_FORMAT]
 * `--out-dir <path>`: Directory for file artifacts. Overridable via NOVOMODELO_BRIDGE_OUT_DIR or novomodelo-bridge.toml. (default: &lt;novomodelo_output_dir&gt;/comparison_artifacts).  [env var: NOVOMODELO_BRIDGE_OUT_DIR]
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `-v, --verbose`: Print notes in full and raise the console log level (-v INFO, -vv DEBUG).  [default: 0]

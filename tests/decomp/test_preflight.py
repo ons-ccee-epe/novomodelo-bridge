@@ -6,13 +6,14 @@ import inspect
 import shutil
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 from idecomp.decomp.modelos.dadger import (
     ACALTEFE,
     ACCOTVAZ,
     ACNCHAVE,
+    ACNPOSNW,
     ACTIPERH,
     ACVERTJU,
     ACVOLMIN,
@@ -22,23 +23,31 @@ from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.preflight import (
     CheckItem,
+    PreflightResult,
     PreflightVerdict,
     optional_input_advisory,
 )
+from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
     detect_libs_electrical,
     detect_unconverted_rha,
+    drop_unknown_entities,
     read_constraints,
 )
 from novomodelo_bridge.decomp.converters.cadastro import (
     _SCALAR_AC_SPECS,
+    ALL_AC_CLASSES,
     APPLIED_AC_CLASSES,
+    DEFERRED_AC_CLASSES,
     CadastroResolutionReport,
+    EffectiveCadastro,
     OutOfHorizon,
+    ac_overrides_deferred_diagnostic,
+    topology_varies_diagnostic,
 )
 from novomodelo_bridge.decomp.files import DecompFiles
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.preflight import (
-    _ALL_AC_CLASSES,
     _ac_coverage,
     _load_factor_check,
     _special_constraint_coverage,
@@ -54,6 +63,11 @@ from tests.decomp.test_constraint_registers import (
     _lv,
 )
 from tests.decomp.test_constraint_registers import _FakeDadger as _ConstraintFakeDadger
+from tests.decomp.test_libs_electrical import (
+    _re_formula,
+    _re_inequacao_per_pat,
+    _StubRestricoes,
+)
 from tests.decomp.test_network_load import (
     _ID_MAP,
     _calendar_rv3,
@@ -237,14 +251,15 @@ class TestOptionalInputAdvisory:
 
 class TestAcCoverageRegistry:
     """The resolver's ``APPLIED_AC_CLASSES`` registry and the reflected idecomp
-    ``AC`` universe (``_ALL_AC_CLASSES``) stay consistent with each other, and the
+    ``AC`` universe (``ALL_AC_CLASSES``) stay consistent with each other, and the
     derived deferred bucket is populated by enumerate-and-diff rather than a
     hand-maintained list — proven by three families
     (``NCHAVE``/``TIPERH``/``VERTJU``) the old blanket warning never named.
     """
 
-    def test_coverage_registry_applied_classes_count_is_18(self) -> None:
-        assert len(APPLIED_AC_CLASSES) == 18
+    def test_coverage_registry_applied_classes_count_is_19(self) -> None:
+        assert len(APPLIED_AC_CLASSES) == 19
+        assert ACNPOSNW in APPLIED_AC_CLASSES
 
     def test_coverage_registry_applies_altefe(self) -> None:
         assert ACALTEFE in APPLIED_AC_CLASSES
@@ -254,17 +269,20 @@ class TestAcCoverageRegistry:
         assert scalar_classes <= APPLIED_AC_CLASSES
 
     def test_coverage_registry_applied_subset_of_all_ac_classes(self) -> None:
-        assert APPLIED_AC_CLASSES <= _ALL_AC_CLASSES
+        assert APPLIED_AC_CLASSES <= ALL_AC_CLASSES
 
     def test_coverage_registry_all_ac_classes_has_at_least_25_members(self) -> None:
         # idecomp 1.13.0 exposes exactly 25; ``>=`` stays robust to a future add.
-        assert len(_ALL_AC_CLASSES) >= 25
+        assert len(ALL_AC_CLASSES) >= 25
 
     def test_coverage_registry_deferred_bucket_contains_uncovered_families(
         self,
     ) -> None:
-        deferred = _ALL_AC_CLASSES - APPLIED_AC_CLASSES
-        assert {ACNCHAVE, ACTIPERH, ACVERTJU} <= deferred
+        assert {ACNCHAVE, ACTIPERH, ACVERTJU} <= DEFERRED_AC_CLASSES
+        assert DEFERRED_AC_CLASSES == ALL_AC_CLASSES - APPLIED_AC_CLASSES
+
+
+_NO_LINKS = EffectiveCadastro(base=pd.DataFrame(), n_stages=1, stage_varying={})
 
 
 class TestAcCoverage:
@@ -282,7 +300,7 @@ class TestAcCoverage:
             ),
         )
 
-        checks, diagnostics = _ac_coverage(dadger, report)
+        checks, diagnostics = _ac_coverage(dadger, _NO_LINKS, report)
 
         assert len(checks) == 1
         assert checks[0].label == "AC cadastro-override coverage"
@@ -306,6 +324,9 @@ class TestAcCoverage:
         assert "COTVAZ" in registers("decomp-ac-overrides-deferred")
         assert "ALTEFE" not in registers("decomp-ac-overrides-deferred")
         assert "ALTEFE" in registers("decomp-ac-overrides-applied")
+        assert by_code[
+            "decomp-ac-overrides-deferred"
+        ] == ac_overrides_deferred_diagnostic(dadger)
 
         table = by_code["decomp-ac-out-of-horizon"].table
         assert table is not None
@@ -319,7 +340,7 @@ class TestAcCoverage:
             applied={"volume_minimo": 1}, out_of_horizon=()
         )
 
-        checks, diagnostics = _ac_coverage(dadger, report)
+        checks, diagnostics = _ac_coverage(dadger, _NO_LINKS, report)
 
         assert len(checks) == 1
         assert checks[0].passed is True
@@ -327,15 +348,40 @@ class TestAcCoverage:
         assert diagnostics[0].code == "decomp-ac-overrides-applied"
         assert diagnostics[0].severity is Severity.INFO
 
+    def test_ac_coverage_warns_about_a_cascade_register_that_varies(self) -> None:
+        """``check decomp`` raises the WARNING ``convert decomp`` raises for a
+        temporal ``AC NUMJUS``, from the same builder."""
+        base = pd.DataFrame({1: {"nome_usina": "FURNAS  "}}).T
+        effective = EffectiveCadastro(
+            base=base,
+            n_stages=3,
+            stage_varying={},
+            downstream_links={1: (5, 5, 7)},
+        )
+        dadger = _FakeDadger({})
+        report = CadastroResolutionReport(applied={}, out_of_horizon=())
+
+        _checks, diagnostics = _ac_coverage(dadger, effective, report)
+
+        expected = topology_varies_diagnostic(effective)
+        assert expected is not None
+        assert expected.code == "decomp-ac-topology-varies"
+        assert expected.severity is Severity.WARNING
+        assert diagnostics == [expected]
+
     def test_ac_coverage_empty_deck_emits_only_the_passing_summary(self) -> None:
         dadger = _FakeDadger({})
         report = CadastroResolutionReport(applied={}, out_of_horizon=())
 
-        checks, diagnostics = _ac_coverage(dadger, report)
+        checks, diagnostics = _ac_coverage(dadger, _NO_LINKS, report)
 
         assert len(checks) == 1
         assert checks[0].passed is True
         assert diagnostics == []
+
+
+#: The plants the synthetic special-constraint deck's FU, CQ and CV terms name.
+_SC_ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(21, 31, 40))
 
 
 class TestSpecialConstraintCoverage:
@@ -380,7 +426,7 @@ class TestSpecialConstraintCoverage:
         dadger = self._rha_dadger()
         census = read_constraints(dadger)
 
-        checks, diagnostics = _special_constraint_coverage(dadger, None)
+        checks, diagnostics = _special_constraint_coverage(dadger, None, _SC_ID_MAP, {})
 
         assert len(checks) == 1
         assert checks[0].label == "Special-constraint coverage"
@@ -406,7 +452,9 @@ class TestSpecialConstraintCoverage:
         dadger = self._synthetic_dadger()
         census = read_constraints(dadger)
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, None)
+        _checks, diagnostics = _special_constraint_coverage(
+            dadger, None, _SC_ID_MAP, {}
+        )
 
         converted = next(
             d for d in diagnostics if d.code == "decomp-special-constraints-converted"
@@ -423,6 +471,34 @@ class TestSpecialConstraintCoverage:
         assert len(census.to_bounds) == 3  # RE FU + HV VARM + HQ QDES
         assert len(census.to_generic) == 1  # HE (always generic)
 
+    def test_a_constraint_on_a_missing_entity_is_left_out_as_convert_does(
+        self,
+    ) -> None:
+        """``check decomp`` counts the screened census and raises the screen's
+        WARNING, as ``convert decomp`` does."""
+        dadger = self._synthetic_dadger()
+        _, expected = drop_unknown_entities(
+            read_constraints(dadger), hydro_codes=(), thermal_codes=(), pumping_codes=()
+        )
+        no_plants = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+
+        checks, diagnostics = _special_constraint_coverage(dadger, None, no_plants, {})
+
+        converted, *unknown = diagnostics
+        assert unknown == expected
+        assert [d.code for d in unknown] == [
+            "decomp-re-plant-not-operated",
+            "decomp-rhq-plant-not-operated",
+            "decomp-rhv-varm-plant-uncadastred",
+        ]
+        assert converted.title == "Special constraints converted (1)"
+        assert converted.table is not None
+        assert [row[0] for row in converted.table.rows] == ["HE"]
+        assert checks[0].detail == (
+            "0 records lowered to bounds, 1 emitted as generic constraints, "
+            "4 families present in the deck"
+        )
+
     def test_deferred_rha_diagnostic_is_sourced_from_the_helper_verbatim(
         self,
     ) -> None:
@@ -430,7 +506,9 @@ class TestSpecialConstraintCoverage:
         expected = detect_unconverted_rha(dadger)
         assert expected is not None
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, None)
+        _checks, diagnostics = _special_constraint_coverage(
+            dadger, None, _SC_ID_MAP, {}
+        )
 
         rha_diagnostic = next(
             d for d in diagnostics if d.code == "decomp-rha-family-unconverted"
@@ -445,16 +523,31 @@ class TestSpecialConstraintCoverage:
         expected = detect_libs_electrical(libs_file)
         assert expected is not None  # sanity: the fixture trips the LIBs token
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, libs_file)
+        _checks, diagnostics = _special_constraint_coverage(
+            dadger, libs_file, _SC_ID_MAP, {}
+        )
 
         assert diagnostics == [expected]
+
+    def test_a_libs_file_with_a_long_form_card_raises_no_libs_warning(
+        self, tmp_path: Path
+    ) -> None:
+        _checks, diagnostics = _special_constraint_coverage(
+            _ConstraintFakeDadger(),
+            tmp_path / "lib_restricao-eletrica-especial.csv",
+            _SC_ID_MAP,
+            {},
+            libs_long_form=True,
+        )
+
+        assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics}
 
     def test_no_special_constraints_deck_emits_only_the_passing_summary(
         self,
     ) -> None:
         dadger = _ConstraintFakeDadger()
 
-        checks, diagnostics = _special_constraint_coverage(dadger, None)
+        checks, diagnostics = _special_constraint_coverage(dadger, None, _SC_ID_MAP, {})
 
         assert len(checks) == 1
         assert checks[0].passed is True
@@ -463,6 +556,111 @@ class TestSpecialConstraintCoverage:
             "0 families present in the deck"
         )
         assert diagnostics == []
+
+
+class TestLibsElectricalWarning:
+    """``check decomp`` warns that the LIBS electrical constraints are not
+    converted only when ``convert decomp`` reads no long-form card from the
+    file, as ``convert decomp`` does."""
+
+    _LIBS_FILE = "lib_restricao-eletrica-especial.csv"
+
+    def _run(
+        self,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        cards: object,
+        reader: MagicMock | None = None,
+    ) -> PreflightResult:
+        """Check the mini deck with a LIBS file whose cards are *cards*, read
+        by *reader* in place of the real reader when given."""
+        deck = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, deck)
+        with (deck / "indices.csv").open("a", encoding="utf-8") as index:
+            index.write(f" RESTRICAO-ELETRICA-ESPECIAL ;eletricas ;{self._LIBS_FILE}\n")
+        (deck / self._LIBS_FILE).write_text("", encoding="utf-8")
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(DecompCase, "libs_restricao_eletrica", new=cards)
+            )
+            if reader is not None:
+                stack.enter_context(
+                    patch(
+                        "novomodelo_bridge.decomp.converters.libs_electrical"
+                        ".read_libs_electrical",
+                        new=reader,
+                    )
+                )
+            return run_decomp_preflight(deck)
+
+    def test_a_file_with_a_long_form_card_raises_no_libs_warning(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        result = self._run(
+            decomp_mini_deck, tmp_path, object(), MagicMock(return_value=object())
+        )
+
+        codes = {d.code for d in result.diagnostics}
+        assert "decomp-libs-electrical-present" not in codes
+
+    def test_a_file_without_a_long_form_card_warns(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        result = self._run(
+            decomp_mini_deck, tmp_path, object(), MagicMock(return_value=None)
+        )
+
+        codes = {d.code for d in result.diagnostics}
+        assert "decomp-libs-electrical-present" in codes
+
+    def test_a_period_row_that_does_not_fit_its_restriction_warns_once(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        cards = _StubRestricoes(
+            restricao_eletrica_formula=_re_formula((401, "ger_usih(1)")),
+            restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+                (401, 1, 1, None, "ger_usih(1)", "<=", "10"),
+            ),
+        )
+
+        result = self._run(decomp_mini_deck, tmp_path, cards)
+
+        [unused] = [
+            d
+            for d in result.diagnostics
+            if d.code == "decomp-electrical-period-rows-unused"
+        ]
+        assert unused.severity is Severity.WARNING
+        assert unused.table is not None
+        assert unused.table.rows == [
+            ["RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", 401]
+        ]
+        assert "decomp-libs-electrical-present" not in {
+            d.code for d in result.diagnostics
+        }
+        assert result.verdict is PreflightVerdict.WARNINGS
+
+    def test_an_unreadable_file_fails_the_check(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        result = self._run(
+            decomp_mini_deck,
+            tmp_path,
+            object(),
+            MagicMock(side_effect=ValueError("restriction 7 is malformed")),
+        )
+
+        [readable] = [
+            c
+            for c in result.checks
+            if c.label == "LIBS electrical restrictions readable"
+        ]
+        assert readable.passed is False
+        assert readable.detail == "restriction 7 is malformed"
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
+        assert "decomp-libs-electrical-present" not in {
+            d.code for d in result.diagnostics
+        }
 
 
 class TestLoadFactorCheck:

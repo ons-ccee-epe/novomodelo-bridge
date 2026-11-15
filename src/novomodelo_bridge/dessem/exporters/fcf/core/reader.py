@@ -300,8 +300,7 @@ def select_pools(
     missing = [pool_id for pool_id in wanted if pool_id not in checkpoint.pools]
     if missing:
         raise PolicyFormatError(
-            f"the policy manifest names pool(s) {missing} that the checkpoint "
-            f"does not hold"
+            f"the policy manifest names pools the checkpoint does not hold: {missing}"
         )
     pools = {pool_id: checkpoint.pools[pool_id] for pool_id in wanted}
     _LOG.info(

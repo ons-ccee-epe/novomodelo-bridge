@@ -15,17 +15,12 @@ sense-free interval endpoints (``bound_lower``/``bound_upper`` — see
 This module stands up that shared scaffolding: the per-term expression-token
 dispatch (``_variable_token``), the ``FI``-interchange line resolver
 (``build_fi_line_map``/``resolve_fi_term``), the ``FE``-contract resolver
-(``build_contract_token_map``/``resolve_fe_term``), the coefficient-string formatter
-(``_format_expression``), the ``BIG_M`` slack-penalty helper, and
-``slots_from_record`` (the per-record (stage, block) slot enumeration feeding
-the shared :class:`~novomodelo_bridge.core.generic_constraint_builder.
-GenericConstraintBuilder`), plus the multi-term ``RE`` emitter
-(``emit_re_generics``) and the ``RHQ``/``RHV`` emitter (
-``emit_rhq_rhv_generics``) built on top of it. This module mirrors — but
-never imports — the sibling ``converters/constraints.py`` emitter's
-``_parse_formula`` pattern; both tracks share one
-``GenericConstraintBuilder``/``GenericConstraintResult``
-(:mod:`novomodelo_bridge.core.generic_constraint_builder`).
+(``build_contract_token_map``/``resolve_fe_term``), the ``BIG_M``
+slack-penalty helper, and ``slots_from_record`` (the per-record (stage,
+block) slot enumeration feeding the shared :class:`~novomodelo_bridge.core.
+generic_constraint_builder.GenericConstraintBuilder`), plus the multi-term
+``RE`` emitter (``emit_re_generics``) and the ``RHQ``/``RHV`` emitter
+(``emit_rhq_rhv_generics``) built on top of it.
 
 GNL pre-processing (abating commanded generation, aborting on uncommanded)
 is out of scope here: a constraint whose ``thermal_generation`` term names a
@@ -53,7 +48,6 @@ rather than a per-plant limit read off the register.
 from __future__ import annotations
 
 import dataclasses
-import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -71,6 +65,7 @@ from novomodelo_bridge.core.generic_constraint_builder import (
     is_bounded,
     soft_slack,
 )
+from novomodelo_bridge.core.generic_constraint_format import Weight, render_expression
 from novomodelo_bridge.core.stored_energy import (
     share_parameters,
     stored_energy_floor,
@@ -101,12 +96,6 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
-
-_LOG = logging.getLogger(__name__)
-
-#: A term's weight in an expression: a literal coefficient, or the ``@name``
-#: of the per-stage parameter carrying a stage-varying one.
-Weight = float | str
 
 #: The source model's ``num_max_iteracoes``-style deficit multiplier: the
 #: slack penalty on a generic constraint is this many times the worst bus
@@ -273,8 +262,8 @@ def resolve_fi_term(
     novomodelo has no submarket-pair variable, only per-line directional
     ``line_direct(id)``/``line_reverse(id)`` variables, so — mirroring the
     source model precedent's ``ener_interc`` resolution
-    (``converters/constraints.py::_parse_formula``) — the term's direction is
-    encoded by *which* directional variable is chosen, never by negating the
+    (``newave/converters/constraints.py::_decision_variable``) — the term's direction
+    is encoded by *which* directional variable is chosen, never by negating the
     coefficient (a negated coefficient would dilute the bound when the LP
     routes the non-canonical direction).
 
@@ -358,35 +347,6 @@ def resolve_fe_term(
     if token is None:
         return Unresolved(_FE_NO_CONTRACT, (*key, "both a CI and a CE record"))
     return token
-
-
-def _format_expression(terms: Sequence[tuple[Weight, str]]) -> str | None:
-    """Join ``(weight, token)`` pairs into a novomodelo expression string.
-
-    Mirrors ``converters/constraints.py::_parse_formula``'s coefficient-
-    formatting rules: a unit (``|coeff| == 1.0``) term is the bare token
-    (or ``- token`` when negative); a fractional term is ``{abs_coeff} *
-    {token}`` (or ``- {abs_coeff} * {token}`` when negative). A parameter
-    weight is ``@{name} * {token}``, its sign carried by the parameter's
-    values. The first term omits the leading ``+``; every later term uses
-    ``+``/``-`` as a binary operator. Returns ``None`` for an empty term list.
-    """
-    if not terms:
-        return None
-    parts: list[str] = []
-    for i, (coeff, token) in enumerate(terms):
-        if isinstance(coeff, str):
-            body = f"@{coeff} * {token}"
-            parts.append(body if i == 0 else f"+ {body}")
-            continue
-        abs_coeff = abs(coeff)
-        is_negative = coeff < 0.0
-        body = token if abs_coeff == 1.0 else f"{abs_coeff} * {token}"
-        if i == 0:
-            parts.append(f"- {body}" if is_negative else body)
-        else:
-            parts.append(f"- {body}" if is_negative else f"+ {body}")
-    return " ".join(parts)
 
 
 def coefficient_parameter_name(record: ConstraintRecord, term_index: int) -> str:
@@ -621,7 +581,7 @@ def emit_re_generics(
             unresolved[tokens.code].append([record.constraint_id, *tokens.cells])
             continue
         terms, parameters = _weighted_terms(record, tokens, len(calendar))
-        expression = _format_expression(terms)
+        expression = render_expression(terms)
         if expression is None:
             continue
         added = builder.add(
@@ -740,7 +700,7 @@ def emit_rhq_rhv_generics(
                 for term in record.terms
             ]
             rhq_terms, parameters = _weighted_terms(record, rhq_tokens, len(calendar))
-            expression = _format_expression(rhq_terms)
+            expression = render_expression(rhq_terms)
             if expression is None:
                 continue
             added = builder.add(
@@ -758,7 +718,7 @@ def emit_rhq_rhv_generics(
             record, id_map, effective, pumping_station_ids
         )
         hv_terms, parameters = _weighted_terms(record, hv_tokens, len(calendar))
-        expression = _format_expression(hv_terms)
+        expression = render_expression(hv_terms)
         if expression is None:
             continue
         adjusted_record = dataclasses.replace(record, bounds=adjusted_bounds)

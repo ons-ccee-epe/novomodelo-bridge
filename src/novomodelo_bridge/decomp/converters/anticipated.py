@@ -384,7 +384,7 @@ def gnl_block_commitments(
                     raise ValueError(
                         f"gl for GNL plant {thermal.code} at "
                         f"{week.start_date.isoformat()} declares "
-                        f"{len(week.block_mw)} block(s); stage {stage.index} "
+                        f"{dx.counted(len(week.block_mw), 'block')}; stage {stage.index} "
                         f"has {n_blocks}"
                     )
             per_stage.append(
@@ -1196,8 +1196,9 @@ def _monthly_lead_stages(
         raise ValueError(f"{label} declares no nl dispatch-anticipation lag")
     if not 1 <= lag <= n_stages:
         raise ValueError(
-            f"{label}: an nl lag of {lag} month(s) is not supported for a study "
-            f"of {n_stages} monthly stage(s); the lag must be between 1 and the "
+            f"{label}: an nl lag of {dx.counted(lag, 'month')} is not supported "
+            f"for a study of {dx.counted(n_stages, 'monthly stage')}; the lag must "
+            "be between 1 and the "
             "stage count"
         )
     late = [
@@ -1437,15 +1438,18 @@ def convert_gnl(
     ``calendar`` is the operative calendar the case's ``stages.json`` is built
     from.
     """
-    with dx.collect() as found:
-        emission = _convert_gnl(
-            model,
-            first_thermal_id=first_thermal_id,
-            bus_id_of=bus_id_of,
-            calendar=calendar,
-        )
-    for diagnostic in dx.merge_tables(found):
-        dx.emit(diagnostic, logger=_LOG)
+    found: list[dx.Diagnostic] = []
+    try:
+        with dx.collect() as found:
+            emission = _convert_gnl(
+                model,
+                first_thermal_id=first_thermal_id,
+                bus_id_of=bus_id_of,
+                calendar=calendar,
+            )
+    finally:
+        for diagnostic in dx.merge_tables(found):
+            dx.emit(diagnostic, logger=_LOG)
     return emission
 
 

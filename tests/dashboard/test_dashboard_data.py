@@ -97,6 +97,94 @@ class TestLoadTemporalContextAbsentLinesJson:
 
         assert context.line_meta == []
 
+    def test_unparseable_lines_json_yields_empty_line_meta_and_a_warning(
+        self, tmp_path: Path
+    ) -> None:
+        case_dir = tmp_path / "case"
+        _write_json(case_dir / "config.json", {"discount_rate": 0.1})
+        _write_json(
+            case_dir / "stages.json",
+            {"stages": [{"id": 0, "blocks": [{"id": 0, "hours": 730.0}]}]},
+        )
+        (case_dir / "system").mkdir()
+        (case_dir / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+
+        with dx.collect() as found:
+            context = load_temporal_context(case_dir)
+
+        assert context.line_meta == []
+        assert [(d.code, d.title) for d in found] == [
+            ("report-file-unreadable", "system/lines.json could not be read")
+        ]
+
+
+def _write_unparseable_config_case(case_dir: Path, stages: dict[str, Any]) -> None:
+    case_dir.mkdir()
+    (case_dir / "config.json").write_text("{not json", encoding="utf-8")
+    _write_json(case_dir / "stages.json", stages)
+
+
+_ONE_STAGE = [{"id": 0, "blocks": [{"id": 0, "hours": 730.0}]}]
+
+
+def test_unparseable_config_json_is_no_finding_when_stages_json_has_the_rate(
+    tmp_path: Path,
+) -> None:
+    case_dir = tmp_path / "case"
+    _write_unparseable_config_case(
+        case_dir,
+        {"stages": _ONE_STAGE, "policy_graph": {"annual_discount_rate": 0.1}},
+    )
+
+    with dx.collect() as found:
+        context = load_temporal_context(case_dir)
+
+    assert context.discount_rate == 0.1
+    assert [d for d in found if d.title == "config.json could not be read"] == []
+
+
+def test_unparseable_config_json_without_a_stages_json_rate_warns(
+    tmp_path: Path,
+) -> None:
+    case_dir = tmp_path / "case"
+    _write_unparseable_config_case(case_dir, {"stages": _ONE_STAGE})
+
+    with dx.collect() as found:
+        context = load_temporal_context(case_dir)
+
+    assert context.discount_rate == 0.0
+    config_findings = [d for d in found if d.title == "config.json could not be read"]
+    assert [d.code for d in config_findings] == ["report-file-unreadable"]
+    assert "0.0% discount rate" in config_findings[0].summary
+
+
+def test_dashboard_builds_when_lines_json_does_not_parse(tmp_path: Path) -> None:
+    from novomodelo_bridge.cli import app
+
+    case_dir = tmp_path / "case"
+    (case_dir / "output" / "simulation").mkdir(parents=True)
+    _write_json(
+        case_dir / "stages.json",
+        {"stages": [{"id": 0, "blocks": [{"id": 0, "hours": 730.0}]}]},
+    )
+    (case_dir / "system").mkdir()
+    (case_dir / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+    output_path = case_dir / "d.html"
+
+    result = CliRunner().invoke(
+        app, ["dashboard", str(case_dir), "--json", "-o", str(output_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["status"] == "ok"
+    assert [
+        d["title"]
+        for d in document["diagnostics"]
+        if d["code"] == "report-file-unreadable"
+    ] == ["system/lines.json could not be read"]
+    assert output_path.is_file()
+
 
 # ---------------------------------------------------------------------------
 # Full synthetic case

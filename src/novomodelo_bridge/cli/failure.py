@@ -10,12 +10,16 @@ import typer
 from typer.core import TyperGroup
 
 from novomodelo_bridge.cli.verdict import build_verdict
-from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    Severity,
+    finalize_diagnostics,
+)
 from novomodelo_bridge.core.errors import diagnostic_from_exception
 from novomodelo_bridge.ui.console import render_diagnostics
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from typer._click import Context
 
@@ -49,15 +53,22 @@ def _fail(
     code: int,
     *,
     summary: Mapping[str, object] | None = None,
+    found_before: Sequence[Diagnostic] = (),
 ) -> NoReturn:
-    """Render + (under --json) emit one failure verdict, then Exit(code)."""
+    """Render + (under --json) emit one failure verdict, then Exit(code).
+
+    *found_before* holds what the command found before *exc* stopped it,
+    reported ahead of the failure.
+    """
     context = _FAILURE_CONTEXT[command.split()[0]]
-    diag = diagnostic_from_exception(exc, context=context)
+    diagnostics = finalize_diagnostics(
+        [*found_before, diagnostic_from_exception(exc, context=context)]
+    )
     if args.json_output:
-        _emit_convert_json(build_verdict(command, "error", summary or {}, [diag]))
+        _emit_convert_json(build_verdict(command, "error", summary or {}, diagnostics))
     else:
         render_diagnostics(
-            [diag],
+            diagnostics,
             heading=f"{context} notes",
             console=args.err_console(),
             quiet=args.quiet,

@@ -18,6 +18,7 @@ import typer
 from novomodelo_bridge.cli.args import CompareArgs, ConvertArgs, DashboardArgs
 from novomodelo_bridge.cli.failure import _fail
 from novomodelo_bridge.cli.verdict import convert_summary
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 from novomodelo_bridge.core.errors import SourceFileError
 
 
@@ -125,3 +126,50 @@ def test_fail_json_defaults_summary_to_empty_dict_with_five_envelope_keys(
         "summary",
         "diagnostics",
     }
+
+
+def _warning(code: str) -> Diagnostic:
+    return Diagnostic(
+        code=code,
+        severity=Severity.WARNING,
+        category="c",
+        title="A warning",
+        summary=f"{code} happened.",
+    )
+
+
+def test_fail_json_reports_what_was_found_before_the_failure_once_each(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = _compare_args(json_output=True)
+    found = [_warning("first"), _warning("second"), _warning("first")]
+
+    with pytest.raises(typer.Exit):
+        _fail("compare decomp", args, ValueError("boom"), 2, found_before=found)
+
+    document = json.loads(capsys.readouterr().out)
+    assert document["status"] == "error"
+    assert [d["code"] for d in document["diagnostics"]] == [
+        "first",
+        "second",
+        "unexpected-error",
+    ]
+
+
+def test_fail_non_json_renders_what_was_found_before_the_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = _dashboard_args(json_output=False)
+
+    with pytest.raises(typer.Exit):
+        _fail(
+            "dashboard",
+            args,
+            ValueError("no output"),
+            1,
+            found_before=[_warning("earlier")],
+        )
+
+    err = capsys.readouterr().err
+    assert "earlier happened." in err
+    assert "no output" in err

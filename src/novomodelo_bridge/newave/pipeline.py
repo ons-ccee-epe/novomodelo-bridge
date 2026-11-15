@@ -374,13 +374,20 @@ def _convert_temporal_and_stochastic(
     )
 
 
-def _convert_constraints(case: NewaveCase, id_map: NewaveIdMap) -> _ConstraintArtifacts:
+def _convert_constraints(
+    case: NewaveCase, id_map: NewaveIdMap, load_stats: pa.Table
+) -> _ConstraintArtifacts:
     """The ``step("Converting constraints")`` phase: the VminOP, electric and
     AGRINT generic constraints over one shared :class:`ConstraintIdAllocator`,
     plus the load factors, line and thermal bounds, non-controllable sources,
     production models, energy-productivity overrides, and tailrace curves.
+    The electric constraints' demand terms read *load_stats* on the load
+    blocks.
     """
     allocator = ConstraintIdAllocator()
+
+    logger.debug("Converting load factors")
+    load_factors_dict = stochastic_conv.convert_load_factors(case, id_map)
 
     logger.debug("Converting VminOP constraints")
     vminop_result = constraints_conv.convert_vminop_constraints(
@@ -389,16 +396,18 @@ def _convert_constraints(case: NewaveCase, id_map: NewaveIdMap) -> _ConstraintAr
 
     logger.debug("Converting electric constraints")
     electric_result = constraints_conv.convert_electric_constraints(
-        case, id_map, allocator=allocator
+        case,
+        id_map,
+        allocator=allocator,
+        block_loads=stochastic_conv.block_loads(
+            load_stats, load_factors_dict, case.patamar.numero_patamares or 1
+        ),
     )
 
     logger.debug("Converting AGRINT group constraints")
     agrint_result = constraints_conv.convert_agrint_constraints(
         case, id_map, allocator=allocator
     )
-
-    logger.debug("Converting load factors")
-    load_factors_dict = stochastic_conv.convert_load_factors(case, id_map)
 
     logger.debug("Converting line bounds (folds in per-block exchange factors)")
     line_bounds_table = network_conv.convert_line_bounds(case, id_map)
@@ -711,9 +720,8 @@ def convert_newave_case(
 ) -> ConversionReport:
     """Convert a source-model case directory to a Novomodelo case directory.
 
-    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
-    failure clears the written outputs and forwards the below-``ERROR``
-    findings collected before it.
+    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`,
+    which refuses an occupied output and rolls back a failed run.
 
     Parameters
     ----------
@@ -792,7 +800,7 @@ def _convert_newave_case_impl(
     temporal = _convert_temporal_and_stochastic(case, id_map)
 
     step("Converting constraints")
-    constraints = _convert_constraints(case, id_map)
+    constraints = _convert_constraints(case, id_map, entities.load_stats)
     hydro_bounds_table = _resolve_hydro_bounds(entities.hydros, temporal, id_map)
     _run_emission_checks(entities, temporal, constraints, hydro_bounds_table)
 

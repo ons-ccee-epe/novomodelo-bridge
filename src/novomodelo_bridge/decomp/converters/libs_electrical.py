@@ -1,5 +1,5 @@
 """Read the LIBs-era electrical special-constraint file into a structured model,
-and parse its linear-expression DSL into flat terms.
+and fold its parsed formulas into per-(stage,block) bounds.
 
 A LIBs-era source-model deck moves its richer electrical special constraints
 out of the classic ``dadger`` ``RE``/``LU``/``FU``/``FT``/``FI`` registers into
@@ -15,13 +15,12 @@ immutable :class:`LibsElectricalModel`.
 
 idecomp returns every ``formula``/``formula_limite``/``limite_inferior``/
 ``limite_superior`` DSL cell as an opaque string or number; the reader stores
-it **verbatim** and does not evaluate it. :func:`parse_linear_expression` turns
-one such string into a flat list of :class:`ParsedTerm`, expanding
-``EXPRESSAO-ELETRICA`` named-expression references and ``re(R)`` restriction
-references (multiplying through the enclosing coefficient) while keeping
-``ALIAS-ELETRICO`` references and ``se(cond, X, Y)`` conditionals unresolved
-for a later resolver; :func:`classify_term`/:func:`classify_terms` then sort
-each parsed term into the source model's A/B/C bucket trichotomy.
+it **verbatim** and does not evaluate it.
+:mod:`novomodelo_bridge.core.electrical_expression`, the grammar NEWAVE's
+``restricao-eletrica.csv`` shares, parses one such string into flat terms and
+sorts them into the A/B/C buckets; the model is the scope it parses in, so
+``EXPRESSAO-ELETRICA`` names and ``re(R)`` references expand to their formulas
+and ``ALIAS-ELETRICO`` names stay unresolved for a later resolver.
 The activation-rule engine (:class:`ActivationRule`, :class:`Comparison`,
 :func:`parse_activation_rule`, :func:`evaluate_rule`) builds on this model
 and reuses this same parser for its comparison operands. This module only
@@ -62,7 +61,6 @@ import operator
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
@@ -72,6 +70,24 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+)
+from novomodelo_bridge.core.electrical_expression import (
+    ALIAS_TOKEN,
+    CONST_TOKEN,
+    GNL_TOKEN,
+    PEQ_TOKEN,
+    SE_TOKEN,
+    AssembledBound,
+    Bucket,
+    DataContext,
+    ParsedTerm,
+    classify_term,
+    classify_terms,
+    evaluate_terms,
+    fold_formula_bound,
+    negate,
+    parse_linear_expression,
+    term_text,
 )
 from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
@@ -209,6 +225,9 @@ class LibsElectricalModel:
     by ``codigo_restricao``; ``rules`` (the raw ``regra_ativacao`` text) by
     ``codigo_regra_ativacao``. ``gnl_thermal_codes`` are the deck's ``dadgnl``
     GNL plants, whose ``ger_usit`` the parser reads as input data.
+
+    The model is the :class:`~novomodelo_bridge.core.electrical_expression.
+    ExpressionScope` its formulas are parsed in.
     """
 
     expressions: Mapping[str, ElectricalExpression]
@@ -216,6 +235,24 @@ class LibsElectricalModel:
     restrictions: Mapping[int, ElectricalRestriction]
     rules: Mapping[int, str]
     gnl_thermal_codes: frozenset[int] = frozenset()
+
+    def expression_formula(self, name: str) -> str | None:
+        expression = self.expressions.get(name)
+        return None if expression is None else expression.formula
+
+    def is_alias(self, name: str) -> bool:
+        return name in self.aliases
+
+    def restriction_formula(self, code: int) -> str:
+        restriction = self.restrictions.get(code)
+        if restriction is None:
+            raise ValueError(f"re({code}) references unknown restriction {code}")
+        if restriction.lhs is None:
+            raise ValueError(
+                f"re({code}) references restriction {code}, which is declared "
+                "only by period rows and has no single formula"
+            )
+        return restriction.lhs
 
 
 class _ElectricalCards(Protocol):
@@ -723,524 +760,9 @@ def ande_load(case: DecompCase) -> tuple[int, dict[int, list[float]]] | None:
     return int(case.hidr.loc[_ITAIPU_CODE, "submercado"]), carga_ande
 
 
-#: Built-in bare (argument-less) input-data tokens. A bare name not
-#: declared by ``EXPRESSAO-ELETRICA`` or ``ALIAS-ELETRICO``, and not in this set,
-#: is an unrecognized identifier.
-_BUILTIN_BARE_TOKENS = frozenset({"demanda_sin", "val_demanda_sin", "carga_ande"})
-
-#: Reserved token for a bare ``peq_<PQ name>_<subsystem>`` reference to one
-#: ``dadger`` ``PQ`` series' generation. The series name keeps its own
-#: underscores (``N_PCHgd``), so only the last ``_`` separates the suffix.
-_PEQ_TOKEN = "peq"
-_PEQ_PREFIX = "peq_"
-
 #: Region names accepted as a ``peq_`` subsystem suffix besides the ``SB``
 #: mnemonics, mapped to the mnemonic they stand for.
 _PEQ_SUBMARKET_ALIASES = {"SECO": "SE", "SUL": "S"}
-
-#: Reserved token for a ``ger_usit(c)`` whose ``c`` is a ``dadgnl`` GNL plant:
-#: its generation is commanded by ``gl``, so it is input data, not a decision.
-_GNL_TOKEN = "__ger_usit_gnl__"
-
-#: Reserved token for a bare numeric constant; its value lives in
-#: :attr:`ParsedTerm.coefficient`.
-_CONST_TOKEN = "__const__"
-
-#: Reserved token for an unresolved ``ALIAS-ELETRICO`` reference; the alias's
-#: own name lives in :attr:`ParsedTerm.alias_name`.
-_ALIAS_TOKEN = "alias"
-
-#: Reserved token for a structural ``se(cond, X, Y)`` conditional.
-_SE_TOKEN = "se"
-
-#: The optional exponent covers the source model's ``1E+31`` "no limit" value.
-_NUMBER_RE = re.compile(r"\d+\.?\d*(?:[eE][+-]?\d+)?")
-_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-
-@dataclass(frozen=True)
-class ParsedTerm:
-    """One atomic, sign-and-coefficient-distributed term of a parsed linear
-    expression (see :func:`parse_linear_expression`).
-
-    ``token`` identifies the term's kind:
-
-    - a function-call name (``ger_usih``, ``ener_interc``, ``disp_usih``, …)
-      with its integer arguments in ``args``;
-    - the reserved :data:`_CONST_TOKEN` (``"__const__"``) for a bare numeric
-      constant — its value is in ``coefficient``, ``args`` is empty;
-    - the reserved :data:`_ALIAS_TOKEN` (``"alias"``) for an unresolved
-      ``ALIAS-ELETRICO`` reference — ``args`` is empty and the alias's own
-      name is in ``alias_name``; its numeric value is resolved
-      per-(stage,block) later, never here;
-    - a built-in bare token (``demanda_sin`` / ``val_demanda_sin`` /
-      ``carga_ande``), ``args`` empty;
-    - the reserved :data:`_GNL_TOKEN` for a ``ger_usit(c)`` naming a GNL plant
-      (:attr:`LibsElectricalModel.gnl_thermal_codes`), the code in ``args``;
-      its commanded generation is resolved per-(stage,block) later;
-    - the reserved :data:`_PEQ_TOKEN` (``"peq"``) for a ``peq_<name>_<sub>``
-      reference — the ``PQ`` series name is in ``pq_name`` and the raw
-      subsystem suffix in ``pq_submarket``; resolved per-(stage,block) later;
-    - the reserved :data:`_SE_TOKEN` (``"se"``) for a ``se(cond, X, Y)``
-      conditional, kept structural: ``condition``, ``branch_true``, and
-      ``branch_false`` carry the raw, unparsed sub-expression text (evaluated
-      later, never here; ``cond`` is not evaluated by this parser).
-
-    A named-expression (``EXPRESSAO-ELETRICA``) or ``re(R)`` reference never
-    survives to a ``ParsedTerm`` — the parser inlines it into its own terms,
-    multiplying the enclosing coefficient through.
-    """
-
-    coefficient: float
-    token: str
-    args: tuple[int, ...] = ()
-    alias_name: str | None = None
-    pq_name: str | None = None
-    pq_submarket: str | None = None
-    condition: str | None = None
-    branch_true: str | None = None
-    branch_false: str | None = None
-
-
-@dataclass(frozen=True)
-class AssembledBound:
-    """The result of folding one restriction's bucket-B/-C terms into a
-    per-(stage,block) numeric bound (:func:`assemble_bound`), sign-canonical
-    for novomodelo.
-
-    ``terms`` is the surviving bucket-A (decision) expression, already in
-    novomodelo's single-LHS form: ``lower <= Σ terms <= upper``. Each of
-    :func:`assemble_bound`'s three folds gets there differently — a FORMULA
-    restriction's LHS bucket-A terms verbatim, a plain INEQUACAO's LHS
-    bucket-A terms plus its RHS bucket-A terms moved over and sign-flipped,
-    a ``disp_usih`` reserve's ``ger_usih`` terms sign-flipped to match the
-    reserve->gen-cap rewrite's operator flip — so a caller reading ``terms``
-    never has to know which shape produced it, and never reproduces the
-    sign hazard of reading ``restriction.lhs``/``.rhs`` verbatim instead.
-    """
-
-    terms: tuple[ParsedTerm, ...]
-    lower: float | None
-    upper: float | None
-
-
-def _negate(term: ParsedTerm) -> ParsedTerm:
-    """*term* with its coefficient sign flipped, every other field verbatim."""
-    return replace(term, coefficient=-term.coefficient)
-
-
-class UnrecognizedElectricalToken(ValueError):
-    """A well-formed but undeclared bare identifier, *name*: neither a
-    declared ``EXPRESSAO-ELETRICA`` named expression, a declared
-    ``ALIAS-ELETRICO`` data alias, nor a member of
-    :data:`_BUILTIN_BARE_TOKENS`.
-
-    Raised only from :meth:`_ExpressionParser._parse_bare_name`'s
-    undeclared-identifier branch — never from a malformed-DSL
-    raise (unbalanced parentheses, a non-numeric coefficient/argument,
-    unexpected trailing content), which stays a plain :class:`ValueError`
-    and remains fail-loud. A :class:`ValueError` subclass so an existing
-    ``pytest.raises(ValueError)`` contract still holds, but distinct so the
-    emitter's per-restriction skip-not-partial boundary
-    (``libs_electrical_emit.emit_libs_electrical_generics``) can contain
-    exactly this "well-formed but undeclared identifier" case to the one
-    restriction that references it, without catching (and so silently
-    masking) a genuine malformed-DSL bug as a routine drop.
-    """
-
-    def __init__(self, name: str, text: str) -> None:
-        super().__init__(
-            f"unrecognized identifier {name!r} in electrical expression "
-            f"{text!r} (not a declared named expression, data alias, "
-            "built-in bare token, or peq_ small-plant reference)"
-        )
-        self.name = name
-
-
-class _ExpressionParser:
-    """Character-position recursive-descent parser for one DSL expression string.
-
-    Threads a running numeric ``scale`` — the product of every sign and scalar
-    coefficient enclosing the current position — down to each atomic term, so a
-    coefficient distributed over a parenthesized sum (``0.05*(a + b)``) lands on
-    every term inside it, and a named-expression/``re(R)`` reference inlines its
-    own terms multiplied by the scale in effect where the reference occurred.
-    """
-
-    def __init__(
-        self, text: str, model: LibsElectricalModel, seen: frozenset[str]
-    ) -> None:
-        self._text = text
-        self._model = model
-        self._seen = seen
-        self._pos = 0
-
-    def parse(self) -> list[ParsedTerm]:
-        terms = self._parse_expr(1.0)
-        self._skip_ws()
-        if self._pos != len(self._text):
-            raise ValueError(
-                f"unexpected trailing content {self._text[self._pos :]!r} in "
-                f"electrical expression {self._text!r}"
-            )
-        return terms
-
-    def _skip_ws(self) -> None:
-        while self._pos < len(self._text) and self._text[self._pos].isspace():
-            self._pos += 1
-
-    def _peek(self) -> str:
-        self._skip_ws()
-        return self._text[self._pos] if self._pos < len(self._text) else ""
-
-    def _consume(self, char: str, context: str) -> None:
-        self._skip_ws()
-        if self._pos >= len(self._text) or self._text[self._pos] != char:
-            raise ValueError(
-                f"expected {char!r} {context} in electrical expression {self._text!r}"
-            )
-        self._pos += 1
-
-    def _parse_expr(self, scale: float) -> list[ParsedTerm]:
-        """``['+'|'-'] term (('+'|'-') term)*`` — a signed sum of terms."""
-        terms: list[ParsedTerm] = []
-        sign = 1.0
-        if self._peek() in ("+", "-"):
-            sign = -1.0 if self._text[self._pos] == "-" else 1.0
-            self._pos += 1
-        terms.extend(self._parse_term(scale * sign))
-        while self._peek() in ("+", "-"):
-            sign = -1.0 if self._text[self._pos] == "-" else 1.0
-            self._pos += 1
-            terms.extend(self._parse_term(scale * sign))
-        return terms
-
-    def _parse_term(self, scale: float) -> list[ParsedTerm]:
-        """``[NUMBER '*'] factor`` — a bare number alone is a constant term."""
-        self._skip_ws()
-        number = _NUMBER_RE.match(self._text, self._pos)
-        if number is None:
-            return self._parse_factor(scale)
-        probe = number.end()
-        while probe < len(self._text) and self._text[probe].isspace():
-            probe += 1
-        if probe < len(self._text) and self._text[probe] == "*":
-            self._pos = probe + 1
-            return self._parse_factor(scale * float(number.group()))
-        self._pos = number.end()
-        return [
-            ParsedTerm(coefficient=scale * float(number.group()), token=_CONST_TOKEN)
-        ]
-
-    def _parse_factor(self, scale: float) -> list[ParsedTerm]:
-        """``'(' expr ')' | IDENT '(' args ')' | IDENT`` — a group or an atom."""
-        self._skip_ws()
-        if self._pos >= len(self._text):
-            raise ValueError(
-                "expected a term but reached the end of electrical expression "
-                f"{self._text!r}"
-            )
-        if self._text[self._pos] == "(":
-            self._pos += 1
-            terms = self._parse_expr(scale)
-            self._consume(")", "to close '('")
-            return terms
-        ident = _IDENT_RE.match(self._text, self._pos)
-        if ident is None:
-            raise ValueError(
-                f"malformed token at {self._text[self._pos :]!r} in electrical "
-                f"expression {self._text!r}"
-            )
-        name = ident.group()
-        self._pos = ident.end()
-        if self._peek() == "(":
-            return self._parse_function_call(name, scale)
-        return self._parse_bare_name(name, scale)
-
-    def _parse_function_call(self, name: str, scale: float) -> list[ParsedTerm]:
-        if name == _SE_TOKEN:
-            return self._parse_se(scale)
-        if name == "re":
-            return self._parse_re(scale)
-        args = self._parse_int_args(name)
-        if name == "ger_usit" and args and args[0] in self._model.gnl_thermal_codes:
-            return [ParsedTerm(coefficient=scale, token=_GNL_TOKEN, args=args)]
-        return [ParsedTerm(coefficient=scale, token=name, args=args)]
-
-    def _parse_int_args(self, fn_name: str) -> tuple[int, ...]:
-        self._consume("(", f"after {fn_name!r}")
-        args: list[int] = []
-        if self._peek() == ")":
-            self._pos += 1
-            return tuple(args)
-        while True:
-            self._skip_ws()
-            number = _NUMBER_RE.match(self._text, self._pos)
-            if number is None or "." in number.group():
-                raise ValueError(
-                    f"expected an integer argument for {fn_name!r}(...) at "
-                    f"{self._text[self._pos :]!r} in electrical expression "
-                    f"{self._text!r}"
-                )
-            args.append(int(number.group()))
-            self._pos = number.end()
-            if self._peek() == ",":
-                self._pos += 1
-                continue
-            break
-        self._consume(")", f"to close {fn_name!r}(...)")
-        return tuple(args)
-
-    def _parse_re(self, scale: float) -> list[ParsedTerm]:
-        """``re(R)`` — a reference to restriction ``R``'s formula, inlined."""
-        args = self._parse_int_args("re")
-        if len(args) != 1:
-            raise ValueError(
-                f"re(...) expects exactly one restriction id, got {args!r} in "
-                f"electrical expression {self._text!r}"
-            )
-        code = args[0]
-        restriction = self._model.restrictions.get(code)
-        if restriction is None:
-            raise ValueError(
-                f"re({code}) references unknown restriction {code} in "
-                f"electrical expression {self._text!r}"
-            )
-        if restriction.lhs is None:
-            raise ValueError(
-                f"re({code}) references restriction {code}, which is declared "
-                "only by period rows and has no single formula, in electrical "
-                f"expression {self._text!r}"
-            )
-        return self._expand_reference(f"re({code})", restriction.lhs, scale)
-
-    def _parse_se(self, scale: float) -> list[ParsedTerm]:
-        """``se(cond, X, Y)`` — one structural term; ``cond`` is never evaluated
-        here, so its raw text (and both branches') is captured by a
-        depth-aware scan for the top-level commas rather than by tokenizing it."""
-        self._consume("(", "after 'se'")
-        args_start = self._pos
-        comma_positions: list[int] = []
-        depth = 0
-        pos = self._pos
-        while True:
-            if pos >= len(self._text):
-                raise ValueError(
-                    "unbalanced parentheses in se(...) in electrical expression "
-                    f"{self._text!r}"
-                )
-            char = self._text[pos]
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                if depth == 0:
-                    break
-                depth -= 1
-            elif char == "," and depth == 0:
-                comma_positions.append(pos)
-            pos += 1
-        close_pos = pos
-        if len(comma_positions) != 2:
-            raise ValueError(
-                "se(...) expects exactly 3 arguments (condition, true-branch, "
-                f"false-branch) in electrical expression {self._text!r}"
-            )
-        first_comma, second_comma = comma_positions
-        condition = self._text[args_start:first_comma].strip()
-        branch_true = self._text[first_comma + 1 : second_comma].strip()
-        branch_false = self._text[second_comma + 1 : close_pos].strip()
-        self._pos = close_pos + 1
-        return [
-            ParsedTerm(
-                coefficient=scale,
-                token=_SE_TOKEN,
-                condition=condition,
-                branch_true=branch_true,
-                branch_false=branch_false,
-            )
-        ]
-
-    def _parse_bare_name(self, name: str, scale: float) -> list[ParsedTerm]:
-        """Disambiguate a bare name: a named expression, else a data alias,
-        else a built-in bare token, else a ``peq_`` ``PQ`` reference — else an
-        unrecognized identifier."""
-        if name in self._model.expressions:
-            return self._expand_reference(
-                name, self._model.expressions[name].formula, scale
-            )
-        if name in self._model.aliases:
-            return [ParsedTerm(coefficient=scale, token=_ALIAS_TOKEN, alias_name=name)]
-        if name in _BUILTIN_BARE_TOKENS:
-            return [ParsedTerm(coefficient=scale, token=name)]
-        pq_name, _, submarket = name.removeprefix(_PEQ_PREFIX).rpartition("_")
-        if name.startswith(_PEQ_PREFIX) and pq_name and submarket:
-            return [
-                ParsedTerm(
-                    coefficient=scale,
-                    token=_PEQ_TOKEN,
-                    pq_name=pq_name,
-                    pq_submarket=submarket,
-                )
-            ]
-        raise UnrecognizedElectricalToken(name, self._text)
-
-    def _expand_reference(
-        self, key: str, formula: str, scale: float
-    ) -> list[ParsedTerm]:
-        """Recursively parse *formula* (a named expression's or a restriction's
-        LHS), multiplying every resulting term's coefficient by *scale*, and
-        guard the recursion against a cycle through *key*."""
-        if key in self._seen:
-            cycle = " -> ".join(sorted({*self._seen, key}))
-            raise ValueError(f"cyclic electrical expression reference: {cycle}")
-        sub_terms = parse_linear_expression(
-            formula, self._model, _seen=self._seen | {key}
-        )
-        return [
-            replace(term, coefficient=scale * term.coefficient) for term in sub_terms
-        ]
-
-
-def parse_linear_expression(
-    text: str,
-    model: LibsElectricalModel,
-    *,
-    _seen: frozenset[str] = frozenset(),
-) -> list[ParsedTerm]:
-    """Parse one electrical linear-expression DSL string into flat terms.
-
-    Distributes every sign and scalar coefficient onto each atomic term
-    (including across a parenthesized sum) and recursively inlines
-    ``EXPRESSAO-ELETRICA`` named-expression references and ``re(R)``
-    restriction references, multiplying through the enclosing coefficient —
-    ``_seen`` (the names/``re(R)`` keys expanded on the current recursion path)
-    guards that inlining against a cycle, raising ``ValueError`` naming it. An
-    ``ALIAS-ELETRICO`` reference is kept as a single unresolved
-    :data:`_ALIAS_TOKEN` term (its value is resolved per-(stage,block) later,
-    never here); a ``se(cond, X, Y)`` conditional is kept as a single
-    structural term with its condition and both branches unevaluated.
-
-    This is the source model's linear-expression grammar, not novomodelo's: the
-    parser never normalizes the relation (no RHS→LHS move, no same-token
-    merge) — it preserves the author's side and term multiplicity verbatim;
-    novomodelo owns relational normalization.
-
-    Raises
-    ------
-    UnrecognizedElectricalToken
-        On a bare identifier that is well-formed but undeclared — neither a
-        named expression, a data alias, nor a built-in bare token (a
-        :class:`ValueError` subclass; the per-restriction
-        skip-not-partial signal — see its own docstring).
-    ValueError
-        On a cyclic named-expression/``re(R)`` reference, or a malformed
-        token (unbalanced parentheses, a non-numeric coefficient/argument,
-        or unexpected trailing content) — genuinely malformed DSL, which
-        stays fail-loud and is never caught as a routine drop.
-    """
-    return _ExpressionParser(text, model, _seen).parse()
-
-
-class Bucket(Enum):
-    """Which of the source model's spec-§0 A/B/C trichotomy a parsed term
-    belongs to.
-
-    - **A** — a novomodelo decision term: stays a structural LP term.
-    - **B** — an input-data term: the bridge evaluates it to a number and
-      folds it into the bound.
-    - **C** — ``disp_usih``: novomodelo has no available-power ``VariableRef``, so
-      the bridge resolves it to a per-stage constant that rewrites the
-      constraint form instead of emitting it as a structural LP term.
-    """
-
-    A = "A"
-    B = "B"
-    C = "C"
-
-
-#: Bucket A — novomodelo decision tokens that stay structural LP terms.
-#: ``re(X)`` is not listed here: the parser already inlines a restriction
-#: reference into its own terms (multiplying through the enclosing
-#: coefficient), so no :class:`ParsedTerm` ever carries a bare ``"re"`` token.
-_BUCKET_A_TOKENS = frozenset(
-    {"ger_usih", "ger_usit", "ger_pee", "ger_conjh", "ener_interc", "ener_comerc"}
-)
-
-#: Bucket B — input-data tokens the bridge evaluates to a number and
-#: folds into the bound: the built-in demand/load tokens, plus the parser's
-#: reserved tokens (a bare numeric constant, an unresolved ``ALIAS-ELETRICO``
-#: reference, a ``peq_`` series, a GNL plant's commanded ``ger_usit``, and a
-#: ``se(cond, X, Y)`` conditional).
-_BUCKET_B_TOKENS = frozenset(
-    {
-        "demanda",
-        "val_demanda",
-        "demanda_sin",
-        "val_demanda_sin",
-        "carga_ande",
-        _CONST_TOKEN,
-        _ALIAS_TOKEN,
-        _PEQ_TOKEN,
-        _GNL_TOKEN,
-        _SE_TOKEN,
-    }
-)
-
-#: Bucket C — ``disp_usih`` is the sole member (see :class:`Bucket`).
-_BUCKET_C_TOKENS = frozenset({"disp_usih"})
-
-#: The closed token -> :class:`Bucket` map, the sole source of truth
-#: for :func:`classify_term`. Mirrors
-#: ``constraint_registers._BOUNDS_AXIS``'s module-level membership-map shape.
-_TOKEN_BUCKET: dict[str, Bucket] = {
-    **dict.fromkeys(_BUCKET_A_TOKENS, Bucket.A),
-    **dict.fromkeys(_BUCKET_B_TOKENS, Bucket.B),
-    **dict.fromkeys(_BUCKET_C_TOKENS, Bucket.C),
-}
-
-
-def classify_term(term: ParsedTerm) -> Bucket:
-    """Classify one parsed term into its spec-§0 A/B/C bucket.
-
-    Decides purely from ``term.token`` against the closed set in
-    :data:`_TOKEN_BUCKET` — never a model lookup, since the parser already
-    resolved every name to a concrete token (an alias to :data:`_ALIAS_TOKEN`,
-    a bare numeric constant to :data:`_CONST_TOKEN`, a conditional to
-    :data:`_SE_TOKEN`, a named-expression/``re(R)`` reference inlined away).
-
-    Raises
-    ------
-    ValueError
-        When ``term.token`` is not a recognized token — fail loud rather than
-        silently drop or mis-bucket a term, which would corrupt either the LP
-        structure (bucket A/C) or the bound (bucket B).
-    """
-    bucket = _TOKEN_BUCKET.get(term.token)
-    if bucket is None:
-        recognized = ", ".join(sorted(_TOKEN_BUCKET))
-        raise ValueError(
-            f"unrecognized electrical-expression token {term.token!r}; "
-            f"recognized tokens are: {recognized}"
-        )
-    return bucket
-
-
-def classify_terms(terms: Sequence[ParsedTerm]) -> dict[Bucket, list[ParsedTerm]]:
-    """Partition a term sequence into its three spec-§0 buckets.
-
-    Every :class:`Bucket` key is present (an empty list when no term
-    classified into it), and each bucket's list preserves the input order —
-    callers get a stable, total partition.
-
-    Raises
-    ------
-    ValueError
-        Propagated from :func:`classify_term` on the first unrecognized token.
-    """
-    partition: dict[Bucket, list[ParsedTerm]] = {bucket: [] for bucket in Bucket}
-    for term in terms:
-        partition[classify_term(term)].append(term)
-    return partition
 
 
 #: The activation-rule grammar's six comparison operators,
@@ -1294,23 +816,6 @@ class ActivationRule:
     """
 
     comparisons: tuple[Comparison, ...]
-
-
-#: Resolves one bucket-B operand term to its numeric value for one
-#: (stage, block) cell — a built-in bare token (``demanda_sin``), a
-#: parameterized one (``demanda(3)``), an unresolved ``ALIAS-ELETRICO``
-#: reference (``term.alias_name``), or a ``se(cond, X, Y)`` conditional.
-#:
-#: A bare numeric constant (``term.token == "__const__"``) is the one
-#: exception: its value already lives in the term's own ``coefficient``
-#: (see :class:`ParsedTerm`), so a resolver **must** return ``1.0`` for it —
-#: :func:`evaluate_rule`'s ``coefficient * context(term)`` product would
-#: otherwise double-apply the constant.
-#:
-#: This is the source model's per-(stage, block) demand/alias resolver
-#: interface, kept abstract so the engine stays a pure function; the real
-#: resolver is :func:`build_data_context`.
-type DataContext = Callable[[ParsedTerm], float]
 
 
 def _split_top_level(text: str, sep: str) -> list[str]:
@@ -1457,32 +962,13 @@ def _parse_comparison(conjunct: str, model: LibsElectricalModel) -> Comparison:
     return Comparison(left=left, op=op, right=right)
 
 
-def _evaluate_side(terms: Sequence[ParsedTerm], context: DataContext) -> float:
-    """Sum one :class:`Comparison` side's ``coefficient * context(term)``
-    over its operand terms.
-
-    A bare numeric constant (``term.token == _CONST_TOKEN``) is read
-    straight from ``term.coefficient`` rather than through *context*: a
-    conforming context already returns ``1.0`` for it (the DataContext
-    convention), so this changes nothing for one, but it closes
-    the handshake so a non-conforming context can never silently double- or
-    zero-apply a constant.
-    """
-    return sum(
-        term.coefficient
-        if term.token == _CONST_TOKEN
-        else term.coefficient * context(term)
-        for term in terms
-    )
-
-
 def evaluate_rule(rule: ActivationRule, context: DataContext) -> bool:
     """Evaluate one parsed activation rule against a per-(stage,block)
     :data:`DataContext`.
 
     Returns the AND of every :class:`Comparison`: each side sums to
     ``Σ coefficient * context(term)`` over its operand terms
-    (:func:`_evaluate_side`), and the six comparison operators map onto the
+    (:func:`evaluate_terms`), and the six comparison operators map onto the
     matching predicate (:data:`_COMPARISON_FUNCS`). An empty
     ``rule.comparisons`` — :func:`is_always_active` — evaluates to ``True``,
     the vacuous AND.
@@ -1493,8 +979,8 @@ def evaluate_rule(rule: ActivationRule, context: DataContext) -> bool:
     """
     return all(
         _COMPARISON_FUNCS[comparison.op](
-            _evaluate_side(comparison.left, context),
-            _evaluate_side(comparison.right, context),
+            evaluate_terms(comparison.left, context),
+            evaluate_terms(comparison.right, context),
         )
         for comparison in rule.comparisons
     )
@@ -1586,7 +1072,7 @@ def _submarket_bus_id(id_map: DecompIdMap, term: ParsedTerm) -> int:
         return id_map.bus_id(code)
     except KeyError as err:
         raise _UnresolvableBucketBTerm(
-            f"{term.token}({code}) references unknown submarket {code}"
+            f"{term.token}({code}) names an undeclared submarket"
         ) from err
 
 
@@ -1610,21 +1096,20 @@ def _peq_block_generation(
         ``PQ`` series of that name.
     """
     assert term.pq_name is not None and term.pq_submarket is not None
-    reference = f"{_PEQ_PREFIX}{term.pq_name}_{term.pq_submarket}"
+    reference = term_text(term)
     mnemonics = [name.strip().upper() for name in id_map.bus_names]
     suffix = term.pq_submarket.upper()
     if suffix not in mnemonics:
         suffix = _PEQ_SUBMARKET_ALIASES.get(suffix, suffix)
     if suffix not in mnemonics:
         raise _UnresolvableBucketBTerm(
-            f"{reference} references unknown subsystem {term.pq_submarket!r}"
+            f"{reference} names the undeclared subsystem {term.pq_submarket}"
         )
     sub_code = id_map.bus_codes[mnemonics.index(suffix)]
     series = pq_generation.get((sub_code, term.pq_name))
     if series is None:
         raise _UnresolvableBucketBTerm(
-            f"{reference} references no PQ series {term.pq_name!r} in "
-            f"subsystem {sub_code}"
+            f"{reference} names no PQ series {term.pq_name} of subsystem {sub_code}"
         )
     return series[stage_index][block_index]
 
@@ -1694,7 +1179,7 @@ def build_data_context(
       to all blocks);
     - the numeric-constant token — ``1.0``, never the constant's own value:
       the value already lives in
-      ``term.coefficient``, which :func:`_evaluate_side` applies directly;
+      ``term.coefficient``, which :func:`evaluate_terms` applies directly;
     - a ``se(cond, X, Y)`` conditional — :func:`evaluate_se`.
 
     Raises
@@ -1720,9 +1205,13 @@ def build_data_context(
     )
     n_submarkets = len(id_map.bus_codes)
 
+    # TRACKED NOVOMODELO-GAP (C36): the case has no load term in a generic
+    # constraint, so the demand is folded into the bound and a bare
+    # demanda/demanda_sin multiplier is not added to the CMO as the source
+    # model does; decomp-electrical-demand-in-cmo lists them.
     def context_for_cell(stage_index: int, block_index: int) -> DataContext:
         def resolve(term: ParsedTerm) -> float:
-            if term.token == _CONST_TOKEN:
+            if term.token == CONST_TOKEN:
                 return 1.0
             if term.token in ("demanda", "val_demanda"):
                 bus_id = _submarket_bus_id(id_map, term)
@@ -1736,31 +1225,29 @@ def build_data_context(
                 values = carga_ande_series.get(stage_index)
                 if values is None:
                     raise _UnresolvableBucketBTerm(
-                        "carga_ande referenced but the deck declares no RI "
-                        f"register (or no series for stage {stage_index})"
+                        "carga_ande has no RI series on this stage"
                     )
                 return values[block_index]
-            if term.token == _ALIAS_TOKEN:
+            if term.token == ALIAS_TOKEN:
                 assert term.alias_name is not None  # parser invariant
                 alias = model.aliases[term.alias_name]
                 patamar = block_index + 1
                 value = _resolve_alias_value(alias, stage_index, patamar)
                 if value is None:
                     raise _UnresolvableBucketBTerm(
-                        f"alias {term.alias_name!r} has no value at stage "
-                        f"{stage_index} (patamar {patamar}) or any earlier "
-                        "stage"
+                        f"alias {term.alias_name} has no value on this block "
+                        "of this stage or an earlier one"
                     )
                 return value
-            if term.token == _PEQ_TOKEN:
+            if term.token == PEQ_TOKEN:
                 return _peq_block_generation(
                     pq_generation, id_map, term, stage_index, block_index
                 )
-            if term.token == _GNL_TOKEN:
+            if term.token == GNL_TOKEN:
                 return _gnl_block_generation(
                     gnl_generation, term, stage_index, block_index
                 )
-            if term.token == _SE_TOKEN:
+            if term.token == SE_TOKEN:
                 return evaluate_se(term, model, stage_index, block_index, resolve)
             raise ValueError(
                 f"Cannot resolve electrical-constraint data term {term.token!r}."
@@ -1808,7 +1295,7 @@ def evaluate_se(
         three for a ``se`` token), or when the selected branch carries any
         non-bucket-B term (naming it and the cell).
     """
-    if term.token != _SE_TOKEN:
+    if term.token != SE_TOKEN:
         raise ValueError(f"evaluate_se: expected a 'se' term, got {term.token!r}")
     if term.condition is None or term.branch_true is None or term.branch_false is None:
         raise ValueError(
@@ -1830,7 +1317,7 @@ def evaluate_se(
             "drop it from the LP — structural handling of a decision-bearing "
             "se branch is out of scope here (fail loud instead)"
         )
-    return _evaluate_side(partition[Bucket.B], ctx)
+    return evaluate_terms(partition[Bucket.B], ctx)
 
 
 def _fold_formula_bound(
@@ -1850,10 +1337,9 @@ def _fold_formula_bound(
     patamar)`` match, falling back to the ``NA`` (all-blocks,
     ``patamar=None``) entry for that stage. The limit's two endpoints are
     already numeric (DECOMP's ``±1E+31`` sentinel already normalized to
-    ``None`` by the reader — see :func:`_opt_bound`); moving the LHS's
-    bucket-B sum onto them keeps its bucket-A/-C terms untouched: ``lower <=
-    lhs_A + lhs_B <= upper`` becomes ``lower - lhs_B <= lhs_A <= upper -
-    lhs_B``.
+    ``None`` by the reader — see :func:`_opt_bound`), and
+    :func:`~novomodelo_bridge.core.electrical_expression.fold_formula_bound`
+    moves the LHS's bucket-B sum onto them.
 
     *lhs_partition* is *restriction.lhs* already parsed and classified
     (:func:`assemble_bound` computes it once and passes it to every fold —
@@ -1875,12 +1361,7 @@ def _fold_formula_bound(
             f"stage {stage_index}, patamar {patamar}"
         )
     lower, upper = limit
-    lhs_b_sum = _evaluate_side(lhs_partition[Bucket.B], ctx)
-    return AssembledBound(
-        terms=tuple(lhs_partition[Bucket.A]),
-        lower=None if lower is None else lower - lhs_b_sum,
-        upper=None if upper is None else upper - lhs_b_sum,
-    )
+    return fold_formula_bound(lhs_partition, lower, upper, ctx)
 
 
 def _effective_inequacao_sides(
@@ -1938,7 +1419,7 @@ def _fold_inequacao_bound(
     ``lhs op rhs`` with a bucket-A term on the RHS must not be read as if it
     were already on the LHS).
 
-    Sums each side's bucket-B contribution (:func:`_evaluate_side`) and
+    Sums each side's bucket-B contribution (:func:`evaluate_terms`) and
     combines them with bucket-A normalized onto the LHS:
     ``bound = Σ_{B∩RHS} − Σ_{B∩LHS}``. :func:`~novomodelo_bridge.
     generic_constraint_format.sense_to_interval` then maps *restriction*'s
@@ -1957,11 +1438,11 @@ def _fold_inequacao_bound(
     own constant sides.
     """
     assert restriction.operator is not None  # INEQUACAO invariant
-    lhs_b_sum = _evaluate_side(lhs_partition[Bucket.B], ctx)
-    rhs_b_sum = _evaluate_side(rhs_partition[Bucket.B], ctx)
+    lhs_b_sum = evaluate_terms(lhs_partition[Bucket.B], ctx)
+    rhs_b_sum = evaluate_terms(rhs_partition[Bucket.B], ctx)
     lower, upper = sense_to_interval(restriction.operator, rhs_b_sum - lhs_b_sum)
     terms = tuple(lhs_partition[Bucket.A]) + tuple(
-        _negate(term) for term in rhs_partition[Bucket.A]
+        negate(term) for term in rhs_partition[Bucket.A]
     )
     return AssembledBound(terms=terms, lower=lower, upper=upper)
 
@@ -2310,7 +1791,7 @@ class AvailablePower:
         value = self.overlay.get((code, stage_index))
         if value is None:
             raise _UnresolvableDispUsih(
-                f"plant {code} has no available power at stage {stage_index}"
+                f"plant {code} has no available power on this stage"
             )
         return value
 
@@ -2371,6 +1852,9 @@ def _flip_operator(sense: str) -> str:
     raise ValueError(f"_flip_operator: unknown operator {sense!r}")
 
 
+DISP_USIH_SUBSTITUTED = "decomp-electrical-disp-usih-substituted"
+
+
 def _emit_disp_usih_substitution(
     restriction_code: int,
     plant_code: int,
@@ -2381,16 +1865,16 @@ def _emit_disp_usih_substitution(
     plant code, the stage, and the ``A_h`` value used."""
     emit(
         Diagnostic(
-            code="decomp-electrical-disp-usih-substituted",
+            code=DISP_USIH_SUBSTITUTED,
             severity=Severity.INFO,
             category="Special constraints",
-            title="Reserve restrictions converted to generation caps",
+            title="Available power held constant in reserve restrictions",
             summary=(
                 "The listed electrical restrictions bound a plant's reserve "
                 "through disp_usih, its available power. The conversion takes "
-                "that power on each stage as a constant, at the reference head "
-                "and after maintenance, so each restriction caps the plant's "
-                "generation."
+                "that power on each listed stage as a constant, at the "
+                "reference head and after maintenance, so each restriction "
+                "caps the plant's generation."
             ),
             table=DiagnosticTable(
                 columns=["Restriction", "Plant code", "Stage", "Available power (MW)"],
@@ -2495,10 +1979,10 @@ def _fold_reserve_disp_usih(
             "pattern"
         )
 
-    lhs_b_sum = _evaluate_side(lhs_partition[Bucket.B], ctx)
-    rhs_b_sum = _evaluate_side(rhs_partition[Bucket.B], ctx)
+    lhs_b_sum = evaluate_terms(lhs_partition[Bucket.B], ctx)
+    rhs_b_sum = evaluate_terms(rhs_partition[Bucket.B], ctx)
     bound_value = reserve_sum + lhs_b_sum - rhs_b_sum
     lower, upper = sense_to_interval(_flip_operator(restriction.operator), bound_value)
     return AssembledBound(
-        terms=tuple(_negate(term) for term in ger_terms), lower=lower, upper=upper
+        terms=tuple(negate(term) for term in ger_terms), lower=lower, upper=upper
     )

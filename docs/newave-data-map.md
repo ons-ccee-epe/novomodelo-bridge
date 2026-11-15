@@ -79,7 +79,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | `dger.dat` | ● | ● | ● | ● | ● | ● | ● | ● | ● |
 | `confhd.dat` | ● |  |  | ● |  | ● | ● | ● | ● |
-| `conft.dat` |  | ● |  |  |  |  |  |  |  |
+| `conft.dat` |  | ● |  |  |  |  | ● |  |  |
 | `sistema.dat` |  |  | ● |  | ● | ● | ● | ● |  |
 | `clast.dat` |  | ● |  |  |  |  |  |  |  |
 | `term.dat` |  | ● |  |  |  |  |  |  |  |
@@ -94,6 +94,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `expt.dat` (opcional) |  | ● |  |  |  |  |  |  |  |
 | `exph.dat` (opcional) | ● |  |  |  |  | ● | ● | ● | ● |
 | `manutt.dat` (opcional) |  | ● |  |  |  |  |  |  |  |
+| `c_adic.dat` (opcional) |  |  |  |  |  |  |  | ● |  |
 | `agrint.dat` (opcional) |  |  |  |  |  |  | ● | ● |  |
 | `re.dat` (opcional) |  |  |  |  |  |  | ● | ● |  |
 | `restricao-eletrica.csv` (opcional) |  |  |  |  |  |  | ● | ● |  |
@@ -664,7 +665,7 @@ Recalcula o bloco `hydro` de `penalties.json` com a PROD_MEDIA_SIN de cada está
 
 ### `constraints/generic_constraints.json`
 
-**Lê:** `curva.dat` (opcional), `dger.dat`, `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `ree.dat`, `exph.dat` (opcional), `restricao-eletrica.csv` (opcional), `re.dat` (opcional), `sistema.dat`, `patamar.dat`, `penalid.dat` (opcional), `agrint.dat` (opcional)  
+**Lê:** `curva.dat` (opcional), `dger.dat`, `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `ree.dat`, `exph.dat` (opcional), `restricao-eletrica.csv` (opcional), `re.dat` (opcional), `sistema.dat`, `conft.dat`, `patamar.dat`, `penalid.dat` (opcional), `agrint.dat` (opcional)  
 **Quando:** somente quando alguma família gera restrições: curva de segurança (`curva.dat` presente, `curva_aversao` de `dger.dat` diferente de 0 e ao menos um REE com reservatório de regularização mensal com volume útil), restrições elétricas (arquivo apontado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv`, ou `re.dat`, com ao menos um limite válido) ou agrupamentos de intercâmbio (`agrint.dat` com grupos e limites); cada família só é lida se o flag correspondente de `dger.dat` estiver ligado (`agrupamento_livre`, `restricoes_eletricas`, `restricoes_eletricas_especiais`)  
 **Esquema:** [generic_constraints.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/generic_constraints.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/constraints.py`
 
@@ -675,14 +676,14 @@ Restrições genéricas de três famílias concatenadas nesta ordem: curva de se
 | `constraints[].id` | `curva.dat` › `curva_seguranca · codigo_ree`, `restricao-eletrica.csv` › `RE · cod_rest`, `re.dat` › `usinas_conjuntos · conjunto`, `agrint.dat` › `agrupamentos · agrupamento` *(derivado)* | Id 0-based contíguo, compartilhado pelas três famílias na ordem de emissão: uma restrição por REE e estágio com curva (ordem crescente de `codigo_ree` e depois de estágio); para cada código de restrição elétrica (ordem crescente), uma restrição para o teto e, se houver piso, outra de mesmo nome; uma por grupo de `agrint.dat` (ordem crescente). Restrições sem nenhum limite não recebem id. |
 | `constraints[].name` | `ree.dat` › `nome`, `restricao-eletrica.csv` › `RE · cod_rest`, `re.dat` › `usinas_conjuntos · conjunto`, `agrint.dat` › `agrupamentos · agrupamento` *(derivado)* | `VminOP_<nome do REE>` (nome de `ree.dat`; o código quando ausente), `RE_<código>` ou `AGRINT_<grupo>`. |
 | `constraints[].description` | `curva.dat` › `curva_seguranca · codigo_ree`, `ree.dat` › `nome`, `restricao-eletrica.csv` › `RE · cod_rest`, `re.dat` › `usinas_conjuntos · conjunto`, `agrint.dat` › `agrupamentos · agrupamento` *(derivado)* | Texto fixo em inglês com o código da origem: energia armazenada mínima do REE (código, nome e estágio), restrição elétrica (código) ou grupo de intercâmbio (número). |
-| `constraints[].expression` | `dger.dat` › `agrupamento_livre · restricoes_eletricas · restricoes_eletricas_especiais`, `confhd.dat` › `ree`, `confhd.dat` › `codigo_usina`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `modif.dat` › `VOLMAX · volume`, `modif.dat` › `VOLMIN · volume`, `restricao-eletrica.csv` › `RE · formula`, `re.dat` › `usinas_conjuntos · codigo_usina`, `agrint.dat` › `agrupamentos · submercado_de`, `agrint.dat` › `agrupamentos · submercado_para`, `agrint.dat` › `agrupamentos · coeficiente`, `sistema.dat` › `limites_intercambio · submercado_de`, `sistema.dat` › `limites_intercambio · submercado_para` | Curva de segurança: `Σ @rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>) >= @pct_vminop_ree<código> * (Σ @earm_max_mwh_h<id>)` sobre as usinas do REE (`ree` de `confhd.dat`) que são reservatório de regularização mensal (`tipo_regulacao` M) com volume útil positivo (após VOLMAX/VOLMIN de `modif.dat`) e produtibilidade acumulada positiva — energia armazenada útil em MWh de pelo menos a fração da curva da energia útil máxima. Acoplamento entre REEs (usina com `codigo_usina_jusante` = 0 e fictícia de mesmo `posto` em outro REE, como TRES MARIAS → FICT.TRES MA → SOBRADINHO): a cascata inteira conta no REE da usina, como na energia armazenada do NEWAVE (`pmo.dat`, energia armazenável máxima por REE), e nada no REE da fictícia. Restrição elétrica: termos `ger_usih(cod)` da fórmula viram `hydro_generation(id)` e `ener_interc(A, B)` viram `line_direct(id)` ou `line_reverse(id)` conforme A < B, com o coeficiente e o sinal preservados; termos com usina fora do caso ou par sem linha em `sistema.dat` são descartados. Restrição só em `re.dat`: soma de `hydro_generation` das usinas do conjunto. Agrupamento: soma ponderada por `coeficiente` de `line_direct`/`line_reverse` do par de submercados. |
+| `constraints[].expression` | `dger.dat` › `agrupamento_livre · restricoes_eletricas · restricoes_eletricas_especiais`, `confhd.dat` › `ree`, `confhd.dat` › `codigo_usina`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `produtibilidade_especifica`, `modif.dat` › `VOLMAX · volume`, `modif.dat` › `VOLMIN · volume`, `restricao-eletrica.csv` › `RE · formula`, `conft.dat` › `usinas · codigo_usina`, `re.dat` › `usinas_conjuntos · codigo_usina`, `agrint.dat` › `agrupamentos · submercado_de`, `agrint.dat` › `agrupamentos · submercado_para`, `agrint.dat` › `agrupamentos · coeficiente`, `sistema.dat` › `limites_intercambio · submercado_de`, `sistema.dat` › `limites_intercambio · submercado_para` | Curva de segurança: `Σ @rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>) >= @pct_vminop_ree<código> * (Σ @earm_max_mwh_h<id>)` sobre as usinas do REE (`ree` de `confhd.dat`) que são reservatório de regularização mensal (`tipo_regulacao` M) com volume útil positivo (após VOLMAX/VOLMIN de `modif.dat`) e produtibilidade acumulada positiva — energia armazenada útil em MWh de pelo menos a fração da curva da energia útil máxima. Acoplamento entre REEs (usina com `codigo_usina_jusante` = 0 e fictícia de mesmo `posto` em outro REE, como TRES MARIAS → FICT.TRES MA → SOBRADINHO): a cascata inteira conta no REE da usina, como na energia armazenada do NEWAVE (`pmo.dat`, energia armazenável máxima por REE), e nada no REE da fictícia. Restrição elétrica: a fórmula, com cada `re(X)` substituído pela fórmula da restrição X do arquivo e os coeficientes distribuídos sobre os parênteses, mantém os termos de decisão `ger_usih(cod)` → `hydro_generation(id)`, `ger_usit(cod)` → `thermal_generation(id)` (código de `conft.dat`) e `ener_interc(A, B)` → `line_direct(id)` ou `line_reverse(id)` conforme A < B, com o coeficiente e o sinal preservados; os termos de dados (`demanda(X)`, `val_demanda(X)`, `demanda_sin`, `val_demanda_sin` e constantes) vão para os limites (ver `bound_lower`). Um termo com usina fora do caso ou par sem linha em `sistema.dat` é descartado. Uma restrição com termo que o caso não representa (`ener_comerc`, `ger_pee`, `ger_conjh`, `disp_usih`, `carga_ande`, `peq_`, `se(...)`, um nome não declarado ou `demanda(X)` de subsistema que `sistema.dat` não declara) fica de fora, com o aviso `electric-constraint-term-unsupported`; uma fórmula malformada (parênteses desbalanceados, função desconhecida ou com número errado de argumentos, `re(X)` sem restrição X) interrompe a conversão com erro. Restrição só em `re.dat`: soma de `hydro_generation` das usinas do conjunto. Agrupamento: soma ponderada por `coeficiente` de `line_direct`/`line_reverse` do par de submercados. |
 | `constraints[].slack.enabled` | `penalid.dat` › `ELETRI · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo` *(derivado)* | Verdadeiro para a curva de segurança; para restrições elétricas, verdadeiro quando há penalidade ELETRI em `penalid.dat` ou, na falta, custo de déficit positivo em `sistema.dat`; falso para agrupamentos de intercâmbio (limite rígido). |
 | `constraints[].slack.penalty` | `curva.dat` › `custos_penalidades · penalidade`, `penalid.dat` › `ELETRI · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo` *(condicional: somente quando `slack.enabled` é verdadeiro (curva de segurança e restrições elétricas))* | Curva de segurança: `penalidade` do REE em `curva.dat` (R$/MWh; 1000.0 quando o REE não tem entrada ou o valor declarado não é positivo), cobrada por MWh de violação (`penalty_basis` `per_unit`). Restrição elétrica: valor ELETRI de `penalid.dat` (primeiro patamar de penalidade) ou, na falta, 10 vezes o maior custo de déficit de `sistema.dat`. |
 | `constraints[].slack.penalty_basis` | — *(derivado; condicional: somente quando `slack.enabled` é verdadeiro (curva de segurança e restrições elétricas))* | Como o Novomodelo cobra a folga: `per_unit` na curva de segurança (penalidade por MWh de violação, igual em todo estágio); `per_hour` nas restrições elétricas (penalidade × horas da restrição, pois a restrição está em MW). |
 
 ### `constraints/generic_constraint_bounds.parquet`
 
-**Lê:** `curva.dat` (opcional), `dger.dat`, `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `ree.dat`, `exph.dat` (opcional), `restricao-eletrica.csv` (opcional), `re.dat` (opcional), `sistema.dat`, `patamar.dat`, `penalid.dat` (opcional), `agrint.dat` (opcional)  
+**Lê:** `curva.dat` (opcional), `dger.dat`, `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `ree.dat`, `exph.dat` (opcional), `restricao-eletrica.csv` (opcional), `re.dat` (opcional), `sistema.dat`, `c_adic.dat` (opcional), `patamar.dat`, `penalid.dat` (opcional), `agrint.dat` (opcional)  
 **Quando:** escrito junto com `constraints/generic_constraints.json`, sob a mesma condição  
 **Código:** `src/novomodelo_bridge/newave/converters/constraints.py`
 
@@ -693,8 +694,8 @@ Limites por restrição, estágio e patamar das três famílias, concatenados na
 | `constraint_id` | `curva.dat` › `curva_seguranca · codigo_ree`, `restricao-eletrica.csv` › `RE · cod_rest`, `re.dat` › `usinas_conjuntos · conjunto`, `agrint.dat` › `agrupamentos · agrupamento` *(derivado)* | O `id` da restrição em `constraints/generic_constraints.json`. |
 | `stage_id` | `curva.dat` › `curva_seguranca · data`, `curva.dat` › `configuracoes_penalizacao`, `restricao-eletrica.csv` › `RE-LIM-FORM-PER-PAT · PerIni`, `restricao-eletrica.csv` › `RE-LIM-FORM-PER-PAT · PerFin`, `restricao-eletrica.csv` › `RE-HORIZ-PER · PerIni`, `restricao-eletrica.csv` › `RE-HORIZ-PER · PerFin`, `re.dat` › `restricoes · mes_inicio`, `re.dat` › `restricoes · ano_inicio`, `re.dat` › `restricoes · mes_fim`, `re.dat` › `restricoes · ano_fim`, `ree.dat` › `mes_fim_individualizado`, `ree.dat` › `ano_fim_individualizado`, `agrint.dat` › `limites_agrupamentos · data_inicio`, `agrint.dat` › `limites_agrupamentos · data_fim`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `num_anos_estudo`, `dger.dat` › `num_anos_pos_estudo` *(derivado)* | Índice 0-based do estágio de `dger.dat`. Curva: estágio da `data` de cada registro; estágios de estudo sem registro e o pós-estudo repetem o último ano por mês-calendário quando o terceiro campo da linha de penalização de `curva.dat` é 1, senão o pós-estudo congela o percentual do último estágio de estudo. Elétricas: somente os estágios cobertos pela janela de vigência do próprio limite — `mes_inicio`/`ano_inicio` a `mes_fim`/`ano_fim` no `re.dat`, `PerIni`/`PerFin` do `RE-LIM-FORM-PER-PAT` interseccionado com o `RE-HORIZ-PER` no CSV; estágio fora de toda janela declarada não recebe limite. Os limites de `re.dat` valem só a partir do fim do período individualizado (`ree.dat`). Agrupamentos: estágios de estudo cobertos pelos limites (fim aberto vai até o fim do horizonte) e congelamento do último estágio de estudo no pós-estudo. |
 | `block_id` | `restricao-eletrica.csv` › `RE-LIM-FORM-PER-PAT · pat`, `re.dat` › `restricoes · patamar`, `patamar.dat` › `numero_patamares` *(derivado)* | Nulo para a curva de segurança (limite por estágio, todos os patamares). Elétricas: `pat` menos 1; `patamar` 0 de `re.dat` expande para todos os `numero_patamares` patamares. Agrupamentos: posição da coluna de limite na linha de `agrint.dat`, uma por patamar do deck; coluna em branco repete o limite do patamar anterior, e registro sem o limite do primeiro patamar interrompe a conversão. |
-| `bound_lower` | `curva.dat` › `curva_seguranca · valor`, `restricao-eletrica.csv` › `RE-LIM-FORM-PER-PAT · lim_inf` | Curva de segurança: 0.0 em cada estágio com curva; o limite está na própria expressão (o Novomodelo soma o valor do parquet ao lado direito simbólico). Elétricas: `lim_inf` de `restricao-eletrica.csv`; um campo em branco (manual, seção 3.45.2) ou um valor até −1e29 é ilimitado e não gera piso, e um limite condicional (`se(...)`) interrompe a conversão com erro. Nulo para tetos elétricos, `re.dat` e agrupamentos. |
-| `bound_upper` | `restricao-eletrica.csv` › `RE-LIM-FORM-PER-PAT · lim_sup`, `re.dat` › `restricoes · restricao`, `agrint.dat` › `limites_agrupamentos · valor` | Elétricas: `lim_sup` de `restricao-eletrica.csv` nos estágios individualizados, com as mesmas regras de `lim_inf` para campo em branco, valor até −1e29 e limite condicional; a partir do fim do período individualizado prevalece `restricao` de `re.dat`, propagado até o fim do horizonte. Agrupamentos: limite do patamar (MWmédio) de `agrint.dat`. Nulo para a curva de segurança e para pisos elétricos. |
+| `bound_lower` | `curva.dat` › `curva_seguranca · valor`, `restricao-eletrica.csv` › `RE-LIM-FORM-PER-PAT · lim_inf`, `restricao-eletrica.csv` › `RE · formula`, `sistema.dat` › `mercado_energia · valor`, `c_adic.dat` › `valor`, `patamar.dat` › `carga_patamares · valor` | Curva de segurança: 0.0 em cada estágio com curva; o limite está na própria expressão (o Novomodelo soma o valor do parquet ao lado direito simbólico). Elétricas: `lim_inf` de `restricao-eletrica.csv` menos os termos de dados da fórmula avaliados no estágio e patamar: `demanda(X)` e `val_demanda(X)` valem a carga do patamar do subsistema X no caso convertido (mercado de `sistema.dat` mais `c_adic.dat`, vezes o fator de carga do patamar de `patamar.dat`), `demanda_sin` e `val_demanda_sin` a soma dos subsistemas, e uma constante o seu valor. O modelo de origem soma o multiplicador de uma restrição com `demanda(X)` ou `demanda_sin` ao CMO dos subsistemas cuja carga o termo lê, e o caso não representa essa parcela: o aviso `electric-constraint-demand-in-cmo` lista essas restrições (as formas `val_` não entram no CMO). Um campo em branco (manual, seção 3.45.2) ou um valor até −1e29 é ilimitado e não gera piso, e um limite condicional (`se(...)`) interrompe a conversão com erro. Nulo para tetos elétricos, `re.dat` e agrupamentos. |
+| `bound_upper` | `restricao-eletrica.csv` › `RE-LIM-FORM-PER-PAT · lim_sup`, `re.dat` › `restricoes · restricao`, `agrint.dat` › `limites_agrupamentos · valor`, `restricao-eletrica.csv` › `RE · formula`, `sistema.dat` › `mercado_energia · valor`, `c_adic.dat` › `valor`, `patamar.dat` › `carga_patamares · valor` | Elétricas: `lim_sup` de `restricao-eletrica.csv` nos estágios individualizados, com as mesmas regras de `lim_inf` para campo em branco, valor até −1e29 e limite condicional; a partir do fim do período individualizado prevalece `restricao` de `re.dat`, propagado até o fim do horizonte. Nos dois casos o teto desconta os termos de dados da fórmula, como `bound_lower`. Agrupamentos: limite do patamar (MWmédio) de `agrint.dat`. Nulo para a curva de segurança e para pisos elétricos. |
 
 ### `constraints/generic_parameters.json`
 
@@ -966,7 +967,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 
 ### `conft.dat`
 
-**Estado:** convertido em parte. **Lido por:** `constraints/thermal_bounds.parquet`, `initial_conditions.json`, `system/thermals.json`.
+**Estado:** convertido em parte. **Lido por:** `constraints/generic_constraints.json`, `constraints/thermal_bounds.parquet`, `initial_conditions.json`, `system/thermals.json`.
 
 - `usinas · codigo_usina` → `system/thermals.json` › `thermals[].id`
 - `usinas · nome_usina` → `system/thermals.json` › `thermals[].name`
@@ -976,6 +977,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `usinas · codigo_usina` → `constraints/thermal_bounds.parquet` › `thermal_id`
 - `usinas · usina_existente` → `constraints/thermal_bounds.parquet` › `min_generation_mw`
 - `usinas · usina_existente` → `constraints/thermal_bounds.parquet` › `max_generation_mw`
+- `usinas · codigo_usina` → `constraints/generic_constraints.json` › `constraints[].expression`
 - `usina_existente · classe` — *não lido.* Toda usina listada vira uma térmica do Novomodelo; o estado `EX`/`NE`/`EE` e a classe térmica não são consultados. A disponibilidade efetiva vem das janelas POTEF de `expt.dat`.
 
 ### `sistema.dat`
@@ -1049,6 +1051,8 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `limites_intercambio · submercado_para` → `constraints/generic_constraints.json` › `constraints[].expression`
 - `custo_deficit · custo` → `constraints/generic_constraints.json` › `constraints[].slack.enabled`
 - `custo_deficit · custo` → `constraints/generic_constraints.json` › `constraints[].slack.penalty`
+- `mercado_energia · valor` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
+- `mercado_energia · valor` → `constraints/generic_constraint_bounds.parquet` › `bound_upper`
 - `numero_patamares_deficit` — *não lido.* Os segmentos de déficit são derivados das linhas de `custo_deficit` (`patamar_deficit`, `custo`, `corte`); a contagem declarada não é lida.
 - `limites_intercambio · registros com flag 1` — *não lido.* Intercâmbio mínimo obrigatório. Não é convertido nem reportado: os limites de `system/lines.json` e de `constraints/line_bounds.parquet` usam só os registros com `flag` 0.
 
@@ -1122,6 +1126,8 @@ Todas as colunas de `usinas` são lidas (potência, FCMAX, TEIF, IP, GTMIN por m
 - `usinas_nao_simuladas · codigo_submercado` → `scenarios/non_controllable_factors.json` › `non_controllable_factors[].block_factors[].factor`
 - `usinas_nao_simuladas · indice_bloco` → `scenarios/non_controllable_factors.json` › `non_controllable_factors[].block_factors[].factor`
 - `numero_patamares` → `constraints/generic_constraint_bounds.parquet` › `block_id`
+- `carga_patamares · valor` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
+- `carga_patamares · valor` → `constraints/generic_constraint_bounds.parquet` › `bound_upper`
 
 ### `hidr.dat`
 
@@ -1580,11 +1586,13 @@ Cada linha reduz a potência da usina proporcionalmente aos dias de sobreposiç�
 
 ### `c_adic.dat`
 
-**Estado:** convertido em parte. **Lido por:** `scenarios/load_seasonal_stats.parquet`, `system/buses.json`.
+**Estado:** convertido em parte. **Lido por:** `constraints/generic_constraint_bounds.parquet`, `scenarios/load_seasonal_stats.parquet`, `system/buses.json`.
 
 - `valor` → `scenarios/load_seasonal_stats.parquet` › `mean_mw`
 - `data` → `scenarios/load_seasonal_stats.parquet` › `mean_mw`
 - `codigo_submercado` → `scenarios/load_seasonal_stats.parquet` › `mean_mw`
+- `valor` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
+- `valor` → `constraints/generic_constraint_bounds.parquet` › `bound_upper`
 - `razao · nome_submercado` — *não lido.* Motivo da carga adicional. Todas as razões do mesmo submercado e mês são somadas à carga em `scenarios/load_seasonal_stats.parquet`; a razão não é preservada.
 
 ### `cvar.dat`
@@ -1760,8 +1768,10 @@ Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e lido pelo
 - `RE-HORIZ-PER · PerFin` → `constraints/generic_constraint_bounds.parquet` › `stage_id`
 - `RE-LIM-FORM-PER-PAT · pat` → `constraints/generic_constraint_bounds.parquet` › `block_id`
 - `RE-LIM-FORM-PER-PAT · lim_inf` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
+- `RE · formula` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
 - `RE-LIM-FORM-PER-PAT · lim_sup` → `constraints/generic_constraint_bounds.parquet` › `bound_upper`
-- `funções de fórmula além de ger_usih e ener_interc` — *não lido.* Só termos `ger_usih(usina)` e `ener_interc(de, para)` são traduzidos para `hydro_generation` e `line_direct`/`line_reverse`; qualquer outra função (térmica, eólica, carga) é descartada silenciosamente pelo parser de fórmula.
+- `RE · formula` → `constraints/generic_constraint_bounds.parquet` › `bound_upper`
+- `termos de fórmula ener_comerc, ger_pee, ger_conjh, disp_usih, carga_ande, peq_ e se(...)` — *não lido.* O caso não tem variável de energia comercial, de potência disponível nem de geração por conjunto de máquinas, e o conversor não lê parques eólicos, a carga da ANDE, séries de pequenas usinas nem termos condicionais. A restrição que usa um desses termos fica de fora, com o aviso `electric-constraint-term-unsupported`.
 - `registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*` — *não lido.* Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O conversor só usa os registros `RE`, `RE-HORIZ-PER` e `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`.
 
 ### `estacao-bombeamento.csv`
@@ -1942,7 +1952,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `polinjus.csv` › `HidreletricaPerdaHidraulicaGrade · HidreletricaProdutibilidadeEspecificaGrade` — *não lido.* Grades de perda hidráulica e de produtibilidade específica por turbinamento. O bridge usa os valores constantes do `hidr.dat` (`perdas`, `tipo_perda`, `produtibilidade_especifica`).
 - `polinjus.csv` › `VolumeReferencialPeriodo · VolumeReferencialTipoPadrao` — *não lido.* Volumes de referência por período neste arquivo. O bridge, como o modelo de origem, os lê do arquivo da chave `HIDRELETRICA-CADASTRO-RESERVATORIO` (`volumes-referencia.csv`).
 - `tratamento-fpha.csv` › `linhas por usina (sufixo diferente de -PADRAO)` — *não lido.* Ajustes do método de redução de cortes por usina; o Novomodelo só aceita um método por caso.
-- `restricao-eletrica.csv` › `funções de fórmula além de ger_usih e ener_interc` — *não lido.* Só termos `ger_usih(usina)` e `ener_interc(de, para)` são traduzidos para `hydro_generation` e `line_direct`/`line_reverse`; qualquer outra função (térmica, eólica, carga) é descartada silenciosamente pelo parser de fórmula.
+- `restricao-eletrica.csv` › `termos de fórmula ener_comerc, ger_pee, ger_conjh, disp_usih, carga_ande, peq_ e se(...)` — *não lido.* O caso não tem variável de energia comercial, de potência disponível nem de geração por conjunto de máquinas, e o conversor não lê parques eólicos, a carga da ANDE, séries de pequenas usinas nem termos condicionais. A restrição que usa um desses termos fica de fora, com o aviso `electric-constraint-term-unsupported`.
 - `restricao-eletrica.csv` › `registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*` — *não lido.* Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O conversor só usa os registros `RE`, `RE-HORIZ-PER` e `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`.
 
 ### Campos do Novomodelo sem origem no deck

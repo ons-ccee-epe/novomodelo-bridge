@@ -146,9 +146,8 @@ class TestExportDessemCli:
             ],
         )
         assert result.exit_code == 1
-        assert (
-            "not found" in result.stdout.lower() or "not found" in result.stderr.lower()
-        )
+        assert "case directory" in result.stderr
+        assert "Re-run novomodelo" in result.stderr
 
     def test_missing_deck_argument_is_a_usage_error(
         self, synthetic_case_dir: Path
@@ -169,7 +168,8 @@ class TestExportDessemCli:
         )
 
         assert result.exit_code == 1
-        assert "DECOMP deck directory not found" in result.stderr
+        assert "DECOMP deck directory" in result.stderr
+        assert "Check the named file or directory exists." in result.stderr
 
     def test_directory_without_a_deck_fails(
         self, synthetic_case_dir: Path, tmp_path: Path
@@ -489,6 +489,21 @@ class TestExportDessemCli:
         assert [d["code"] for d in errors] == ["dessem-fcf-export-failed"]
         assert "initial_conditions.json" in errors[0]["summary"]
 
+    def test_json_missing_deck_dir_is_a_missing_source(
+        self, deck_dir: Path, tmp_path: Path
+    ) -> None:
+        case_dir = tmp_path / "case"
+        case_dir.mkdir()
+        result = self._invoke_json(
+            tmp_path / "nonexistent", case_dir, tmp_path / "output"
+        )
+
+        assert result.exit_code == 1
+        verdict = json.loads(result.stdout)
+        [error] = verdict["diagnostics"]
+        assert error["code"] == "source-file-missing"
+        assert "DECOMP deck directory" in error["summary"]
+
     def test_json_missing_case_dir_emits_one_error_verdict(
         self, deck_dir: Path, tmp_path: Path
     ) -> None:
@@ -499,4 +514,7 @@ class TestExportDessemCli:
         assert result.exit_code == 1
         verdict = json.loads(result.stdout)
         assert verdict["status"] == "error"
-        assert "Case directory not found" in verdict["diagnostics"][0]["summary"]
+        [error] = verdict["diagnostics"]
+        assert error["code"] == "novomodelo-output-unreadable"
+        assert "case directory" in error["summary"]
+        assert "does not exist" in error["summary"]

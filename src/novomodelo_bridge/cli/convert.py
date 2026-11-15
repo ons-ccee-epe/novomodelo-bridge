@@ -47,33 +47,17 @@ def _handle_conversion_pipeline_failure(
     args: ConvertArgs,
     *,
     command: str,
-    err_console: Console,
     found_before: Sequence[Diagnostic],
 ) -> NoReturn:
-    """Render/emit a pipeline failure verdict and exit 1 (shared by both tracks).
+    """Emit a pipeline failure verdict and exit 1 (shared by both tracks).
 
-    ``report`` is None on this path, so counts are zeroed and the dry-run
-    would-write listing is empty; ``status`` is "error" because
-    ``diagnostic_from_exception`` yields an ERROR-severity diagnostic.
+    No report exists on this path, so the counts are zeroed and the dry-run
+    would-write listing is empty.
     """
-    diagnostics = [*found_before, diagnostic_from_exception(exc, context="Conversion")]
-    if args.json_output:
-        summary = _convert_verdict_summary(None)
-        if args.dry_run:
-            summary["would_write"] = []
-            status = _convert_status(diagnostics, success="dry-run")
-        else:
-            status = _convert_status(diagnostics, success="ok")
-        _emit_convert_json(build_verdict(command, status, summary, diagnostics))
-    else:
-        render_diagnostics(
-            diagnostics,
-            heading="Conversion notes",
-            console=err_console,
-            quiet=args.quiet,
-            verbose=args.verbose > 0,
-        )
-    raise typer.Exit(code=1)
+    summary = _convert_verdict_summary(None)
+    if args.dry_run:
+        summary["would_write"] = []
+    _fail(command, args, exc, 1, summary=summary, found_before=found_before)
 
 
 def _write_diagnostics_json(
@@ -165,7 +149,6 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
             exc,
             args,
             command="convert newave",
-            err_console=err_console,
             found_before=found_before,
         )
 
@@ -348,12 +331,22 @@ def _handle_boundary_fcf_failure(
 ) -> NoReturn:
     """Render/emit a boundary-FCF import failure verdict and exit 1."""
     diag = diagnostic_from_exception(exc, context="Boundary FCF import")
-    failure_diagnostics = [*report.diagnostics, *fcf_diags, diag]
+    failure_diagnostics = dx.finalize_diagnostics(
+        [*report.diagnostics, *fcf_diags, diag]
+    )
+    # The manifest and the sidecar carry the same merged set as the failure
+    # verdict below: the converter's own findings, whatever the importer's
+    # sink captured before it raised, and the failure diagnostic itself.
+    _write_conversion_manifest(
+        report,
+        args.src,
+        args.dst,
+        command="convert decomp",
+        discover=discover_decomp_files,
+        console=err_console,
+        diagnostics=failure_diagnostics,
+    )
     if args.diagnostics_json is not None:
-        # The sidecar carries the same merged set as the failure
-        # verdict below: the converter's own findings, whatever the
-        # importer's sink captured before it raised, and the failure
-        # diagnostic itself.
         _write_diagnostics_json(
             report,
             args.diagnostics_json,
@@ -398,7 +391,7 @@ def _import_decomp_boundary_fcf(
     # The boundary FCF is imported by default; ``--no-fcf`` skips the whole
     # step (and its deck discovery). With it on, the deck's own FC records
     # (or the cortes* glob) locate the cut files; a deck that declares none
-    # simply converts without a boundary FCF (an INFO note, not an error).
+    # converts without a boundary FCF, before the capability probe can fail.
     # The single `DecompCase` built here is handed to the importer below, so
     # the deck is discovered (and, on first attribute access, parsed) once
     # for the FCF step rather than the importer re-discovering it itself.
@@ -406,13 +399,9 @@ def _import_decomp_boundary_fcf(
         return []
     case = DecompCase.from_directory(args.src)
     if case.files.cortesh is None or case.files.cortes is None:
-        print_status(
-            "Note: the deck declares no cortes/cortesh files; converting "
-            "without a boundary FCF.",
-            console=err_console,
-            style="#F5A623",
-        )
-        return []
+        from novomodelo_bridge.decomp.fcf.importer import cut_files_absent_diagnostic
+
+        return [cut_files_absent_diagnostic()]
 
     # Cut-files-absent, the capability probe, and the importer all funnel
     # through this one broad ``except`` mapped to exit 1 (a conversion-step
@@ -470,8 +459,8 @@ def _conclude_decomp_conversion(
     """Write the sidecar, validate, emit the verdict and gate the exit code.
 
     The sidecar, verdict and status carry the merged converter + boundary-FCF
-    diagnostics. A validated case with an imported boundary FCF ends on the
-    command that runs it.
+    diagnostics. A case with an imported boundary FCF that neither failed
+    validation nor carries an ERROR ends on the command that runs it.
     """
     if args.diagnostics_json is not None:
         # The --diagnostics-json sidecar coexists with --json (both can be
@@ -495,13 +484,9 @@ def _conclude_decomp_conversion(
             whitelist_substrings=_DECOMP_VALIDATION_WHITELIST,
         )
 
-    # ``status`` is derived from ``combined_diagnostics`` (importer diagnostics
-    # are INFO-only, so this stays "ok" whenever the converter's own
-    # diagnostics allow it) and feeds both the --json verdict below and the
-    # exit-code gate, so it is computed unconditionally.
     status = _convert_status(combined_diagnostics, success="ok")
 
-    if "boundary_fcf" in summary and not validation_failed:
+    if "boundary_fcf" in summary and not validation_failed and status != "error":
         print_status(
             f"Boundary FCF imported. Run this case with: novomodelo run {args.dst}",
             console=err_console,
@@ -524,33 +509,9 @@ def _conclude_decomp_conversion(
 def _run_decomp_conversion(args: ConvertArgs) -> None:
     """Execute the convert decomp subcommand.
 
-    Structurally mirrors ``_run_newave_conversion``: a TTY phase bar over the
-    DECOMP phases, the ``✓ Converted …`` summary, grouped diagnostic panels, a
-    ``--dry-run`` branch, a provenance-manifest write, and a unified ``--json``
-    verdict.
-
-    A broad ``except Exception`` (rather than a fixed exception tuple) also
-    covers an ERROR-severity post-emission self-check finding (novomodelo rules
-    43/41/45/38/36 + the block_id-range rule) — ``convert_decomp_case`` raises a
-    ``ValueError`` naming the failing rule(s) and entities, mapped to exit 1
-    like every other conversion failure.
-
-    Unless ``--no-fcf`` is set, the boundary-FCF importer runs after the
-    manifest write and BEFORE ``--validate`` (so validation sees the patched
-    ``config.json``) whenever the deck declares its cut files: the capability
-    probe, then ``import_boundary_fcf``. A deck with no cut files simply
-    converts without a boundary FCF (an INFO note, not an error); a capability
-    or importer failure exits 1 via the same ``diagnostic_from_exception``
-    mapping as a conversion failure. A successful import confirms the boundary
-    FCF and records a ``summary["boundary_fcf"]`` sub-object; the boundary
-    loads automatically on a plain ``novomodelo run <case>``.
-
-    ``--validate`` runs after a successful conversion (and boundary-FCF
-    import) via the shared ``_run_novomodelo_validation`` helper (mirroring
-    ``convert newave``), with the DECOMP external-solver-interop whitelist so
-    the deliberate ``inflow_lags=false`` shape never surfaces as a scary
-    warning; a failed validation exits 2, giving ``convert decomp`` the same
-    0/1/2 exit-code set as ``convert newave``.
+    The boundary-FCF import (skipped by ``--no-fcf``) runs before the manifest
+    write, so the manifest records its diagnostics. An import failure exits 1
+    like a conversion failure, and a failed ``--validate`` exits 2.
     """
     from novomodelo_bridge.decomp.pipeline import (
         DECOMP_CONVERSION_PHASE_LABELS,
@@ -589,7 +550,6 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
             exc,
             args,
             command="convert decomp",
-            err_console=err_console,
             found_before=found_before,
         )
 

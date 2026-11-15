@@ -101,6 +101,34 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger(__name__)
 
+#: What the report leaves out without ``relato.rvN``, completing ``"relato.rvN
+#: was not found, so ..."``; every relato.rvN reader shares it, so the note is one.
+_RELATO_MISSING_EFFECT = (
+    "the report leaves out DECOMP's convergence, its time per iteration and the "
+    "REE energy comparison."
+)
+#: The same for a relato.rvN without its convergence table, which both readers
+#: of that table meet, completing ``"relato.rvN could not be read, so ..."``.
+_RELATO_CONVERGENCE_UNREADABLE_EFFECT = (
+    "the report shows Novomodelo's convergence alone, without DECOMP's time per "
+    "iteration."
+)
+_DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
+
+
+def _emit_missing(file_name: str, decomp_dir: Path, effect: str) -> None:
+    emit(report_file_missing_diagnostic(file_name, decomp_dir, effect), logger=_LOG)
+
+
+def _emit_unreadable(
+    file_name: str, decomp_dir: Path, effect: str, exc: Exception
+) -> None:
+    emit(
+        report_file_unreadable_diagnostic(file_name, decomp_dir, effect, exc),
+        logger=_LOG,
+    )
+
+
 #: Minimum turbined flow (m³/s) for the derived gen/turbined productivity
 #: to be meaningful -- mirrors
 #: :data:`novomodelo_bridge.comparators.newave.results._PRODUCTIVITY_TURB_EPS`: near-zero
@@ -535,19 +563,14 @@ def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
     this same canonical schema instead of aborting
     :func:`build_decomp_dataset` -- the chart then renders Novomodelo-only.
     """
-    effect = "the report shows Novomodelo's convergence alone."
     try:
         source = read_relato_convergence(decomp_dir)
     except FileNotFoundError:
-        emit(
-            report_file_missing_diagnostic("relato.rvN", decomp_dir, effect),
-            logger=_LOG,
-        )
+        _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
         return pl.DataFrame(schema=_CONVERGENCE_SCHEMA)
     except ValueError as exc:
-        emit(
-            report_file_unreadable_diagnostic("relato.rvN", decomp_dir, effect, exc),
-            logger=_LOG,
+        _emit_unreadable(
+            "relato.rvN", decomp_dir, _RELATO_CONVERGENCE_UNREADABLE_EFFECT, exc
         )
         return pl.DataFrame(schema=_CONVERGENCE_SCHEMA)
 
@@ -966,12 +989,16 @@ def _line_result_comparisons(
     """
     if id_map is None:
         return [], []
+    effect = "the report leaves out DECOMP's interchange on the lines."
     try:
         source_lines, unresolved = _interc_side(
             decomp_dir, novomodelo_output_dir, id_map, probabilities=probabilities
         )
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model interchange table for line alignment: %s", exc)
+    except FileNotFoundError:
+        _emit_missing("dec_oper_interc.csv", decomp_dir, effect)
+        return [], []
+    except ValueError as exc:
+        _emit_unreadable("dec_oper_interc.csv", decomp_dir, effect, exc)
         return [], []
 
     unresolved_lists = [list(pair) for pair in unresolved]
@@ -1324,8 +1351,8 @@ def _deficit_cost(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataF
     ``duracao`` x the subsystem's ``CD`` cost.
 
     The report prints no deficit parcel, so it is priced here from
-    ``dec_oper_sist``. Deficit in a subsystem without a ``CD`` cost is logged
-    and stays in the unitemized slack.
+    ``dec_oper_sist``. Deficit in a subsystem without a ``CD`` cost stays in the
+    unitemized slack.
     """
     sist = read_dec_oper_sist(decomp_dir)
     blocks = sist.filter(pl.col("patamar").is_not_null() & (pl.col("deficit_MW") > 0.0))
@@ -1564,18 +1591,20 @@ def _decomp_tim_stages(decomp_dir: Path) -> dict[str, float]:
     ``read_decomp_tim``'s ``Tempo`` column is a ``datetime.timedelta`` (one
     row per ``iter_rows``); :meth:`~datetime.timedelta.total_seconds` gives
     the float seconds :func:`~novomodelo_bridge.comparators.charts.
-    performance_metric_cards` expects. A missing/empty ``decomp.tim``
-    (``read_decomp_tim`` raising ``FileNotFoundError``/``ValueError``)
-    degrades to ``{}`` instead of failing :func:`build_decomp_dataset` --
-    the metric cards then render with their ``0.0``/"—" fallback. When
+    performance_metric_cards` expects. A missing or unreadable ``decomp.tim``
+    gives ``{}`` rather than failing :func:`build_decomp_dataset`, and the
+    metric cards render with their ``0.0``/"—" fallback. When
     ``decomp.tim`` *is* read but one of the two mapped ``Etapa`` rows is
     absent from it, that key is still returned, explicitly set to ``0.0``
     (see :data:`_DECOMP_TIM_PHASE_MAP`).
     """
     try:
         table = read_decomp_tim(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model timing table (decomp.tim): %s", exc)
+    except FileNotFoundError:
+        _emit_missing("decomp.tim", decomp_dir, _DECOMP_TIM_EFFECT)
+        return {}
+    except ValueError as exc:
+        _emit_unreadable("decomp.tim", decomp_dir, _DECOMP_TIM_EFFECT, exc)
         return {}
 
     seconds_by_etapa: dict[str, float] = {}
@@ -1614,8 +1643,13 @@ def _decomp_tim_iterations(decomp_dir: Path) -> pl.DataFrame:
     empty = pl.DataFrame(schema=_DECOMP_TIM_ITERATIONS_SCHEMA)
     try:
         source = read_relato_convergence(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model convergence table for timing: %s", exc)
+    except FileNotFoundError:
+        _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
+        return empty
+    except ValueError as exc:
+        _emit_unreadable(
+            "relato.rvN", decomp_dir, _RELATO_CONVERGENCE_UNREADABLE_EFFECT, exc
+        )
         return empty
 
     columns = {c.lower(): c for c in source.columns}
@@ -2050,22 +2084,25 @@ def _ree_result_comparisons(
 
     Returns ``([], [])`` when *id_map* is ``None`` (deck unreadable -- no
     hydro code -> Novomodelo id mapping exists to build the membership map with).
-    A missing/empty membership table or `dec_oper_ree` table degrades to no
-    REE rows (a genuinely unavailable section, logged at INFO) rather than
-    raising -- matching every other optional field this module builds. A
-    hydro code absent from the membership table is excluded from every REE
-    sum and returned (sorted) as the second element, with a WARNING
-    diagnostic recording the codes (never silently dropped).
+    A missing or unreadable membership table or `dec_oper_ree` table degrades
+    to no REE rows rather than raising -- matching every other optional field
+    this module builds. A hydro code absent from the membership table is
+    excluded from every REE sum and returned (sorted) as the second element,
+    with a WARNING diagnostic recording the codes (never silently dropped).
     """
     if id_map is None:
         return [], []
 
     hydro_codes = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
+    effect = "the report leaves out the REE energy comparison."
 
     try:
         membership = read_relato_membership(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model REE membership table (relato): %s", exc)
+    except FileNotFoundError:
+        _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
+        return [], []
+    except ValueError as exc:
+        _emit_unreadable("relato.rvN", decomp_dir, effect, exc)
         return [], []
 
     ree_by_novomodelo_id, unmapped = _ree_membership_map(membership, hydro_codes)
@@ -2092,8 +2129,11 @@ def _ree_result_comparisons(
 
     try:
         source_ree, names = _decomp_ree_frame(decomp_dir, probabilities=probabilities)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model REE table (dec_oper_ree): %s", exc)
+    except FileNotFoundError:
+        _emit_missing("dec_oper_ree.csv", decomp_dir, effect)
+        return [], unmapped
+    except ValueError as exc:
+        _emit_unreadable("dec_oper_ree.csv", decomp_dir, effect, exc)
         return [], unmapped
 
     novomodelo_sums = _novomodelo_ree_sums(novomodelo_hydro, ree_by_novomodelo_id)
@@ -2253,11 +2293,11 @@ def _evaporation_result_comparisons(
     Novomodelo's side to match.
 
     Returns ``([], [])`` when *id_map* is ``None`` (deck unreadable). A
-    missing/empty `dec_oper_evap` table, an absent ``evaporation_m3s`` column
-    on the Novomodelo side, or no resolvable stage-hours denominator
+    missing or unreadable `dec_oper_evap` table, an absent ``evaporation_m3s``
+    column on the Novomodelo side, or no resolvable stage-hours denominator
     (:func:`_novomodelo_stage_hours`) each degrade to "no evaporation section"
-    (logged at INFO) rather than raising, matching every other optional
-    field this module builds.
+    rather than raising, matching every other optional field this module
+    builds.
     """
     if id_map is None:
         return [], []
@@ -2268,8 +2308,17 @@ def _evaporation_result_comparisons(
         source_evap, _unmapped_hydro_codes = _evap_side(
             decomp_dir, hydro_codes, probabilities=probabilities
         )
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model evaporation table (dec_oper_evap): %s", exc)
+    except FileNotFoundError as exc:
+        # No finding: DECOMP may omit the file for a deck with no evaporating plant.
+        _LOG.info("No dec_oper_evap.csv: %s", exc)
+        return [], []
+    except ValueError as exc:
+        _emit_unreadable(
+            "dec_oper_evap.csv",
+            decomp_dir,
+            "the report leaves out the evaporation comparison.",
+            exc,
+        )
         return [], []
     if source_evap.is_empty():
         return [], []

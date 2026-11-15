@@ -368,7 +368,7 @@ def resolve(
             raise ValueError(
                 f"stage-level axis {family}.{axis} rejects a block_id, but "
                 f"entity_id={entity_id} at stage_id={stage_id} has "
-                f"block_id(s) {block_ids}"
+                f"contributions for blocks {block_ids}"
             )
 
         base_contribs = [c for c in group if c.block_id is None]
@@ -403,7 +403,7 @@ def resolve(
         out_of_range = sorted(b for b in block_ids if not 0 <= b < n_blocks)
         if out_of_range:
             raise ValueError(
-                f"block_id(s) {out_of_range} out of range [0, {n_blocks}) for "
+                f"blocks {out_of_range} out of range [0, {n_blocks}) for "
                 f"{family}.{axis} at entity_id={entity_id}, stage_id={stage_id}; "
                 f"a contribution would otherwise be silently dropped"
             )

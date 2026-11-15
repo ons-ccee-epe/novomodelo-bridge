@@ -10,6 +10,7 @@ import shutil
 from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
@@ -32,8 +33,11 @@ from novomodelo_bridge.decomp.constraint_registers import (
 )
 from novomodelo_bridge.decomp.converters.anticipated import GnlEmission
 from novomodelo_bridge.decomp.converters.cadastro import (
+    CadastroResolutionReport,
     DiversionChannel,
     EffectiveCadastro,
+    OutOfHorizon,
+    ac_overrides_deferred_diagnostic,
 )
 from novomodelo_bridge.decomp.converters.hydro import TurbineLimits
 from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
@@ -44,11 +48,17 @@ from novomodelo_bridge.decomp.converters.thermal import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.pipeline import (
     ConversionReport,
+    DecompCaseArtifacts,
     DiversionChannels,
     _base_diversion_channels,
+    _cadastro_overrides_diagnostic,
     _close_diversion,
+    _convert_config_and_stages,
+    _couple_diversion_channels,
     _diversion_channel_dropped_diagnostic,
     _diversion_channels,
+    _read_constraint_census,
+    _released_runofriver_codes,
 )
 from novomodelo_bridge.decomp.scenarios import (
     convert_external_inflows,
@@ -59,10 +69,13 @@ from novomodelo_bridge.decomp.scenarios import (
 )
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
-from tests.conftest import make_decomp_case
+from tests.conftest import _FakeDadger, make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
+from tests.decomp.test_constraint_registers import _qdef_ceiling_and_floor
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from idecomp.decomp import Dadger, Vazoes
 
     from novomodelo_bridge.decomp.case import DecompCase
@@ -429,8 +442,6 @@ class TestDecompCaseArtifacts:
     which reads ``config``/``initial_conditions``) depend on."""
 
     def test_field_contract(self) -> None:
-        from novomodelo_bridge.decomp.pipeline import DecompCaseArtifacts
-
         field_names = {f.name for f in dataclasses.fields(DecompCaseArtifacts)}
         assert {
             "case",
@@ -491,6 +502,140 @@ class TestDecompCaseArtifacts:
         assert isinstance(artifacts.id_map, DecompIdMap)
         assert isinstance(artifacts.lines_doc, dict)
         assert isinstance(artifacts.line_bounds, pa.Table)
+
+
+class TestCVaRRiskMeasureDiagnostic:
+    """``_convert_config_and_stages`` notes the deck's ``AR`` CVaR measure with
+    its α and λ, and the stage it starts on when that is not the first."""
+
+    @staticmethod
+    def _convert(tmp_path: Path, ar: SimpleNamespace | None) -> list[Diagnostic]:
+        dadger = MagicMock()
+        dadger.data.of_type.return_value = [] if ar is None else [ar]
+        artifacts = DecompCaseArtifacts(
+            case=make_decomp_case(tmp_path, calendar=_calendar()),
+            id_map=_ID_MAP,
+            dadger=dadger,
+            calendar=_calendar(),
+            vazoes=cast("Vazoes", object()),
+            effective=cast("EffectiveCadastro", object()),
+            itaipu_operated=False,
+            fan_probabilities=[1.0],
+            tx=0.1,
+        )
+        with (
+            patch(
+                "novomodelo_bridge.decomp.converters.config.convert_config",
+                return_value={},
+            ),
+            collect() as collected,
+        ):
+            _convert_config_and_stages(artifacts, MagicMock())
+        return collected
+
+    def test_ar_from_the_first_stage_is_noted_with_alpha_and_lambda(
+        self, tmp_path: Path
+    ) -> None:
+        ar = SimpleNamespace(estagio=1, alfa=15.0, lamb=40.0)
+        [diagnostic] = self._convert(tmp_path, ar)
+        assert diagnostic.code == "decomp-cvar-risk-measure"
+        assert diagnostic.severity is Severity.INFO
+        assert "CVaR (α 0.15, λ 0.4)" in diagnostic.summary
+        assert "on every stage, as DECOMP does" in diagnostic.summary
+
+    def test_ar_from_a_later_stage_names_the_stage_it_starts_on(
+        self, tmp_path: Path
+    ) -> None:
+        ar = SimpleNamespace(estagio=3, alfa=15.0, lamb=40.0)
+        [diagnostic] = self._convert(tmp_path, ar)
+        assert diagnostic.code == "decomp-cvar-risk-measure"
+        assert "CVaR (α 0.15, λ 0.4) from stage 2 (0-based)" in diagnostic.summary
+
+    def test_deck_without_ar_notes_no_risk_measure(self, tmp_path: Path) -> None:
+        assert self._convert(tmp_path, None) == []
+
+
+class TestReleasedRunOfRiverDiagnostic:
+    """``_released_runofriver_codes`` lists, by code and name, the run-of-river
+    plants above their cascade's first reservoir."""
+
+    _ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10, 30, 40))
+
+    @staticmethod
+    def _effective(head_regulation: str) -> EffectiveCadastro:
+        # 10 -> 30 (reservoir) -> 40 -> sink.
+        rows = {
+            10: ("HEADWATER   ", head_regulation, 30),
+            30: ("RESERVOIR", "M", 40),
+            40: ("TAILWATER", "D", 0),
+        }
+        hidr = pd.DataFrame(
+            {
+                code: {
+                    "nome_usina": name,
+                    "tipo_regulacao": regulation,
+                    "codigo_usina_jusante": downstream,
+                }
+                for code, (name, regulation, downstream) in rows.items()
+            }
+        ).T
+        hidr.index.name = "codigo_usina"
+        return EffectiveCadastro(base=hidr, n_stages=1, stage_varying={})
+
+    def test_runofriver_above_the_first_reservoir_is_listed(self) -> None:
+        with collect() as collected:
+            released = _released_runofriver_codes(self._effective("D"), self._ID_MAP)
+        assert released == {10}
+        [diagnostic] = collected
+        assert diagnostic.code == "decomp-runofriver-outflow-relaxed"
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.title.endswith("(1)")
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [[10, "HEADWATER"]]
+
+    def test_cascade_headed_by_a_reservoir_lists_nothing(self) -> None:
+        with collect() as collected:
+            released = _released_runofriver_codes(self._effective("S"), self._ID_MAP)
+        assert released == set()
+        assert collected == []
+
+
+class TestConstraintCensusConflictDiagnostic:
+    """``_read_constraint_census`` reports conflicting single-plant flow
+    restrictions under the plant's cadastro name."""
+
+    _ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(118,))
+
+    @staticmethod
+    def _effective() -> EffectiveCadastro:
+        hidr = pd.DataFrame({118: {"nome_usina": "BILLINGS    "}}).T
+        hidr.index.name = "codigo_usina"
+        return EffectiveCadastro(base=hidr, n_stages=2, stage_varying={})
+
+    def _census(self, dadger: _FakeDadger) -> list[Diagnostic]:
+        with collect() as collected:
+            _read_constraint_census(
+                cast("Dadger", dadger), self._effective(), self._ID_MAP, {}
+            )
+        return collected
+
+    def test_conflicting_restrictions_are_reported_by_plant_name(self) -> None:
+        [diagnostic] = self._census(_qdef_ceiling_and_floor())
+        assert diagnostic.code == "decomp-conflicting-flow-restrictions"
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [
+            [118, "BILLINGS", "QDEF", "HQ 116, HQ 170", 0, 0, 6.0, 0.0]
+        ]
+
+    def test_deck_without_restrictions_reports_no_conflict(self) -> None:
+        assert self._census(_FakeDadger()) == []
+
+    def test_a_conflict_on_a_missing_pumping_station_is_not_reported(self) -> None:
+        """The restrictions the entity check leaves out are not reported as
+        conflicting."""
+        diagnostics = self._census(_qdef_ceiling_and_floor(variable="QBOM"))
+        assert [d.code for d in diagnostics] == ["decomp-rhq-qbom-no-station"]
 
 
 class TestEmissionCheckWiring:
@@ -776,11 +921,16 @@ class _CadastroDadger:
         def of_type(_register: type) -> list[object]:
             return []
 
-    def __init__(self, ac_volmax_frame: pd.DataFrame | None) -> None:
+    def __init__(
+        self,
+        ac_volmax_frame: pd.DataFrame | None,
+        ac_frames: Mapping[type, pd.DataFrame] | None = None,
+    ) -> None:
         self.tx = self._Tx()
         self.data = self._Data()
         self._uh = _cadastro_uh_frame()
         self._ac_volmax_frame = ac_volmax_frame
+        self._ac_frames = ac_frames or {}
 
     def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
@@ -810,7 +960,7 @@ class _CadastroDadger:
 
         if modificacao is ACVOLMAX:
             return self._ac_volmax_frame
-        return None
+        return self._ac_frames.get(modificacao) if modificacao else None
 
 
 def _run_cadastro_pipeline(
@@ -827,6 +977,7 @@ def _run_cadastro_pipeline(
     convert_gnl_mock_out: list[MagicMock] | None = None,
     turbine_limits: TurbineLimits | None = None,
     gnl_ct_thermals: list[dict] | None = None,
+    ac_frames: Mapping[type, pd.DataFrame] | None = None,
 ) -> Path:
     """Run ``convert_decomp_case`` against the fully synthetic mock deck
     above, patching every converter not under test to a canned
@@ -871,6 +1022,7 @@ def _run_cadastro_pipeline(
     *gnl_emission* (``[]`` drives a deck whose only thermals are GNL).
 
     *turbine_limits* replaces the default flat turbined-flow limits.
+    *ac_frames* gives the mock deck the ``AC`` frames of other registers.
     """
     from novomodelo_bridge.decomp.files import DecompFiles
     from novomodelo_bridge.decomp.pipeline import convert_decomp_case
@@ -884,7 +1036,7 @@ def _run_cadastro_pipeline(
         renovaveis=None,
         polinjus=None,
     )
-    dadger = _CadastroDadger(ac_volmax_frame)
+    dadger = _CadastroDadger(ac_volmax_frame, ac_frames)
     hidr = _cadastro_hidr_frame()
     calendar = _calendar()
     case = make_decomp_case(
@@ -1394,6 +1546,47 @@ class TestCadastroPipelineWiring:
         assert cadastro_diagnostics[0].table is not None
         assert cadastro_diagnostics[0].table.rows == [["VOLMAX", 1]]
 
+    def test_only_overrides_after_the_horizon_are_reported_as_changing_nothing(
+        self,
+    ) -> None:
+        diagnostic = _cadastro_overrides_diagnostic(
+            CadastroResolutionReport(
+                applied={},
+                out_of_horizon=(
+                    OutOfHorizon(code=1, param="volume_maximo", mes=12, ano=2026),
+                ),
+            )
+        )
+
+        assert diagnostic.code == "cadastro-overrides-applied"
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.title.endswith(" (1)")
+        assert "(0)" not in diagnostic.title
+        assert "below" not in diagnostic.summary
+        assert diagnostic.table is None
+
+    def test_an_unconverted_ac_register_warns_as_check_decomp_does(
+        self, tmp_path: Path
+    ) -> None:
+        """``convert decomp`` raises the ``AC`` WARNING ``check decomp`` raises
+        for a register it does not read, from the same builder."""
+        from idecomp.decomp.modelos.dadger import ACCOTVAZ
+
+        ac_frames: dict[type, pd.DataFrame] = {
+            ACCOTVAZ: pd.DataFrame([{"codigo_usina": 1}])
+        }
+        collected: list[Diagnostic] = []
+        _run_cadastro_pipeline(
+            tmp_path, None, ac_frames=ac_frames, diagnostics_out=collected
+        )
+
+        [deferred] = [d for d in collected if d.code == "decomp-ac-overrides-deferred"]
+        assert deferred == ac_overrides_deferred_diagnostic(
+            _CadastroDadger(None, ac_frames)
+        )
+        assert deferred.table is not None
+        assert deferred.table.rows == [["COTVAZ"]]
+
 
 # Synthetic RE/RHQ/RHV/RHE ``to_generic`` records for
 # ``TestGenericConstraintWiring`` below. Every record uses plant codes 1/2 —
@@ -1548,6 +1741,31 @@ class TestGenericConstraintWiring:
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
         assert not (dst / "constraints" / "generic_constraints.json").exists()
         assert not (dst / "constraints" / "generic_constraint_bounds.parquet").exists()
+
+    def test_an_hq_constraint_on_a_plant_not_operated_is_left_out(
+        self, tmp_path: Path
+    ) -> None:
+        base = _synthetic_rhq_record()
+        on_unoperated = dataclasses.replace(
+            base,
+            terms=(
+                base.terms[0],
+                ConstraintTerm(code=3, coefficient=1.0, variable="QDEF"),
+            ),
+        )
+        found: list[Diagnostic] = []
+
+        dst = _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            to_generic=(on_unoperated,),
+            diagnostics_out=found,
+        )
+
+        [left_out] = [d for d in found if d.code == "decomp-rhq-plant-not-operated"]
+        assert left_out.table is not None
+        assert left_out.table.rows == [[902, 3]]
+        assert not (dst / "constraints" / "generic_constraints.json").exists()
 
     def test_stage_varying_coefficient_is_declared_without_rhe(
         self, tmp_path: Path
@@ -2222,6 +2440,44 @@ class TestBaseDiversionChannels:
 
     def test_no_diversion_returns_empty(self) -> None:
         assert self._channels({}, set()) == {}
+
+    def _couple(self, diversions: dict) -> tuple[dict, list[Diagnostic]]:
+        effective = self._effective(diversions)
+        base = _base_diversion_channels(effective, self._id_map(), set())
+        hydros = {
+            "hydros": [{"id": 0, "name": "MOXOTO"}, {"id": 1, "name": "P.AFONSO 4"}]
+        }
+        bounds = pa.table({"hydro_id": pa.array([0, 1], type=pa.int32())})
+        with collect() as collected:
+            _couple_diversion_channels(bounds, hydros, base, self._id_map(), effective)
+        return hydros, collected
+
+    def test_coupled_base_channel_is_noted_with_its_target(self) -> None:
+        channel = DiversionChannel(downstream=175, limit=None)
+        hydros, collected = self._couple({173: (channel, channel)})
+        assert hydros["hydros"][0]["diversion"] == {
+            "downstream_id": 1,
+            "max_flow_m3s": None,
+        }
+        [diagnostic] = collected
+        assert diagnostic.code == "decomp-base-diversion-modeled"
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.title.endswith("(1)")
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [[173, "MOXOTO", 175, "P.AFONSO 4", "none"]]
+
+    def test_coupled_ac_limit_is_noted_as_the_channel_limit(self) -> None:
+        channel = DiversionChannel(downstream=175, limit=500.0)
+        _, collected = self._couple({173: (channel, channel)})
+        [diagnostic] = collected
+        assert diagnostic.code == "decomp-base-diversion-modeled"
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [[173, "MOXOTO", 175, "P.AFONSO 4", 500.0]]
+
+    def test_no_base_channel_notes_nothing(self) -> None:
+        hydros, collected = self._couple({})
+        assert collected == []
+        assert all("diversion" not in hydro for hydro in hydros["hydros"])
 
 
 class TestMiniDeckDiversionChannels:

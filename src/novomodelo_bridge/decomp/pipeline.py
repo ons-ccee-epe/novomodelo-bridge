@@ -543,58 +543,6 @@ def _next_operated(parents: Mapping[int, Sequence[int]]) -> dict[int, int]:
     return {child: parent for parent, children in parents.items() for child in children}
 
 
-def _topology_varies_diagnostic(
-    effective: cadastro_conv.EffectiveCadastro,
-) -> dx.Diagnostic | None:
-    """The ``decomp-ac-topology-varies`` WARNING, or ``None`` when no ``AC
-    NUMJUS``, ``NUMPOS`` or ``JUSENA`` register changes value between stages.
-
-    The case carries one cascade for the whole horizon, so every cascade walk
-    reads these registers at the first stage.
-    """
-    registers: tuple[tuple[str, Mapping[int, Sequence[int | None]]], ...] = (
-        ("AC NUMJUS", effective.downstream_links),
-        ("AC NUMPOS", effective.inflow_gauges),
-        ("AC JUSENA", effective.energy_links),
-    )
-    rows: list[list[object]] = []
-    for register, series_by_code in registers:
-        for code in sorted(series_by_code):
-            series = series_by_code[code]
-            changed = [
-                stage for stage, value in enumerate(series) if value != series[0]
-            ]
-            if not changed:
-                continue
-            name = (
-                str(effective.base.loc[code, "nome_usina"]).strip()
-                if code in effective.base.index
-                else ""
-            )
-            used = "none" if series[0] is None else series[0]
-            rows.append([code, name, register, used, dx.format_stage_ranges(changed)])
-    if not rows:
-        return None
-    return dx.Diagnostic(
-        code="decomp-ac-topology-varies",
-        severity=dx.Severity.WARNING,
-        category="Cadastro overrides",
-        title=f"Cascade registers that change between stages ({len(rows)})",
-        summary=(
-            "The listed AC registers take a different value on later stages, "
-            "but the converted case has one cascade for the whole horizon and "
-            "uses the first stage's value throughout, so on the listed stages "
-            "the water, inflow or stored-energy routing differs from DECOMP's."
-        ),
-        table=dx.DiagnosticTable(
-            columns=["Code", "Name", "Register", "Used", "Differs on stages"],
-            rows=rows,
-            justify=["right", "left", "left", "right", "left"],
-            caption="Stage ids are 0-based.",
-        ),
-    )
-
-
 #: The withdrawal axis's own side-table schema -- mirrors
 #: :func:`~novomodelo_bridge.decomp.converters.bounds.convert_irrigation_withdrawal`'s shape
 #: plus the ``block_id`` column :func:`_fan_resolved_rows` needs as a fan-out
@@ -888,21 +836,10 @@ _LIBS_LEFT_OUT = {
 def _libs_electrical_census_diagnostic(
     result: libs_electrical_emit.LibsElectricalResult,
 ) -> dx.Diagnostic:
-    """The ``decomp-libs-electrical-converted`` INFO diagnostic:
-    the authoritative per-restriction census for the deck's LIBs-era
-    long-form electrical file -- how many restrictions converted to a novomodelo
-    generic constraint, and how many were dropped, broken down by
-    :class:`~novomodelo_bridge.decomp.converters.libs_electrical_emit.LibsElectricalResult`'s
-    four drop reasons (``inactive``/``unrecognized-token``/
-    ``unresolved-bucket-bc``/``unresolved-bucket-a``, each already carrying
-    its own per-restriction WARNING/INFO diagnostic).
-
-    This supersedes the flat ``decomp-libs-electrical-present`` warning for
-    the converted subset (:func:`_emit_constraint_detection_diagnostics`
-    suppresses that warning once a model converts) -- this is the one place a
-    caller reads how much of the entry actually converted, so no "not
-    converted" claim survives over it.
-    """
+    """The ``decomp-libs-electrical-converted`` INFO census: the converted
+    restrictions plus one row per
+    :attr:`~novomodelo_bridge.decomp.converters.libs_electrical_emit.LibsElectricalResult.deferred`
+    reason, labelled by :data:`_LIBS_LEFT_OUT`."""
     n_converted = len(result.converted_codes)
     total = n_converted + sum(len(codes) for codes in result.deferred.values())
     rows: list[list[object]] = [["Converted", n_converted]]
@@ -944,7 +881,7 @@ def _gnl_thermal_codes(
     shared = sorted(codes.intersection(id_map.thermal_codes))
     if shared:
         raise ValueError(
-            f"thermal code(s) {shared} are declared both in the dadger CT "
+            f"the thermal codes {shared} are declared both in the dadger CT "
             "registry and in the dadgnl TG registry; an electrical restriction's "
             "ger_usit for them cannot be told apart as a decision or a "
             "commanded GNL generation"
@@ -983,7 +920,7 @@ def _water_bucket_stages(
 def _discover(src: Path) -> DecompCaseArtifacts:
     """The ``step("Discovering deck")`` phase: parse *src* via one
     :class:`DecompCase`, resolve the cadastro override view (emitting its
-    overrides-applied/topology-relinked diagnostics), and compute the scalars
+    AC-register diagnostics), and compute the scalars
     every later phase needs -- the Itaipu-operated flag, the terminal fan
     probabilities, and the annual discount rate.
     """
@@ -1019,6 +956,9 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     )
     if cadastro_report.applied or cadastro_report.out_of_horizon:
         dx.emit(_cadastro_overrides_diagnostic(cadastro_report), logger=_LOG)
+    deferred_diagnostic = cadastro_conv.ac_overrides_deferred_diagnostic(dadger)
+    if deferred_diagnostic is not None:
+        dx.emit(deferred_diagnostic, logger=_LOG)
     # The topology/gauge relink is its own diagnostic
     # (not folded into the summary above) so an automated consumer can key
     # on "cadastro-topology-relinked" specifically — the resolved
@@ -1026,7 +966,7 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     relink_diagnostic = _topology_relink_diagnostic(effective, id_map)
     if relink_diagnostic is not None:
         dx.emit(relink_diagnostic, logger=_LOG)
-    varies_diagnostic = _topology_varies_diagnostic(effective)
+    varies_diagnostic = cadastro_conv.topology_varies_diagnostic(effective)
     if varies_diagnostic is not None:
         dx.emit(varies_diagnostic, logger=_LOG)
     fan_probabilities = scenarios_conv.terminal_fan_probabilities(vazoes, calendar)
@@ -1062,17 +1002,26 @@ def _cadastro_overrides_diagnostic(
         [cadastro_conv.AC_REGISTER_BY_PARAM[param], count]
         for param, count in report.applied.items()
     )
+    late = len(report.out_of_horizon)
+    late_sentence = (
+        f"{dx.counted(late, 'AC override')} "
+        f"{'takes' if late == 1 else 'take'} effect after the study "
+        f"horizon and {'changes' if late == 1 else 'change'} nothing"
+    )
+    if not rows:
+        return dx.Diagnostic(
+            code="cadastro-overrides-applied",
+            severity=dx.Severity.INFO,
+            category="Cadastro overrides",
+            title=f"AC registry overrides after the study horizon ({late})",
+            summary=f"{late_sentence}, as in DECOMP.",
+        )
     summary = (
         "The deck's AC registers change the hidr.dat registry of the plants "
         "below from the stage each one takes effect, as in DECOMP."
     )
-    if report.out_of_horizon:
-        late = len(report.out_of_horizon)
-        summary += (
-            f" {dx.counted(late, 'AC override')} "
-            f"{'takes' if late == 1 else 'take'} effect after the study "
-            f"horizon and {'changes' if late == 1 else 'change'} nothing."
-        )
+    if late:
+        summary += f" {late_sentence}."
     present = {row[0] for row in rows}
     per_unit_set = [name for name in _UNIT_SET_AC_REGISTERS if name in present]
     notes = (
@@ -1090,9 +1039,7 @@ def _cadastro_overrides_diagnostic(
             columns=["AC register", "Plants"],
             rows=rows,
             justify=["left", "right"],
-        )
-        if rows
-        else None,
+        ),
         notes=notes,
     )
 
@@ -1525,7 +1472,14 @@ def _read_constraint_census(
     """The deck's special constraints split by lowering target, without the
     ones on an entity the case lacks, reporting those and any conflicting
     bounds as diagnostics."""
-    census = constraint_registers.read_constraints(dadger)
+    census, unknown = constraint_registers.drop_unknown_entities(
+        constraint_registers.read_constraints(dadger),
+        hydro_codes=id_map.hydro_codes,
+        thermal_codes=id_map.thermal_codes,
+        pumping_codes=pumping_ids.keys(),
+    )
+    for diagnostic in unknown:
+        dx.emit(diagnostic, logger=_LOG)
     if census.bound_conflicts:
         names = {
             conflict.code: str(effective.base.loc[conflict.code, "nome_usina"]).strip()
@@ -1538,14 +1492,6 @@ def _read_constraint_census(
             ),
             logger=_LOG,
         )
-    census, unknown = constraint_registers.drop_unknown_entities(
-        census,
-        hydro_codes=id_map.hydro_codes,
-        thermal_codes=id_map.thermal_codes,
-        pumping_codes=pumping_ids.keys(),
-    )
-    for diagnostic in unknown:
-        dx.emit(diagnostic, logger=_LOG)
     return census
 
 
@@ -2393,9 +2339,8 @@ def convert_decomp_case(
 ) -> ConversionReport:
     """Convert one deck revision into a Novomodelo case directory.
 
-    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
-    failure clears the written outputs and forwards the below-``ERROR``
-    findings collected before it.
+    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`,
+    which refuses an occupied output and rolls back a failed run.
 
     Parameters
     ----------

@@ -39,6 +39,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_hydro_means,
     read_novomodelo_hydro_metadata,
     read_novomodelo_hydro_per_stage_bounds,
+    read_novomodelo_hydro_total_flows,
     read_novomodelo_hydro_withdrawal,
     read_novomodelo_line_bounds,
     read_novomodelo_line_means,
@@ -361,6 +362,59 @@ class TestCliExitCodeTwoOnNovomodeloReadError:
 # real (unpatched) code path to NovomodeloReadError, proving the antipattern fix
 # rather than only the CLI wiring.
 # ---------------------------------------------------------------------------
+
+
+class TestMissingColumnsWarn:
+    """A file present without a column a reader needs is a warning naming the
+    column, not a silent empty frame."""
+
+    def test_lp_max_generation_without_its_columns_warns(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        bounds = out / "training" / "dictionaries" / "bounds.parquet"
+        bounds.parent.mkdir(parents=True)
+        pl.DataFrame(
+            {"entity_type_code": [0], "entity_id": [1], "stage_id": [0]}
+        ).write_parquet(bounds)
+
+        with dx.collect() as found:
+            result = read_novomodelo_lp_max_generation(out)
+
+        assert result.is_empty()
+        [warning] = found
+        assert warning.code == "report-file-unreadable"
+        assert warning.title == (
+            "output/training/dictionaries/bounds.parquet could not be read"
+        )
+        assert warning.notes[-1] == (
+            "Reason: no bound_type_code or bound_value columns"
+        )
+
+    def test_total_flows_without_the_outflow_warns(self, tmp_path: Path) -> None:
+        means = pl.DataFrame(
+            {"entity_id": [1], "stage_id": [0], "incremental_inflow_m3s": [10.0]}
+        )
+
+        with dx.collect() as found:
+            result = read_novomodelo_hydro_total_flows(tmp_path / "output", means)
+
+        assert result.is_empty()
+        [warning] = found
+        assert warning.title == "output/simulation/hydros could not be read"
+        assert "total inflow" in warning.summary
+        assert warning.notes[-1] == "Reason: no outflow_m3s column"
+
+    def test_withdrawal_without_its_column_is_a_case_without_withdrawal(
+        self, tmp_path: Path
+    ) -> None:
+        bounds = tmp_path / "constraints" / "hydro_bounds.parquet"
+        bounds.parent.mkdir(parents=True)
+        pl.DataFrame({"hydro_id": [1], "stage_id": [0]}).write_parquet(bounds)
+
+        with dx.collect() as found:
+            result = read_novomodelo_hydro_withdrawal(tmp_path / "output")
+
+        assert result.is_empty()
+        assert found == []
 
 
 class TestCorruptDrivesRealReaderPath:
@@ -1652,14 +1706,31 @@ class TestReadNovomodeloLines:
 
         assert read_novomodelo_lines(out) == []
 
-    def test_corrupt_json_raises_novomodeloreaderror(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("content", "reason"),
+        [
+            ("not valid json{", "Reason: JSONDecodeError: "),
+            ('{"lines": {"id": 0}}', "Reason: no list of lines"),
+            ("[]", "Reason: no list of lines"),
+        ],
+    )
+    def test_a_file_without_a_list_of_lines_is_no_lines_and_one_warning(
+        self, tmp_path: Path, content: str, reason: str
+    ) -> None:
         out = tmp_path / "output"
         system_dir = tmp_path / "system"
         system_dir.mkdir(parents=True)
-        (system_dir / "lines.json").write_text("not valid json{", encoding="utf-8")
+        (system_dir / "lines.json").write_text(content, encoding="utf-8")
 
-        with pytest.raises(NovomodeloReadError, match="lines.json"):
-            read_novomodelo_lines(out)
+        with dx.collect() as collected:
+            assert read_novomodelo_lines(out) == []
+            assert read_novomodelo_lines(out) == []
+
+        [warning] = dx.finalize_diagnostics(collected)
+        assert warning.code == "report-file-unreadable"
+        assert warning.severity is Severity.WARNING
+        assert "treats the case as having no lines" in warning.summary
+        assert warning.notes[-1].startswith(reason)
 
 
 class TestReadNovomodeloFphaFitConfig:
@@ -1946,7 +2017,7 @@ class TestReadNovomodeloNetworkLines:
                 "system/lines.json could not be read",
             )
         ]
-        assert "Network tab shows no line" in collected[0].summary
+        assert "no line on the Network tab" in collected[0].summary
 
 
 class TestReadNovomodeloTrainingMetadata:

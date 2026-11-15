@@ -48,6 +48,8 @@ from novomodelo_bridge.newave.converters.hydro.geometry import (
 )
 from novomodelo_bridge.newave.converters.hydro.overrides import (
     _apply_permanent_overrides,
+    _extract_temporal_overrides,
+    _per_stage_drop_overrides,
     read_diversion_records,
 )
 from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
@@ -759,6 +761,36 @@ def _report_expansion_plants(rows: list[list[object]]) -> None:
     )
 
 
+def _report_plants_without_forebay_curve(
+    case: NewaveCase, active_hydros: pd.DataFrame, plants: list[tuple[int, str]]
+) -> None:
+    """Report the ``(code, name)`` *plants* without a forebay curve.
+
+    Only the stages no modif.dat CMONT covers are listed, and a plant CMONT
+    covers throughout is left out.
+    """
+    if not plants:
+        return
+    # Every active plant, not *plants*: finalize_diagnostics keeps the first
+    # modif-temporal-* table of the run, so each caller must build the full one.
+    temporal = _extract_temporal_overrides(
+        case, [int(code) for code in active_hydros["codigo_usina"]]
+    )
+    total_stages = case.horizon.total_stages
+    rows: list[list[object]] = []
+    for code, name in plants:
+        drops = _per_stage_drop_overrides(
+            [o for o in temporal.get(code, []) if o["type"] in ("CFUGA", "CMONT")],
+            case,
+            total_stages,
+        )
+        stages = [stage for stage, (_, cmont) in enumerate(drops) if cmont is None]
+        if stages:
+            rows.append([code, name, format_stage_ranges(stages)])
+    if rows:
+        emit(forebay_curve_missing_diagnostic(rows), logger=_LOG)
+
+
 def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     """Convert the source model hydro plant data to a Novomodelo ``hydros.json`` dict.
 
@@ -790,8 +822,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     filling_rows: list[list[object]] = []
     expansion_rows: list[list[object]] = []
     efficiency_rows: list[list[object]] = []
-    no_curve_rows: list[list[object]] = []
-    all_stages = format_stage_ranges(range(case.horizon.total_stages))
+    no_curve: list[tuple[int, str]] = []
     for _, row in context.active_hydros.iterrows():
         plant = _hydro_entry(row, context, id_map)
         hydros.append(plant.entry)
@@ -804,7 +835,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
         code = int(row["codigo_usina"])
         hreg = context.cadastro.loc[code]
         if not has_forebay_curve([float(hreg[f"a{i}_volume_cota"]) for i in range(5)]):
-            no_curve_rows.append([code, str(row["nome_usina"]).strip(), all_stages])
+            no_curve.append((code, str(row["nome_usina"]).strip()))
 
     hydros.sort(key=lambda h: h["id"])
 
@@ -816,8 +847,7 @@ def convert_hydros(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     _report_expansion_plants(expansion_rows)
     if efficiency_rows:
         emit(fpha_efficiency_capped_diagnostic(efficiency_rows), logger=_LOG)
-    if no_curve_rows:
-        emit(forebay_curve_missing_diagnostic(no_curve_rows), logger=_LOG)
+    _report_plants_without_forebay_curve(case, context.active_hydros, no_curve)
     _report_outage_overshoots(
         context.cadastro, (int(code) for code in context.active_hydros["codigo_usina"])
     )
