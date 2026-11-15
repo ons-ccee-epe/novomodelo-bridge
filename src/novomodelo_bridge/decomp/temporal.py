@@ -36,6 +36,7 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from novomodelo_bridge.core.diagnostics import counted
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.core.pandas_utils import as_frame, as_int
 from novomodelo_bridge.core.season_calendar import (
     block_names,
@@ -54,6 +55,7 @@ if TYPE_CHECKING:
 _SATURDAY = 5
 _WEEK_HOURS = 168.0
 _HOURS_PER_DAY = 24.0
+_SUMMER_TIME_SHIFT_HOURS = 1.0
 # Only the first operative month is split into weeks, and it spans four to six
 # of them depending on where the Saturday start falls in the civil month; every
 # later month is a single monthly stage.
@@ -132,6 +134,9 @@ def build_operative_calendar(
         number of months; the terminal fan being the only branch point is a
         *scenario* contract verified against the inflow
         file (``scenarios.terminal_fan_probabilities``), not here.
+    UnsupportedSourceError
+        If a weekly stage lasts 168 ± 1 h, a week shifted by summer time
+        (``VR``).
     """
     if len(stage_block_hours) < 2:
         raise ValueError(
@@ -149,6 +154,22 @@ def build_operative_calendar(
     for index, hours in enumerate(stage_block_hours):
         block_hours = tuple(float(h) for h in hours)
         total = sum(block_hours)
+        if (
+            index < last_index
+            and not seen_monthly
+            and abs(total - _WEEK_HOURS) == _SUMMER_TIME_SHIFT_HOURS
+        ):
+            # TRACKED NOVOMODELO-GAP (C37): novomodelo stages run in whole days
+            # and their block hours sum to that span, so a week shifted by an
+            # hour cannot be written. Remove when novomodelo accepts such a stage.
+            raise UnsupportedSourceError(
+                f"dadger.rvN gives stage {index + 1} (counted from 1) {total:g} h "
+                "in DP, an operative week shifted by summer time (VR). The case's "
+                "calendar runs in whole days, so give every operative week 168 h "
+                "in DP and leave summer time out.",
+                path="dadger.rvN",
+                field="DP duracao",
+            )
         days = total / _HOURS_PER_DAY
         if abs(days - round(days)) > 1e-9:
             raise ValueError(
@@ -174,9 +195,7 @@ def build_operative_calendar(
                     f"stage {index}: a non-final stage is either a 168 h "
                     f"operative week of the first month or a stage closing a "
                     f"calendar month; got {total} h spanning {cursor} to "
-                    f"{end}. A summer-time week (VR, 168 ± 1 h) is not "
-                    f"representable on this whole-day calendar, and weekly "
-                    f"stages may not follow a monthly one."
+                    f"{end}. Weekly stages may not follow a monthly one."
                 )
             weeks += is_week
             if weeks > _MAX_FIRST_MONTH_WEEKS:

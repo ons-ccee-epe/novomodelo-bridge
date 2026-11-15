@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -22,6 +23,7 @@ from novomodelo_bridge.core.diagnostics import (
     DiagnosticTable,
     Severity,
     emit,
+    exception_reason,
     report_file_missing_diagnostic,
     report_file_unreadable_diagnostic,
 )
@@ -29,18 +31,20 @@ from novomodelo_bridge.core.errors import NovomodeloOutputError
 from novomodelo_bridge.novomodelo.case_io import resolve_hydro_productivities
 from novomodelo_bridge.novomodelo.constraint_expr import (
     ResolvedGenericConstraints,
-    resolve_generic_constraints,
 )
 from novomodelo_bridge.novomodelo.readers import (
     SPLIT_PLANT_COLUMNS,
     SPLIT_PLANT_SUMMARY,
     hydro_home_bus,
-    read_novomodelo_generic_constraint_echo,
-    read_novomodelo_hydro_metadata,
+    read_novomodelo_buses,
+    read_novomodelo_hydros,
     read_novomodelo_line_bounds,
     read_novomodelo_lines,
     read_novomodelo_load_bus_ids,
+    read_novomodelo_non_controllable_sources,
+    read_novomodelo_resolved_generic_constraints,
     read_novomodelo_scenario_weights,
+    read_novomodelo_thermals,
     read_novomodelo_training_metadata,
     split_plant_row,
 )
@@ -66,18 +70,21 @@ def scan_entity(case_dir: Path, entity: str) -> pl.LazyFrame:
     return pl.scan_parquet(str(sim_dir / "**" / "*.parquet"), hive_partitioning=True)
 
 
+_ENTITY_READERS: dict[str, Callable[[Path], list[dict]]] = {
+    "hydros": read_novomodelo_hydros,
+    "buses": read_novomodelo_buses,
+    "thermals": read_novomodelo_thermals,
+    "non_controllable_sources": read_novomodelo_non_controllable_sources,
+    "lines": read_novomodelo_lines,
+}
+
+
 def load_names(case_dir: Path) -> dict[tuple[str, int], str]:
     """Load entity name mappings from system JSON files."""
     names: dict[tuple[str, int], str] = {}
-    for entity in ("hydros", "buses", "thermals", "non_controllable_sources"):
-        path = case_dir / "system" / f"{entity}.json"
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            for item in data.get(entity, []):
-                names[(entity, item["id"])] = item.get("name", str(item["id"]))
-    for item in read_novomodelo_lines(case_dir / "output"):
-        names[("lines", item["id"])] = item.get("name", str(item["id"]))
+    for entity, read in _ENTITY_READERS.items():
+        for item in read(case_dir / "output"):
+            names[(entity, item["id"])] = item.get("name", str(item["id"]))
     return names
 
 
@@ -85,8 +92,100 @@ def entity_name(names: dict[tuple[str, int], str], entity: str, eid: int) -> str
     return names.get((entity, eid), str(eid))
 
 
-def load_stage_labels(case_dir: Path) -> dict[int, str]:
-    """Return stage_id -> date label from stages.json, keyed on each stage's date.
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _read_json_object(path: Path) -> tuple[dict, Exception | str | None]:
+    """*path*'s JSON object, or ``{}`` and why the file holds none."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {}, exc
+    if not isinstance(data, dict):
+        return {}, "no JSON object"
+    return data, None
+
+
+def _read_report_json(
+    path: Path,
+    label: str,
+    effect: str,
+    shape_problem: Callable[[dict], str | None] | None = None,
+) -> dict:
+    """*path*'s JSON object, shown to the user as *label*; ``{}`` when absent.
+
+    A file that does not parse, holds no JSON object, or lacks what
+    *shape_problem* names yields ``{}`` with a ``report-file-unreadable``
+    warning naming *effect*.
+    """
+    if not path.exists():
+        return {}
+    data, problem = _read_json_object(path)
+    if problem is None and shape_problem is not None:
+        problem = shape_problem(data)
+    if problem is None:
+        return data
+    emit(report_file_unreadable_diagnostic(label, path, effect, problem), logger=logger)
+    return {}
+
+
+def _stages_problem(data: dict) -> str | None:
+    """What ``stages.json`` lacks of what the dashboard reads, if anything."""
+    stages = data.get("stages")
+    if not isinstance(stages, list):
+        return "no list of stages"
+    for stage in stages:
+        if not isinstance(stage, dict) or type(stage.get("id")) is not int:
+            return "a stage without an id"
+        blocks = stage.get("blocks")
+        if not isinstance(blocks, list) or not all(
+            isinstance(b, dict)
+            and type(b.get("id")) is int
+            and _is_number(b.get("hours"))
+            for b in blocks
+        ):
+            return f"stage {stage['id']} without blocks that have an id and hours"
+    policy_graph = data.get("policy_graph", {})
+    if not isinstance(policy_graph, dict):
+        return "a policy graph that is not an object"
+    rate = policy_graph.get("annual_discount_rate")
+    if rate is not None and not _is_number(rate):
+        return "a discount rate that is not a number"
+    return None
+
+
+def _read_stages(case_dir: Path) -> dict:
+    """``stages.json``, which the dashboard cannot build without: every chart's
+    stage axis and every energy and hours-weighted average come from its
+    stages and block hours.
+
+    Raises:
+        NovomodeloOutputError: the file is absent, does not parse, or lacks
+            a stage's id or blocks, a block's id or hours, or holds a
+            discount rate that is not a number.
+    """
+    path = case_dir / "stages.json"
+    effect = "so the dashboard has no stages or block hours to build its charts on."
+    if not path.exists():
+        raise NovomodeloOutputError(
+            f"stages.json was not found in {case_dir}, {effect}", path=str(path)
+        )
+    data, problem = _read_json_object(path)
+    if problem is None:
+        problem = _stages_problem(data)
+    if problem is not None:
+        reason = (
+            exception_reason(problem) if isinstance(problem, Exception) else problem
+        )
+        raise NovomodeloOutputError(
+            f"stages.json could not be read ({reason}), {effect}", path=str(path)
+        )
+    return data
+
+
+def stage_labels(stages_data: dict) -> dict[int, str]:
+    """Return stage_id -> date label from *stages_data*, keyed on each stage's date.
 
     Monthly horizons (the source model's typical monthly stages) get a compact
     ``"Mon YYYY"`` label. When a horizon packs several stages into one calendar
@@ -95,14 +194,8 @@ def load_stage_labels(case_dir: Path) -> dict[int, str]:
     gets a day-resolution ``"DD Mon YYYY"`` label from its own ``start_date``.
     A stage with a missing or unparseable ``start_date`` falls back to its id.
     """
-    path = case_dir / "stages.json"
-    if not path.exists():
-        return {}
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-
     parsed: list[tuple[int, pd.Timestamp | None]] = []
-    for stage in data.get("stages", []):
+    for stage in stages_data.get("stages", []):
         sid = stage["id"]
         start = stage.get("start_date", "")
         stamp: pd.Timestamp | None = None
@@ -126,23 +219,18 @@ def load_stage_labels(case_dir: Path) -> dict[int, str]:
     }
 
 
-def load_stage_dates(case_dir: Path) -> dict[int, str]:
-    """Return stage_id -> ISO ``YYYY-MM-DD`` start date from stages.json.
+def stage_dates(stages_data: dict) -> dict[int, str]:
+    """Return stage_id -> ISO ``YYYY-MM-DD`` start date from *stages_data*.
 
-    These are the x-axis *positions* (paired with :func:`load_stage_labels`'s
+    These are the x-axis *positions* (paired with :func:`stage_labels`'s
     display text as tick labels): feeding them to a Plotly ``type="date"`` axis
     spaces the stages by their true calendar distance, so weekly stages sit
     closer together than a following monthly stage. A stage with a missing or
     unparseable ``start_date`` is omitted (its chart point falls back to the
     stage-id label via the axis helper).
     """
-    path = case_dir / "stages.json"
-    if not path.exists():
-        return {}
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
     dates: dict[int, str] = {}
-    for stage in data.get("stages", []):
+    for stage in stages_data.get("stages", []):
         start = stage.get("start_date", "")
         if not start:
             continue
@@ -153,71 +241,73 @@ def load_stage_dates(case_dir: Path) -> dict[int, str]:
     return dates
 
 
-def _unit_group_bus_ids(hydro: dict) -> list[int]:
-    return sorted({g["bus_id"] for g in hydro.get("unit_groups") or []})
-
-
-def resolve_hydro_bus_id(
-    hydro: dict, *, hydros_path: Path, load_bus_ids: frozenset[int]
-) -> int | None:
-    """Resolve the bus a hydro plant's reservoir counts at, from its ``unit_groups``.
-
-    Shared by ``load_hydro_bus_map`` and ``load_hydro_metadata`` so the two
-    never disagree on a plant's bus, and by rule
-    (``novomodelo_readers.hydro_home_bus``) with the compare layer's
-    ``comparators.analyze._bus_name_lookups``. A plant split across buses,
-    such as Itaipu, resolves to the one of them with load.
-
-    A split plant with no such bus gets ``None``: callers leave it out of the
-    views keyed by one bus per plant, so its ``load_hydro_metadata`` entry
-    has no ``"bus_id"``, and :func:`load_hydro_bus_map` reports it. Its
-    generation still counts at each bus, read per bus from
-    ``simulation/hydro_bus_generation``.
-
-    Raises:
-        NovomodeloOutputError: ``unit_groups`` is missing or empty, which
-            novomodelo rejects at load, so only a hand-edited file has it.
-    """
-    hid = hydro.get("id")
-    name = hydro.get("name", str(hid))
-    bus_ids = _unit_group_bus_ids(hydro)
-    if not bus_ids:
-        raise NovomodeloOutputError(
-            f"hydro {hid} ({name}) has no unit_groups; cannot resolve its bus",
-            path=str(hydros_path),
-        )
-    return hydro_home_bus(bus_ids, load_bus_ids)
+def _unit_group_bus_ids(hydro: dict) -> list[int] | None:
+    """The buses of *hydro*'s unit groups; ``None`` unless it has unit
+    groups and each names its bus."""
+    groups = hydro.get("unit_groups")
+    if not isinstance(groups, list) or not groups:
+        return None
+    if not all(isinstance(g, dict) and type(g.get("bus_id")) is int for g in groups):
+        return None
+    return sorted({g["bus_id"] for g in groups})
 
 
 def load_hydro_bus_map(
     case_dir: Path, *, load_bus_ids: frozenset[int] | None = None
 ) -> dict[int, int]:
-    """Return hydro_id -> the bus :func:`resolve_hydro_bus_id` resolves.
+    """Return hydro_id -> the bus a plant's reservoir counts at, from its
+    ``unit_groups``.
 
-    *load_bus_ids* defaults to the case's
-    ``novomodelo_readers.read_novomodelo_load_bus_ids``.
+    Resolved by the compare layer's rule
+    (``novomodelo_readers.hydro_home_bus``): a plant split across buses,
+    such as Itaipu, resolves to the one of them with load. *load_bus_ids*
+    defaults to the case's ``novomodelo_readers.read_novomodelo_load_bus_ids``.
+
+    A plant without unit groups that name their buses, which novomodelo
+    rejects at load, and a split plant with no such bus get no entry, so
+    the views keyed by one bus per plant leave them out; each kind is
+    reported once. A split plant's generation still counts at each bus,
+    read per bus from ``simulation/hydro_bus_generation``.
     """
-    path = case_dir / "system" / "hydros.json"
-    if not path.exists():
+    hydros = read_novomodelo_hydros(case_dir / "output")
+    if not hydros:
         return {}
     if load_bus_ids is None:
         load_bus_ids = read_novomodelo_load_bus_ids(case_dir / "output")
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
     result: dict[int, int] = {}
+    ungrouped_rows: list[list[object]] = []
     split_rows: list[list[object]] = []
-    for h in d["hydros"]:
-        bus_id = resolve_hydro_bus_id(h, hydros_path=path, load_bus_ids=load_bus_ids)
+    for h in hydros:
+        name = h.get("name", str(h["id"]))
+        bus_ids = _unit_group_bus_ids(h)
+        if bus_ids is None:
+            ungrouped_rows.append([h["id"], name])
+            continue
+        bus_id = hydro_home_bus(bus_ids, load_bus_ids)
         if bus_id is not None:
             result[h["id"]] = bus_id
             continue
-        split_rows.append(
-            split_plant_row(
-                h["id"],
-                h.get("name", str(h["id"])),
-                _unit_group_bus_ids(h),
-                load_bus_ids,
-            )
+        split_rows.append(split_plant_row(h["id"], name, bus_ids, load_bus_ids))
+    if ungrouped_rows:
+        emit(
+            Diagnostic(
+                code="hydro-unit-groups-missing",
+                severity=Severity.WARNING,
+                category="Dashboard data",
+                title=f"Hydro plants without unit groups ({len(ungrouped_rows)})",
+                summary=(
+                    "The listed hydro plants have no unit groups that name their "
+                    "bus in system/hydros.json, which novomodelo rejects when it "
+                    "loads a case. The dashboard leaves them out of the per-bus "
+                    "storage, stored-energy and inflow charts."
+                ),
+                table=DiagnosticTable(
+                    columns=["Hydro ID", "Name"],
+                    rows=ungrouped_rows,
+                    justify=["right", "left"],
+                ),
+            ),
+            logger=logger,
         )
     if split_rows:
         emit(
@@ -244,13 +334,8 @@ def load_hydro_bus_map(
 
 def load_thermal_metadata(case_dir: Path) -> dict[int, dict]:
     """Return thermal_id -> {bus_id, max_mw, cost_per_mwh} metadata."""
-    path = case_dir / "system" / "thermals.json"
-    if not path.exists():
-        return {}
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
     result = {}
-    for t in d["thermals"]:
+    for t in read_novomodelo_thermals(case_dir / "output"):
         # v0.4.3+: scalar cost_per_mwh; legacy: cost_segments array.
         if "cost_per_mwh" in t:
             cost = float(t["cost_per_mwh"])
@@ -268,12 +353,10 @@ def load_thermal_metadata(case_dir: Path) -> dict[int, dict]:
 
 
 def load_ncs_bus_map(case_dir: Path) -> dict[int, int]:
-    path = case_dir / "system" / "non_controllable_sources.json"
-    if not path.exists():
-        return {}
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
-    return {n["id"]: n["bus_id"] for n in d["non_controllable_sources"]}
+    return {
+        n["id"]: n["bus_id"]
+        for n in read_novomodelo_non_controllable_sources(case_dir / "output")
+    }
 
 
 def load_hydro_metadata(
@@ -291,26 +374,24 @@ def load_hydro_metadata(
     ``hydros.json:generation.productivity_mw_per_m3s`` field so older
     converted cases still render.
     """
-    path = case_dir / "system" / "hydros.json"
-    if not path.exists():
+    hydros = read_novomodelo_hydros(case_dir / "output")
+    if not hydros:
         return {}
     if bus_map is None:
         bus_map = load_hydro_bus_map(case_dir)
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
     # Share the single canonical productivity cascade with the comparator so
     # the dashboard and compare report never disagree on a plant's ρ.
-    productivities = resolve_hydro_productivities(case_dir, d["hydros"])
+    productivities = resolve_hydro_productivities(case_dir, hydros)
     result = {}
-    for h in d["hydros"]:
-        gen = h.get("generation", {})
-        res = h.get("reservoir", {})
+    for h in hydros:
+        gen = h.get("generation") or {}
+        res = h.get("reservoir") or {}
         prod = productivities.get(h["id"]) or 0
         max_turbined = gen.get("max_turbined_m3s", 0)
         bus_id = bus_map.get(h["id"])
         entry: dict = {
             "name": h.get("name", str(h["id"])),
-            "bus_ids": _unit_group_bus_ids(h),
+            "bus_ids": _unit_group_bus_ids(h) or [],
             "vol_max": res.get("max_storage_hm3", 0),
             "vol_min": res.get("min_storage_hm3", 0),
             "max_gen_mw": gen.get("max_generation_mw", 0),
@@ -505,34 +586,43 @@ class TemporalContext:
     line_meta: list[dict]
 
 
+def _config_problem(data: dict) -> str | None:
+    rate = data.get("discount_rate")
+    if rate is not None and not _is_number(rate):
+        return "a discount rate that is not a number"
+    return None
+
+
 def load_temporal_context(case_dir: Path) -> TemporalContext:
-    """Load config.json / stages.json and the derived stage & block hour maps."""
+    """Load config.json / stages.json and the derived stage & block hour maps.
+
+    Raises:
+        NovomodeloOutputError: from :func:`_read_stages`.
+    """
+    stages_data = _read_stages(case_dir)
+
     config_path = case_dir / "config.json"
     config: dict = {}
-    config_error: json.JSONDecodeError | None = None
+    config_problem: Exception | str | None = None
     if config_path.exists():
-        try:
-            with config_path.open(encoding="utf-8") as f:
-                config = json.load(f)
-        except json.JSONDecodeError as exc:
-            config_error = exc
+        config, config_problem = _read_json_object(config_path)
+        if config_problem is None:
+            config_problem = _config_problem(config)
+        if config_problem is not None:
+            config = {}
     discount_rate = float(config.get("discount_rate", 0.0))
-
-    stages_json_path = case_dir / "stages.json"
-    with stages_json_path.open(encoding="utf-8") as f:
-        stages_data = json.load(f)
 
     # stages.json policy_graph is the authoritative discount rate when present.
     pg_rate = stages_data.get("policy_graph", {}).get("annual_discount_rate")
     if pg_rate is not None:
         discount_rate = float(pg_rate)
-    elif config_error is not None:
+    elif config_problem is not None:
         emit(
             report_file_unreadable_diagnostic(
                 "config.json",
                 config_path,
                 "the Overview shows a 0.0% discount rate.",
-                config_error,
+                config_problem,
             ),
             logger=logger,
         )
@@ -583,8 +673,9 @@ class EntityMetadata:
     non_fictitious_bus_ids: list[int]
 
 
-def load_entity_metadata(case_dir: Path) -> EntityMetadata:
-    """Load entity name maps and hydro/thermal metadata dictionaries.
+def load_entity_metadata(case_dir: Path, stages_data: dict) -> EntityMetadata:
+    """Load entity name maps and hydro/thermal metadata dictionaries, with the
+    stage labels and dates of *stages_data* (``TemporalContext.stages_data``).
 
     ``hydro_bus_map`` is resolved once and reused by
     :func:`load_hydro_metadata`, so a split plant's
@@ -596,8 +687,8 @@ def load_entity_metadata(case_dir: Path) -> EntityMetadata:
     hydro_bus_map = load_hydro_bus_map(case_dir, load_bus_ids=load_bus_ids)
     return EntityMetadata(
         names=names,
-        stage_labels=load_stage_labels(case_dir),
-        stage_dates=load_stage_dates(case_dir),
+        stage_labels=stage_labels(stages_data),
+        stage_dates=stage_dates(stages_data),
         hydro_bus_map=hydro_bus_map,
         thermal_meta=load_thermal_metadata(case_dir),
         ncs_bus_map=load_ncs_bus_map(case_dir),
@@ -676,6 +767,27 @@ class ScenarioInputs:
     thermal_bounds: pd.DataFrame
 
 
+def _load_factors_problem(data: dict) -> str | None:
+    entries = data.get("load_factors")
+    if not isinstance(entries, list):
+        return "no list of load factors"
+    for e in entries:
+        factors = e.get("block_factors") if isinstance(e, dict) else None
+        if not (
+            isinstance(factors, list)
+            and type(e.get("bus_id")) is int
+            and type(e.get("stage_id")) is int
+            and all(
+                isinstance(f, dict)
+                and type(f.get("block_id")) is int
+                and _is_number(f.get("factor"))
+                for f in factors
+            )
+        ):
+            return "a load factor without its bus, stage or block factors"
+    return None
+
+
 def load_scenario_inputs(case_dir: Path) -> ScenarioInputs:
     """Load the optional scenario inputs and input constraint bounds.
 
@@ -687,11 +799,12 @@ def load_scenario_inputs(case_dir: Path) -> ScenarioInputs:
     load_stats = (
         pq.read_table(ls_path).to_pandas() if ls_path.exists() else pd.DataFrame()
     )
-    lf_path = case_dir / "scenarios" / "load_factors.json"
-    load_factors_list: list[dict] = []
-    if lf_path.exists():
-        with lf_path.open(encoding="utf-8") as f:
-            load_factors_list = json.load(f)["load_factors"]
+    load_factors_list: list[dict] = _read_report_json(
+        case_dir / "scenarios" / "load_factors.json",
+        "scenarios/load_factors.json",
+        "the dashboard takes each bus's load in every block as its stage mean.",
+        _load_factors_problem,
+    ).get("load_factors", [])
 
     ncs_stats_path = case_dir / "scenarios" / "non_controllable_stats.parquet"
     ncs_stats = (
@@ -814,6 +927,21 @@ def load_training_convergence(case_dir: Path) -> pd.DataFrame:
     return _normalize_output_columns(pq.read_table(path).to_pandas())
 
 
+def _scaling_report_problem(data: dict) -> str | None:
+    stages = data.get("stages", [])
+    if not isinstance(stages, list):
+        return "no list of stages"
+    for stage in stages:
+        dims = stage.get("dimensions") if isinstance(stage, dict) else None
+        if not (
+            isinstance(dims, dict)
+            and "stage_id" in stage
+            and all(k in dims for k in ("num_cols", "num_rows", "num_nz"))
+        ):
+            return "a stage without its LP dimensions"
+    return None
+
+
 def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerformance:
     """Load solver/performance artifacts. ``conv`` (convergence) is needed to
     correct the timing wall-times. All frames fall back to empty when absent."""
@@ -842,12 +970,12 @@ def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerform
         if sim_solver_path.exists()
         else pd.DataFrame()
     )
-    scaling_path = case_dir / "output" / "training" / "scaling_report.json"
-    if scaling_path.exists():
-        with scaling_path.open(encoding="utf-8") as f:
-            scaling_report: dict = json.load(f)
-    else:
-        scaling_report = {}
+    scaling_report = _read_report_json(
+        case_dir / "output" / "training" / "scaling_report.json",
+        "output/training/scaling_report.json",
+        "the Performance tab leaves out the LP dimensions and scaling quality.",
+        _scaling_report_problem,
+    )
     cs_path = case_dir / "output" / "training" / "cut_selection" / "iterations.parquet"
     cut_selection = _cut_selection_per_stage(
         _normalize_output_columns(
@@ -888,6 +1016,10 @@ class StochasticData:
     correlation: dict
 
 
+def _stochastic_effect(content: str) -> str:
+    return f"the dashboard's Stochastic Model tab leaves out {content}."
+
+
 def _stochastic_file_present(path: Path, content: str) -> bool:
     """Whether *path* exists; when not, a note that the Stochastic Model tab
     leaves out its *content*."""
@@ -895,13 +1027,39 @@ def _stochastic_file_present(path: Path, content: str) -> bool:
         return True
     emit(
         report_file_missing_diagnostic(
-            f"output/stochastic/{path.name}",
-            path,
-            f"the dashboard's Stochastic Model tab leaves out {content}.",
+            f"output/stochastic/{path.name}", path, _stochastic_effect(content)
         ),
         logger=logger,
     )
     return False
+
+
+def _read_stochastic_json(
+    path: Path, content: str, shape_problem: Callable[[dict], str | None]
+) -> dict:
+    """:func:`_read_report_json` of ``output/stochastic/<name>``, with the
+    effect its absence note gives."""
+    return _read_report_json(
+        path,
+        f"output/stochastic/{path.name}",
+        _stochastic_effect(content),
+        shape_problem,
+    )
+
+
+def _fitting_report_problem(data: dict) -> str | None:
+    hydros = data.get("hydros", {})
+    if not isinstance(hydros, dict) or not all(
+        isinstance(info, dict) and str(hid).isdigit() for hid, info in hydros.items()
+    ):
+        return "no hydro plants keyed by their id"
+    return None
+
+
+def _correlation_problem(data: dict) -> str | None:
+    if not isinstance(data.get("profiles", {}), dict):
+        return "no correlation profiles"
+    return None
 
 
 def load_stochastic_data(case_dir: Path) -> StochasticData:
@@ -931,10 +1089,14 @@ def load_stochastic_data(case_dir: Path) -> StochasticData:
             noise_openings = pq.read_table(path).to_pandas()
         path = stochastic_dir / "fitting_report.json"
         if _stochastic_file_present(path, "the fitting report"):
-            fitting_report = json.loads(path.read_text(encoding="utf-8"))
+            fitting_report = _read_stochastic_json(
+                path, "the fitting report", _fitting_report_problem
+            )
         path = stochastic_dir / "correlation.json"
         if _stochastic_file_present(path, "the inflow correlation"):
-            correlation = json.loads(path.read_text(encoding="utf-8"))
+            correlation = _read_stochastic_json(
+                path, "the inflow correlation", _correlation_problem
+            )
     return StochasticData(
         available=available,
         inflow_stats_stoch=inflow_stats_stoch,
@@ -1007,6 +1169,15 @@ class OutputMetadata:
     policy: dict
 
 
+def _simulation_metadata_problem(data: dict) -> str | None:
+    scenarios = data.get("scenarios", {})
+    if not isinstance(scenarios, dict) or not (
+        scenarios.get("completed") is None or type(scenarios["completed"]) is int
+    ):
+        return "a completed-scenario count that is not a whole number"
+    return None
+
+
 def load_output_metadata(case_dir: Path) -> OutputMetadata:
     """Load output/{training,simulation,policy} metadata (empty if absent).
 
@@ -1016,28 +1187,16 @@ def load_output_metadata(case_dir: Path) -> OutputMetadata:
     no ``metadata.json`` of its own.
     """
 
-    def _load_metadata(subdir: str) -> dict:
-        meta_path = case_dir / "output" / subdir / "metadata.json"
-        if not meta_path.exists():
-            return {}
-        try:
-            with meta_path.open(encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError as exc:
-            emit(
-                report_file_unreadable_diagnostic(
-                    f"output/{subdir}/metadata.json",
-                    meta_path,
-                    f"the dashboard leaves out what the run recorded about its {subdir}.",
-                    exc,
-                ),
-                logger=logger,
-            )
-            return {}
+    simulation = _read_report_json(
+        case_dir / "output" / "simulation" / "metadata.json",
+        "output/simulation/metadata.json",
+        "the dashboard leaves out what the run recorded about its simulation.",
+        _simulation_metadata_problem,
+    )
 
     return OutputMetadata(
         training=read_novomodelo_training_metadata(case_dir / "output"),
-        simulation=_load_metadata("simulation"),
+        simulation=simulation,
         policy=_load_policy_metadata(case_dir),
     )
 
@@ -1069,27 +1228,10 @@ class GenericConstraintData:
 
 
 def load_generic_constraints(case_dir: Path) -> GenericConstraintData:
-    """Load ``constraints/generic_constraints.json`` resolved against the run's echo."""
-    gc_path = case_dir / "constraints" / "generic_constraints.json"
-    constraints: list[dict] = []
-    if gc_path.exists():
-        with gc_path.open(encoding="utf-8") as f:
-            gc_data = json.load(f)
-        constraints = gc_data.get("constraints", [])
-
-    output_dir = case_dir / "output"
-    min_storage = {
-        hid: float(meta.get("min_storage_hm3") or 0.0)
-        for hid, meta in read_novomodelo_hydro_metadata(output_dir).items()
-    }
+    """Load ``constraints/generic_constraints.json`` resolved against the run's
+    echo, by ``novomodelo_readers.read_novomodelo_resolved_generic_constraints``."""
     return GenericConstraintData(
-        resolve_generic_constraints(
-            constraints,
-            read_novomodelo_generic_constraint_echo(output_dir)
-            if constraints
-            else None,
-            min_storage,
-        )
+        read_novomodelo_resolved_generic_constraints(case_dir, case_dir / "output")
     )
 
 
@@ -1157,17 +1299,20 @@ class DashboardData:
 
         Thin orchestrator: each cohesive section is read by a dedicated
         ``load_*`` loader returning a sub-struct, which :class:`DashboardData`
-        holds directly (see the flat-field ``@property`` shims below). Raises
-        ``FileNotFoundError`` if ``stages.json`` is missing; every other file
-        is optional and falls back to an empty DataFrame / dict inside its
-        loader, so a training-only and a simulation-only case both load.
+        holds directly (see the flat-field ``@property`` shims below). Only
+        ``stages.json`` is required: :func:`_read_stages` raises
+        ``NovomodeloOutputError`` when it is absent or unusable. Every other
+        file is optional: an absent one falls back to an empty DataFrame /
+        dict inside its loader, and a JSON file that cannot be used to one
+        with a ``report-file-unreadable`` warning, so a training-only and a
+        simulation-only case both load.
         """
         logger.info("Loading dashboard data from %s", case_dir)
 
         conv = load_training_convergence(case_dir)
 
         temporal = load_temporal_context(case_dir)
-        entities = load_entity_metadata(case_dir)
+        entities = load_entity_metadata(case_dir, temporal.stages_data)
         simulation = load_simulation_data(case_dir)
         scenario = load_scenario_inputs(case_dir)
         performance = load_solver_performance(case_dir, conv)

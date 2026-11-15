@@ -10,6 +10,7 @@ from novomodelo_bridge.core.errors import (
     NovomodeloOutputError,
     NovomodeloPartitionMissingError,
     SourceFileError,
+    UnsupportedSourceError,
     diagnostic_from_exception,
 )
 
@@ -17,6 +18,9 @@ from novomodelo_bridge.core.errors import (
 class TestExceptionHierarchy:
     def test_source_file_error_is_filenotfounderror(self) -> None:
         assert isinstance(SourceFileError("x"), FileNotFoundError)
+
+    def test_unsupported_source_error_is_valueerror(self) -> None:
+        assert isinstance(UnsupportedSourceError("x"), ValueError)
 
     def test_source_file_error_stores_location_attrs(self) -> None:
         exc = SourceFileError("caso.dat not found", path="/case", field="caso.dat")
@@ -76,6 +80,17 @@ class TestDiagnosticFromException:
         assert diag.notes == ["field: dger.dat line 96"]
         assert not any(note.startswith("file:") for note in diag.notes)
         assert not any(note.startswith("row:") for note in diag.notes)
+
+    def test_unsupported_source_error_names_the_field_to_change(self) -> None:
+        exc = UnsupportedSourceError(
+            "plants differ", path="confhd.dat", field="INIC.HIST/FIM HIST"
+        )
+        diag = diagnostic_from_exception(exc, context="Conversion")
+        assert isinstance(exc, BridgeError)
+        assert diag.code == "source-unsupported"
+        assert diag.notes == ["file: confhd.dat", "field: INIC.HIST/FIM HIST"]
+        assert diag.remediation is not None
+        assert "malformed" not in diag.remediation
 
     def test_novomodelo_output_error_category(self) -> None:
         exc = NovomodeloOutputError("bad parquet", path="/out/bounds.parquet")

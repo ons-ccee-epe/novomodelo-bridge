@@ -17,6 +17,7 @@ mirror, never a substitute.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -26,8 +27,15 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     collect,
     counted,
+    emit,
 )
-from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
+from novomodelo_bridge.core.errors import (
+    BridgeError,
+    FieldParseError,
+    UnsupportedSourceError,
+    diagnostic_from_exception,
+)
+from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
 from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightResult,
@@ -55,7 +63,7 @@ from novomodelo_bridge.decomp.files import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Mapping, Sequence
 
     from idecomp.decomp import Dadger, Vazoes
 
@@ -66,6 +74,8 @@ if TYPE_CHECKING:
     )
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
+
+_LOG = logging.getLogger(__name__)
 
 _CONTEXT = "Preflight"
 
@@ -88,11 +98,20 @@ def _verdict(
 
 
 _CALENDAR_LABEL = "Operative calendar (operative weeks, then whole months)"
+_DEFICIT_LABEL = "Deficit cost is one full-depth CD curve per subsystem"
+_TREE_SHAPE_LABEL = "Tree shape is a trunk with one terminal fan"
+
+
+def _typed_failure_diagnostics(exc: Exception) -> list[Diagnostic]:
+    """The diagnostic ``convert decomp`` reports for a typed refusal, else none."""
+    if isinstance(exc, BridgeError):
+        return [diagnostic_from_exception(exc, context=_CONTEXT)]
+    return []
 
 
 def _calendar_check(
     dadger: Dadger,
-) -> tuple[CheckItem, list[OperativeStage], str | None]:
+) -> tuple[CheckItem, list[OperativeStage], list[Diagnostic]]:
     """Build the operative calendar, turning its validation into one check."""
     from novomodelo_bridge.decomp.temporal import operative_calendar_from_dadger
 
@@ -106,7 +125,7 @@ def _calendar_check(
                 detail=str(exc),
             ),
             [],
-            str(exc),
+            _typed_failure_diagnostics(exc),
         )
     span = f"{calendar[0].start_date} → {calendar[-1].end_date}"
     return (
@@ -116,12 +135,36 @@ def _calendar_check(
             detail=f"{len(calendar)} stages, {span}",
         ),
         calendar,
-        None,
+        [],
     )
 
 
-def _tree_checks(vazoes: Vazoes, calendar: list[OperativeStage]) -> list[CheckItem]:
-    """Per-stage probability mass and the trunk-plus-terminal-fan shape gate."""
+def _deficit_check(dadger: Dadger) -> tuple[CheckItem, list[Diagnostic]]:
+    """Price each subsystem's deficit from its ``CD`` records as ``convert
+    decomp`` does."""
+    from novomodelo_bridge.decomp.converters.network import bus_deficit_costs
+
+    try:
+        costs = bus_deficit_costs(dadger)
+    except (ValueError, KeyError, AttributeError) as exc:
+        return (
+            CheckItem(label=_DEFICIT_LABEL, passed=False, detail=str(exc)),
+            _typed_failure_diagnostics(exc),
+        )
+    return (
+        CheckItem(
+            label=_DEFICIT_LABEL,
+            passed=True,
+            detail=f"{counted(len(costs), 'subsystem')} priced",
+        ),
+        [],
+    )
+
+
+def _probability_checks(
+    vazoes: Vazoes, calendar: list[OperativeStage]
+) -> list[CheckItem]:
+    """Per-stage probability mass of the deck's scenario tree."""
     from novomodelo_bridge.decomp.scenarios import convert_scenario_probabilities
 
     try:
@@ -136,18 +179,16 @@ def _tree_checks(vazoes: Vazoes, calendar: list[OperativeStage]) -> list[CheckIt
         ]
 
     per_stage: dict[int, float] = {}
-    counts: dict[int, int] = {}
     for stage_id, probability in zip(
         table["stage_id"], table["probability"], strict=True
     ):
         per_stage[stage_id] = per_stage.get(stage_id, 0.0) + probability
-        counts[stage_id] = counts.get(stage_id, 0) + 1
 
     worst = max(
         (abs(total - 1.0) for total in per_stage.values()),
         default=0.0,
     )
-    checks = [
+    return [
         CheckItem(
             label="Scenario probabilities sum to 1 per stage",
             passed=worst <= _PROBABILITY_ATOL,
@@ -155,20 +196,29 @@ def _tree_checks(vazoes: Vazoes, calendar: list[OperativeStage]) -> list[CheckIt
         )
     ]
 
-    # The training path enumerates a trunk that branches once, at the end. A
-    # deck that fans earlier is a node-graph study and would be mis-modelled
-    # silently as a wider terminal fan.
-    ordered = [counts[stage] for stage in sorted(counts)]
-    branching = [i for i, n in enumerate(ordered) if n > 1]
-    fan_is_terminal = not branching or branching == [len(ordered) - 1]
-    checks.append(
-        CheckItem(
-            label="Tree shape is a trunk with one terminal fan",
-            passed=fan_is_terminal,
-            detail=f"nodes per stage: {ordered}",
+
+def _tree_shape_check(
+    vazoes: Vazoes, calendar: list[OperativeStage]
+) -> tuple[CheckItem, list[Diagnostic]]:
+    """Build the terminal fan ``convert decomp`` builds, which refuses a tree
+    that branches before the last stage."""
+    from novomodelo_bridge.decomp.scenarios import terminal_fan_probabilities
+
+    try:
+        fan = terminal_fan_probabilities(vazoes, calendar)
+    except (ValueError, KeyError, AttributeError) as exc:
+        return (
+            CheckItem(label=_TREE_SHAPE_LABEL, passed=False, detail=str(exc)),
+            _typed_failure_diagnostics(exc),
         )
+    return (
+        CheckItem(
+            label=_TREE_SHAPE_LABEL,
+            passed=True,
+            detail=f"a terminal fan of {counted(len(fan), 'scenario')}",
+        ),
+        [],
     )
-    return checks
 
 
 def _load_factor_check(case: DecompCase, id_map: DecompIdMap) -> CheckItem:
@@ -308,7 +358,13 @@ def _special_constraint_coverage(
     id_map: DecompIdMap,
     pumping_ids: Mapping[int, int],
     *,
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]] | None = None,
+    gnl_submarkets: Mapping[int, int] | None = None,
+    ct_submarkets: Mapping[int, Collection[int]],
+    dadger_path: str,
+    dadgnl_path: str | None,
     libs_long_form: bool | None = False,
+    plant_names: Mapping[int, str] | None = None,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify the deck's special constraints into converted (RE/HQ/HV/HE,
     split into bounds-lowered vs generic-emitted), left out (a term on an
@@ -317,28 +373,53 @@ def _special_constraint_coverage(
 
     Counts the census ``convert decomp`` consumes:
     :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`
+    with the GNL terms of *gnl_generation* folded by
+    :func:`~novomodelo_bridge.decomp.converters.constraints.fold_commanded_gnl_terms`
+    under *gnl_submarkets* and *ct_submarkets*,
     screened by
-    :func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`
-    against *id_map* and the ``UE`` codes of *pumping_ids*. Always returns
-    exactly one passing summary :class:`CheckItem` (coverage never blocks
-    conversion), an ``INFO`` for the converted split when any constraint
-    converts, and, verbatim as ``convert decomp`` raises them, the screen's
-    WARNINGs, the one of
+    :func:`~novomodelo_bridge.decomp.constraint_registers.screen_constraints`
+    against *id_map* and the ``UE`` codes of *pumping_ids*. Returns one
+    summary :class:`CheckItem`, failed only when the fold stops the
+    conversion, an ``INFO`` for the converted split when any constraint
+    converts, and, verbatim as ``convert decomp`` raises them, the fold's and
+    the screen's diagnostics (conflicting restrictions under *plant_names*),
+    the one of
+    :func:`~novomodelo_bridge.decomp.converters.constraints.re_gnl_patamar_diagnostic`,
+    the one of
     :func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`
     and, when *libs_long_form* is ``False`` (the LIBS file has no long-form
     card ``convert decomp`` reads; ``None`` when the read failed, which its own
     failed check reports), the one of
     :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`.
-    :func:`_libs_electrical_read` raises the LIBS file's own
-    ``decomp-electrical-period-rows-unused``. Neither raises
-    ``decomp-conflicting-flow-restrictions``, which ``convert decomp`` raises
-    for the census's ``bound_conflicts``.
+    :func:`_libs_electrical_read` raises the LIBS file's own WARNINGs.
     """
-    census, unknown = constraint_registers.drop_unknown_entities(
-        constraint_registers.read_constraints(dadger),
+    from novomodelo_bridge.decomp.converters.constraints import (
+        fold_commanded_gnl_terms,
+        re_gnl_patamar_diagnostic,
+    )
+
+    census = constraint_registers.read_constraints(dadger)
+    try:
+        census, gnl_only = fold_commanded_gnl_terms(
+            census,
+            gnl_generation or {},
+            gnl_submarkets=gnl_submarkets or {},
+            ct_submarkets=ct_submarkets,
+            dadger_path=dadger_path,
+            dadgnl_path=dadgnl_path,
+        )
+    except (FieldParseError, UnsupportedSourceError) as exc:
+        failed = CheckItem(
+            label="Special-constraint coverage", passed=False, detail=str(exc)
+        )
+        return [failed], [diagnostic_from_exception(exc, context=_CONTEXT)]
+    census, screened = constraint_registers.screen_constraints(
+        census,
         hydro_codes=id_map.hydro_codes,
+        coupling_only_codes=id_map.coupling_only_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
+        plant_names={} if plant_names is None else plant_names,
     )
 
     bounds_by_family: dict[str, int] = {}
@@ -396,7 +477,10 @@ def _special_constraint_coverage(
                 ),
             )
         )
-    diagnostics.extend(unknown)
+    diagnostics.extend((*gnl_only, *screened))
+    patamar_values = re_gnl_patamar_diagnostic(census, gnl_generation or {})
+    if patamar_values is not None:
+        diagnostics.append(patamar_values)
 
     rha_diagnostic = constraint_registers.detect_unconverted_rha(dadger)
     if rha_diagnostic is not None:
@@ -414,20 +498,25 @@ def _libs_electrical_read(
     """Read the LIBS ``RESTRICAO-ELETRICA-ESPECIAL`` file as ``convert decomp`` does.
 
     Returns whether it has a long-form card ``convert decomp`` reads, with the
-    WARNINGs the read raises. A file it cannot read gives ``None`` and a failed
-    check, since ``convert decomp`` stops on it.
+    WARNINGs the read raises, the lines it does not read among them. A file it
+    cannot read gives ``None`` and a failed check, since ``convert decomp``
+    stops on it.
     """
     from novomodelo_bridge.decomp.converters import libs_electrical
 
+    path = case.files.libs_restricao_eletrica
     found: list[Diagnostic] = []
     try:
         with collect() as found:
             restricoes = case.libs_restricao_eletrica
-            model = (
-                libs_electrical.read_libs_electrical(restricoes, calendar)
-                if restricoes is not None
-                else None
-            )
+            model = None
+            if path is not None and restricoes is not None:
+                unread = unread_lines_diagnostic(path, restricoes.data)
+                if unread is not None:
+                    emit(unread, logger=_LOG)
+                model = libs_electrical.read_libs_electrical(
+                    restricoes, calendar, source=path
+                )
     except Exception as exc:
         failed = CheckItem(
             label="LIBS electrical restrictions readable",
@@ -440,6 +529,39 @@ def _libs_electrical_read(
             [*found, diagnostic_from_exception(exc, context=_CONTEXT)],
         )
     return model is not None, [], found
+
+
+def _gnl_generation_read(
+    case: DecompCase, calendar: list[OperativeStage]
+) -> tuple[
+    Mapping[int, Sequence[Sequence[float] | None]] | None,
+    Mapping[int, int],
+    list[CheckItem],
+    list[Diagnostic],
+]:
+    """Each GNL plant's commanded generation per stage and block, and each
+    plant's subsystem, read from ``dadgnl`` as ``convert decomp`` does; empty
+    without the file.
+
+    A file it cannot read gives ``None``, no subsystem and a failed check,
+    since ``convert decomp`` stops on it.
+    """
+    from novomodelo_bridge.decomp.converters.anticipated import (
+        gnl_block_commitments,
+        gnl_submarkets,
+        read_gnl_model,
+    )
+
+    try:
+        dadgnl = case.dadgnl
+        model = read_gnl_model(dadgnl) if dadgnl is not None else None
+        generation = gnl_block_commitments(model, calendar) if model is not None else {}
+    except Exception as exc:
+        failed = CheckItem(
+            label="GNL commitments readable", passed=False, detail=str(exc)
+        )
+        return None, {}, [failed], [diagnostic_from_exception(exc, context=_CONTEXT)]
+    return generation, gnl_submarkets(model) if model is not None else {}, [], []
 
 
 def run_decomp_preflight(src: Path) -> PreflightResult:
@@ -531,10 +653,15 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         )
     )
 
-    calendar_check, calendar, failure = _calendar_check(dadger)
-    checks.append(calendar_check)
+    deficit_check, deficit_diags = _deficit_check(dadger)
+    checks.append(deficit_check)
+    diagnostics.extend(deficit_diags)
 
-    if failure is None:
+    calendar_check, calendar, calendar_diags = _calendar_check(dadger)
+    checks.append(calendar_check)
+    diagnostics.extend(calendar_diags)
+
+    if calendar_check.passed:
         checks.append(_load_factor_check(case, id_map))
         try:
             vazoes = Vazoes.read(str(files.vazoes))
@@ -543,7 +670,10 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
                 CheckItem(label="Scenario tree readable", passed=False, detail=str(exc))
             )
         else:
-            checks.extend(_tree_checks(vazoes, calendar))
+            checks.extend(_probability_checks(vazoes, calendar))
+            shape_check, shape_diags = _tree_shape_check(vazoes, calendar)
+            checks.append(shape_check)
+            diagnostics.extend(shape_diags)
 
         from novomodelo_bridge.decomp.converters.cadastro import (
             build_effective_cadastro,
@@ -552,13 +682,15 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         from novomodelo_bridge.decomp.converters.network import (
             pumping_station_id_map,
         )
+        from novomodelo_bridge.decomp.converters.thermal import ct_submarkets
 
+        plant_names: dict[int, str] = {}
         try:
             hidr = read_hidr(files.hidr)
             effective, cadastro_report = build_effective_cadastro(
                 dadger, hidr, calendar
             )
-        except (ValueError, KeyError, OSError) as exc:
+        except (ValueError, KeyError, OSError, FieldParseError) as exc:
             checks.append(
                 CheckItem(
                     label="AC cadastro overrides resolvable",
@@ -567,6 +699,10 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
                 )
             )
         else:
+            plant_names = {
+                int(code): str(name).strip()
+                for code, name in effective.base["nome_usina"].items()
+            }
             cov_checks, cov_diags = _ac_coverage(dadger, effective, cadastro_report)
             checks.extend(cov_checks)
             diagnostics.extend(cov_diags)
@@ -577,12 +713,24 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         checks.extend(electrical_checks)
         diagnostics.extend(electrical_diags)
 
+        gnl_generation, gnl_submarkets, gnl_checks, gnl_diags = _gnl_generation_read(
+            case, calendar
+        )
+        checks.extend(gnl_checks)
+        diagnostics.extend(gnl_diags)
+
         sc_checks, sc_diags = _special_constraint_coverage(
             dadger,
             files.libs_restricao_eletrica,
             id_map,
             pumping_station_id_map(dadger),
+            gnl_generation=gnl_generation,
+            gnl_submarkets=gnl_submarkets,
+            ct_submarkets=ct_submarkets(dadger),
+            dadger_path=str(files.dadger),
+            dadgnl_path=str(files.dadgnl) if files.dadgnl is not None else None,
             libs_long_form=libs_long_form,
+            plant_names=plant_names,
         )
         checks.extend(sc_checks)
         diagnostics.extend(sc_diags)

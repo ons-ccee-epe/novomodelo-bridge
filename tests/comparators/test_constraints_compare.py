@@ -21,8 +21,6 @@ import pytest
 from novomodelo_bridge.comparators.constraints import (
     _resolve_bound,
     evaluate_lhs_novomodelo,
-    load_generic_constraints,
-    load_resolved_generic_constraints,
     per_stage_bounds,
 )
 from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
@@ -30,6 +28,10 @@ from novomodelo_bridge.comparators.newave.constraints import evaluate_lhs_newave
 from novomodelo_bridge.comparators.newave.readers import read_medias_hydro
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.newave.id_map import NewaveIdMap
+from novomodelo_bridge.novomodelo.readers import (
+    read_novomodelo_generic_constraints,
+    read_novomodelo_resolved_generic_constraints,
+)
 from tests.conftest import write_generic_constraint_echo
 
 _NOVOMODELO_INPUT_DIR = (
@@ -172,12 +174,12 @@ def _write_case(tmp_path: Path) -> tuple[Path, Path]:
 
 class TestLoadGenericConstraints:
     def test_parses_sense_free_constraints(self) -> None:
-        constraints = load_generic_constraints(_NOVOMODELO_INPUT_DIR)
+        constraints = read_novomodelo_generic_constraints(_NOVOMODELO_INPUT_DIR)
         assert {c["id"] for c in constraints} == {0, 1}
         assert all("sense" not in c for c in constraints)
 
     def test_degrades_to_empty_list_on_missing_file(self, tmp_path: Path) -> None:
-        assert load_generic_constraints(tmp_path) == []
+        assert read_novomodelo_generic_constraints(tmp_path) == []
 
     def test_degrades_to_empty_list_and_warns_on_malformed_json(
         self, tmp_path: Path
@@ -187,7 +189,7 @@ class TestLoadGenericConstraints:
         path.write_text("{not valid json", encoding="utf-8")
 
         with dx.collect() as collected:
-            constraints = load_generic_constraints(tmp_path)
+            constraints = read_novomodelo_generic_constraints(tmp_path)
 
         assert constraints == []
         assert [(d.code, d.severity, d.title) for d in collected] == [
@@ -205,7 +207,7 @@ class TestLoadResolvedGenericConstraints:
     ) -> None:
         case_dir, output_dir = _write_case(tmp_path)
 
-        resolved = load_resolved_generic_constraints(case_dir, output_dir)
+        resolved = read_novomodelo_resolved_generic_constraints(case_dir, output_dir)
 
         assert [(c["id"], c["name"]) for c in resolved.constraints] == [
             (_NON_VMINOP_ID, "RE_generation_sum"),
@@ -217,7 +219,9 @@ class TestLoadResolvedGenericConstraints:
     def test_no_echo_leaves_no_bounds(self, tmp_path: Path) -> None:
         shutil.copytree(_NOVOMODELO_INPUT_DIR / "constraints", tmp_path / "constraints")
 
-        resolved = load_resolved_generic_constraints(tmp_path, tmp_path / "output")
+        resolved = read_novomodelo_resolved_generic_constraints(
+            tmp_path, tmp_path / "output"
+        )
 
         assert len(resolved.constraints) == 2
         assert resolved.bounds.is_empty()
@@ -252,7 +256,9 @@ class TestResolveBound:
 
 class TestPerStageBounds:
     def test_resolves_both_constraints(self, tmp_path: Path) -> None:
-        bounds = load_resolved_generic_constraints(*_write_case(tmp_path)).bounds
+        bounds = read_novomodelo_resolved_generic_constraints(
+            *_write_case(tmp_path)
+        ).bounds
         resolved = per_stage_bounds(bounds)
         assert resolved[_NON_VMINOP_ID][0].shape == "<="
         assert resolved[_NON_VMINOP_ID][0].value == 200.0
@@ -260,7 +266,9 @@ class TestPerStageBounds:
         assert resolved[_VMINOP_ID][0].value == 100.0
 
     def test_max_stage_drops_later_stages(self, tmp_path: Path) -> None:
-        bounds = load_resolved_generic_constraints(*_write_case(tmp_path)).bounds
+        bounds = read_novomodelo_resolved_generic_constraints(
+            *_write_case(tmp_path)
+        ).bounds
         resolved = per_stage_bounds(bounds, max_stage=0)
         assert set(resolved[_NON_VMINOP_ID]) == {0}
 
@@ -284,7 +292,7 @@ class TestPerStageBounds:
 
 class TestEvaluateLhsNewave:
     def _lhs(self, tmp_path: Path) -> dict[tuple[int, int], float]:
-        resolved = load_resolved_generic_constraints(*_write_case(tmp_path))
+        resolved = read_novomodelo_resolved_generic_constraints(*_write_case(tmp_path))
         lhs = evaluate_lhs_newave(
             resolved,
             read_medias_hydro(_NEWAVE_DIR),
@@ -314,7 +322,9 @@ class TestEvaluateLhsNewave:
 
     def test_degrades_to_empty_frame_without_echo(self, tmp_path: Path) -> None:
         shutil.copytree(_NOVOMODELO_INPUT_DIR / "constraints", tmp_path / "constraints")
-        resolved = load_resolved_generic_constraints(tmp_path, tmp_path / "output")
+        resolved = read_novomodelo_resolved_generic_constraints(
+            tmp_path, tmp_path / "output"
+        )
         lhs = evaluate_lhs_newave(
             resolved,
             read_medias_hydro(_NEWAVE_DIR),
@@ -329,7 +339,7 @@ class TestEvaluateLhsNewave:
 class TestEvaluateLhsNovomodelo:
     def test_evaluates_both_constraints_from_simulation(self, tmp_path: Path) -> None:
         case_dir, output_dir = _write_case(tmp_path)
-        resolved = load_resolved_generic_constraints(case_dir, output_dir)
+        resolved = read_novomodelo_resolved_generic_constraints(case_dir, output_dir)
 
         lhs = evaluate_lhs_novomodelo(resolved, output_dir)
 
@@ -348,7 +358,7 @@ class TestEvaluateLhsNovomodelo:
         self, tmp_path: Path
     ) -> None:
         case_dir, output_dir = _write_case(tmp_path)
-        resolved = load_resolved_generic_constraints(case_dir, output_dir)
+        resolved = read_novomodelo_resolved_generic_constraints(case_dir, output_dir)
         shutil.rmtree(output_dir / "simulation")
 
         with dx.collect() as collected:

@@ -51,11 +51,13 @@ import pandas as pd
 from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
 from novomodelo_bridge.core.tolerances import relative_tolerance
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
+    from collections.abc import Set as AbstractSet
     from pathlib import Path
 
 _LOG = logging.getLogger(__name__)
@@ -200,6 +202,10 @@ class ConstraintRecord:
     #: side selector — ``limite`` is always the lower side regardless of it.
     tipo_limite: int | None = None
     he_meta: HeMeta | None = None  # HE productivity/penalty columns
+    #: ``(thermal code, 0-based stage)`` of each GNL ``FT`` term
+    #: :func:`~novomodelo_bridge.decomp.converters.constraints.fold_commanded_gnl_terms`
+    #: moved into the limits.
+    gnl_folds: tuple[tuple[int, int], ...] = ()
 
     @property
     def n_entities(self) -> int:
@@ -859,8 +865,11 @@ def _split_bound_conflicts(
 
 def bound_conflicts_diagnostic(
     conflicts: Sequence[BoundConflict], plant_names: Mapping[int, str]
-) -> Diagnostic:
-    """WARNING listing the conflicting restrictions kept as soft constraints."""
+) -> Diagnostic | None:
+    """WARNING listing the conflicting restrictions kept as soft constraints, or
+    ``None`` when there are none."""
+    if not conflicts:
+        return None
     rows = [
         [
             conflict.code,
@@ -940,10 +949,10 @@ _ENTITY_CHECKS = (
         diagnostic_code="decomp-re-thermal-not-normal",
         title="RE constraints on thermals without a CT record",
         summary=(
-            "The listed RE constraints have an FT term on a thermal with no CT "
-            "record in dadger.rvN, such as a GNL thermal of dadgnl.rvN. The "
-            "conversion leaves each constraint out, so the case runs without "
-            "the limits DECOMP applies."
+            "The listed RE constraints have an FT term on a thermal with "
+            "neither a CT record in dadger.rvN nor a TG record in dadgnl.rvN. "
+            "The conversion leaves each constraint out, so the case runs "
+            "without the limits DECOMP applies."
         ),
         code_column="Thermal code",
         remediation=(
@@ -958,9 +967,10 @@ _ENTITY_CHECKS = (
         title="RE constraints on plants the case does not operate",
         summary=(
             "The listed RE constraints have an FU term on a plant with no UH "
-            "record giving an initial volume in dadger.rvN, so the case does not "
-            "operate it. The conversion leaves each constraint out, so the case "
-            "runs without the limits DECOMP applies."
+            "record in dadger.rvN, or FU terms only on plants whose UH record "
+            "gives no initial volume, which DECOMP does not operate. The "
+            "conversion leaves each constraint out, so the case runs without "
+            "the limits DECOMP applies."
         ),
         code_column="Plant code",
         remediation=(
@@ -1047,10 +1057,19 @@ def drop_unknown_entities(
     census: ConstraintCensus,
     *,
     hydro_codes: Collection[int],
+    coupling_only_codes: Collection[int],
     thermal_codes: Collection[int],
     pumping_codes: Collection[int],
 ) -> tuple[ConstraintCensus, list[Diagnostic]]:
-    """Leave out every constraint with a term on an entity the case lacks.
+    """Leave out every constraint with a term on an entity the case lacks,
+    and every ``RE`` ``FU`` term on a coupling-only plant.
+
+    An ``FU`` term on a plant in *coupling_only_codes* (a ``UH`` record with
+    no initial volume, which DECOMP does not operate) generates nothing, so
+    it is left out of its ``RE`` constraint and the rest is kept, lowered
+    anew: left with one term, the constraint can become an entity bound.
+    Those terms are reported in one INFO; a constraint with no other term
+    keeps them and is checked as below.
 
     Checks the ``FT`` thermal, the ``QBOM``/``VBOM`` pumping station and the
     plant of each ``FU``, ``QDEF``/``QTUR``/``QDES``/``QVER`` and
@@ -1066,31 +1085,52 @@ def drop_unknown_entities(
         "thermal": set(thermal_codes),
         "pumping": set(pumping_codes),
     }
+    coupling_only = set(coupling_only_codes)
     rows: dict[str, list[list[object]]] = defaultdict(list)
     dropped: set[tuple[str, int]] = set()
+    stripped: dict[tuple[str, int], ConstraintRecord] = {}
+    coupling_only_rows: list[list[object]] = []
     for record in (*census.to_bounds, *census.to_generic):
+        key = (record.family, record.constraint_id)
+        screened, zero_terms = _without_coupling_only_terms(record, coupling_only)
         for check in _ENTITY_CHECKS:
-            if record.family != check.family:
+            if screened.family != check.family:
                 continue
-            for term in record.terms:
+            for term in screened.terms:
                 if (
                     term.variable in check.variables
                     and term.code not in known[check.entity]
                 ):
                     rows[check.diagnostic_code].append(
-                        [record.constraint_id, term.code]
+                        [screened.constraint_id, term.code]
                     )
-                    dropped.add((record.family, record.constraint_id))
-    if not dropped:
+                    dropped.add(key)
+        if zero_terms and key not in dropped:
+            stripped[key] = screened
+            coupling_only_rows.extend(
+                [record.constraint_id, term.code] for term in zero_terms
+            )
+    if not dropped and not stripped:
         return census, []
-    screened = replace(
+    to_bounds: list[ConstraintRecord] = []
+    to_generic: list[ConstraintRecord] = []
+    for bucket, records in (
+        (to_bounds, census.to_bounds),
+        (to_generic, census.to_generic),
+    ):
+        for record in records:
+            key = (record.family, record.constraint_id)
+            if key in dropped:
+                continue
+            if key in stripped:
+                record = stripped[key]
+                (to_bounds if lowers_to_bound(record) else to_generic).append(record)
+            else:
+                bucket.append(record)
+    screened_census = replace(
         census,
-        to_bounds=tuple(
-            r for r in census.to_bounds if (r.family, r.constraint_id) not in dropped
-        ),
-        to_generic=tuple(
-            r for r in census.to_generic if (r.family, r.constraint_id) not in dropped
-        ),
+        to_bounds=tuple(to_bounds),
+        to_generic=tuple(to_generic),
         bound_conflicts=tuple(
             conflict
             for conflict in census.bound_conflicts
@@ -1116,7 +1156,72 @@ def drop_unknown_entities(
         for check in _ENTITY_CHECKS
         if rows[check.diagnostic_code]
     ]
-    return screened, diagnostics
+    if coupling_only_rows:
+        diagnostics.append(_coupling_only_terms_diagnostic(coupling_only_rows))
+    return screened_census, diagnostics
+
+
+def _without_coupling_only_terms(
+    record: ConstraintRecord, coupling_only: AbstractSet[int]
+) -> tuple[ConstraintRecord, tuple[ConstraintTerm, ...]]:
+    """*record* without its ``RE`` ``FU`` terms on a plant in *coupling_only*,
+    and those terms; *record* whole when it has no other term."""
+    if record.family != "RE":
+        return record, ()
+    kept: list[ConstraintTerm] = []
+    zero: list[ConstraintTerm] = []
+    for term in record.terms:
+        on_coupling_only = term.variable == "generation" and term.code in coupling_only
+        (zero if on_coupling_only else kept).append(term)
+    if not zero or not kept:
+        return record, ()
+    return replace(record, terms=tuple(kept)), tuple(zero)
+
+
+def _coupling_only_terms_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-re-term-coupling-only-plant",
+        severity=OutsideTerm.NOT_GENERATING.severity,
+        category=_CATEGORY,
+        title=f"RE terms on plants DECOMP does not operate left out ({len(rows)})",
+        summary=(
+            "The listed RE constraints have an FU term on a plant whose UH "
+            "record in dadger.rvN gives no initial volume: DECOMP does not "
+            "operate the plant, so the term adds nothing there either. The "
+            "conversion leaves the term out and keeps the rest of the "
+            "constraint."
+        ),
+        table=DiagnosticTable(
+            columns=["Constraint", "Plant code"],
+            rows=sorted(rows),
+            justify=["right", "right"],
+        ),
+    )
+
+
+def screen_constraints(
+    census: ConstraintCensus,
+    *,
+    hydro_codes: Collection[int],
+    coupling_only_codes: Collection[int],
+    thermal_codes: Collection[int],
+    pumping_codes: Collection[int],
+    plant_names: Mapping[int, str],
+) -> tuple[ConstraintCensus, list[Diagnostic]]:
+    """*census* screened by :func:`drop_unknown_entities`, with the diagnostics
+    ``check decomp`` and ``convert decomp`` both raise for it: those of the
+    screen, then the conflicting flow restrictions, under their *plant_names*."""
+    census, diagnostics = drop_unknown_entities(
+        census,
+        hydro_codes=hydro_codes,
+        coupling_only_codes=coupling_only_codes,
+        thermal_codes=thermal_codes,
+        pumping_codes=pumping_codes,
+    )
+    conflicts = bound_conflicts_diagnostic(census.bound_conflicts, plant_names)
+    if conflicts is not None:
+        diagnostics.append(conflicts)
+    return census, diagnostics
 
 
 def read_constraints(dadger: ConstraintRegisters) -> ConstraintCensus:

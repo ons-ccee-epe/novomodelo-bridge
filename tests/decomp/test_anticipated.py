@@ -22,6 +22,7 @@ import pytest
 from idecomp.decomp import Dadgnl
 
 from novomodelo_bridge.core.diagnostics import Severity, collect
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.decomp.converters import anticipated
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlClass4Window,
@@ -35,6 +36,7 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     _build_post_study_calendar,
     _month_end_duration_hours,
     classify_gnl_windows,
+    commanded_gnl_generation,
     convert_gnl,
     fill_undeclared_block_hours,
     gnl_block_commitments,
@@ -167,6 +169,31 @@ def test_gnl_block_commitments_weights_each_block_by_its_duracao() -> None:
     assert got[86][1] == pytest.approx(((40 * 100 + 10 * 400) / 50, 200.0, 100.0))
 
 
+def test_gnl_block_commitments_holds_each_week_inside_the_tg_range() -> None:
+    """The TG minimum and capacity of each block prevail over a GL value
+    outside them, week by week before the stage mean: the two-week stage's
+    first block is (40 * 100 + 10 * 120) / 50, not its mean 160 held at 120."""
+    gl = [
+        _GlReg(86, 1, "14032026", [40.0, 48.0, 80.0], [100.0, 200.0, 300.0]),
+        _GlReg(86, 2, "21032026", [40.0, 48.0, 80.0], [100.0, 100.0, 100.0]),
+        _GlReg(86, 3, "28032026", [10.0, 48.0, 110.0], [400.0, 300.0, 100.0]),
+    ]
+    tg = [
+        {
+            **_tg_row(86, "SANTA CRUZ", disp=250.0, inflex=150.0),
+            "disponibilidade_3": 400.0,
+        },
+        {**_tg_row(86, "SANTA CRUZ", disp=120.0), "estagio": 2},
+    ]
+    model = read_gnl_model(_StubDadgnl(gl, tg, []))
+    assert model is not None
+
+    got = gnl_block_commitments(model, _two_stage_calendar())
+
+    assert got[86][0] == (150.0, 200.0, 300.0)
+    assert got[86][1] == pytest.approx((104.0, 110.0, 100.0))
+
+
 def test_gnl_block_commitments_stage_without_gl_week_is_uncommanded() -> None:
     gl = [_GlReg(86, 1, "14032026", [40.0, 48.0, 80.0], [500.0, 500.0, 500.0])]
     model = read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))
@@ -182,6 +209,36 @@ def test_gnl_block_commitments_block_count_mismatch_raises() -> None:
 
     with pytest.raises(ValueError, match="declares 2 block"):
         gnl_block_commitments(model, _two_stage_calendar())
+
+
+def test_commanded_gnl_generation_reads_the_stage_blocks() -> None:
+    generation = {86: [(100.0, 200.0), None]}
+
+    assert commanded_gnl_generation(
+        generation, 86, 0, reference="x", dadgnl_path="dadgnl.rv0"
+    ) == (100.0, 200.0)
+
+
+@pytest.mark.parametrize(("code", "stage"), [(86, 1), (99, 0)])
+def test_commanded_gnl_generation_without_a_gl_week_names_the_term(
+    code: int, stage: int
+) -> None:
+    generation = {86: [(100.0, 200.0), None]}
+
+    with pytest.raises(
+        FieldParseError,
+        match=rf"^ger_usit\({code}\) is on GNL thermal {code}, but no dadgnl GL "
+        rf"week starts in stage {stage + 1},",
+    ) as raised:
+        commanded_gnl_generation(
+            generation,
+            code,
+            stage,
+            reference=f"ger_usit({code})",
+            dadgnl_path="dadgnl.rv0",
+        )
+
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rv0", "GL")
 
 
 def test_gate_on_for_a_tg_plant_without_gl() -> None:
@@ -225,8 +282,65 @@ def test_thermals_ascending_by_code() -> None:
 
 def test_gl_code_absent_from_tg_raises_naming_code() -> None:
     gl = [_GlReg(999, 1, "14032026", [168.0], [100.0])]
-    with pytest.raises(ValueError, match="999"):
+    with pytest.raises(FieldParseError, match="GL record for plant 999") as raised:
         read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))
+
+    assert raised.value.field == "GL plant code"
+    assert "dadgnl.rvN" in str(raised.value)
+
+
+@pytest.mark.parametrize("data_inicio", ["1403206", "32132026", "abcdefgh"])
+def test_unparseable_gl_start_date_raises_naming_plant_and_stage(
+    data_inicio: str,
+) -> None:
+    gl = [_GlReg(86, 3, data_inicio, [168.0], [100.0])]
+    with pytest.raises(
+        FieldParseError, match="GL record for plant 86 at stage 3"
+    ) as raised:
+        read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))
+
+    assert raised.value.field == "GL start date"
+    assert repr(data_inicio) in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("gs_rows", "nl_rows", "field", "what"),
+    [
+        (
+            [{"mes": 1, "semanas": 3}, {"mes": 2, "semanas": float("nan")}],
+            [],
+            "GS week count",
+            "the week count of GS month 2",
+        ),
+        (
+            [{"mes": float("nan"), "semanas": 3}],
+            [],
+            "GS month",
+            "the month of a GS record",
+        ),
+        (
+            [],
+            [{"codigo_usina": 86, "codigo_submercado": 1, "lag": float("nan")}],
+            "NL lag",
+            "the NL lag of plant 86",
+        ),
+        (
+            [],
+            [{"codigo_usina": float("nan"), "codigo_submercado": 1, "lag": 2}],
+            "NL plant code",
+            "the plant code of an NL record",
+        ),
+    ],
+)
+def test_blank_gs_or_nl_field_raises_naming_record_and_field(
+    gs_rows: list[dict], nl_rows: list[dict], field: str, what: str
+) -> None:
+    gl = [_GlReg(86, 1, "14032026", [168.0], [100.0])]
+    with pytest.raises(FieldParseError) as raised:
+        read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], gs_rows, nl_rows))
+
+    assert raised.value.field == field
+    assert str(raised.value) == f"dadgnl.rvN leaves {what} blank or unreadable"
 
 
 def test_registry_only_plant_has_empty_commitment() -> None:
@@ -818,10 +932,11 @@ def test_convert_gnl_raises_on_differing_class4_end_across_plants() -> None:
         weeks_per_month=_EMIT_WEEKS_PER_MONTH,
         nl_lag_months={86: 2, 224: 2},
     )
-    with pytest.raises(ValueError, match="differing já-comandada cutoffs"):
+    with pytest.raises(UnsupportedSourceError, match="up to different dates") as raised:
         convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
         )
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "GL data_inicio")
 
 
 def test_convert_gnl_reports_the_lag_before_differing_cutoffs_raise() -> None:
@@ -845,7 +960,7 @@ def test_convert_gnl_reports_the_lag_before_differing_cutoffs_raise() -> None:
         nl_lag_months={86: 2, 224: 3},
     )
     with collect() as found:
-        with pytest.raises(ValueError, match="differing já-comandada cutoffs"):
+        with pytest.raises(UnsupportedSourceError, match="up to different dates"):
             convert_gnl(
                 model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
             )
@@ -1340,13 +1455,17 @@ def test_convert_gnl_monthly_shorter_lag_prices_only_its_reach() -> None:
 
 
 def test_convert_gnl_monthly_rejects_a_gs_month_split_into_weeks() -> None:
-    with pytest.raises(ValueError, match=r"one gs interval per month.*\{3: 4\}"):
+    with pytest.raises(UnsupportedSourceError, match="month 3 into 4") as raised:
         _convert_monthly(_monthly_model(weeks_per_month={1: 1, 2: 1, 3: 4}))
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "GS semanas")
 
 
 def test_convert_gnl_monthly_rejects_a_lag_past_the_study() -> None:
-    with pytest.raises(ValueError, match="nl lag of 3 month"):
+    with pytest.raises(
+        UnsupportedSourceError, match="an NL lag of 3 months, but the study has 2"
+    ) as raised:
         _convert_monthly(_monthly_model(nl={86: 3, 224: 2}))
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "NL lag")
 
 
 def test_convert_gnl_monthly_rejects_a_plant_without_nl() -> None:
@@ -1357,8 +1476,11 @@ def test_convert_gnl_monthly_rejects_a_plant_without_nl() -> None:
 def test_convert_gnl_monthly_rejects_gl_past_the_horizon() -> None:
     late = (GnlStageCommitment(3, date(2026, 3, 1), 500.0, 0.0),)
 
-    with pytest.raises(ValueError, match="past the study horizon .2026-03-01."):
+    with pytest.raises(
+        UnsupportedSourceError, match=r"past the study horizon \(2026-03-01\)"
+    ) as raised:
         _convert_monthly(_monthly_model(extra_gl=late))
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "GL data_inicio")
 
 
 def test_convert_gnl_monthly_rejects_tg_past_the_post_study_months() -> None:
@@ -1688,3 +1810,40 @@ def test_convert_gnl_keeps_a_plant_whose_gl_commits_nothing() -> None:
     assert all(p["value_mw"] == 0.0 for p in e.past_anticipated_commitments)
     assert e.post_study_stages is not None
     assert e.post_study_stages["thermal_bounds"]
+
+
+def test_gnl_patamar_values_lists_the_stages_the_generation_differs_in() -> None:
+    note = anticipated.gnl_patamar_values_diagnostic(
+        "decomp-re-gnl-patamar-values",
+        [
+            (10, 86, 0, (500.0, 400.0)),
+            (10, 86, 1, (300.0, 300.0)),
+            (10, 86, 2, (1.0, 2.0)),
+            (10, 86, 3, (1.0, 2.0)),
+            (10, 87, 0, (1.0, 2.0)),
+            (12, 86, 1, (300.0, 300.0)),
+        ],
+        noun="RE constraints",
+        column="Constraint",
+    )
+
+    assert note is not None
+    assert note.code == "decomp-re-gnl-patamar-values"
+    assert note.severity is Severity.INFO
+    assert note.title == (
+        "RE constraints reading a GNL generation that differs by patamar (2)"
+    )
+    assert note.table is not None
+    assert note.table.columns == ["Constraint", "Thermal code", "Stages"]
+    assert note.table.rows == [[10, 86, "0, 2-3"], [10, 87, "0"]]
+
+
+def test_gnl_patamar_values_is_none_where_every_patamar_reads_alike() -> None:
+    note = anticipated.gnl_patamar_values_diagnostic(
+        "decomp-electrical-gnl-patamar-values",
+        [(901, 86, 0, (300.0, 300.0, 300.0))],
+        noun="electrical restrictions",
+        column="Restriction",
+    )
+
+    assert note is None

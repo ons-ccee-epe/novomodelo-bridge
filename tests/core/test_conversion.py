@@ -20,6 +20,8 @@ from novomodelo_bridge.core.errors import (
     OutputExistsError,
 )
 
+_LOG = logging.getLogger(__name__)
+
 _ARTIFACTS = ClearedArtifacts(subdirs=("system",), files=("config.json",))
 
 
@@ -38,9 +40,9 @@ def test_run_conversion_folds_findings_into_the_report_once_each(
     tmp_path: Path,
 ) -> None:
     def convert() -> ConversionReport:
-        dx.emit(_diagnostic("early", dx.Severity.WARNING))
-        dx.emit(_diagnostic("note", dx.Severity.INFO))
-        dx.emit(_diagnostic("early", dx.Severity.WARNING))
+        dx.emit(_diagnostic("early", dx.Severity.WARNING), logger=_LOG)
+        dx.emit(_diagnostic("note", dx.Severity.INFO), logger=_LOG)
+        dx.emit(_diagnostic("early", dx.Severity.WARNING), logger=_LOG)
         return ConversionReport()
 
     report = run_conversion(convert, tmp_path, _ARTIFACTS, force=False, dry_run=False)
@@ -65,10 +67,10 @@ def test_failed_emission_check_reaches_the_caller_with_its_findings(
 ) -> None:
     def convert() -> ConversionReport:
         _write_outputs(tmp_path)
-        dx.emit(_diagnostic("early", dx.Severity.WARNING))
-        dx.emit(_diagnostic("early", dx.Severity.WARNING))
+        dx.emit(_diagnostic("early", dx.Severity.WARNING), logger=_LOG)
+        dx.emit(_diagnostic("early", dx.Severity.WARNING), logger=_LOG)
         emission_checks.run_and_gate(
-            lambda: dx.emit(_diagnostic("check-failed", dx.Severity.ERROR))
+            lambda: dx.emit(_diagnostic("check-failed", dx.Severity.ERROR), logger=_LOG)
         )
         return ConversionReport()
 
@@ -160,7 +162,7 @@ def test_a_failed_rollback_keeps_the_original_error_and_its_findings(
 
     def convert() -> ConversionReport:
         _write_outputs(tmp_path)
-        dx.emit(_diagnostic("early", dx.Severity.WARNING))
+        dx.emit(_diagnostic("early", dx.Severity.WARNING), logger=_LOG)
         raise FieldParseError("bad field", path="deck.dat", field="X")
 
     with dx.collect() as outer, pytest.raises(FieldParseError, match="bad field"):

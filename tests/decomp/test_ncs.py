@@ -13,8 +13,10 @@ from novomodelo_bridge.core.diagnostics import (
     collect,
     finalize_diagnostics,
 )
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.ncs import (
+    build_pee_ncs_id_map,
     convert_ncs_factors,
     convert_ncs_stats,
     convert_non_controllable_sources,
@@ -256,7 +258,6 @@ def _config_frame(states: dict[int, str]) -> pd.DataFrame:
 def test_pee_series_deterministic_typo_uses_modal_value() -> None:
     """A lone per-scenario outlier is collapsed to the majority (modal)
     value and reported, not crashed on, and never resolved to the outlier."""
-    from novomodelo_bridge.core.diagnostics import collect
     from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad = pd.DataFrame([{"codigo_pee": 9, "nome_pee": "PARK9"}])
@@ -278,13 +279,12 @@ def test_pee_series_deterministic_typo_uses_modal_value() -> None:
             )
     renov = _StubRenovaveis(cad, subm, pd.DataFrame(ger_rows))
 
-    with collect() as found:
-        series = _pee_series(renov, _ID_MAP, _calendar(), 0)
+    series, findings = _pee_series(renov, _ID_MAP, _calendar(), 0)
 
     assert len(series) == 1
     # block 0 (patamar 1) resolves to the modal 77.07, NOT the 77.9 outlier.
     assert series[0].per_stage_blocks[0] == (77.07, 50.0, 60.0)
-    [spread] = [d for d in found if d.code == "decomp-pee-generation-spread"]
+    [spread] = [d for d in findings if d.code == "decomp-pee-generation-spread"]
     assert spread.table is not None
     assert spread.table.rows == [[9, "PARK9", 0, 0, 77.07, 77.9, 77.07]]
 
@@ -320,7 +320,7 @@ def test_pee_series_deterministic_card_only_reads_generation() -> None:
     )
     renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det)
 
-    series = _pee_series(renov, _ID_MAP, _calendar(), 0)
+    series, _ = _pee_series(renov, _ID_MAP, _calendar(), 0)
 
     assert len(series) == 1
     assert series[0].name == "PARK4_1"
@@ -332,11 +332,7 @@ def test_pee_series_deterministic_card_only_reads_generation() -> None:
     )
 
 
-def test_pee_series_deterministic_repeated_key_uses_last_row_and_warns(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    import logging
-
+def test_pee_series_deterministic_repeated_key_uses_last_row_and_warns() -> None:
     from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad, subm = _pee_registry(4)
@@ -346,13 +342,10 @@ def test_pee_series_deterministic_repeated_key_uses_last_row_and_warns(
     )
     renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det)
 
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.ncs"
-    ):
-        series = _pee_series(renov, _ID_MAP, _calendar(), 0)
+    series, findings = _pee_series(renov, _ID_MAP, _calendar(), 0)
 
     assert series[0].per_stage_blocks[0] == (99.0, 20.0, 30.0)
-    assert any("more than one PEE-GER-PER-PAT" in r.message for r in caplog.records)
+    assert "decomp-pee-generation-repeated" in {d.code for d in findings}
 
 
 def test_pee_series_cards_with_distinct_parks_are_combined() -> None:
@@ -376,7 +369,7 @@ def test_pee_series_cards_with_distinct_parks_are_combined() -> None:
     det = pd.DataFrame(_deterministic_rows(2, 1, (10.0, 20.0, 30.0)))
     renov = _StubRenovaveis(cad, subm, per_scenario, det)
 
-    series = _pee_series(renov, _ID_MAP, _calendar(), 7)
+    series, _ = _pee_series(renov, _ID_MAP, _calendar(), 7)
 
     assert [(s.ncs_id, s.name) for s in series] == [(7, "PARK2_1"), (8, "PARK5_1")]
     assert series[0].per_stage_blocks[0] == (10.0, 20.0, 30.0)
@@ -417,15 +410,18 @@ def test_pee_series_park_with_two_operating_states_raises() -> None:
     det = pd.DataFrame(_deterministic_rows(4, 1, (10.0, 20.0, 30.0)))
     renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det, config)
 
-    with pytest.raises(ValueError, match="more than one PEE-CONFIG-PER"):
+    with pytest.raises(
+        UnsupportedSourceError,
+        match=r"park 4 more than one PEE-CONFIG-PER operating state \(centralizado, fixo\)",
+    ) as raised:
         _pee_series(renov, _ID_MAP, _calendar(), 0)
+    assert (raised.value.path, raised.value.field) == (
+        "renovaveis.csv",
+        "PEE-CONFIG-PER estado_operacao",
+    )
 
 
-def test_pee_series_park_without_operating_state_is_must_run_and_warns(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    import logging
-
+def test_pee_series_park_without_operating_state_is_must_run_and_warns() -> None:
     from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad, subm = _pee_registry(4, 6)
@@ -437,16 +433,13 @@ def test_pee_series_park_without_operating_state_is_must_run_and_warns(
         cad, subm, pd.DataFrame(), det, _config_frame({4: "centralizado"})
     )
 
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.ncs"
-    ):
-        series = _pee_series(renov, _ID_MAP, _calendar(), 0)
+    series, findings = _pee_series(renov, _ID_MAP, _calendar(), 0)
 
     assert [(s.name, s.allow_curtailment) for s in series] == [
         ("PARK4_1", True),
         ("PARK6_1", False),
     ]
-    assert any("no PEE-CONFIG-PER operating state" in r.message for r in caplog.records)
+    assert [d.code for d in findings] == ["decomp-pee-operating-state-missing"]
 
 
 def _park_case(renov: _StubRenovaveis) -> DecompCase:
@@ -513,3 +506,38 @@ class TestPeeFindings:
         assert missing.severity is Severity.WARNING
         assert missing.table is not None
         assert missing.table.rows == [[6]]
+
+    def test_each_park_warning_is_raised_once_by_all_ncs_converters(self) -> None:
+        cad, subm = _pee_registry(4, 5)
+        repeated = pd.DataFrame(
+            _deterministic_rows(4, 1, (10.0, 20.0, 30.0))
+            + _deterministic_rows(4, 1, (99.0,))
+        )
+        spread = pd.DataFrame(
+            [
+                {
+                    "codigo_pee": 5,
+                    "estagio": 1,
+                    "patamar": pat,
+                    "cenario": cen,
+                    "geracao": 41.0 if cen == 2 else 40.0,
+                }
+                for pat in (1, 2, 3)
+                for cen in (1, 2, 3)
+            ]
+        )
+        case = _park_case(
+            _StubRenovaveis(cad, subm, spread, repeated, _config_frame({4: "fixo"}))
+        )
+
+        with collect() as found:
+            convert_non_controllable_sources(case, _ID_MAP)
+            convert_ncs_stats(case, _ID_MAP)
+            convert_ncs_factors(case, _ID_MAP)
+            build_pee_ncs_id_map(case, _ID_MAP)
+
+        assert sorted(d.code for d in found) == [
+            "decomp-pee-generation-repeated",
+            "decomp-pee-generation-spread",
+            "decomp-pee-operating-state-missing",
+        ]

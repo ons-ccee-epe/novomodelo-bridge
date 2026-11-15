@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.hydro import (
@@ -23,15 +25,20 @@ from novomodelo_bridge.decomp.converters.hydro import (
     convert_initial_storage,
     convert_production_models,
     outage_stage_model,
+    read_hidr,
 )
 from novomodelo_bridge.decomp.converters.thermal import (
     convert_thermal_bounds,
     convert_thermals,
+    ct_submarkets,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
+
+if TYPE_CHECKING:
+    from idecomp.decomp import Dadger
 
 _EVAPORATION_COLUMNS = (
     "evaporacao_JAN",
@@ -339,6 +346,21 @@ def _itaipu_frequency_frame() -> pd.DataFrame:
             {"codigo_usina": 66, "frequencia": 60.0},
         ]
     )
+
+
+def test_hidr_without_plant_records_is_a_field_parse_error(tmp_path: Path) -> None:
+    """An empty ``hidr.dat`` names the file, as ``source-field-parse``."""
+    path = tmp_path / "hidr.dat"
+    path.write_bytes(b"")
+
+    with (
+        pytest.warns(UserWarning),
+        pytest.raises(FieldParseError, match="hidr.dat holds no hydro plant") as raised,
+    ):
+        read_hidr(path)
+
+    assert raised.value.path == str(path)
+    assert raised.value.field == "hidr.dat"
 
 
 class TestConvertHydros:
@@ -766,3 +788,16 @@ class TestConvertThermals:
         ct.loc[ct["codigo_usina"] == 20, "estagio"] = 2
         with pytest.raises(ValueError, match="stage 1"):
             convert_thermals(_case(_StubDadger(ct=ct)), _ID_MAP)
+
+
+def test_ct_submarkets_gathers_each_number_s_subsystems() -> None:
+    """Two CT plants of different subsystems can share a number."""
+    ct = _ct_frame()
+    ct.loc[2, "codigo_submercado"] = 3
+    ct.loc[len(ct)] = {**ct.loc[2], "codigo_usina": 10}
+
+    assert ct_submarkets(cast("Dadger", _StubDadger(ct=ct))) == {
+        10: frozenset({1, 3}),
+        20: frozenset({3}),
+    }
+    assert ct_submarkets(cast("Dadger", _StubDadger())) == {}

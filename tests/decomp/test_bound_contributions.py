@@ -486,7 +486,6 @@ class TestCollisionIntersection:
             census=census,
             pumping_station_ids={},
             effective=effective,
-            hydro_capacities={},
         )
         assert len(rhq_contribs) == 1
 

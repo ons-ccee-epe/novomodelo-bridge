@@ -26,14 +26,17 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import soft_slack
+from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
     ConstraintRecord,
     ConstraintTerm,
     StageBounds,
+    lowers_to_bound,
 )
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.constraints import (
@@ -45,6 +48,8 @@ from novomodelo_bridge.decomp.converters.constraints import (
     build_fi_line_map,
     emit_re_generics,
     emit_rhq_rhv_generics,
+    fold_commanded_gnl_terms,
+    re_gnl_patamar_diagnostic,
     resolve_fe_term,
     resolve_fi_term,
     slots_from_record,
@@ -202,7 +207,9 @@ def test_resolve_fi_term_reverse_match(fi_id_map: DecompIdMap) -> None:
     assert resolve_fi_term(term, fi_id_map, line_map) == "line_reverse(1)"
 
 
-def test_resolve_fi_term_without_a_line_is_unresolved(fi_id_map: DecompIdMap) -> None:
+def test_resolve_fi_term_without_a_line_leaves_the_term_out(
+    fi_id_map: DecompIdMap,
+) -> None:
     line_map = {(0, 2): 1}
     term = ConstraintTerm(
         code=0,
@@ -212,9 +219,13 @@ def test_resolve_fi_term_without_a_line_is_unresolved(fi_id_map: DecompIdMap) ->
         submarket_para="S",
     )
 
-    assert resolve_fi_term(term, fi_id_map, line_map) == Unresolved(
-        "decomp-fi-no-line", ("SE", "S", "no IA record joins them")
+    unresolved = resolve_fi_term(term, fi_id_map, line_map)
+
+    assert unresolved == Unresolved(
+        "decomp-re-term-interchange-no-line", ("SE", "S"), OutsideTerm.NO_LINE
     )
+    assert isinstance(unresolved, Unresolved)
+    assert not unresolved.drops_constraint
 
 
 def test_resolve_fi_term_unknown_name_is_unresolved(fi_id_map: DecompIdMap) -> None:
@@ -227,9 +238,15 @@ def test_resolve_fi_term_unknown_name_is_unresolved(fi_id_map: DecompIdMap) -> N
         submarket_para="XX",
     )
 
-    assert resolve_fi_term(term, fi_id_map, line_map) == Unresolved(
-        "decomp-fi-no-line", ("SE", "XX", "a submarket has no SB record")
+    unresolved = resolve_fi_term(term, fi_id_map, line_map)
+
+    assert unresolved == Unresolved(
+        "decomp-fi-no-line",
+        ("SE", "XX", "a submarket has no SB record"),
+        OutsideTerm.ABSENT,
     )
+    assert isinstance(unresolved, Unresolved)
+    assert unresolved.drops_constraint
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +544,118 @@ def test_emit_re_generics_fi_no_line_skips(id_map: DecompIdMap) -> None:
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-fi-no-line"
+
+
+def _fi_term(de: str, para: str) -> ConstraintTerm:
+    return ConstraintTerm(
+        code=0,
+        coefficient=1.0,
+        variable="interchange",
+        submarket_de=de,
+        submarket_para=para,
+    )
+
+
+_TWO_SUBMARKETS = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"), hydro_codes=(5,))
+
+
+def test_emit_re_generics_leaves_an_fi_term_on_no_line_out() -> None:
+    """No IA record joins SE and S, so no flow runs between them in DECOMP
+    either: the term is left out with a note and the rest of RE 23 kept."""
+    record = ConstraintRecord(
+        family="RE",
+        constraint_id=23,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="generation"),
+            _fi_term("SE", "S"),
+        ),
+        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
+        per_block=True,
+    )
+    calendar = [_stage(0, 1)]
+
+    with dx.collect() as collected:
+        result = emit_re_generics(
+            _case(calendar),
+            _TWO_SUBMARKETS,
+            census=_census(record),
+            line_map={},
+            contract_tokens={},
+            big_m=45000.0,
+        )
+
+    assert result is not None
+    assert [c["expression"] for c in result.constraints] == ["hydro_generation(0)"]
+    assert [(d.code, d.severity) for d in collected] == [
+        ("decomp-re-term-interchange-no-line", Severity.INFO)
+    ]
+    assert collected[0].table is not None
+    assert collected[0].table.rows == [[23, "SE", "S"]]
+
+
+def test_emit_re_generics_with_only_fi_terms_on_no_line_skips() -> None:
+    record = ConstraintRecord(
+        family="RE",
+        constraint_id=24,
+        stage_start=0,
+        stage_end=0,
+        terms=(_fi_term("SE", "S"),),
+        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
+        per_block=True,
+    )
+    calendar = [_stage(0, 1)]
+
+    with dx.collect() as collected:
+        result = emit_re_generics(
+            _case(calendar),
+            _TWO_SUBMARKETS,
+            census=_census(record),
+            line_map={},
+            contract_tokens={},
+            big_m=45000.0,
+        )
+
+    assert result is None
+    assert [(d.code, d.severity) for d in collected] == [
+        ("decomp-fi-no-line", Severity.WARNING)
+    ]
+    assert collected[0].table is not None
+    assert collected[0].table.rows == [[24, "SE", "S", "no IA record joins them"]]
+
+
+def test_emit_re_generics_fi_term_on_an_undeclared_submarket_skips() -> None:
+    record = ConstraintRecord(
+        family="RE",
+        constraint_id=25,
+        stage_start=0,
+        stage_end=0,
+        terms=(
+            ConstraintTerm(code=5, coefficient=1.0, variable="generation"),
+            _fi_term("SE", "XX"),
+        ),
+        bounds={0: StageBounds(lower=(0.0,), upper=(50.0,))},
+        per_block=True,
+    )
+    calendar = [_stage(0, 1)]
+
+    with dx.collect() as collected:
+        result = emit_re_generics(
+            _case(calendar),
+            _TWO_SUBMARKETS,
+            census=_census(record),
+            line_map={},
+            contract_tokens={},
+            big_m=45000.0,
+        )
+
+    assert result is None
+    assert [(d.code, d.severity) for d in collected] == [
+        ("decomp-fi-no-line", Severity.WARNING)
+    ]
+    assert collected[0].table is not None
+    assert collected[0].table.rows == [[25, "SE", "XX", "a submarket has no SB record"]]
 
 
 def test_emit_re_generics_all_records_skipped_returns_none(
@@ -983,3 +1112,176 @@ def test_emit_rhq_rhv_generics_constant_coefficients_declare_no_parameter(
     assert result is not None
     assert result.per_stage_parameters == {}
     assert "@" not in result.constraints[0]["expression"]
+
+
+# ---------------------------------------------------------------------------
+# fold_commanded_gnl_terms
+# ---------------------------------------------------------------------------
+
+#: GNL plant 86 of subsystem 1 commands 100/200/300 MW at stage 0 and nothing
+#: at stage 1.
+_GNL_GENERATION = {86: [(100.0, 200.0, 300.0), None]}
+_GNL_SUBMARKETS = {86: 1}
+
+
+def _gnl_ft(
+    coefficient: float = 1.0, schedule: tuple[tuple[int, float], ...] = ()
+) -> ConstraintTerm:
+    return ConstraintTerm(
+        code=86,
+        coefficient=coefficient,
+        variable="thermal_generation",
+        submarket=1,
+        schedule=schedule,
+    )
+
+
+def _re_record(
+    constraint_id: int, *terms: ConstraintTerm, stages: int = 1
+) -> ConstraintRecord:
+    return ConstraintRecord(
+        family="RE",
+        constraint_id=constraint_id,
+        stage_start=0,
+        stage_end=stages - 1,
+        terms=terms,
+        bounds={
+            stage: StageBounds(lower=(None, 50.0, 10.0), upper=(1e21, 1000.0, 1000.0))
+            for stage in range(stages)
+        },
+        per_block=True,
+    )
+
+
+def _split(*records: ConstraintRecord) -> ConstraintCensus:
+    return ConstraintCensus(
+        by_family={"RE": records},
+        to_bounds=tuple(r for r in records if lowers_to_bound(r)),
+        to_generic=tuple(r for r in records if not lowers_to_bound(r)),
+    )
+
+
+def _fold(
+    census: ConstraintCensus, *, ct_submarkets: dict[int, frozenset[int]] | None = None
+) -> tuple[ConstraintCensus, list[Diagnostic]]:
+    return fold_commanded_gnl_terms(
+        census,
+        _GNL_GENERATION,
+        gnl_submarkets=_GNL_SUBMARKETS,
+        ct_submarkets={} if ct_submarkets is None else ct_submarkets,
+        dadger_path="dadger.rv0",
+        dadgnl_path="dadgnl.rv0",
+    )
+
+
+def test_fold_moves_the_commanded_gnl_generation_into_the_limits() -> None:
+    """``FU 5 + 0.5 FT 86`` keeps the hydro term, with half of each block's
+    commanded MW taken off both limits; a lone unit term then becomes an
+    entity bound. Unbounded sides and other thermals stay as they are."""
+    hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
+    other_thermal = ConstraintTerm(
+        code=30, coefficient=1.0, variable="thermal_generation", submarket=1
+    )
+    folded_record = _re_record(1, hydro, _gnl_ft(0.5))
+    untouched = _re_record(2, hydro, other_thermal)
+    census = _split(folded_record, untouched)
+
+    folded, diagnostics = _fold(census, ct_submarkets={3: frozenset({1})})
+
+    assert diagnostics == []
+    [bound] = folded.to_bounds
+    assert bound.terms == (hydro,)
+    assert bound.bounds == {
+        0: StageBounds(lower=(None, -50.0, -140.0), upper=(1e21, 900.0, 850.0))
+    }
+    assert folded.to_generic == (untouched,)
+    assert folded.by_family == census.by_family
+
+
+def test_a_constraint_only_on_gnl_thermals_is_left_out() -> None:
+    folded, diagnostics = _fold(_split(_re_record(4, _gnl_ft())))
+
+    assert (*folded.to_bounds, *folded.to_generic) == ()
+    [diagnostic] = diagnostics
+    assert diagnostic.code == "decomp-re-gnl-terms-only"
+    assert diagnostic.severity is Severity.INFO
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[4, 86]]
+
+
+def test_an_uncommanded_gnl_term_stops_the_fold() -> None:
+    hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
+    census = _split(_re_record(3, hydro, _gnl_ft(), stages=2))
+
+    with pytest.raises(
+        FieldParseError,
+        match="^the FT term of RE 3 on thermal 86 is on GNL thermal 86, but no "
+        "dadgnl GL week starts in stage 2,",
+    ) as raised:
+        _fold(census)
+
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rv0", "GL")
+
+
+def test_a_gnl_term_absent_at_a_stage_reads_no_commitment_there() -> None:
+    hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
+    record = _re_record(3, hydro, _gnl_ft(schedule=((0, 1.0), (1, 0.0))), stages=2)
+
+    folded, _ = _fold(_split(record))
+
+    [bound] = folded.to_bounds
+    assert bound.bounds[0] == StageBounds(
+        lower=(None, -150.0, -290.0), upper=(1e21, 800.0, 700.0)
+    )
+    assert bound.bounds[1] == record.bounds[1]
+    assert bound.gnl_folds == ((86, 0),)
+
+
+def test_the_kept_gnl_folds_are_listed_where_the_generation_differs() -> None:
+    """RE 4, left out for having only GNL terms, is not listed."""
+    hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
+    folded, _ = _fold(_split(_re_record(1, hydro, _gnl_ft()), _re_record(4, _gnl_ft())))
+
+    note = re_gnl_patamar_diagnostic(folded, _GNL_GENERATION)
+
+    assert note is not None
+    assert note.code == "decomp-re-gnl-patamar-values"
+    assert note.table is not None
+    assert note.table.rows == [[1, 86, "0"]]
+
+
+def test_a_gnl_number_a_ct_record_gives_in_its_subsystem_is_a_parse_error() -> None:
+    """DECOMP requires distinct numbers for two thermals of one subsystem,
+    across CT and TG records, so the deck is at fault, on dadgnl TG."""
+    hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
+
+    with pytest.raises(
+        FieldParseError,
+        match="^thermal 86, which the FT term of RE 5 is on, is the number of "
+        "both a CT record in dadger and a TG record in dadgnl in subsystem 1;",
+    ) as raised:
+        _fold(
+            _split(_re_record(5, hydro, _gnl_ft())),
+            ct_submarkets={86: frozenset({1, 2})},
+        )
+
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rv0", "TG")
+
+
+def test_a_gnl_number_a_ct_record_gives_in_another_subsystem_is_unsupported() -> None:
+    """DECOMP tells the two thermals apart by subsystem; the conversion
+    tells thermals apart by number alone, so the term is refused."""
+    hydro = ConstraintTerm(code=5, coefficient=1.0, variable="generation")
+
+    with pytest.raises(
+        UnsupportedSourceError,
+        match="^RE 5 has an FT term on thermal 86, the number of a TG record "
+        "in dadgnl in subsystem 1 and of a CT record in dadger in subsystems "
+        "2, 3;",
+    ) as raised:
+        _fold(
+            _split(_re_record(5, hydro, _gnl_ft())),
+            ct_submarkets={86: frozenset({3, 2})},
+        )
+
+    assert (raised.value.path, raised.value.field) == ("dadger.rv0", "RE/FT")

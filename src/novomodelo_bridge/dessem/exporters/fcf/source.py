@@ -37,7 +37,8 @@ def read_source_deck(directory: Path) -> SourceDeck:
 
     Raises:
         SourceFileError: *directory* is not a deck directory.
-        FieldParseError: an operated plant is missing from `hidr.dat`.
+        FieldParseError: `hidr.dat` holds no plant or misses an operated one,
+            or `dadgnl` has a malformed record.
     """
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import read_gnl_model

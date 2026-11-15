@@ -70,21 +70,29 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.anticipated import commitment_clamped_diagnostic
-from novomodelo_bridge.core.pandas_utils import as_float, as_frame, require_frame
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
+from novomodelo_bridge.core.pandas_utils import (
+    as_float,
+    as_frame,
+    as_int,
+    require_frame,
+)
 from novomodelo_bridge.core.policy_dates import hours_between
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
 from novomodelo_bridge.decomp.temporal import hours_weighted, weekly_stage_count
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
     import pandas as pd
 
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _LOG = logging.getLogger(__name__)
+_DADGNL = "dadgnl.rvN"
 
 _NONZERO_TOLERANCE = 1e-9
+_DADGNL = "dadgnl.rvN"
 _HOURS_PER_OPERATIVE_WEEK = 168  # 7 days x 24 h; the study/post-study grid step
 
 
@@ -267,9 +275,11 @@ def read_gnl_model(dadgnl: _GnlRegisters) -> GnlCommitmentModel | None:
 
     Raises
     ------
-    ValueError
+    FieldParseError
         If a ``gl`` register names a ``codigo_usina`` with no ``tg`` registry
-        entry (a committed dispatch for an unknown plant — a malformed deck).
+        entry (a committed dispatch for an unknown plant — a malformed deck),
+        a ``gl`` ``data_inicio`` is not a ``ddmmyyyy`` date, or a ``gs`` or
+        ``nl`` field is blank.
     """
     if not is_gnl_enabled(dadgnl):
         return None
@@ -316,17 +326,27 @@ def _read_gl_commitments(
     by_code: dict[int, list[GnlStageCommitment]] = {}
     for register in _gl_registers(dadgnl):
         code = int(register.codigo_usina)
+        estagio = int(register.estagio)
         if code not in known_codes:
-            raise ValueError(
-                f"gl declares a committed dispatch for code {code} with no tg "
-                "registry entry (a dispatch for an unknown plant)"
+            raise FieldParseError(
+                f"{_DADGNL} has a GL record for plant {code} at stage {estagio}, "
+                "but no TG record declares that plant",
+                field="GL plant code",
             )
+        try:
+            start_date = _parse_data_inicio(register.data_inicio)
+        except ValueError as exc:
+            raise FieldParseError(
+                f"{_DADGNL} has a GL record for plant {code} at stage {estagio} "
+                f"whose start date {register.data_inicio!r} is not a ddmmyyyy date",
+                field="GL start date",
+            ) from exc
         geracao = _as_floats(register.geracao)
         duracao = _as_floats(register.duracao)
         by_code.setdefault(code, []).append(
             GnlStageCommitment(
-                estagio=int(register.estagio),
-                start_date=_parse_data_inicio(register.data_inicio),
+                estagio=estagio,
+                start_date=start_date,
                 committed_mw=_block_weighted_mean(geracao, duracao),
                 hours=sum(duracao),
                 block_mw=tuple(geracao),
@@ -350,7 +370,9 @@ def gnl_block_commitments(
     ``geracao`` over every study ``gl`` week (:func:`_split_at_study_end`)
     starting inside the stage — one week for a weekly stage, every week of the
     month for a monthly one, the same stage assignment :func:`convert_gnl`
-    folds its per-stage commitment with.
+    folds its per-stage commitment with. Each week's value is first held
+    inside the block's ``tg`` range at the stage, since the source model's
+    ``tg`` minimum and capacity prevail over a ``gl`` value outside them.
     A stage no ``gl`` week starts in maps to ``None``: the plant's dispatch
     there is not commanded.
 
@@ -362,6 +384,9 @@ def gnl_block_commitments(
     """
     study_week_count = _study_gl_week_count(model.weeks_per_month, calendar)
     horizon_end = calendar[-1].end_date
+    capabilities = dense_stage_records(
+        model.tg, calendar, register="TG", name_column="nome"
+    )
     commitments: dict[int, list[tuple[float, ...] | None]] = {}
     for thermal in model.thermals:
         stages, _ = _split_at_study_end(
@@ -370,8 +395,9 @@ def gnl_block_commitments(
             study_week_count,
             horizon_end,
         )
+        capability = capabilities[thermal.code]["stages"]
         per_stage: list[tuple[float, ...] | None] = []
-        for stage in calendar:
+        for position, stage in enumerate(calendar):
             weeks = [
                 c for c in stages if stage.start_date <= c.start_date < stage.end_date
             ]
@@ -387,10 +413,16 @@ def gnl_block_commitments(
                         f"{dx.counted(len(week.block_mw), 'block')}; stage {stage.index} "
                         f"has {n_blocks}"
                     )
+            limits = capability[position]
             per_stage.append(
                 tuple(
                     _block_weighted_mean(
-                        [week.block_mw[b] for week in weeks],
+                        [
+                            _within_capability(
+                                week.block_mw[b], limits["inflex"][b], limits["disp"][b]
+                            )
+                            for week in weeks
+                        ],
                         [week.block_hours[b] for week in weeks],
                     )
                     for b in range(n_blocks)
@@ -400,12 +432,108 @@ def gnl_block_commitments(
     return commitments
 
 
+def gnl_submarkets(model: GnlCommitmentModel) -> dict[int, int]:
+    """Each GNL plant's subsystem, from its ``tg`` record."""
+    return {thermal.code: thermal.submarket_code for thermal in model.thermals}
+
+
+def gnl_patamar_values_diagnostic(
+    code: str,
+    reads: Iterable[tuple[int, int, int, Sequence[float]]],
+    *,
+    noun: str,
+    column: str,
+) -> dx.Diagnostic | None:
+    """The INFO for the kept constraints that read a GNL plant's commanded
+    generation at a stage where it differs by patamar, or ``None`` when none
+    does.
+
+    *reads* holds each ``(constraint, thermal code, 0-based stage, MW per
+    patamar)`` a kept constraint reads; *noun* names the constraints, plural,
+    and *column* their table column.
+    """
+    stages: dict[tuple[int, int], set[int]] = {}
+    for constraint, thermal_code, stage_index, blocks in reads:
+        if max(blocks) - min(blocks) > _NONZERO_TOLERANCE:
+            stages.setdefault((constraint, thermal_code), set()).add(stage_index)
+    if not stages:
+        return None
+    return dx.Diagnostic(
+        code=code,
+        severity=dx.Severity.INFO,
+        category="Special constraints",
+        title=(
+            f"{noun[:1].upper()}{noun[1:]} reading a GNL generation that "
+            f"differs by patamar ({len(stages)})"
+        ),
+        summary=(
+            f"In the listed stages, the listed {noun} read a GNL plant's "
+            "commanded generation patamar by patamar, as DECOMP does, and it "
+            "differs by patamar. DECOMP also holds the plant to it in each "
+            "patamar; the case holds the plant only to its commitment for the "
+            "stage, so its dispatch in a patamar can differ from the generation "
+            "the constraint read there."
+        ),
+        table=dx.DiagnosticTable(
+            columns=[column, "Thermal code", "Stages"],
+            rows=[
+                [constraint, thermal_code, dx.format_stage_ranges(found)]
+                for (constraint, thermal_code), found in sorted(stages.items())
+            ],
+            justify=["right", "right", "left"],
+        ),
+    )
+
+
+def commanded_gnl_generation(
+    gnl_generation: Mapping[int, Sequence[Sequence[float] | None]],
+    code: int,
+    stage_index: int,
+    *,
+    reference: str,
+    dadgnl_path: str | None,
+) -> Sequence[float]:
+    """GNL plant *code*'s commanded MW per block at 0-based *stage_index*,
+    from :func:`gnl_block_commitments`, for the constraint term *reference*
+    names.
+
+    Raises
+    ------
+    FieldParseError
+        When the plant's generation is not commanded at the stage (no ``gl``
+        week starts in it), on the ``gl`` field of *dadgnl_path*: DECOMP
+        stops on such a term too.
+    """
+    # TRACKED NOVOMODELO-GAP (C24): the anticipated ring holds one MW per slot,
+    # so the case holds the plant's stage energy, not these per-block values; a
+    # limit folded with them is exact only where the case dispatches each block
+    # at its GL value. gnl_patamar_values_diagnostic lists where they differ.
+    per_stage = gnl_generation.get(code)
+    blocks = per_stage[stage_index] if per_stage is not None else None
+    if blocks is None:
+        raise FieldParseError(
+            f"{reference} is on GNL thermal {code}, but no dadgnl GL week "
+            f"starts in stage {stage_index + 1}, so the thermal has no "
+            "commanded generation there to move into the limits; DECOMP stops "
+            "on such a term too",
+            path=dadgnl_path,
+            field="GL",
+        )
+    return blocks
+
+
 def _read_weeks_per_month(dadgnl: _GnlRegisters) -> dict[int, int]:
     """The ``gs`` weeks-per-month map ``{mes: semanas}`` (empty when absent)."""
     frame = as_frame(dadgnl.gs(df=True))
     if frame is None or frame.empty:
         return {}
-    return {int(row["mes"]): int(row["semanas"]) for _, row in frame.iterrows()}
+    weeks: dict[int, int] = {}
+    for _, row in frame.iterrows():
+        month = _whole_number(row["mes"], "GS month", "the month of a GS record")
+        weeks[month] = _whole_number(
+            row["semanas"], "GS week count", f"the week count of GS month {month}"
+        )
+    return weeks
 
 
 def operative_week_months(
@@ -448,7 +576,24 @@ def _read_nl_lags(dadgnl: _GnlRegisters) -> dict[int, int]:
     frame = as_frame(dadgnl.nl(df=True))
     if frame is None or frame.empty:
         return {}
-    return {int(row["codigo_usina"]): int(row["lag"]) for _, row in frame.iterrows()}
+    lags: dict[int, int] = {}
+    for _, row in frame.iterrows():
+        code = _whole_number(
+            row["codigo_usina"], "NL plant code", "the plant code of an NL record"
+        )
+        lags[code] = _whole_number(row["lag"], "NL lag", f"the NL lag of plant {code}")
+    return lags
+
+
+def _whole_number(value: object, field: str, what: str) -> int:
+    """*value* as an ``int``; *what* names it in the error a blank field raises."""
+    try:
+        return as_int(value)
+    except (TypeError, ValueError) as exc:
+        raise FieldParseError(
+            f"{_DADGNL} leaves {what} blank or unreadable",
+            field=field,
+        ) from exc
 
 
 def fill_undeclared_block_hours(
@@ -926,6 +1071,12 @@ def _stage_capabilities(
     }
 
 
+def _within_capability(value: float, lo: float, hi: float) -> float:
+    """*value* held inside ``[lo, hi]``; an inflexibility above the
+    availability (``lo > hi``) holds it at the availability."""
+    return min(max(value, min(lo, hi)), hi)
+
+
 def _clamp_committed(
     value: float, thermal: GnlThermal, lo: float, hi: float, delivery: str
 ) -> float:
@@ -935,10 +1086,9 @@ def _clamp_committed(
     The source model's ``gl`` geração and ``tg`` disponibilidade are
     independent fields, so a commitment can exceed capability, and novomodelo
     rejects a ``past_anticipated_commitment`` outside the plant's generation
-    bounds. An inflexibility above the availability (``lo > hi``) clamps to
-    the availability.
+    bounds.
     """
-    clamped = min(max(value, min(lo, hi)), hi)
+    clamped = _within_capability(value, lo, hi)
     if abs(clamped - value) > _NONZERO_TOLERANCE:
         row = [
             thermal.code,
@@ -1085,15 +1235,19 @@ def _shared_class4_end(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         If the plants' ``class4_end`` values disagree.
     """
     ends = {classification.plants[t.code].class4_end for t in thermals}
     if len(ends) > 1:
-        raise ValueError(
-            "GNL plants declare differing já-comandada cutoffs "
-            f"{sorted(ends)}; post_study_stages is emitted once, globally, "
-            "and needs one shared class4_end"
+        dates = ", ".join(end.isoformat() for end in sorted(ends))
+        raise UnsupportedSourceError(
+            "dadgnl.rvN commits the dispatch of the GNL plants past the study "
+            f"horizon up to different dates ({dates}). GNL plants committed past "
+            "the horizon up to different dates are not converted yet, so give "
+            "each GNL plant GL weeks past the horizon up to the same date.",
+            path=_DADGNL,
+            field="GL data_inicio",
         )
     return next(iter(ends), horizon_end)
 
@@ -1186,20 +1340,24 @@ def _monthly_lead_stages(
     Raises
     ------
     ValueError
-        If the plant declares no lag, a lag outside ``1..n_stages``, or a
-        ``gl`` dispatch dated past the horizon: a delivery past the horizon
-        decided before the study has no in-study stage to carry it.
+        If the plant declares no lag.
+    UnsupportedSourceError
+        If the lag is outside ``1..n_stages``, or a ``gl`` dispatch is dated
+        past the horizon: a delivery past the horizon decided before the study
+        has no in-study stage to carry it.
     """
     label = f"GNL plant {thermal.code} ({thermal.name})"
     lag = model.nl_lag_months.get(thermal.code)
     if lag is None:
         raise ValueError(f"{label} declares no nl dispatch-anticipation lag")
     if not 1 <= lag <= n_stages:
-        raise ValueError(
-            f"{label}: an nl lag of {dx.counted(lag, 'month')} is not supported "
-            f"for a study of {dx.counted(n_stages, 'monthly stage')}; the lag must "
-            "be between 1 and the "
-            "stage count"
+        raise UnsupportedSourceError(
+            f"dadgnl.rvN gives {label} an NL lag of {dx.counted(lag, 'month')}, "
+            f"but the study has {dx.counted(n_stages, 'monthly stage')}. In a "
+            "study of monthly stages only, a lag outside its stages is not "
+            f"converted yet, so give the plant an NL lag from 1 to {n_stages}.",
+            path=_DADGNL,
+            field="NL lag",
         )
     late = [
         s.start_date.isoformat()
@@ -1207,9 +1365,13 @@ def _monthly_lead_stages(
         if s.start_date >= horizon_end
     ]
     if late:
-        raise ValueError(
-            f"{label}: gl dispatch dated past the study horizon ({', '.join(late)}) "
-            "is not supported for a study of monthly stages only"
+        raise UnsupportedSourceError(
+            f"dadgnl.rvN commits {label} to GL dispatch past the study horizon "
+            f"({', '.join(late)}). In a study of monthly stages only, GL dispatch "
+            "past the horizon is not converted yet, so remove the plant's GL "
+            "records dated past the horizon.",
+            path=_DADGNL,
+            field="GL data_inicio",
         )
     return lag
 
@@ -1312,15 +1474,23 @@ def _convert_monthly_gnl(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         If ``gs`` books more than one interval to a month, or a plant's lag or
         ``gl`` dispatch fails :func:`_monthly_lead_stages`.
+    ValueError
+        If a plant declares no ``nl`` lag.
     """
     split_months = {m: n for m, n in model.weeks_per_month.items() if n != 1}
     if split_months:
-        raise ValueError(
-            "a study of monthly stages only books one gs interval per month; gs "
-            f"declares {split_months} (month: intervals)"
+        months = ", ".join(
+            f"month {month} into {n}" for month, n in sorted(split_months.items())
+        )
+        raise UnsupportedSourceError(
+            f"dadgnl.rvN splits GS months into several intervals ({months}) in a "
+            "study of monthly stages only. The case decides one GNL dispatch per "
+            "monthly stage, so give every GS month one interval.",
+            path=_DADGNL,
+            field="GS semanas",
         )
     n_stages = len(calendar)
     horizon_start = calendar[0].start_date

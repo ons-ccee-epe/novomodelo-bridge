@@ -10,30 +10,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.newave.id_map import NewaveIdMap
-
-# The title/summary/remediation/notes strings geometry.py emits reach a
-# pip-installed user with no repo checkout — none may leak a repo-internal
-# reference (mirrors test_constraints.py's own marker scan).
-_REPO_INTERNAL_LEAKS = (
-    "docs/",
-    "plans/",
-    "~/git",
-    "feat/",
-    "ticket-",
-    "epic-",
-    "src/",
-    ".py",
-)
-
-
-def _assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
-    for diag in collected:
-        strings = [diag.title, diag.summary, *diag.notes]
-        if diag.remediation is not None:
-            strings.append(diag.remediation)
-        for s in strings:
-            for leak in _REPO_INTERNAL_LEAKS:
-                assert leak not in s, f"diagnostic {diag.code!r} leaks {leak!r}: {s!r}"
+from tests.newave.conftest import assert_no_repo_internal_leaks
 
 
 def _make_geometry_cadastro() -> pd.DataFrame:
@@ -273,7 +250,7 @@ class TestGeometryCoversReferenceVolumes:
         assert [[row[0], *row[2:]] for row in diagnostic.table.rows] == [
             [1, 100.0, 1000.0, 100.0, 1200.0]
         ]
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_reference_volume_below_vmin_extends_geometry(self) -> None:
         from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry
@@ -397,7 +374,7 @@ class TestGenerateHydroGeometryDiagnostics:
         assert "hidr.dat" in str(by_code[3][2])
         assert by_code[1][2] != by_code[3][2]
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_no_skips_emits_no_diagnostic(self) -> None:
         from novomodelo_bridge.newave.converters.hydro import generate_hydro_geometry

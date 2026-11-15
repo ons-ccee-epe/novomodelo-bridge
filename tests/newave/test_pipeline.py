@@ -20,6 +20,8 @@ from tests.conftest import (
 )
 from tests.newave.conftest import _run_with_all_mocks
 
+_LOG = logging.getLogger(__name__)
+
 
 class TestConversionReport:
     def test_str_format(self) -> None:
@@ -344,7 +346,7 @@ class TestEmissionCheckWiring:
         self, tmp_path: Path
     ) -> None:
         """A hydro_bounds row above the plant's declared max_turbined_m3s is
-        clamped back to the declaration and reported as a WARNING, so the
+        clamped back to the declaration and reported as a note, so the
         convert verdict stays "ok" instead of erroring on novomodelo rule 43."""
         import contextlib
 
@@ -465,10 +467,10 @@ class TestConversionWarningCapture:
             dry_run: bool = False,
             float_digits: int | None = None,
         ) -> ConversionReport:
-            dx.emit(_warning("a", "vazpast.dat could not be read"))
-            dx.emit(_warning("a", "vazpast.dat could not be read"))
+            dx.emit(_warning("a", "vazpast.dat could not be read"), logger=_LOG)
+            dx.emit(_warning("a", "vazpast.dat could not be read"), logger=_LOG)
             logging.getLogger("novomodelo_bridge.newave.fake").warning("log text")
-            dx.emit(_warning("b", "ree.dat has no entries"))
+            dx.emit(_warning("b", "ree.dat has no entries"), logger=_LOG)
             return ConversionReport(hydro_count=3)
 
         with patch.object(pipeline, "_convert_newave_case_impl", side_effect=fake_impl):

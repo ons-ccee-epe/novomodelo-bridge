@@ -8,6 +8,7 @@ alignment, computation, comparison, and report generation.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
     from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
     from novomodelo_bridge.core.diagnostics import Diagnostic
+
+_LOG = logging.getLogger(__name__)
 
 # -------------------------------------------------------------------
 # Horizon bounds-helper unit tests
@@ -603,7 +606,7 @@ class TestCompareDiagnosticsWiring:
         diagnostic = _dropped_plant_diagnostic()
 
         def _compare_results_with_diagnostic(**_kwargs: object) -> ComparisonDataset:
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
             return _fake_results_dataset()
 
         monkeypatch.setattr(
@@ -633,7 +636,7 @@ class TestCompareDiagnosticsWiring:
         def _build_decomp_dataset_with_diagnostic(
             *_args: object, **_kwargs: object
         ) -> ComparisonDataset:
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
             return _fake_decomp_dataset()
 
         monkeypatch.setattr(
@@ -659,7 +662,7 @@ class TestCompareDiagnosticsWiring:
         diagnostic = _dropped_plant_diagnostic()
 
         def _compare_results_with_diagnostic(**_kwargs: object) -> ComparisonDataset:
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
             return _fake_results_dataset()
 
         monkeypatch.setattr(
@@ -687,7 +690,7 @@ class TestCompareDiagnosticsWiring:
         def _build_decomp_dataset_with_diagnostic(
             *_args: object, **_kwargs: object
         ) -> ComparisonDataset:
-            dx.emit(diagnostic)
+            dx.emit(diagnostic, logger=_LOG)
             return _fake_decomp_dataset()
 
         monkeypatch.setattr(
@@ -1423,7 +1426,7 @@ class TestCompareResultsReturnsDataset:
         )
 
         monkeypatch.setattr(
-            "novomodelo_bridge.comparators.constraints.load_resolved_generic_constraints",
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_resolved_generic_constraints",
             lambda *_a: resolve_generic_constraints([], None, {}),
         )
 
@@ -2215,8 +2218,8 @@ class TestGenericConstraintF3Loaders:
     """The constraints loader consumes sense-free JSON."""
 
     def test_constraints_loader_parses_sense_free_json(self, tmp_path: Path) -> None:
-        from novomodelo_bridge.comparators.constraints import (
-            load_generic_constraints,
+        from novomodelo_bridge.novomodelo.readers import (
+            read_novomodelo_generic_constraints,
         )
 
         constraints_dir = tmp_path / "constraints"
@@ -2237,7 +2240,7 @@ class TestGenericConstraintF3Loaders:
             encoding="utf-8",
         )
 
-        constraints = load_generic_constraints(tmp_path)
+        constraints = read_novomodelo_generic_constraints(tmp_path)
         assert len(constraints) == 1
         assert "sense" not in constraints[0]
         assert constraints[0]["name"] == "RE_1"

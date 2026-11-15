@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -12,6 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.conftest import _make_fake_newave_dir
+
+_LOG = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,7 +55,8 @@ def _warn_then_fail(*_args: object, **_kwargs: object) -> None:
             category="Source files",
             title="Tab characters in fixed-column files",
             summary="1 input file(s) contain tab characters.",
-        )
+        ),
+        logger=_LOG,
     )
     raise ValueError("boom")
 
@@ -2399,7 +2403,8 @@ class TestCliInProcess:
                     category="Boundary FCF",
                     title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
-                )
+                ),
+                logger=_LOG,
             )
             return dst / "boundary"
 
@@ -2460,7 +2465,8 @@ class TestCliInProcess:
                     category="Boundary FCF",
                     title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
-                )
+                ),
+                logger=_LOG,
             )
             return dst / "boundary"
 
@@ -2529,7 +2535,8 @@ class TestCliInProcess:
                     category="Boundary FCF",
                     title="An importer warning",
                     summary="from the boundary FCF import",
-                )
+                ),
+                logger=_LOG,
             )
             return dst / "boundary"
 
@@ -2584,7 +2591,8 @@ class TestCliInProcess:
                         category="Boundary FCF",
                         title="Plants with no boundary-cut term (1)",
                         summary="synthetic",
-                    )
+                    ),
+                    logger=_LOG,
                 )
                 return dst / "boundary"
 
@@ -2650,7 +2658,8 @@ class TestCliInProcess:
                     category="Boundary FCF",
                     title="GNL commitment priced per delivery window, not per patamar",
                     summary="synthetic deviation diagnostic for the sink test",
-                )
+                ),
+                logger=_LOG,
             )
             return dst / "boundary"
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.decomp.converters.network import (
     convert_buses,
     convert_lines,
@@ -129,8 +130,12 @@ class TestDecompIdMap:
             _ID_MAP.bus_id(99)
 
     def test_reserved_name_rejected(self) -> None:
-        with pytest.raises(ValueError, match="reserved"):
+        with pytest.raises(UnsupportedSourceError, match="named IV") as raised:
             DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "IV"))
+        assert (raised.value.path, raised.value.field) == (
+            "dadger.rvN",
+            "SB nome_submercado",
+        )
 
 
 class TestConvertBuses:
@@ -157,8 +162,12 @@ class TestConvertBuses:
             dadger=dadger,
             calendar=_single_stage_calendar(date(2024, 8, 31)),
         )
-        with pytest.raises(ValueError, match="depth"):
+        with pytest.raises(UnsupportedSourceError, match="95 % of the load") as raised:
             convert_buses(case, _ID_MAP)
+        assert (raised.value.path, raised.value.field) == (
+            "dadger.rvN",
+            "CD limite_superior",
+        )
 
     def test_rejects_block_varying_cost(self) -> None:
         cd = _cd_frame()
@@ -168,8 +177,12 @@ class TestConvertBuses:
             dadger=_StubDadger(cd=cd),
             calendar=_single_stage_calendar(date(2024, 8, 31)),
         )
-        with pytest.raises(ValueError, match="uniform"):
+        with pytest.raises(
+            UnsupportedSourceError,
+            match=r"different CD deficit costs .*\(7810.62, 9000\)",
+        ) as raised:
             convert_buses(case, _ID_MAP)
+        assert (raised.value.path, raised.value.field) == ("dadger.rvN", "CD custo")
 
     def test_rejects_multi_segment_curves(self) -> None:
         cd = pd.concat([_cd_frame(), _cd_frame(cost=9000.0)], ignore_index=True)
@@ -179,8 +192,14 @@ class TestConvertBuses:
             dadger=_StubDadger(cd=cd),
             calendar=_single_stage_calendar(date(2024, 8, 31)),
         )
-        with pytest.raises(ValueError, match="multi-segment"):
+        with pytest.raises(
+            UnsupportedSourceError, match=r"2 CD deficit curves \(1, 2\)"
+        ) as raised:
             convert_buses(case, _ID_MAP)
+        assert (raised.value.path, raised.value.field) == (
+            "dadger.rvN",
+            "CD codigo_curva",
+        )
 
 
 class TestFictitiousBusIds:

@@ -31,8 +31,8 @@ nothing declares is ignored, and `check decomp` and `convert decomp` list it in
 a `libs-unindexed-file` note (`-v` prints it in full). The index is read as
 UTF-8 when it is valid UTF-8 and as Latin-1 otherwise. In the
 electrical-constraint file a card name is recognized only in upper case,
-as the manual writes it, and `convert decomp` warns about every line that is
-not a card it reads (`libs-unread-lines`).
+as the manual writes it, and `check decomp` and `convert decomp` warn about
+every line that is not a card it reads (`libs-unread-lines`).
 
 `check decomp` validates the deck without writing anything and also lists what
 the conversion will leave behind for this particular deck. Exit 0 means ready,
@@ -84,8 +84,44 @@ becomes a bound on that plant. Two such `HQ` restrictions on the same plant
 variable that no value meets at once, such as a 0 m³/s ceiling and a 6 m³/s floor, become generic constraints
 instead, each with its own slack at the same penalty. DECOMP prices every
 `RHQ` violation per unit and violates the cheaper restriction, whatever their
-order or numbers, so Novomodelo then makes the same choice. The conversion lists
-these pairs in one warning.
+order or numbers, so Novomodelo then makes the same choice. `check decomp` and
+`convert decomp` list these pairs in one warning.
+
+A term that is zero in DECOMP too is left out of the sum with a note, and the
+rest of the restriction is kept. A plant whose `UH` record gives no initial
+volume is kept by DECOMP only for the coupling with NEWAVE and is not
+operated, so it generates nothing: its `FU` term in an `RE` constraint, or its
+`ger_usih` or `ger_conjh` term in an electrical restriction of the LIBS file,
+is left out, and an `RE` left with one term becomes a plant bound. An `FI`
+term of an `RE`, or an `ener_interc` term of the LIBS file between two `SB`
+submarkets, on a pair no `IA` record joins is left out too, since no flow
+runs between them. Any other term on an entity the case lacks, such as an
+`HQ` or `HV` term on a plant DECOMP does not operate, an `FU` term on a plant
+with no `UH` record, or an `FI` term on a submarket no `SB` record declares,
+leaves the whole restriction out with a warning, and so does a restriction
+with no term left. An `ener_interc` operand that is not an `SB` code is read
+as the `IV` node, so a missing line on it also leaves the whole restriction
+out: the conversion cannot tell the `IV` node from an undeclared code.
+
+An `FT` term in an `RE` constraint on a fuel-constrained thermal of
+`dadgnl.rvN` is handled as DECOMP handles it, and as the conversion handles
+`ger_usit` on such a plant in the LIBS file: the generation its `GL` records
+command at each stage and patamar, held within the plant's `TG` minimum and
+capacity there as DECOMP holds it, times the term's coefficient, is taken off
+the limits, and the term leaves the sum. The case holds the plant to its
+commitment for the stage, not to each patamar's `GL` value, so its dispatch
+in a patamar can differ from the generation taken off the limits there;
+`convert decomp` lists the stages where that generation differs by patamar in
+a note, and `check decomp` lists them for an `RE` constraint. An `RE` left
+with one plant term becomes a plant bound, and one left with no other term
+bounds nothing in the case and is left out with a note. A plant with no `GL`
+week in a stage where its term applies stops the conversion, as it stops
+DECOMP, and `check decomp` reports it for an `RE` constraint. So does an `FT`
+term on a GNL plant whose number a `CT` record also gives: as a malformed
+field when the `CT` record is in the plant's own subsystem, which DECOMP does
+not allow, and as unsupported when it is in another one, since DECOMP tells
+the two plants apart by subsystem and the conversion tells thermals apart by
+number alone.
 
 Incremental inflows are converted as the inflow file gives them, negative
 values included. DECOMP reports a negative incremental inflow as zero in its
@@ -154,9 +190,9 @@ thermal calendar there (`thermal_stages` and `thermal_bounds`). A deck with
 `VI` travel times gets `water_bucket_stages`: one stage from the end of the
 last operative stage to the end of that month, so a horizon that ends on the
 first of a month gives the whole month. A `VI` travel time longer than that
-stage fails the conversion, naming the plant, because Novomodelo refuses a
-water calendar shorter than its deepest travel time. A deck with neither
-writes no `post_study_stages.json`.
+stage fails the conversion, naming the plant: a water calendar of more than
+one stage is not converted yet. A deck with neither writes no
+`post_study_stages.json`.
 
 Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
@@ -169,6 +205,12 @@ Examples at the time of writing are the `RHA` inflow constraints
 lists every register and field the converter leaves out. A warning carries a
 remediation line only when a change to the deck removes it; the conversion
 proceeds either way.
+
+A deck value the conversion does not convert stops `convert decomp` with a
+`source-unsupported` error that names the file and the record field and says
+what to change. Its message says the value "is not converted yet" when the
+conversion, not Novomodelo, is what is missing. `check decomp` fails with the
+same error on the ones it can find without converting the deck.
 
 ## The boundary cost-to-go function
 

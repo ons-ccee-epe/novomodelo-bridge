@@ -234,10 +234,10 @@ def _discover(src: Path) -> tuple[NewaveCase, NewaveIdMap]:
     case = NewaveCase.from_directory(src)
     tabs = tab_character_diagnostic(case.files.fixed_column_files)
     if tabs is not None:
-        dx.emit(tabs)
+        dx.emit(tabs, logger=logger)
     unindexed = unindexed_libs_diagnostic(case.files)
     if unindexed is not None:
-        dx.emit(unindexed)
+        dx.emit(unindexed, logger=logger)
 
     logger.debug("Building NewaveIdMap from %s", src)
     return case, case.id_map
@@ -461,13 +461,13 @@ def _resolve_hydro_bounds(
         hydro_bounds_table, temporal.capacity_caps
     )
 
-    # Clamp any per-stage MAX bound outside the plant's declared envelope back
-    # to the declared value, so the rule-43 self-check in
-    # ``_run_emission_checks`` passes on the result.
+    # Hold every per-stage limit to the plant's declared envelope, so the
+    # rule-43 self-check in ``_run_emission_checks`` passes on the result.
     return emission_checks.clamp_hydro_bounds_to_declared(
         hydros_dict,
         hydro_bounds_table,
         source_codes={id_map.hydro_id(code): code for code in id_map.all_hydro_codes},
+        raise_to_minimum=True,
     )
 
 

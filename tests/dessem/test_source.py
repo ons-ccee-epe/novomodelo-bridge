@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from novomodelo_bridge.core.errors import SourceFileError
+from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlCommitmentModel,
@@ -22,6 +22,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.travel_time import travel_time_plants
 from novomodelo_bridge.dessem.exporters.fcf.source import read_source_deck
+from tests.decomp.test_anticipated import _GlReg, _StubDadgnl, _tg_row
 
 
 def test_revision_comes_from_caso_dat(decomp_mini_deck: Path) -> None:
@@ -118,6 +119,21 @@ def test_gnl_plants_carry_their_nl_lag_in_code_order(decomp_mini_deck: Path) -> 
         SourceGnlThermal(code=86, name="SANTA CRUZ", lag_months=2),
         SourceGnlThermal(code=224, name="PSERGIPE I", lag_months=None),
     )
+
+
+def test_gl_record_on_an_undeclared_plant_is_a_field_parse_error(
+    decomp_mini_deck: Path,
+) -> None:
+    dadgnl = _StubDadgnl(
+        [_GlReg(999, 1, "14032026", [168.0], [100.0])],
+        [_tg_row(86, "SANTA CRUZ")],
+        [],
+    )
+    with (
+        patch.object(DecompCase, "dadgnl", new=dadgnl),
+        pytest.raises(FieldParseError, match="GL record for plant 999"),
+    ):
+        read_source_deck(decomp_mini_deck)
 
 
 def test_directory_without_caso_dat_raises(tmp_path: Path) -> None:

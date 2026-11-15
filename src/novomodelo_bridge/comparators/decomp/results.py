@@ -58,6 +58,9 @@ from novomodelo_bridge.comparators.decomp.operating_points import (
     compare_operating_points,
 )
 from novomodelo_bridge.comparators.decomp.readers import (
+    DEC_OPER_SIST_EFFECT,
+    DEC_OPER_USIH_EFFECT,
+    DEC_OPER_USIT_EFFECT,
     read_dec_estatfpha,
     read_dec_oper_evap,
     read_dec_oper_interc,
@@ -67,6 +70,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_oper_usih,
     read_dec_oper_usit,
     read_decomp_tim,
+    read_or_note,
     read_relato2_costs,
     read_relato_convergence,
     read_relato_costs,
@@ -104,16 +108,30 @@ _LOG = logging.getLogger(__name__)
 #: What the report leaves out without ``relato.rvN``, completing ``"relato.rvN
 #: was not found, so ..."``; every relato.rvN reader shares it, so the note is one.
 _RELATO_MISSING_EFFECT = (
-    "the report leaves out DECOMP's convergence, its time per iteration and the "
-    "REE energy comparison."
+    "the report leaves out DECOMP's cost breakdown and stage costs, its "
+    "convergence, its time per iteration and the REE energy comparison."
 )
-#: The same for a relato.rvN without its convergence table, which both readers
-#: of that table meet, completing ``"relato.rvN could not be read, so ..."``.
+#: What the report leaves out of a relato.rvN without one of its tables,
+#: completing ``"relato.rvN could not be read, so ..."``. Each reader fails on
+#: its own table, so the effect is per table, shared by that table's readers.
 _RELATO_CONVERGENCE_UNREADABLE_EFFECT = (
     "the report shows Novomodelo's convergence alone, without DECOMP's time per "
     "iteration."
 )
+_RELATO_COSTS_UNREADABLE_EFFECT = (
+    "the report leaves out DECOMP's cost breakdown and stage costs."
+)
+#: The same for its REE membership table, shared with ``dec_oper_ree.csv``.
+_REE_ENERGY_EFFECT = "the report leaves out the REE energy comparison."
+#: What the report loses without ``relato2.rvN``'s cost table on a deck with a
+#: scenario fan: it is the only source of that stage's probabilities and costs.
+_RELATO2_EFFECT = (
+    "the report averages the scenarios of DECOMP's fan stage with equal "
+    "weights instead of their probabilities, and leaves that stage out of "
+    "DECOMP's cost breakdown and stage costs."
+)
 _DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
+_DEC_OPER_RHESOFT_EFFECT = "the report leaves out DECOMP's side of the RHE constraints."
 
 
 def _emit_missing(file_name: str, decomp_dir: Path, effect: str) -> None:
@@ -305,6 +323,41 @@ _SCENARIO_PROBABILITY_SCHEMA: dict[str, type[pl.DataType]] = {
 }
 
 
+def _relato2_costs(decomp_dir: Path) -> pl.DataFrame:
+    """``relato2``'s cost rows, or empty without them.
+
+    A deck with no scenario fan writes no ``relato2``, so its absence or a
+    missing cost table is a finding only when :func:`_has_scenario_fan`.
+    """
+    try:
+        return read_relato2_costs(decomp_dir)
+    except FileNotFoundError as exc:
+        if _has_scenario_fan(decomp_dir):
+            _emit_missing("relato2.rvN", decomp_dir, _RELATO2_EFFECT)
+        else:
+            _LOG.info("No relato2.rvN, and no scenario fan: %s", exc)
+    except ValueError as exc:
+        if _has_scenario_fan(decomp_dir):
+            _emit_unreadable("relato2.rvN", decomp_dir, _RELATO2_EFFECT, exc)
+        else:
+            _LOG.info("relato2.rvN unread, and no scenario fan: %s", exc)
+    return pl.DataFrame()
+
+
+def _has_scenario_fan(decomp_dir: Path) -> bool:
+    """Whether a stage of DECOMP's operation holds more than one scenario.
+
+    Read off ``dec_oper_sist.csv``, whose parse the comparison reuses;
+    ``False`` without that table, which its own readers note.
+    """
+    try:
+        sist = read_dec_oper_sist(decomp_dir)
+    except (FileNotFoundError, ValueError):
+        return False
+    scenarios = sist.group_by("estagio").agg(pl.col("cenario").n_unique())
+    return bool((scenarios["cenario"] > 1).any())
+
+
 def _union_relato_reports(raw: pl.DataFrame, monthly: pl.DataFrame) -> pl.DataFrame:
     """Union ``relato``/``relato2`` -- relato2 wins for stages it covers."""
     if monthly.is_empty():
@@ -343,17 +396,20 @@ def _scenario_probabilities(decomp_dir: Path) -> pl.DataFrame:
     ``relato2`` is not free.
 
     Returns an empty (schema-valid) frame -- :func:`_scenario_mean` then
-    falls back to its unweighted mean -- when :func:`read_relato_costs`
-    raises ``FileNotFoundError``/``ValueError`` (no source-model cost report
-    at all) AND ``relato2`` is also empty. Never raises on its own.
+    falls back to its unweighted mean -- when ``relato`` or its cost table is
+    missing, after the same finding :func:`_cost_frames` emits, AND
+    ``relato2`` is also empty. Never raises on its own.
     """
     try:
         raw = read_relato_costs(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No relato cost table for scenario probabilities: %s", exc)
+    except FileNotFoundError:
+        _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
+        raw = pl.DataFrame()
+    except ValueError as exc:
+        _emit_unreadable("relato.rvN", decomp_dir, _RELATO_COSTS_UNREADABLE_EFFECT, exc)
         raw = pl.DataFrame()
 
-    monthly = read_relato2_costs(decomp_dir)
+    monthly = _relato2_costs(decomp_dir)
 
     if raw.is_empty() and monthly.is_empty():
         return pl.DataFrame(schema=_SCENARIO_PROBABILITY_SCHEMA)
@@ -397,6 +453,8 @@ def _result_comparisons(
     :func:`novomodelo_bridge.comparators.analyze.build_results_dataset`, keyed by
     :data:`_CANONICAL_VARIABLE`.
     """
+    if source.is_empty():
+        return []
     joined = source.join(novomodelo, on=["entity_id", "stage_id"], how="inner")
     if joined.is_empty():
         return []
@@ -596,8 +654,14 @@ def _hydro_side(
     """Per-(hydro, stage) ``dec_oper_usih`` means. *probabilities* -- a
     :func:`_scenario_probabilities` lookup -- weights the scenario fold by
     the real tree probabilities instead of :func:`_scenario_mean`'s plain
-    mean; ``None`` (the default) keeps the unweighted fold."""
-    frame = _stage_rows(read_dec_oper_usih(decomp_dir))
+    mean; ``None`` (the default) keeps the unweighted fold. Empty, with no
+    unmapped code, when the table is unavailable."""
+    table = read_or_note(
+        read_dec_oper_usih, "dec_oper_usih.csv", decomp_dir, DEC_OPER_USIH_EFFECT
+    )
+    if table is None:
+        return pl.DataFrame(), []
+    frame = _stage_rows(table)
     columns = [v.source_column for v in _HYDRO_VARIABLES]
     aggregated = _scenario_mean(
         frame,
@@ -616,8 +680,14 @@ def _thermal_side(
     probabilities: pl.DataFrame | None = None,
 ) -> tuple[pl.DataFrame, list[int]]:
     """Per-(thermal, stage) ``dec_oper_usit`` means. See :func:`_hydro_side`
-    for *probabilities*'s scenario-weighting contract."""
-    frame = _stage_rows(read_dec_oper_usit(decomp_dir))
+    for *probabilities*'s scenario-weighting contract and the unavailable
+    table."""
+    table = read_or_note(
+        read_dec_oper_usit, "dec_oper_usit.csv", decomp_dir, DEC_OPER_USIT_EFFECT
+    )
+    if table is None:
+        return pl.DataFrame(), []
+    frame = _stage_rows(table)
     columns = [v.source_column for v in _THERMAL_VARIABLES]
     aggregated = _scenario_mean(
         frame,
@@ -636,8 +706,13 @@ def _bus_side(
     probabilities: pl.DataFrame | None = None,
 ) -> tuple[pl.DataFrame, list[int]]:
     """Per-(bus, stage) ``dec_oper_sist`` means. See :func:`_hydro_side` for
-    *probabilities*'s scenario-weighting contract."""
-    frame = _stage_rows(read_dec_oper_sist(decomp_dir))
+    *probabilities*'s scenario-weighting contract and the unavailable table."""
+    table = read_or_note(
+        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, DEC_OPER_SIST_EFFECT
+    )
+    if table is None:
+        return pl.DataFrame(), []
+    frame = _stage_rows(table)
     columns = [v.source_column for v in _BUS_VARIABLES]
     aggregated = _scenario_mean(
         frame,
@@ -1117,9 +1192,14 @@ def _energy_balance_frames(
     places on a bus but ``demanda_MW`` leaves out (the ANDE load); it is
     added before NET_LOAD is formed.
     """
-    frame = _stage_rows(read_dec_oper_sist(decomp_dir))
+    empty = _empty_market_frame()
+    table = read_or_note(
+        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, DEC_OPER_SIST_EFFECT
+    )
+    if table is None:
+        return empty, empty, empty
+    frame = _stage_rows(table)
     if frame.is_empty() or "codigo_submercado" not in frame.columns:
-        empty = _empty_market_frame()
         return empty, empty, empty
 
     aggregated = _scenario_mean(
@@ -1346,15 +1426,22 @@ def _probability_weighted_stage_cost(
     return _weighted_group_mean(frame, ["estagio"], present)
 
 
-def _deficit_cost(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataFrame:
+def _deficit_cost(
+    decomp_dir: Path, deficit_costs: dict[int, float]
+) -> pl.DataFrame | None:
     """Per-(stage, scenario) deficit cost, k$: each block's ``deficit_MW`` x
     ``duracao`` x the subsystem's ``CD`` cost.
 
     The report prints no deficit parcel, so it is priced here from
     ``dec_oper_sist``. Deficit in a subsystem without a ``CD`` cost stays in the
-    unitemized slack.
+    unitemized slack, and so does every deficit when ``dec_oper_sist`` is
+    unavailable (``None``).
     """
-    sist = read_dec_oper_sist(decomp_dir)
+    sist = read_or_note(
+        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, DEC_OPER_SIST_EFFECT
+    )
+    if sist is None:
+        return None
     blocks = sist.filter(pl.col("patamar").is_not_null() & (pl.col("deficit_MW") > 0.0))
     unpriced = (
         blocks.select(
@@ -1402,9 +1489,12 @@ def _deficit_cost(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataF
     )
 
 
-def _stage_cost_rows(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.DataFrame:
-    """The unioned ``relato``/``relato2`` cost rows with the contract balance,
-    the priced deficit, the unitemized slack and the present-value factor.
+def _stage_cost_rows(
+    relato: pl.DataFrame, decomp_dir: Path, deficit_costs: dict[int, float]
+) -> pl.DataFrame:
+    """*relato*'s cost rows unioned with ``relato2``'s, with the contract
+    balance, the priced deficit, the unitemized slack and the present-value
+    factor.
 
     The report's values are native k$; its parcels and ``custo_presente_nominal``
     are nominal, and only ``custo_presente`` is discounted to the study start,
@@ -1420,21 +1510,21 @@ def _stage_cost_rows(decomp_dir: Path, deficit_costs: dict[int, float]) -> pl.Da
     irrigation) the report does not itemize. It is a sum of non-negative
     penalties, so a negative value is print rounding and reads as zero.
     """
-    combined = _union_relato_reports(
-        read_relato_costs(decomp_dir), read_relato2_costs(decomp_dir)
+    combined = _union_relato_reports(relato, _relato2_costs(decomp_dir))
+    rows = combined.with_columns(
+        (
+            pl.col("contrato_importacao")
+            + 2.0 * pl.col("contrato_exportacao_minimo")
+            - pl.col("contrato_exportacao")
+        ).alias("contratos")
     )
     deficit = _deficit_cost(decomp_dir, deficit_costs)
-    rows = (
-        combined.with_columns(
-            (
-                pl.col("contrato_importacao")
-                + 2.0 * pl.col("contrato_exportacao_minimo")
-                - pl.col("contrato_exportacao")
-            ).alias("contratos")
+    if deficit is None:
+        rows = rows.with_columns(pl.lit(0.0).alias("deficit"))
+    else:
+        rows = rows.join(deficit, on=["estagio", "cenario"], how="left").with_columns(
+            pl.col("deficit").fill_null(0.0)
         )
-        .join(deficit, on=["estagio", "cenario"], how="left")
-        .with_columns(pl.col("deficit").fill_null(0.0))
-    )
     nominal = pl.col("custo_presente_nominal")
     return rows.with_columns(
         (nominal - pl.sum_horizontal(_ITEMIZED_PARCELS) - pl.col("deficit"))
@@ -1478,12 +1568,19 @@ def _cost_frames(
       unpivoted to ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows with the 1-based
       ``stage`` column kept as-is (the consuming charts subtract ``nw_offset``).
 
-    Raises whatever :func:`read_relato_costs` raises on a missing/empty
-    ``relato`` parse (the mandatory report); a missing ``relato2`` is not an
-    error -- :func:`read_relato2_costs` returns empty and only the fan stage(s)
-    are absent.
+    A ``relato`` that is missing or has no cost table leaves both frames empty
+    after its note, so a ``relato2`` alone never yields partial costs; a missing
+    or unreadable ``relato2`` only drops the fan stage(s).
     """
-    rows = _stage_cost_rows(decomp_dir, deficit_costs)
+    try:
+        relato = read_relato_costs(decomp_dir)
+    except FileNotFoundError:
+        _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
+        return {}, pl.DataFrame()
+    except ValueError as exc:
+        _emit_unreadable("relato.rvN", decomp_dir, _RELATO_COSTS_UNREADABLE_EFFECT, exc)
+        return {}, pl.DataFrame()
+    rows = _stage_cost_rows(relato, decomp_dir, deficit_costs)
     parcels = [*_ITEMIZED_PARCELS, *_DERIVED_PARCELS, "contrato_exportacao_minimo"]
     discounted = rows.with_columns(pl.col(c) * pl.col("pv") for c in parcels)
     per_stage_pv = _probability_weighted_stage_cost(discounted, parcels)
@@ -2094,7 +2191,6 @@ def _ree_result_comparisons(
         return [], []
 
     hydro_codes = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
-    effect = "the report leaves out the REE energy comparison."
 
     try:
         membership = read_relato_membership(decomp_dir)
@@ -2102,7 +2198,7 @@ def _ree_result_comparisons(
         _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
         return [], []
     except ValueError as exc:
-        _emit_unreadable("relato.rvN", decomp_dir, effect, exc)
+        _emit_unreadable("relato.rvN", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], []
 
     ree_by_novomodelo_id, unmapped = _ree_membership_map(membership, hydro_codes)
@@ -2130,10 +2226,10 @@ def _ree_result_comparisons(
     try:
         source_ree, names = _decomp_ree_frame(decomp_dir, probabilities=probabilities)
     except FileNotFoundError:
-        _emit_missing("dec_oper_ree.csv", decomp_dir, effect)
+        _emit_missing("dec_oper_ree.csv", decomp_dir, _REE_ENERGY_EFFECT)
         return [], unmapped
     except ValueError as exc:
-        _emit_unreadable("dec_oper_ree.csv", decomp_dir, effect, exc)
+        _emit_unreadable("dec_oper_ree.csv", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], unmapped
 
     novomodelo_sums = _novomodelo_ree_sums(novomodelo_hydro, ree_by_novomodelo_id)
@@ -2431,15 +2527,16 @@ def _dec_oper_hydro_stage_frame(
     special-constraint register terms this feeds carry the source model's
     own plant codes, not novomodelo ids. *probabilities* is forwarded to
     `_scenario_mean` unchanged (see `_hydro_side` for its
-    scenario-weighting contract). Degrades to an empty frame (never
-    raises) when the deck ships no ``dec_oper_usih.csv`` -- every caller
-    already treats an empty frame as "nothing to look up".
+    scenario-weighting contract). Empty after the note for a missing or
+    unreadable ``dec_oper_usih.csv`` -- every caller already treats an empty
+    frame as "nothing to look up".
     """
-    try:
-        frame = _stage_rows(read_dec_oper_usih(decomp_dir))
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No dec_oper_usih.csv for the Constraints tab LHS: %s", exc)
+    table = read_or_note(
+        read_dec_oper_usih, "dec_oper_usih.csv", decomp_dir, DEC_OPER_USIH_EFFECT
+    )
+    if table is None:
         return pl.DataFrame()
+    frame = _stage_rows(table)
     columns = [
         "geracao_MW",
         "vazao_defluente_m3s",
@@ -2464,11 +2561,12 @@ def _dec_oper_thermal_stage_frame(
     generation, averaged over node/scenario. Mirrors
     `_dec_oper_hydro_stage_frame`, including the same degrade-to-empty and
     the same *probabilities* scenario-weighting contract."""
-    try:
-        frame = _stage_rows(read_dec_oper_usit(decomp_dir))
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No dec_oper_usit.csv for the Constraints tab LHS: %s", exc)
+    table = read_or_note(
+        read_dec_oper_usit, "dec_oper_usit.csv", decomp_dir, DEC_OPER_USIT_EFFECT
+    )
+    if table is None:
         return pl.DataFrame()
+    frame = _stage_rows(table)
     return _scenario_mean(
         frame,
         "estagio",
@@ -2479,18 +2577,19 @@ def _dec_oper_thermal_stage_frame(
 
 
 def _dec_oper_rhesoft_frame(decomp_dir: Path) -> pl.DataFrame:
-    """Best-effort ``dec_oper_rhesoft.csv`` read.
+    """``dec_oper_rhesoft.csv``, empty when absent or unreadable.
 
-    Empty when the deck carries no RHE (soft minimum-stored-energy)
-    constraints -- the source model omits the file entirely in that case,
-    which `read_dec_oper_rhesoft`'s own empty-is-error contract (for a
-    genuinely broken/empty parse) does not distinguish on its own.
+    The source model writes the file only for a deck with RHE (soft
+    minimum-stored-energy) constraints, so an absent one is no finding.
     """
-    try:
-        return read_dec_oper_rhesoft(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No dec_oper_rhesoft.csv (no RHE constraints?): %s", exc)
-        return pl.DataFrame()
+    table = read_or_note(
+        read_dec_oper_rhesoft,
+        "dec_oper_rhesoft.csv",
+        decomp_dir,
+        _DEC_OPER_RHESOFT_EFFECT,
+        note_missing=False,
+    )
+    return pl.DataFrame() if table is None else table
 
 
 def _stage_frame_to_lookup(
@@ -2959,12 +3058,11 @@ def _generic_constraint_fields(
     """
     from novomodelo_bridge.comparators.constraints import (
         evaluate_lhs_novomodelo,
-        load_resolved_generic_constraints,
         stage_bounds_novomodelo,
     )
 
     novomodelo_case_dir = case_dir_for(novomodelo_output_dir)
-    gc_resolved = load_resolved_generic_constraints(
+    gc_resolved = novomodelo_readers.read_novomodelo_resolved_generic_constraints(
         novomodelo_case_dir, novomodelo_output_dir
     )
     gc_constraints = gc_resolved.constraints

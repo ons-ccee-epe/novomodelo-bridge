@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
@@ -488,6 +489,36 @@ class TestExportDessemCli:
         errors = [d for d in verdict["diagnostics"] if d["severity"] == "error"]
         assert [d["code"] for d in errors] == ["dessem-fcf-export-failed"]
         assert "initial_conditions.json" in errors[0]["summary"]
+
+    def test_json_deck_with_an_empty_hydro_registry_is_a_field_parse_error(
+        self, decomp_mini_deck: Path, synthetic_case_dir: Path, tmp_path: Path
+    ) -> None:
+        deck = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, deck)
+        (deck / "hidr.dat").write_bytes(b"")
+
+        with pytest.warns(UserWarning):
+            result = self._invoke_json(deck, synthetic_case_dir, tmp_path / "output")
+
+        assert result.exit_code == 1
+        verdict = json.loads(result.stdout)
+        [error] = verdict["diagnostics"]
+        assert error["code"] == "source-field-parse"
+        assert error["summary"].startswith("hidr.dat holds no hydro plant records")
+
+    def test_json_output_path_that_is_a_file_emits_export_failed(
+        self, synthetic_case_dir: Path, deck_dir: Path, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        output_dir.write_text("not a directory", encoding="utf-8")
+
+        result = self._invoke_json(deck_dir, synthetic_case_dir, output_dir)
+
+        assert result.exit_code == 1
+        verdict = json.loads(result.stdout)
+        errors = [d for d in verdict["diagnostics"] if d["severity"] == "error"]
+        assert [d["code"] for d in errors] == ["dessem-fcf-export-failed"]
+        assert errors[0]["notes"] == ["Failed step: create the output directory"]
 
     def test_json_missing_deck_dir_is_a_missing_source(
         self, deck_dir: Path, tmp_path: Path
