@@ -37,6 +37,7 @@ from novomodelo_bridge.novomodelo.readers import (
     hydro_home_bus,
     read_novomodelo_generic_constraint_echo,
     read_novomodelo_hydro_metadata,
+    read_novomodelo_hydros,
     read_novomodelo_line_bounds,
     read_novomodelo_lines,
     read_novomodelo_load_bus_ids,
@@ -69,7 +70,9 @@ def scan_entity(case_dir: Path, entity: str) -> pl.LazyFrame:
 def load_names(case_dir: Path) -> dict[tuple[str, int], str]:
     """Load entity name mappings from system JSON files."""
     names: dict[tuple[str, int], str] = {}
-    for entity in ("hydros", "buses", "thermals", "non_controllable_sources"):
+    for item in read_novomodelo_hydros(case_dir / "output"):
+        names[("hydros", item["id"])] = item.get("name", str(item["id"]))
+    for entity in ("buses", "thermals", "non_controllable_sources"):
         path = case_dir / "system" / f"{entity}.json"
         if path.exists():
             with open(path, encoding="utf-8") as f:
@@ -197,16 +200,15 @@ def load_hydro_bus_map(
     *load_bus_ids* defaults to the case's
     ``novomodelo_readers.read_novomodelo_load_bus_ids``.
     """
-    path = case_dir / "system" / "hydros.json"
-    if not path.exists():
+    hydros = read_novomodelo_hydros(case_dir / "output")
+    if not hydros:
         return {}
     if load_bus_ids is None:
         load_bus_ids = read_novomodelo_load_bus_ids(case_dir / "output")
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
+    path = case_dir / "system" / "hydros.json"
     result: dict[int, int] = {}
     split_rows: list[list[object]] = []
-    for h in d["hydros"]:
+    for h in hydros:
         bus_id = resolve_hydro_bus_id(h, hydros_path=path, load_bus_ids=load_bus_ids)
         if bus_id is not None:
             result[h["id"]] = bus_id
@@ -291,20 +293,18 @@ def load_hydro_metadata(
     ``hydros.json:generation.productivity_mw_per_m3s`` field so older
     converted cases still render.
     """
-    path = case_dir / "system" / "hydros.json"
-    if not path.exists():
+    hydros = read_novomodelo_hydros(case_dir / "output")
+    if not hydros:
         return {}
     if bus_map is None:
         bus_map = load_hydro_bus_map(case_dir)
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
     # Share the single canonical productivity cascade with the comparator so
     # the dashboard and compare report never disagree on a plant's ρ.
-    productivities = resolve_hydro_productivities(case_dir, d["hydros"])
+    productivities = resolve_hydro_productivities(case_dir, hydros)
     result = {}
-    for h in d["hydros"]:
-        gen = h.get("generation", {})
-        res = h.get("reservoir", {})
+    for h in hydros:
+        gen = h.get("generation") or {}
+        res = h.get("reservoir") or {}
         prod = productivities.get(h["id"]) or 0
         max_turbined = gen.get("max_turbined_m3s", 0)
         bus_id = bus_map.get(h["id"])

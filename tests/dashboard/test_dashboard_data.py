@@ -158,7 +158,10 @@ def test_unparseable_config_json_without_a_stages_json_rate_warns(
     assert "0.0% discount rate" in config_findings[0].summary
 
 
-def test_dashboard_builds_when_lines_json_does_not_parse(tmp_path: Path) -> None:
+@pytest.mark.parametrize("filename", ["lines.json", "hydros.json"])
+def test_dashboard_builds_when_a_system_json_does_not_parse(
+    tmp_path: Path, filename: str
+) -> None:
     from novomodelo_bridge.cli import app
 
     case_dir = tmp_path / "case"
@@ -168,7 +171,7 @@ def test_dashboard_builds_when_lines_json_does_not_parse(tmp_path: Path) -> None
         {"stages": [{"id": 0, "blocks": [{"id": 0, "hours": 730.0}]}]},
     )
     (case_dir / "system").mkdir()
-    (case_dir / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+    (case_dir / "system" / filename).write_text("{not json", encoding="utf-8")
     output_path = case_dir / "d.html"
 
     result = CliRunner().invoke(
@@ -182,7 +185,7 @@ def test_dashboard_builds_when_lines_json_does_not_parse(tmp_path: Path) -> None
         d["title"]
         for d in document["diagnostics"]
         if d["code"] == "report-file-unreadable"
-    ] == ["system/lines.json could not be read"]
+    ] == [f"system/{filename} could not be read"]
     assert output_path.is_file()
 
 

@@ -19,11 +19,14 @@ treat as required — the source model's ``newave_readers`` instead
 degrades every present-but-unparseable input to a typed-empty frame, a
 genuine behaviour difference (see that module's docstring). Every
 partition and system JSON this module reads is an optional input. A
-present-but-unparseable system JSON that only names or describes entities
-(lines, thermals, buses, the hydro metadata) or the run's training
+present-but-unparseable system JSON that names or describes entities
+(lines, hydro plants, thermals, buses) or the run's training
 ``metadata.json`` degrades to an empty result with a
-``report-file-unreadable`` warning, since the report can go on without those
-labels; every other present-but-corrupt parquet or JSON raises.
+``report-file-unreadable`` warning whose effect is the same from every reader
+of the file, since the report can go on without them; ``lines.json`` and
+``hydros.json`` are read only through :func:`read_novomodelo_lines` and
+:func:`read_novomodelo_hydros`. The thermal and non-controllable-source bus
+maps, and every other present-but-corrupt parquet or JSON, raise.
 """
 
 from __future__ import annotations
@@ -66,7 +69,10 @@ _LOG = logging.getLogger(__name__)
 #: found, so ..."`` and ``"<file> could not be read, so ..."``; every reader
 #: of the file passes the same one, so its finding is reported once.
 _HYDROS_EFFECT = (
-    "the report shows the hydro plants without their names and cadastro data."
+    "the report shows the hydro plants without their names and cadastro data, "
+    "leaves out the results it matches, places or classifies by plant, and "
+    "counts each plant's minimum storage as zero in the generic constraints' "
+    "bounds."
 )
 _BUSES_EFFECT = "the report shows the buses without their names."
 
@@ -599,7 +605,7 @@ def read_novomodelo_hydro_total_flows(
     -------
     pl.DataFrame
         Columns ``entity_id``, ``stage_id``, ``total_inflow_m3s``.
-        Empty when ``hydros.json`` is missing, or, with a
+        Empty when :func:`read_novomodelo_hydros` yields no plant, or, with a
         ``report-file-unreadable`` warning, when the simulation output lacks
         either component column.
     """
@@ -625,23 +631,13 @@ def read_novomodelo_hydro_total_flows(
         )
         return empty
 
-    case_dir = case_dir_for(novomodelo_output_dir)
-    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
-    if hydros_path is None:
-        hydros_path = case_dir / "system" / "hydros.json"
-    if not hydros_path.exists():
+    hydros = read_novomodelo_hydros(novomodelo_output_dir)
+    if not hydros:
         return empty
-    try:
-        with hydros_path.open(encoding="utf-8") as f:
-            hydros_data = json.load(f)
-    except Exception as exc:
-        raise NovomodeloReadError(
-            f"Failed to parse hydros.json for total-inflow topology: {hydros_path}"
-        ) from exc
 
     # parents[child_id] = list of hydro_ids whose downstream_id == child_id.
     parents: dict[int, list[int]] = {}
-    for h in hydros_data.get("hydros", []):
+    for h in hydros:
         ds = h.get("downstream_id")
         if ds is None:
             continue
@@ -692,21 +688,10 @@ def _load_hydro_reservoir_flag(novomodelo_output_dir: Path) -> dict[int, bool]:
     The discriminator mirrors the dashboard convention (reservoir = any
     plant with positive max storage; run-of-river otherwise).
     """
-    case_dir = case_dir_for(novomodelo_output_dir)
-    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
-    if hydros_path is None:
-        hydros_path = case_dir / "system" / "hydros.json"
-    if not hydros_path.exists():
-        return {}
-    try:
-        with hydros_path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return {}
     out: dict[int, bool] = {}
-    for h in data.get("hydros", []):
-        max_stor = h.get("reservoir", {}).get("max_storage_hm3", 0) or 0
-        out[int(h["id"])] = max_stor > 0
+    for h in read_novomodelo_hydros(novomodelo_output_dir):
+        max_stor = (h.get("reservoir") or {}).get("max_storage_hm3", 0) or 0
+        out[h["id"]] = max_stor > 0
     return out
 
 
@@ -2176,27 +2161,18 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
     break visibly (``KeyError``) instead of silently degrading to an empty
     bus map.
     """
-    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
-    if hydros_path is None:
-        _emit_system_json_missing(novomodelo_output_dir, "hydros.json", _HYDROS_EFFECT)
+    hydros_path, hydros = _read_hydros_json(novomodelo_output_dir)
+    if hydros_path is None or not hydros:
         return {}
 
-    try:
-        with hydros_path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        _emit_system_json_unreadable(hydros_path, _HYDROS_EFFECT, exc)
-        return {}
-
-    case_dir = hydros_path.parent.parent
     # Productivity resolution is shared with the dashboard via the single
     # canonical cascade in novomodelo_io so the two products never report a
     # different ρ for the same plant (see resolve_hydro_productivities).
-    productivities = resolve_hydro_productivities(case_dir, data.get("hydros", []))
+    productivities = resolve_hydro_productivities(hydros_path.parent.parent, hydros)
 
     result: dict[int, dict] = {}
-    for hydro in data.get("hydros", []):
-        entity_id = int(hydro["id"])
+    for hydro in hydros:
+        entity_id = hydro["id"]
         name = str(hydro.get("name", f"hydro_{entity_id}"))
 
         prod = productivities.get(entity_id)
@@ -2346,26 +2322,15 @@ def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int
 
     Returns ``{hydro_id: {"name", "specific_productivity", "tailwater_m", "losses_m",
     "vmin_hm3", "vmax_hm3"}}``; per-field values are ``None`` when absent.  Returns an
-    empty dict when ``hydros.json`` cannot be located.  (The
+    empty dict when :func:`read_novomodelo_hydros` yields no plant.  (The
     point/equivalent/accumulated productivities are *not* read from Novomodelo here — the
     Productivity-tab scatters validate the conversion against what novomodelo-bridge computes
     from the source model inputs, and the realized per-stage productivity comes from the
     simulation generation/turbined comparison rows.)
     """
-    hydros_path = _find_system_json(novomodelo_output_dir, "hydros.json")
-    if hydros_path is None:
-        _emit_system_json_missing(novomodelo_output_dir, "hydros.json", _HYDROS_EFFECT)
-        return {}
-    try:
-        with hydros_path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        _emit_system_json_unreadable(hydros_path, _HYDROS_EFFECT, exc)
-        return {}
-
     result: dict[int, dict] = {}
-    for hydro in data.get("hydros", []):
-        hid = int(hydro["id"])
+    for hydro in read_novomodelo_hydros(novomodelo_output_dir):
+        hid = hydro["id"]
 
         tailrace = hydro.get("tailrace") or {}
         coeffs = tailrace.get("coefficients") or []
@@ -2435,6 +2400,49 @@ def _emit_system_json_unreadable(
     )
 
 
+def _read_system_list(
+    novomodelo_output_dir: Path,
+    filename: str,
+    effect: str,
+    *,
+    entity: tuple[str, str],
+    absence_is_finding: bool,
+) -> tuple[Path | None, list[dict]]:
+    """The entity list of ``system/<filename>``, under the key named for the
+    file, and the path it was read from.
+
+    Resolved by :func:`_find_system_json`, so every reader of the file reads
+    the same one. *entity* is the singular and plural noun of one entry, for
+    the warning's reason. An absent file, or one without the key, yields
+    ``[]``, with a ``report-file-missing`` note for an absent file when
+    *absence_is_finding*. A file that does not parse, holds no list under the
+    key, or has an entry without an integer ``id`` yields ``[]`` with a
+    ``report-file-unreadable`` warning.
+    """
+    path = _find_system_json(novomodelo_output_dir, filename)
+    if path is None:
+        if absence_is_finding:
+            _emit_system_json_missing(novomodelo_output_dir, filename, effect)
+        else:
+            _LOG.debug("no system/%s near %s", filename, novomodelo_output_dir)
+        return None, []
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        _emit_system_json_unreadable(path, effect, exc)
+        return path, []
+    singular, plural = entity
+    entries = data.get(path.stem, []) if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        _emit_system_json_unreadable(path, effect, f"no list of {plural}")
+        return path, []
+    if not all(isinstance(e, dict) and type(e.get("id")) is int for e in entries):
+        _emit_system_json_unreadable(path, effect, f"a {singular} without an id")
+        return path, []
+    return path, entries
+
+
 #: What a report loses when ``lines.json`` cannot be read, the same from every
 #: reader so the warning is reported once.
 _LINES_UNREADABLE_EFFECT = (
@@ -2444,32 +2452,35 @@ _LINES_UNREADABLE_EFFECT = (
 
 
 def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
-    """Read ``system/lines.json`` and return its ``"lines"`` list.
+    """``system/lines.json``'s lines, by :func:`_read_system_list`'s contract.
 
-    Resolves the file via :func:`_find_system_json`'s candidate search
-    (``case_dir_for(novomodelo_output_dir)`` -> ``novomodelo_output_dir`` -> its
-    parent), so every caller -- the compare context, the dashboard, the
-    DECOMP corridor-alignment index -- resolves the same file. Returns
-    ``[]`` when the file, or its ``"lines"`` key, is absent, as for a case
-    without lines. A present ``lines.json`` that does not parse, or holds no
-    list of lines, also returns ``[]``, with a ``report-file-unreadable``
-    warning.
+    An absent file is a case without lines, so it is no finding.
     """
-    path = _find_system_json(novomodelo_output_dir, "lines.json")
-    if path is None:
-        _LOG.debug("no system/lines.json near %s", novomodelo_output_dir)
-        return []
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as exc:
-        _emit_system_json_unreadable(path, _LINES_UNREADABLE_EFFECT, exc)
-        return []
-    lines = data.get("lines", []) if isinstance(data, dict) else None
-    if not isinstance(lines, list):
-        _emit_system_json_unreadable(path, _LINES_UNREADABLE_EFFECT, "no list of lines")
-        return []
-    return lines
+    return _read_system_list(
+        novomodelo_output_dir,
+        "lines.json",
+        _LINES_UNREADABLE_EFFECT,
+        entity=("line", "lines"),
+        absence_is_finding=False,
+    )[1]
+
+
+def _read_hydros_json(novomodelo_output_dir: Path) -> tuple[Path | None, list[dict]]:
+    """``system/hydros.json``'s plants and path, by :func:`_read_system_list`'s
+    contract; the conversion always writes the file, so its absence is noted."""
+    return _read_system_list(
+        novomodelo_output_dir,
+        "hydros.json",
+        _HYDROS_EFFECT,
+        entity=("hydro plant", "hydro plants"),
+        absence_is_finding=True,
+    )
+
+
+def read_novomodelo_hydros(novomodelo_output_dir: Path) -> list[dict]:
+    """``system/hydros.json``'s hydro plants: the one way any report reads the
+    file, so a missing or unreadable file is one finding with one effect."""
+    return _read_hydros_json(novomodelo_output_dir)[1]
 
 
 def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:

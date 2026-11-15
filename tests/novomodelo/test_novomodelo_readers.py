@@ -41,13 +41,16 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_hydro_per_stage_bounds,
     read_novomodelo_hydro_total_flows,
     read_novomodelo_hydro_withdrawal,
+    read_novomodelo_hydros,
     read_novomodelo_line_bounds,
     read_novomodelo_line_means,
     read_novomodelo_lines,
     read_novomodelo_load_bus_ids,
     read_novomodelo_lp_max_generation,
     read_novomodelo_network_lines,
+    read_novomodelo_productivity_detail,
     read_novomodelo_scenario_weights,
+    read_novomodelo_spillage_energy,
     read_novomodelo_stage_line_bounds,
     read_novomodelo_thermal_means,
     read_novomodelo_thermal_metadata,
@@ -692,6 +695,110 @@ class TestHydroMetadataHasNoBusId:
         out = tmp_path / "output"
         out.mkdir(parents=True)
         assert read_novomodelo_hydro_metadata(out) == {}
+
+
+def _write_hydros_text(case_dir: Path, text: str) -> None:
+    (case_dir / "system").mkdir(parents=True, exist_ok=True)
+    (case_dir / "system" / "hydros.json").write_text(text, encoding="utf-8")
+
+
+_HYDRO_MEANS = pl.DataFrame(
+    {
+        "entity_id": [0, 1],
+        "stage_id": [0, 0],
+        "incremental_inflow_m3s": [10.0, 4.0],
+        "outflow_m3s": [30.0, 50.0],
+    }
+)
+
+
+class TestReadNovomodeloHydros:
+    def test_absent_file_is_a_missing_note(self, tmp_path: Path) -> None:
+        with dx.collect() as found:
+            assert read_novomodelo_hydros(tmp_path / "output") == []
+
+        assert [(d.code, d.severity, d.title) for d in found] == [
+            ("report-file-missing", Severity.INFO, "system/hydros.json not found")
+        ]
+
+    def test_file_without_the_plant_list_is_a_case_without_plants(
+        self, tmp_path: Path
+    ) -> None:
+        _write_hydros_text(tmp_path, "{}")
+
+        with dx.collect() as found:
+            assert read_novomodelo_hydros(tmp_path / "output") == []
+
+        assert found == []
+
+    @pytest.mark.parametrize(
+        ("text", "reason"),
+        [
+            ("{not json", "Reason: JSONDecodeError: "),
+            ("[]", "Reason: no list of hydro plants"),
+            ('{"hydros": 3}', "Reason: no list of hydro plants"),
+            ('{"hydros": [{"name": "H0"}]}', "Reason: a hydro plant without an id"),
+            ('{"hydros": [{"id": "0"}]}', "Reason: a hydro plant without an id"),
+        ],
+    )
+    def test_unusable_file_is_one_warning(
+        self, tmp_path: Path, text: str, reason: str
+    ) -> None:
+        _write_hydros_text(tmp_path, text)
+
+        with dx.collect() as found:
+            assert read_novomodelo_hydros(tmp_path / "output") == []
+
+        [warning] = found
+        assert (warning.code, warning.severity, warning.title) == (
+            "report-file-unreadable",
+            Severity.WARNING,
+            "system/hydros.json could not be read",
+        )
+        assert warning.notes[-1].startswith(reason)
+
+    def test_every_reader_of_an_unreadable_file_degrades_to_one_finding(
+        self, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "output"
+        _write_sim_entity_partition(
+            out,
+            "hydros",
+            0,
+            [
+                {
+                    "hydro_id": 0,
+                    "stage_id": 0,
+                    "block_id": 0,
+                    "spillage_m3s": 5.0,
+                    "equivalent_productivity_mw_per_m3s": 1.0,
+                }
+            ],
+        )
+        _write_hydros_text(tmp_path, "{not json")
+
+        with dx.collect() as found:
+            assert read_novomodelo_hydro_metadata(out) == {}
+            assert read_novomodelo_productivity_detail(out) == {}
+            assert read_novomodelo_hydro_total_flows(out, _HYDRO_MEANS).is_empty()
+            assert read_novomodelo_spillage_energy(out).is_empty()
+
+        assert len(found) == 4
+        assert [(d.code, d.title) for d in dx.finalize_diagnostics(found)] == [
+            ("report-file-unreadable", "system/hydros.json could not be read")
+        ]
+        assert "minimum storage as zero" in found[0].summary
+
+    def test_total_inflow_adds_the_upstream_plants_outflow(
+        self, tmp_path: Path
+    ) -> None:
+        _write_minimal_hydros_json(
+            tmp_path, [{"id": 0, "downstream_id": 1}, {"id": 1, "downstream_id": None}]
+        )
+
+        result = read_novomodelo_hydro_total_flows(tmp_path / "output", _HYDRO_MEANS)
+
+        assert result.sort("entity_id")["total_inflow_m3s"].to_list() == [10.0, 34.0]
 
 
 class TestHydroBusLabels:

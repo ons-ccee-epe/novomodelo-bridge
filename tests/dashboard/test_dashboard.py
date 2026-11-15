@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -327,6 +328,22 @@ def test_load_hydro_bus_map_empty_unit_groups_raises_named_error(
 
     with pytest.raises(NovomodeloOutputError, match=r"hydro 4 \(EMPTY_GROUPS\)"):
         load_hydro_bus_map(tmp_path)
+
+
+@pytest.mark.parametrize("load", [load_names, load_hydro_bus_map, load_hydro_metadata])
+def test_hydro_loaders_without_a_readable_hydros_json_degrade_with_one_warning(
+    tmp_path: Path, load: Callable[[Path], object]
+) -> None:
+    (tmp_path / "system").mkdir()
+    (tmp_path / "system" / "hydros.json").write_text("{not json", encoding="utf-8")
+
+    with dx.collect() as found:
+        result = load(tmp_path)
+
+    assert result == {}
+    assert [(d.code, d.title) for d in found] == [
+        ("report-file-unreadable", "system/hydros.json could not be read")
+    ]
 
 
 # ---------------------------------------------------------------------------
