@@ -54,6 +54,8 @@ from novomodelo_bridge.decomp.files import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from idecomp.decomp import Dadger, Vazoes
 
     from novomodelo_bridge.decomp.case import DecompCase
@@ -300,31 +302,34 @@ def _ac_coverage(
 
 
 def _special_constraint_coverage(
-    dadger: _SpecialConstraintRegisters, libs_file: Path | None
+    dadger: _SpecialConstraintRegisters,
+    libs_file: Path | None,
+    id_map: DecompIdMap,
+    pumping_ids: Mapping[int, int],
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify the deck's special constraints into converted (RE/HQ/HV/HE,
-    split into bounds-lowered vs generic-emitted) and deferred (RHA/
-    LIBs-electrical), so an operator sees at a glance what the conversion
-    will and will not carry — without running a conversion.
+    split into bounds-lowered vs generic-emitted), left out (a term on an
+    entity the case lacks) and deferred (RHA/LIBs-electrical), without
+    running a conversion.
 
-    A pure read of *dadger* (through the same census
-    :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints` the
-    pipeline consumes) and of the deck's LIBs electrical-constraint file
-    *libs_file* — no conversion, no emitter.
-
-    Always returns exactly one passing summary :class:`CheckItem` (coverage
-    never blocks conversion, mirroring :func:`_ac_coverage`) plus a
-    diagnostic per bucket that is non-empty: an ``INFO`` for the converted
-    split — present whenever the deck declares at least one special
-    constraint — reporting the bounds-lowered/generic-emitted counts as
-    probes (never a hard-coded oracle), plus a ``WARNING`` per
-    present deferred surface. The deferred diagnostics are produced verbatim
-    by the detection helpers
-    (:func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`
-    / :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`)
-    — never re-derived here.
+    Counts the census ``convert decomp`` consumes:
+    :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`
+    screened by
+    :func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`
+    against *id_map* and the ``UE`` codes of *pumping_ids*. Always returns
+    exactly one passing summary :class:`CheckItem` (coverage never blocks
+    conversion) plus an ``INFO`` for the converted split when any constraint
+    converts, and the WARNINGs of the screen and of the detection helpers
+    (:func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`,
+    :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`)
+    verbatim, as ``convert decomp`` raises them.
     """
-    census = constraint_registers.read_constraints(dadger)
+    census, unknown = constraint_registers.drop_unknown_entities(
+        constraint_registers.read_constraints(dadger),
+        hydro_codes=id_map.hydro_codes,
+        thermal_codes=id_map.thermal_codes,
+        pumping_codes=pumping_ids.keys(),
+    )
 
     bounds_by_family: dict[str, int] = {}
     generic_by_family: dict[str, int] = {}
@@ -335,6 +340,7 @@ def _special_constraint_coverage(
     present_families = sorted(
         fam for fam, records in census.by_family.items() if records
     )
+    converted_families = sorted(bounds_by_family.keys() | generic_by_family.keys())
 
     n_bounds = len(census.to_bounds)
     n_generic = len(census.to_generic)
@@ -353,7 +359,7 @@ def _special_constraint_coverage(
     ]
     diagnostics: list[Diagnostic] = []
 
-    if present_families:
+    if converted_families:
         diagnostics.append(
             Diagnostic(
                 code="decomp-special-constraints-converted",
@@ -374,12 +380,13 @@ def _special_constraint_coverage(
                             bounds_by_family.get(fam, 0),
                             generic_by_family.get(fam, 0),
                         ]
-                        for fam in present_families
+                        for fam in converted_families
                     ],
                     justify=["left", "right", "right"],
                 ),
             )
         )
+    diagnostics.extend(unknown)
 
     rha_diagnostic = constraint_registers.detect_unconverted_rha(dadger)
     if rha_diagnostic is not None:
@@ -498,6 +505,9 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             build_effective_cadastro,
         )
         from novomodelo_bridge.decomp.converters.hydro import read_hidr
+        from novomodelo_bridge.decomp.converters.network import (
+            pumping_station_id_map,
+        )
 
         try:
             hidr = read_hidr(files.hidr)
@@ -518,7 +528,10 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             diagnostics.extend(cov_diags)
 
         sc_checks, sc_diags = _special_constraint_coverage(
-            dadger, files.libs_restricao_eletrica
+            dadger,
+            files.libs_restricao_eletrica,
+            id_map,
+            pumping_station_id_map(dadger),
         )
         checks.extend(sc_checks)
         diagnostics.extend(sc_diags)

@@ -29,6 +29,7 @@ from novomodelo_bridge.core.preflight import (
 from novomodelo_bridge.decomp.constraint_registers import (
     detect_libs_electrical,
     detect_unconverted_rha,
+    drop_unknown_entities,
     read_constraints,
 )
 from novomodelo_bridge.decomp.converters.cadastro import (
@@ -43,6 +44,7 @@ from novomodelo_bridge.decomp.converters.cadastro import (
     topology_varies_diagnostic,
 )
 from novomodelo_bridge.decomp.files import DecompFiles
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.preflight import (
     _ac_coverage,
     _load_factor_check,
@@ -371,6 +373,10 @@ class TestAcCoverage:
         assert diagnostics == []
 
 
+#: The plant the synthetic special-constraint deck's HV VARM term names.
+_SC_ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(40,))
+
+
 class TestSpecialConstraintCoverage:
     """``_special_constraint_coverage``'s converted (RE/HQ/HV/HE,
     bounds-lowered vs generic-emitted) vs deferred (RHA/LIBs-electrical)
@@ -413,7 +419,7 @@ class TestSpecialConstraintCoverage:
         dadger = self._rha_dadger()
         census = read_constraints(dadger)
 
-        checks, diagnostics = _special_constraint_coverage(dadger, None)
+        checks, diagnostics = _special_constraint_coverage(dadger, None, _SC_ID_MAP, {})
 
         assert len(checks) == 1
         assert checks[0].label == "Special-constraint coverage"
@@ -439,7 +445,9 @@ class TestSpecialConstraintCoverage:
         dadger = self._synthetic_dadger()
         census = read_constraints(dadger)
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, None)
+        _checks, diagnostics = _special_constraint_coverage(
+            dadger, None, _SC_ID_MAP, {}
+        )
 
         converted = next(
             d for d in diagnostics if d.code == "decomp-special-constraints-converted"
@@ -456,6 +464,30 @@ class TestSpecialConstraintCoverage:
         assert len(census.to_bounds) == 3  # RE FU + HV VARM + HQ QDES
         assert len(census.to_generic) == 1  # HE (always generic)
 
+    def test_a_constraint_on_a_missing_entity_is_left_out_as_convert_does(
+        self,
+    ) -> None:
+        """``check decomp`` counts the screened census and raises the screen's
+        WARNING, as ``convert decomp`` does."""
+        dadger = self._synthetic_dadger()
+        _, expected = drop_unknown_entities(
+            read_constraints(dadger), hydro_codes=(), thermal_codes=(), pumping_codes=()
+        )
+        no_plants = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+
+        checks, diagnostics = _special_constraint_coverage(dadger, None, no_plants, {})
+
+        converted, *unknown = diagnostics
+        assert unknown == expected
+        assert [d.code for d in unknown] == ["decomp-rhv-varm-plant-uncadastred"]
+        assert converted.title == "Special constraints converted (3)"
+        assert converted.table is not None
+        assert [row[0] for row in converted.table.rows] == ["HE", "HQ", "RE"]
+        assert checks[0].detail == (
+            "2 records lowered to bounds, 1 emitted as generic constraints, "
+            "4 families present in the deck"
+        )
+
     def test_deferred_rha_diagnostic_is_sourced_from_the_helper_verbatim(
         self,
     ) -> None:
@@ -463,7 +495,9 @@ class TestSpecialConstraintCoverage:
         expected = detect_unconverted_rha(dadger)
         assert expected is not None
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, None)
+        _checks, diagnostics = _special_constraint_coverage(
+            dadger, None, _SC_ID_MAP, {}
+        )
 
         rha_diagnostic = next(
             d for d in diagnostics if d.code == "decomp-rha-family-unconverted"
@@ -478,7 +512,9 @@ class TestSpecialConstraintCoverage:
         expected = detect_libs_electrical(libs_file)
         assert expected is not None  # sanity: the fixture trips the LIBs token
 
-        _checks, diagnostics = _special_constraint_coverage(dadger, libs_file)
+        _checks, diagnostics = _special_constraint_coverage(
+            dadger, libs_file, _SC_ID_MAP, {}
+        )
 
         assert diagnostics == [expected]
 
@@ -487,7 +523,7 @@ class TestSpecialConstraintCoverage:
     ) -> None:
         dadger = _ConstraintFakeDadger()
 
-        checks, diagnostics = _special_constraint_coverage(dadger, None)
+        checks, diagnostics = _special_constraint_coverage(dadger, None, _SC_ID_MAP, {})
 
         assert len(checks) == 1
         assert checks[0].passed is True
