@@ -111,8 +111,9 @@ _RELATO_MISSING_EFFECT = (
     "the report leaves out DECOMP's cost breakdown and stage costs, its "
     "convergence, its time per iteration and the REE energy comparison."
 )
-#: The same for a relato.rvN without its convergence table, which both readers
-#: of that table meet, completing ``"relato.rvN could not be read, so ..."``.
+#: What the report leaves out of a relato.rvN without one of its tables,
+#: completing ``"relato.rvN could not be read, so ..."``. Each reader fails on
+#: its own table, so the effect is per table, shared by that table's readers.
 _RELATO_CONVERGENCE_UNREADABLE_EFFECT = (
     "the report shows Novomodelo's convergence alone, without DECOMP's time per "
     "iteration."
@@ -120,6 +121,8 @@ _RELATO_CONVERGENCE_UNREADABLE_EFFECT = (
 _RELATO_COSTS_UNREADABLE_EFFECT = (
     "the report leaves out DECOMP's cost breakdown and stage costs."
 )
+#: The same for its REE membership table, shared with ``dec_oper_ree.csv``.
+_REE_ENERGY_EFFECT = "the report leaves out the REE energy comparison."
 _DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
 
 
@@ -350,14 +353,17 @@ def _scenario_probabilities(decomp_dir: Path) -> pl.DataFrame:
     ``relato2`` is not free.
 
     Returns an empty (schema-valid) frame -- :func:`_scenario_mean` then
-    falls back to its unweighted mean -- when :func:`read_relato_costs`
-    raises ``FileNotFoundError``/``ValueError`` (no source-model cost report
-    at all) AND ``relato2`` is also empty. Never raises on its own.
+    falls back to its unweighted mean -- when ``relato`` or its cost table is
+    missing, after the same finding :func:`_cost_frames` emits, AND
+    ``relato2`` is also empty. Never raises on its own.
     """
     try:
         raw = read_relato_costs(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No relato cost table for scenario probabilities: %s", exc)
+    except FileNotFoundError:
+        _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
+        raw = pl.DataFrame()
+    except ValueError as exc:
+        _emit_unreadable("relato.rvN", decomp_dir, _RELATO_COSTS_UNREADABLE_EFFECT, exc)
         raw = pl.DataFrame()
 
     monthly = read_relato2_costs(decomp_dir)
@@ -2142,7 +2148,6 @@ def _ree_result_comparisons(
         return [], []
 
     hydro_codes = {code: id_map.hydro_id(code) for code in id_map.hydro_codes}
-    effect = "the report leaves out the REE energy comparison."
 
     try:
         membership = read_relato_membership(decomp_dir)
@@ -2150,7 +2155,7 @@ def _ree_result_comparisons(
         _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
         return [], []
     except ValueError as exc:
-        _emit_unreadable("relato.rvN", decomp_dir, effect, exc)
+        _emit_unreadable("relato.rvN", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], []
 
     ree_by_novomodelo_id, unmapped = _ree_membership_map(membership, hydro_codes)
@@ -2178,10 +2183,10 @@ def _ree_result_comparisons(
     try:
         source_ree, names = _decomp_ree_frame(decomp_dir, probabilities=probabilities)
     except FileNotFoundError:
-        _emit_missing("dec_oper_ree.csv", decomp_dir, effect)
+        _emit_missing("dec_oper_ree.csv", decomp_dir, _REE_ENERGY_EFFECT)
         return [], unmapped
     except ValueError as exc:
-        _emit_unreadable("dec_oper_ree.csv", decomp_dir, effect, exc)
+        _emit_unreadable("dec_oper_ree.csv", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], unmapped
 
     novomodelo_sums = _novomodelo_ree_sums(novomodelo_hydro, ree_by_novomodelo_id)

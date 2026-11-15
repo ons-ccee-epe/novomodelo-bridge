@@ -12,16 +12,20 @@ pending their own carve.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
+from idecomp.decomp import Relato
 
 from novomodelo_bridge.comparators.charts import _COST_MAP
 from novomodelo_bridge.comparators.decomp.results import (
     _NW_COST_LABELS,
     _bus_side,
     _cost_frames,
+    _decomp_convergence_frame,
     _probability_weighted_stage_cost,
+    _ree_result_comparisons,
     _scenario_probabilities,
     _union_cost_rows,
     _union_relato_reports,
@@ -31,7 +35,15 @@ from novomodelo_bridge.comparators.decomp.results import (
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from tests.comparators.conftest import _balance_fixture, _patch_aligned_frames
+from tests.comparators.conftest import (
+    _aligned_fixture,
+    _balance_fixture,
+    _patch_aligned_frames,
+    _ree_id_map,
+)
+from tests.comparators.test_decomp_results_performance import (
+    _relato_convergence_frame,
+)
 
 
 def _relato_costs_frame() -> pl.DataFrame:
@@ -634,6 +646,89 @@ class TestScenarioProbabilities:
         result = _scenario_probabilities(tmp_path)
 
         assert set(result["estagio"].unique().to_list()) == {3}
+
+    @pytest.mark.parametrize(
+        ("error", "code", "title"),
+        [
+            (
+                FileNotFoundError("no relato.rvN found"),
+                "report-file-missing",
+                "relato.rvN not found",
+            ),
+            (
+                ValueError("relato.rv0 has no relatorio_operacao_custos table"),
+                "report-file-unreadable",
+                "relato.rvN could not be read",
+            ),
+        ],
+    )
+    def test_emits_the_cost_breakdown_finding(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        error: Exception,
+        code: str,
+        title: str,
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise error
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
+            lambda *_a, **_k: pl.DataFrame(),
+        )
+
+        with dx.collect() as collected:
+            _scenario_probabilities(tmp_path)
+            _cost_frames(tmp_path, {})
+
+        assert len(collected) == 2
+        assert [(d.code, d.title) for d in dx.finalize_diagnostics(collected)] == [
+            (code, title)
+        ]
+
+
+def test_a_partial_relato_costs_only_the_sections_of_its_missing_tables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ``relato.rvN`` holding its convergence table but neither its cost
+    nor its REE membership table: the convergence reads through, and each
+    missing table is one warning shared by every reader of that table."""
+    (tmp_path / "relato.rv0").touch()
+    report = SimpleNamespace(
+        convergencia=_relato_convergence_frame().to_pandas(),
+        relatorio_operacao_custos=None,
+        uhes_rees_submercados=None,
+    )
+    monkeypatch.setattr(Relato, "read", staticmethod(lambda _path: report))
+
+    with dx.collect() as collected:
+        nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        probabilities = _scenario_probabilities(tmp_path)
+        convergence = _decomp_convergence_frame(tmp_path)
+        ree, _ = _ree_result_comparisons(
+            tmp_path, _aligned_fixture().novomodelo_hydro, _ree_id_map()
+        )
+
+    assert nw_costs == {}
+    assert nw_sin.is_empty()
+    assert probabilities.is_empty()
+    assert ree == []
+    assert convergence["iteration"].to_list() == [1, 2, 3]
+    assert len(collected) == 3
+    warnings = dx.finalize_diagnostics(collected)
+    assert [(d.code, d.title) for d in warnings] == [
+        ("report-file-unreadable", "relato.rvN could not be read")
+    ] * 2
+    assert sorted(d.summary for d in warnings) == [
+        "relato.rvN could not be read, so the report leaves out DECOMP's cost "
+        "breakdown and stage costs.",
+        "relato.rvN could not be read, so the report leaves out the REE energy "
+        "comparison.",
+    ]
 
 
 class TestWeightedGroupMeanCostEquivalence:
