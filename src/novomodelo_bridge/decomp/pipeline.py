@@ -1464,7 +1464,7 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
 
 
 def _read_constraint_census(
-    dadger: Dadger,
+    dadger: constraint_registers.ConstraintRegisters,
     effective: cadastro_conv.EffectiveCadastro,
     id_map: DecompIdMap,
     pumping_ids: Mapping[int, int],
@@ -1472,26 +1472,18 @@ def _read_constraint_census(
     """The deck's special constraints split by lowering target, without the
     ones on an entity the case lacks, reporting those and any conflicting
     bounds as diagnostics."""
-    census, unknown = constraint_registers.drop_unknown_entities(
-        constraint_registers.read_constraints(dadger),
+    census, diagnostics = constraint_registers.read_screened_constraints(
+        dadger,
         hydro_codes=id_map.hydro_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
+        plant_names={
+            int(code): str(name).strip()
+            for code, name in effective.base["nome_usina"].items()
+        },
     )
-    for diagnostic in unknown:
+    for diagnostic in diagnostics:
         dx.emit(diagnostic, logger=_LOG)
-    if census.bound_conflicts:
-        names = {
-            conflict.code: str(effective.base.loc[conflict.code, "nome_usina"]).strip()
-            for conflict in census.bound_conflicts
-            if conflict.code in effective.base.index
-        }
-        dx.emit(
-            constraint_registers.bound_conflicts_diagnostic(
-                census.bound_conflicts, names
-            ),
-            logger=_LOG,
-        )
     return census
 
 

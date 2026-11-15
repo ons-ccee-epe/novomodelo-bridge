@@ -32,9 +32,9 @@ the plane-reduction file and the electrical-constraint file are each read as
 UTF-8 when they are valid UTF-8 and as Latin-1 otherwise.
 
 The electrical-constraint file is read record by record, and a record name is
-recognized only in upper case, as the manual writes it. `convert newave` warns
-about every line that is not a record it reads (`libs-unread-lines`). A blank
-limit is unbounded, as the manual states. A conditional limit (`se(...)`) is
+recognized only in upper case, as the manual writes it. `check newave` and
+`convert newave` warn about every line that is not a record it reads
+(`libs-unread-lines`). A blank limit is unbounded, as the manual states. A conditional limit (`se(...)`) is
 not converted, and makes the case fail to convert.
 
 Many inputs are optional (`modif.dat`, `cvar.dat`, `curva.dat`, `agrint.dat`,

@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from novomodelo_bridge.core.diagnostics import Severity
-from novomodelo_bridge.core.preflight import PreflightVerdict
+from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
+from novomodelo_bridge.core.preflight import PreflightResult, PreflightVerdict
 from novomodelo_bridge.newave import preflight
+from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.files import NewaveFiles
 from novomodelo_bridge.newave.preflight import run_preflight
+from novomodelo_bridge.newave.switches import DgerSwitches
 from tests.conftest import make_nw_files
 
 # Optional field names derived the same way the module does, so the "all present"
@@ -24,7 +28,12 @@ _OPTIONAL_FIELDS = [
 
 
 def _all_optionals_present(tmp_path: Path) -> dict[str, Path | None]:
-    """Every optional input resolved to a path under *tmp_path* (none absent)."""
+    """Every optional input resolved to a path under *tmp_path* (none absent).
+
+    The electrical-constraint file, the one optional input whose contents
+    preflight reads, is written empty.
+    """
+    (tmp_path / "restricao_eletrica.dat").touch()
     return {name: tmp_path / f"{name}.dat" for name in _OPTIONAL_FIELDS}
 
 
@@ -139,27 +148,21 @@ class TestOptionalInputAdvisory:
 
 
 class TestSwitchAdvisory:
-    def _switches(self, **values: int):
-        from unittest.mock import MagicMock
-
-        from novomodelo_bridge.newave.switches import DgerSwitches
-
+    @staticmethod
+    def _switches(**values: int) -> DgerSwitches:
         dger = MagicMock()
         for field, value in values.items():
             setattr(dger, field, value)
         return DgerSwitches.from_dger(dger)
 
     def test_present_input_switched_off_yields_info_and_passing_check(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
         files = make_nw_files(tmp_path, ghmin=tmp_path / "ghmin.dat")
-        monkeypatch.setattr(
-            preflight,
-            "_read_switches",
-            lambda _files: self._switches(considera_ghmin=0),
-        )
 
-        checks, diagnostics = preflight._switch_advisory(files)
+        checks, diagnostics = preflight._switch_advisory(
+            files, self._switches(considera_ghmin=0)
+        )
 
         assert [c.label for c in checks] == ["dger.dat switches"]
         assert checks[0].passed and checks[0].detail == "1 present input switched off"
@@ -168,14 +171,11 @@ class TestSwitchAdvisory:
         assert "ghmin.dat" in diagnostics[0].title
 
     def test_nothing_switched_off_yields_one_passing_check(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
         files = make_nw_files(tmp_path, ghmin=tmp_path / "ghmin.dat")
-        monkeypatch.setattr(
-            preflight, "_read_switches", lambda _files: self._switches()
-        )
 
-        checks, diagnostics = preflight._switch_advisory(files)
+        checks, diagnostics = preflight._switch_advisory(files, self._switches())
 
         assert diagnostics == []
         assert checks[0].passed
@@ -184,16 +184,19 @@ class TestSwitchAdvisory:
     def test_unreadable_dger_is_a_failed_check(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def boom(_files):
+        def boom(_case: NewaveCase) -> DgerSwitches:
             raise ValueError("bad dger")
 
-        monkeypatch.setattr(preflight, "_read_switches", boom)
+        files = make_nw_files(tmp_path)
+        monkeypatch.setattr(preflight.NewaveFiles, "from_directory", lambda _src: files)
+        monkeypatch.setattr(NewaveCase, "switches", property(boom))
 
-        checks, diagnostics = preflight._switch_advisory(make_nw_files(tmp_path))
+        result = run_preflight(tmp_path)
 
-        assert [c.label for c in checks] == ["dger.dat readable"]
-        assert not checks[0].passed
-        assert diagnostics and diagnostics[0].severity is Severity.ERROR
+        [readable] = [c for c in result.checks if c.label == "dger.dat readable"]
+        assert not readable.passed
+        assert any(d.severity is Severity.ERROR for d in result.diagnostics)
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
 
     def test_run_preflight_stays_ok_with_a_switched_off_input(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -202,13 +205,92 @@ class TestSwitchAdvisory:
         present = _all_optionals_present(tmp_path)
         files = make_nw_files(tmp_path, **present)
         monkeypatch.setattr(preflight.NewaveFiles, "from_directory", lambda _src: files)
-        monkeypatch.setattr(
-            preflight,
-            "_read_switches",
-            lambda _files: self._switches(agrupamento_livre=0),
-        )
+        switches = self._switches(agrupamento_livre=0)
+        monkeypatch.setattr(NewaveCase, "switches", property(lambda _case: switches))
 
         result = run_preflight(tmp_path)
 
         assert result.verdict is PreflightVerdict.OK
         assert [d.code for d in result.diagnostics] == ["dger-switch-off"]
+
+
+class TestElectricFileAdvisory:
+    """``check newave`` reads the electrical-constraint file as ``convert
+    newave`` does, when ``dger.dat`` lets the conversion read it."""
+
+    def _run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        text: str,
+        switches: DgerSwitches | None = None,
+    ) -> PreflightResult:
+        libs_file = tmp_path / "restricao-eletrica.csv"
+        libs_file.write_text(text, encoding="utf-8")
+        files = make_nw_files(tmp_path, restricao_eletrica=libs_file)
+        monkeypatch.setattr(preflight.NewaveFiles, "from_directory", lambda _src: files)
+        if switches is not None:
+            monkeypatch.setattr(
+                NewaveCase, "switches", property(lambda _case: switches)
+            )
+        return run_preflight(tmp_path)
+
+    def test_lines_the_reader_keeps_as_text_are_warned_as_convert_does(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._run(
+            tmp_path,
+            monkeypatch,
+            "& comentario\n\nre;2;1.0ger_usih(10)\n"
+            "RESTRICAO-ELETRICA-FORMULA;3;ger_usih(10)\n",
+        )
+
+        [unread] = [d for d in result.diagnostics if d.code == UNREAD_LINES_CODE]
+        assert unread.severity is Severity.WARNING
+        assert unread.table is not None
+        assert unread.table.rows == [
+            ["re;2;1.0ger_usih(10)"],
+            ["RESTRICAO-ELETRICA-FORMULA;3;ger_usih(10)"],
+        ]
+        assert result.verdict is PreflightVerdict.WARNINGS
+
+    def test_a_file_whose_lines_are_all_read_raises_no_unread_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._run(tmp_path, monkeypatch, "& comentario\n")
+
+        assert UNREAD_LINES_CODE not in {d.code for d in result.diagnostics}
+        assert result.verdict is PreflightVerdict.OK
+
+    def test_a_file_switched_off_in_dger_is_not_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._run(
+            tmp_path,
+            monkeypatch,
+            "re;2;1.0ger_usih(10)\n",
+            TestSwitchAdvisory._switches(restricoes_eletricas_especiais=0),
+        )
+
+        assert "dger-switch-off" in {d.code for d in result.diagnostics}
+        assert UNREAD_LINES_CODE not in {d.code for d in result.diagnostics}
+        assert result.verdict is PreflightVerdict.OK
+
+    def test_an_unreadable_file_fails_the_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(_case: NewaveCase) -> None:
+            raise ValueError("restriction 7 is malformed")
+
+        monkeypatch.setattr(NewaveCase, "restricao_eletrica", property(boom))
+
+        result = self._run(tmp_path, monkeypatch, "")
+
+        [readable] = [
+            c
+            for c in result.checks
+            if c.label == "LIBS electrical restrictions readable"
+        ]
+        assert readable.passed is False
+        assert readable.detail == "restriction 7 is malformed"
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT

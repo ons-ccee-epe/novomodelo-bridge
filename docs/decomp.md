@@ -31,8 +31,8 @@ nothing declares is ignored, and `check decomp` and `convert decomp` list it in
 a `libs-unindexed-file` note (`-v` prints it in full). The index is read as
 UTF-8 when it is valid UTF-8 and as Latin-1 otherwise. In the
 electrical-constraint file a card name is recognized only in upper case,
-as the manual writes it, and `convert decomp` warns about every line that is
-not a card it reads (`libs-unread-lines`).
+as the manual writes it, and `check decomp` and `convert decomp` warn about
+every line that is not a card it reads (`libs-unread-lines`).
 
 `check decomp` validates the deck without writing anything and also lists what
 the conversion will leave behind for this particular deck. Exit 0 means ready,
@@ -84,8 +84,8 @@ becomes a bound on that plant. Two such `HQ` restrictions on the same plant
 variable that no value meets at once, such as a 0 m³/s ceiling and a 6 m³/s floor, become generic constraints
 instead, each with its own slack at the same penalty. DECOMP prices every
 `RHQ` violation per unit and violates the cheaper restriction, whatever their
-order or numbers, so Novomodelo then makes the same choice. The conversion lists
-these pairs in one warning.
+order or numbers, so Novomodelo then makes the same choice. `check decomp` and
+`convert decomp` list these pairs in one warning.
 
 Incremental inflows are converted as the inflow file gives them, negative
 values included. DECOMP reports a negative incremental inflow as zero in its
