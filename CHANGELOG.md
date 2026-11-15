@@ -267,9 +267,10 @@ links are cobre-bridge's.
 
 - **`convert decomp` stopped with `unexpected-error` on deck limits that put
   a floor above the ceiling.** On turbined flow, generation, outflow, storage
-  and unit groups it now writes both limits as the deck has them, with a
-  `decomp-bound-floor-above-ceiling` warning: DECOMP violates whichever is
-  cheaper, and novomodelo charges the violation. On spillage, diversion,
+  and unit groups it now writes both limits as the deck has them, with one
+  `decomp-bound-floor-above-ceiling` warning, also when the floor is above the
+  plant's capacity: DECOMP violates whichever is cheaper, and novomodelo
+  charges the violation. On spillage, diversion,
   thermal generation, pumped flow and contracts, which novomodelo holds within
   both limits, it stops with `source-field-parse` naming the records.
 - **A failed `convert newave` or `convert decomp` left an empty case directory

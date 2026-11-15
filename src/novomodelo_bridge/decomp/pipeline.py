@@ -1696,7 +1696,7 @@ def _hydro_bound_labels(
 ) -> emission_checks.BoundLabels:
     """The deck constraints and limits behind each ``hydro_bounds`` cell, each
     with the value it sets, for the capacity clamp's report."""
-    labels: dict[tuple[int, int, int | None, str], list[tuple[str, float]]] = {}
+    labels: dict[emission_checks.BoundKey, list[tuple[str, float]]] = {}
     for contrib in contribs:
         if contrib.family != "hydro":
             continue
@@ -1813,6 +1813,21 @@ def _keep_soft_conflicts(
         else:
             settled.append(replace(row, lower=row.upper, conflict=None))
     return settled
+
+
+def _kept_hydro_floors(
+    rows: Iterable[bounds_accumulator.ResolvedRow],
+) -> set[emission_checks.BoundKey]:
+    """The ``hydro_bounds`` floors :func:`_keep_soft_conflicts` kept above
+    their ceiling, which the merge warning already reports."""
+    floors: set[emission_checks.BoundKey] = set()
+    for row in rows:
+        if row.family != "hydro" or row.conflict is None:
+            continue
+        column = bounds_accumulator.axis_spec(row.family, row.axis).lower_column
+        if column is not None:
+            floors.add((row.entity_id, row.stage_id, row.block_id, column))
+    return floors
 
 
 def _kept_conflicts_diagnostic(kept: Sequence[_KeptConflict]) -> dx.Diagnostic:
@@ -1966,24 +1981,23 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     block_counts = {stage.index: len(stage.block_hours) for stage in calendar}
     hydro_names = {hydro["id"]: hydro["name"] for hydro in hydros_dict["hydros"]}
     kept: list[_KeptConflict] = []
-    bound_tables = bounds_accumulator.build_bound_tables(
-        _keep_soft_conflicts(
-            _resolve_or_refuse(
-                contribs,
-                block_counts,
-                lambda row: _bound_entity(
-                    row, id_map, hydro_names, artifacts.thermals_dict, pumping_ids
-                ),
-                dadger=case.files.dadger,
+    rows = _keep_soft_conflicts(
+        _resolve_or_refuse(
+            contribs,
+            block_counts,
+            lambda row: _bound_entity(
+                row, id_map, hydro_names, artifacts.thermals_dict, pumping_ids
             ),
-            lambda row: (
-                id_map.hydro_codes[row.entity_id],
-                hydro_names[row.entity_id],
-                "",
-            ),
-            kept,
-        )
+            dadger=case.files.dadger,
+        ),
+        lambda row: (
+            id_map.hydro_codes[row.entity_id],
+            hydro_names[row.entity_id],
+            "",
+        ),
+        kept,
     )
+    bound_tables = bounds_accumulator.build_bound_tables(rows)
     # An RE or RHQ QTUR ceiling can sit above the plant's declared capacity
     # (BELO MONTE's RE does on both real decks); novomodelo rule 43 rejects it.
     # A ceiling below the stage's floor is not raised: the source model treats
@@ -1995,6 +2009,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         source_codes={id_map.hydro_id(code): code for code in id_map.hydro_codes},
         raise_to_minimum=False,
         labels=_hydro_bound_labels(contribs),
+        reported_floors=_kept_hydro_floors(rows),
     )
     assert hydro_bounds is not None
     # Fold in the TI irrigation withdrawal (a consumptive water use novomodelo reads

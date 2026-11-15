@@ -606,6 +606,34 @@ class TestClampHydroBoundsToDeclared:
             [6, "Hydro 0", "Min turbined flow (m³/s)", "3", 150.0, 100.0]
         ]
 
+    def test_a_floor_the_caller_reported_is_not_reported_again(self) -> None:
+        hydros = _hydros(_hydro_with_envelope(0, turbined=(0.0, 100.0)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0, 0], type=pa.int32()),
+                "stage_id": pa.array([3, 4], type=pa.int32()),
+                "min_turbined_m3s": pa.array([150.0, 140.0], type=pa.float64()),
+                "max_turbined_m3s": pa.array([50.0, 50.0], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros,
+                hydro_bounds,
+                source_codes=_CODES,
+                raise_to_minimum=False,
+                reported_floors={(0, 3, None, "min_turbined_m3s")},
+            )
+
+        assert result is hydro_bounds
+        (floor,) = collected
+        assert floor.code == "hydro-bounds-floor-above-declared-capacity"
+        assert floor.table is not None
+        assert floor.table.rows == [
+            [6, "Hydro 0", "Min turbined flow (m³/s)", "4", 140.0, 100.0]
+        ]
+
     def test_floor_above_capacity_is_written_with_a_warning(self) -> None:
         # The ceiling is capped at 100; the 120 floor beside it stays.
         hydros = _hydros(_hydro_with_envelope(0, generation=(0.0, 100.0)))

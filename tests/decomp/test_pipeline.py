@@ -866,19 +866,26 @@ class TestBoundAccumulatorWiring:
             d.code for d in diagnostics
         }
 
+    @pytest.mark.parametrize(
+        "floor",
+        [
+            pytest.param(30.0, id="floor_under_capacity"),
+            pytest.param(120.0, id="floor_above_capacity"),
+        ],
+    )
     def test_generation_floor_above_another_records_ceiling_is_kept(
-        self, tmp_path: Path
+        self, tmp_path: Path, floor: float
     ) -> None:
         """RE 12's floor above RE 13's ceiling on one plant is written as the
         deck has it, since the source model violates whichever soft limit is
         cheaper, with one warning naming both records and no second report of
-        the same cells."""
+        the same cells, even where the floor is also above the capacity."""
         diagnostics: list[Diagnostic] = []
         dst = _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
             to_bounds=(
-                _re_generation_record(12, lower=30.0, upper=None),
+                _re_generation_record(12, lower=floor, upper=None),
                 _re_generation_record(13, lower=None, upper=20.0),
             ),
             diagnostics_out=diagnostics,
@@ -887,8 +894,9 @@ class TestBoundAccumulatorWiring:
         hydro = json.loads(
             (dst / "system" / "hydros.json").read_text(encoding="utf-8")
         )["hydros"][0]
+        assert 20.0 < hydro["generation"]["max_generation_mw"] < 120.0
         table = pq.read_table(dst / "constraints" / "hydro_bounds.parquet")
-        assert table["min_generation_mw"].drop_null().to_pylist() == [30.0] * 3
+        assert table["min_generation_mw"].drop_null().to_pylist() == [floor] * 3
         assert table["max_generation_mw"].drop_null().to_pylist() == [20.0] * 3
         reported = [
             d
@@ -905,7 +913,7 @@ class TestBoundAccumulatorWiring:
         ]
         assert reported[0].table is not None
         assert reported[0].table.rows == [
-            [1, hydro["name"], "Generation (MW)", "RE 12", "RE 13", "0", 30.0, 20.0]
+            [1, hydro["name"], "Generation (MW)", "RE 12", "RE 13", "0", floor, 20.0]
         ]
 
     def test_spillage_floor_above_another_records_ceiling_is_refused(

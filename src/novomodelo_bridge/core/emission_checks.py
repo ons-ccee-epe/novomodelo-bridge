@@ -41,7 +41,7 @@ unit-testable against hand-built artifacts.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -96,13 +96,13 @@ _CLAMP_LIMIT_LABELS: dict[str, str] = {
     "min_outflow_m3s": "Min outflow (m³/s)",
 }
 
-#: The deck constraints and limits behind each ``hydro_bounds`` cell, keyed
-#: ``(hydro_id, stage_id, block_id, column)``, each with the value it sets in
-#: that column.
-#: A ``None`` block_id covers every block of the stage.
-type BoundLabels = Mapping[
-    tuple[int, int, int | None, str], Sequence[tuple[str, float]]
-]
+#: One column of a ``hydro_bounds`` row: ``(hydro_id, stage_id, block_id,
+#: column)``. A ``None`` block_id covers every block of the stage.
+type BoundKey = tuple[int, int, int | None, str]
+
+#: The deck constraints and limits behind each ``hydro_bounds`` cell, each with
+#: the value it sets in that column.
+type BoundLabels = Mapping[BoundKey, Sequence[tuple[str, float]]]
 
 #: A ``hydro_bounds`` row's ``(hydro_id, stage_id, block_id)``.
 type _Cell = tuple[int, int, int | None]
@@ -345,6 +345,7 @@ def clamp_hydro_bounds_to_declared(
     source_codes: Mapping[int, int],
     raise_to_minimum: bool,
     labels: BoundLabels | None = None,
+    reported_floors: Collection[BoundKey] = (),
 ) -> pa.Table | None:
     """Hold every per-stage ``hydro_bounds`` turbined, generation and outflow
     limit to the owning plant's declared ``[min, max]`` envelope from
@@ -365,8 +366,8 @@ def clamp_hydro_bounds_to_declared(
        shortfall, and the caller reports the pair where it meets them.
     3. A floor above the declared max is written as the deck has it:
        novomodelo prices the shortfall instead of rejecting it, and a WARNING
-       reports it. A floor above a lower ceiling is step 2's, or the
-       caller's.
+       reports it unless *reported_floors* names it. A floor above a lower
+       ceiling is step 2's, or the caller's.
 
     Each finding is reported only past the deck's written precision
     (:func:`~novomodelo_bridge.core.tolerances.beyond_written_precision`);
@@ -376,7 +377,8 @@ def clamp_hydro_bounds_to_declared(
     *source_codes* maps each hydro id to its source-model code for those
     reports. *labels*, when given, names the deck constraints and limits behind
     each cell, and each report then lists, under "Set by", those that put the
-    cell outside its envelope.
+    cell outside its envelope. *reported_floors* names the floors the caller
+    has already reported, so one cause gets one diagnostic.
     Returns *hydro_bounds* unchanged (same object) when it is ``None``, carries
     no clamped column, or nothing fell outside its envelope.
     """
@@ -409,6 +411,7 @@ def clamp_hydro_bounds_to_declared(
             labels,
             found,
             raise_to_minimum=raise_to_minimum,
+            reported_floors=reported_floors,
         )
         for column, values in ((ceiling_column, ceilings), (floor_column, floors)):
             if values != columns[column]:
@@ -512,6 +515,7 @@ def _clamp_axis(
     found: _ClampFindings,
     *,
     raise_to_minimum: bool,
+    reported_floors: Collection[BoundKey],
 ) -> None:
     """Apply the steps of :func:`clamp_hydro_bounds_to_declared` to one
     limit's *ceilings* and *floors* in place, keyed by its ``(ceiling column,
@@ -569,6 +573,8 @@ def _clamp_axis(
         ):
             continue
         if beyond_written_precision(floor, declared_max):
+            if (*cell, floor_column) in reported_floors:
+                continue
             _record(
                 found.floors,
                 cell,
