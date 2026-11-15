@@ -134,16 +134,15 @@ links are cobre-bridge's.
   as `electric-constraint-malformed-term`. `convert decomp`
   now reads a LIBS coefficient written before a space or a parenthesis, and
   stops on a function given the wrong number of arguments.
-- **`compare` and `dashboard` no longer stop on a `system/lines.json` or
-  `system/hydros.json` they cannot read, nor `dashboard` on such a
-  `buses.json`, `thermals.json` or `non_controllable_sources.json`**, where
-  `compare newave` exited 2 on such a `hydros.json` and `dashboard` stopped
-  with a traceback. Without `lines.json` they leave out the interchange and
-  the Network tab's lines; without `hydros.json`, the hydro plants' names and
-  the results matched, placed or classified by plant. Without one of the other
-  three, `dashboard` shows its entities without their names and leaves out the
-  thermal plants' results or the non-controllable sources' generation by bus.
-  A `report-file-unreadable` warning says so.
+- **`dashboard` no longer stops on a file it can go without and cannot read,
+  nor `compare` on such a `system/lines.json` or `system/hydros.json`**, where
+  `compare newave` exited 2 and `dashboard` stopped with a traceback: a
+  `report-file-unreadable` warning says what the report leaves out, and a
+  hydro plant without unit groups is left out of the per-bus charts with a new
+  `hydro-unit-groups-missing` warning. `dashboard` still needs `stages.json`
+  and exits 1 with `novomodelo-output-unreadable` when it is missing or
+  unusable, as it does with the new `output-write-failed` on an output path it
+  cannot write.
 - **`export dessem` reports a missing DECOMP deck directory as
   `source-file-missing` and a missing case directory as
   `novomodelo-output-unreadable`**, as `convert` and `dashboard` do, instead

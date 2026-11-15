@@ -158,29 +158,43 @@ def test_unparseable_config_json_without_a_stages_json_rate_warns(
     assert "0.0% discount rate" in config_findings[0].summary
 
 
+_NOT_JSON = "{not json"
+
+
 @pytest.mark.parametrize(
-    "filename",
+    ("relative", "text"),
     [
-        "lines.json",
-        "hydros.json",
-        "thermals.json",
-        "non_controllable_sources.json",
-        "buses.json",
+        ("system/lines.json", _NOT_JSON),
+        ("system/hydros.json", _NOT_JSON),
+        ("system/thermals.json", _NOT_JSON),
+        ("system/non_controllable_sources.json", _NOT_JSON),
+        ("system/buses.json", _NOT_JSON),
+        ("config.json", _NOT_JSON),
+        ("config.json", '{"discount_rate": "ten"}'),
+        ("scenarios/load_factors.json", _NOT_JSON),
+        ("scenarios/load_factors.json", '{"load_factors": [{"bus_id": 0}]}'),
+        ("output/training/scaling_report.json", _NOT_JSON),
+        ("output/training/scaling_report.json", '{"stages": [{"stage_id": 0}]}'),
+        ("output/stochastic/fitting_report.json", _NOT_JSON),
+        ("output/stochastic/fitting_report.json", '{"hydros": []}'),
+        ("output/stochastic/correlation.json", _NOT_JSON),
+        ("output/stochastic/correlation.json", '{"profiles": []}'),
+        ("output/simulation/metadata.json", _NOT_JSON),
+        ("output/simulation/metadata.json", '{"scenarios": {"completed": "2"}}'),
+        ("constraints/generic_constraints.json", _NOT_JSON),
+        ("constraints/generic_constraints.json", '{"constraints": [{"name": "RE"}]}'),
     ],
 )
-def test_dashboard_builds_when_a_system_json_does_not_parse(
-    tmp_path: Path, filename: str
+def test_dashboard_builds_when_a_file_it_can_go_without_is_unusable(
+    tmp_path: Path, relative: str, text: str
 ) -> None:
     from novomodelo_bridge.cli import app
 
     case_dir = tmp_path / "case"
     (case_dir / "output" / "simulation").mkdir(parents=True)
-    _write_json(
-        case_dir / "stages.json",
-        {"stages": [{"id": 0, "blocks": [{"id": 0, "hours": 730.0}]}]},
-    )
-    (case_dir / "system").mkdir()
-    (case_dir / "system" / filename).write_text("{not json", encoding="utf-8")
+    _write_json(case_dir / "stages.json", {"stages": _ONE_STAGE})
+    (case_dir / relative).parent.mkdir(parents=True, exist_ok=True)
+    (case_dir / relative).write_text(text, encoding="utf-8")
     output_path = case_dir / "d.html"
 
     result = CliRunner().invoke(
@@ -194,8 +208,62 @@ def test_dashboard_builds_when_a_system_json_does_not_parse(
         d["title"]
         for d in document["diagnostics"]
         if d["code"] == "report-file-unreadable"
-    ] == [f"system/{filename} could not be read"]
+    ] == [f"{relative} could not be read"]
     assert output_path.is_file()
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        (None, "stages.json was not found"),
+        (_NOT_JSON, "JSONDecodeError"),
+        ("[]", "no JSON object"),
+        ("{}", "no list of stages"),
+        ('{"stages": [{"blocks": []}]}', "a stage without an id"),
+        ('{"stages": [{"id": 0}]}', "stage 0 without blocks"),
+        ('{"stages": [{"id": 0, "blocks": [{"id": 0}]}]}', "stage 0 without blocks"),
+        (
+            '{"stages": [], "policy_graph": {"annual_discount_rate": "ten"}}',
+            "a discount rate that is not a number",
+        ),
+    ],
+)
+def test_an_unusable_stages_json_stops_the_dashboard_with_a_typed_error(
+    tmp_path: Path, text: str | None, reason: str
+) -> None:
+    from novomodelo_bridge.core.errors import NovomodeloOutputError
+
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    if text is not None:
+        (case_dir / "stages.json").write_text(text, encoding="utf-8")
+
+    with pytest.raises(NovomodeloOutputError, match=reason) as raised:
+        load_temporal_context(case_dir)
+
+    assert raised.value.path == str(case_dir / "stages.json")
+
+
+def test_an_unwritable_output_path_is_one_typed_failure(tmp_path: Path) -> None:
+    from novomodelo_bridge.cli import app
+
+    case_dir = tmp_path / "case"
+    (case_dir / "output" / "simulation").mkdir(parents=True)
+    _write_json(case_dir / "stages.json", {"stages": _ONE_STAGE})
+    blocker = tmp_path / "a-file"
+    blocker.write_text("", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["dashboard", str(case_dir), "--json", "-o", str(blocker / "d.html")],
+    )
+
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert document["status"] == "error"
+    [error] = [d for d in document["diagnostics"] if d["severity"] == "error"]
+    assert error["code"] == "output-write-failed"
+    assert f"file: {blocker / 'd.html'}" in error["notes"]
 
 
 # ---------------------------------------------------------------------------

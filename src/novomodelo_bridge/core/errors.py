@@ -104,6 +104,14 @@ class NovomodeloPartitionMissingError(BridgeError):
         self.path = path
 
 
+class OutputWriteError(BridgeError):
+    """A command could not write the file it produces."""
+
+    def __init__(self, message: str, *, path: str | None = None) -> None:
+        super().__init__(message)
+        self.path = path
+
+
 class EmissionCheckError(BridgeError, ValueError):
     """A self-check on the converted case found an ``ERROR``-severity defect.
 
@@ -143,6 +151,11 @@ _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
     NovomodeloPartitionMissingError: (
         "novomodelo-partition-missing",
         "Re-run novomodelo at the required version to produce this partition.",
+    ),
+    OutputWriteError: (
+        "output-write-failed",
+        "Check that the named file's directory can be written, or write to "
+        "another path.",
     ),
     OutputExistsError: (
         "output-exists",

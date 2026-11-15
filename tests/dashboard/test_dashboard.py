@@ -20,7 +20,6 @@ import polars as pl
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.errors import NovomodeloOutputError
 from novomodelo_bridge.dashboard.data import (
     _aggregate_timing_by_iteration,
     _correct_wall_times_from_convergence,
@@ -32,10 +31,9 @@ from novomodelo_bridge.dashboard.data import (
     load_hydro_metadata,
     load_names,
     load_ncs_bus_map,
-    load_stage_labels,
     load_thermal_metadata,
-    resolve_hydro_bus_id,
     scan_entity,
+    stage_labels,
 )
 from novomodelo_bridge.dashboard.tabs import (
     TAB_MODULES,
@@ -157,26 +155,24 @@ def test_load_names_without_a_readable_lines_json_keeps_the_other_names(
 
 
 # ---------------------------------------------------------------------------
-# load_stage_labels
+# stage_labels
 # ---------------------------------------------------------------------------
 
 
-def test_load_stage_labels_returns_formatted_labels(tmp_path: Path) -> None:
+def test_stage_labels_returns_formatted_labels() -> None:
     stages_json = {
         "stages": [
             {"id": 0, "start_date": "2024-01-01"},
             {"id": 1, "start_date": "2024-02-01"},
         ]
     }
-    _write_json(tmp_path / "stages.json", stages_json)
-
-    result = load_stage_labels(tmp_path)
+    result = stage_labels(stages_json)
 
     assert result[0] == "Jan 2024"
     assert result[1] == "Feb 2024"
 
 
-def test_load_stage_labels_weekly_stages_use_day_resolution(tmp_path: Path) -> None:
+def test_stage_labels_weekly_stages_use_day_resolution() -> None:
     """Stages sharing a calendar month (weekly week/month decks) must not
     collapse onto one month-only x-axis point — each gets a day-resolution
     label from its own start date.
@@ -189,9 +185,7 @@ def test_load_stage_labels_weekly_stages_use_day_resolution(tmp_path: Path) -> N
             {"id": 3, "start_date": "2026-04-04"},
         ]
     }
-    _write_json(tmp_path / "stages.json", stages_json)
-
-    result = load_stage_labels(tmp_path)
+    result = stage_labels(stages_json)
 
     # Three stages fall in March; month-only labels would all read "Mar 2026".
     assert result == {
@@ -203,34 +197,20 @@ def test_load_stage_labels_weekly_stages_use_day_resolution(tmp_path: Path) -> N
     assert len(set(result.values())) == 4
 
 
-def test_load_stage_labels_missing_file_returns_empty(tmp_path: Path) -> None:
-    result = load_stage_labels(tmp_path)
-
-    assert result == {}
-
-
-def test_load_stage_labels_falls_back_to_stage_id_on_invalid_date(
-    tmp_path: Path,
-) -> None:
+def test_stage_labels_falls_back_to_stage_id_on_invalid_date() -> None:
     stages_json = {
         "stages": [
             {"id": 3, "start_date": "not-a-date"},
         ]
     }
-    _write_json(tmp_path / "stages.json", stages_json)
-
-    result = load_stage_labels(tmp_path)
+    result = stage_labels(stages_json)
 
     assert result[3] == "3"
 
 
-def test_load_stage_labels_falls_back_to_stage_id_when_start_date_absent(
-    tmp_path: Path,
-) -> None:
+def test_stage_labels_falls_back_to_stage_id_when_start_date_absent() -> None:
     stages_json = {"stages": [{"id": 7}]}
-    _write_json(tmp_path / "stages.json", stages_json)
-
-    result = load_stage_labels(tmp_path)
+    result = stage_labels(stages_json)
 
     assert result[7] == "7"
 
@@ -310,27 +290,33 @@ def test_load_hydro_bus_map_omits_split_plant_without_one_loaded_bus(
     assert ambiguous_diags[0].table.rows == [[1, "X", "10, 20", loaded]]
 
 
-def test_load_hydro_bus_map_missing_unit_groups_raises_named_error(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "plant",
+    [
+        {"id": 3, "name": "ORPHAN"},
+        {"id": 3, "name": "ORPHAN", "unit_groups": []},
+        {"id": 3, "name": "ORPHAN", "unit_groups": [{"id": 0}]},
+        {"id": 3, "name": "ORPHAN", "unit_groups": "SE"},
+    ],
+)
+def test_a_plant_without_unit_groups_has_no_bus_and_is_listed(
+    tmp_path: Path, plant: dict
 ) -> None:
-    """A hand-edited/pre-0.13 hydro with no unit_groups raises a typed
-    error naming the plant, rather than a bare KeyError."""
-    hydros_json = {"hydros": [{"id": 3, "name": "ORPHAN"}]}
+    hydros_json = {"hydros": [hydro_with_group(0, 5), plant]}
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
-    with pytest.raises(NovomodeloOutputError, match=r"hydro 3 \(ORPHAN\)"):
-        load_hydro_bus_map(tmp_path)
+    with dx.collect() as found:
+        bus_map = load_hydro_bus_map(tmp_path)
+        metadata = load_hydro_metadata(tmp_path, bus_map=bus_map)
 
-
-def test_load_hydro_bus_map_empty_unit_groups_raises_named_error(
-    tmp_path: Path,
-) -> None:
-    """Empty-list variant of the missing-unit_groups guard."""
-    hydros_json = {"hydros": [{"id": 4, "name": "EMPTY_GROUPS", "unit_groups": []}]}
-    _write_json(tmp_path / "system" / "hydros.json", hydros_json)
-
-    with pytest.raises(NovomodeloOutputError, match=r"hydro 4 \(EMPTY_GROUPS\)"):
-        load_hydro_bus_map(tmp_path)
+    assert bus_map == {0: 5}
+    assert "bus_id" not in metadata[3]
+    assert metadata[3]["bus_ids"] == []
+    [warning] = [d for d in found if d.code == "hydro-unit-groups-missing"]
+    assert warning.severity is dx.Severity.WARNING
+    assert warning.title == "Hydro plants without unit groups (1)"
+    assert warning.table is not None
+    assert warning.table.rows == [[3, "ORPHAN"]]
 
 
 @pytest.mark.parametrize(
@@ -504,44 +490,13 @@ def test_load_hydro_metadata_omits_bus_id_for_split_plant_without_home(
     assert [row[:2] for row in ambiguous_diags[0].table.rows] == [[1, "AMBIGUOUS"]]
 
 
-def test_load_hydro_metadata_missing_unit_groups_raises_named_error(
-    tmp_path: Path,
-) -> None:
-    """Absent unit_groups raises the same typed error naming the plant,
-    from the metadata call site too."""
-    hydros_json = {
-        "hydros": [
-            {
-                "id": 2,
-                "name": "ORPHAN",
-                "generation": {},
-                "reservoir": {},
-            }
-        ]
-    }
-    _write_json(tmp_path / "system" / "hydros.json", hydros_json)
-
-    with pytest.raises(NovomodeloOutputError, match=r"hydro 2 \(ORPHAN\)"):
-        load_hydro_metadata(tmp_path)
-
-
-def test_resolve_hydro_bus_id_is_the_single_shared_implementation(
-    tmp_path: Path,
-) -> None:
-    """Both load_hydro_bus_map and load_hydro_metadata derive a plant's
-    bus by calling the one shared helper, rather than each inlining its own
-    copy of the unit_groups scan."""
+def test_hydro_metadata_takes_its_bus_from_the_bus_map(tmp_path: Path) -> None:
     hydros_json = {"hydros": [hydro_with_group(0, 7)]}
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
-    with patch(
-        "novomodelo_bridge.dashboard.data.resolve_hydro_bus_id",
-        wraps=resolve_hydro_bus_id,
-    ) as mock_resolve:
-        bus_map = load_hydro_bus_map(tmp_path)
-        metadata = load_hydro_metadata(tmp_path)
+    bus_map = load_hydro_bus_map(tmp_path)
+    metadata = load_hydro_metadata(tmp_path)
 
-    assert mock_resolve.call_count == 2
     assert bus_map[0] == metadata[0]["bus_id"] == 7
 
 
@@ -561,7 +516,7 @@ def test_load_entity_metadata_emits_multi_bus_diagnostic_once(
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
 
     with dx.collect() as collected:
-        metadata = load_entity_metadata(tmp_path)
+        metadata = load_entity_metadata(tmp_path, {})
 
     assert metadata.hydro_bus_map == {0: 5}
     assert "bus_id" not in metadata.hydro_meta[1]
@@ -581,7 +536,7 @@ def test_load_entity_metadata_resolves_split_plant_to_its_loaded_bus(
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
     _write_bus_loads(tmp_path, {0: 40000.0, 5: 0.0})
 
-    metadata = load_entity_metadata(tmp_path)
+    metadata = load_entity_metadata(tmp_path, {})
 
     assert metadata.hydro_bus_map == {1: 0}
     assert metadata.hydro_meta[1]["bus_id"] == 0
@@ -2078,7 +2033,7 @@ class TestSectionLoaders:
         assert temporal.stage_hours[0] == 420.0  # 120 + 300
         assert temporal.discount_rate == 0.0
 
-        entities = load_entity_metadata(_v2_case)
+        entities = load_entity_metadata(_v2_case, temporal.stages_data)
         assert isinstance(entities.names, dict)
         assert isinstance(entities.hydro_meta, dict)
 

@@ -20,11 +20,12 @@ degrades every present-but-unparseable input to a typed-empty frame, a
 genuine behaviour difference (see that module's docstring). Every
 partition and system JSON this module reads is an optional input. A
 present-but-unparseable system JSON that lists entities (lines, hydro
-plants, thermal plants, non-controllable sources, buses) or the run's
-training ``metadata.json`` degrades to an empty result with a
+plants, thermal plants, non-controllable sources, buses), the case's
+``constraints/generic_constraints.json``, or the run's training
+``metadata.json`` degrades to an empty result with a
 ``report-file-unreadable`` warning whose effect is the same from every reader
-of the file, since the report can go on without them; each of those system
-JSONs has one loader, :func:`_read_system_list` under a public
+of the file, since the report can go on without them; each of those entity
+lists has one loader, built on :func:`_read_entity_list` under a public
 ``read_novomodelo_<file>`` name, that every degrading reader goes through.
 The thermal and non-controllable-source bus maps of
 :func:`read_novomodelo_bus_aggregates`, and every other present-but-corrupt
@@ -56,7 +57,11 @@ from novomodelo_bridge.novomodelo.case_io import (
     case_dir_for,
     resolve_hydro_productivities,
 )
-from novomodelo_bridge.novomodelo.constraint_expr import BLOCK_HOURS_SCHEMA
+from novomodelo_bridge.novomodelo.constraint_expr import (
+    BLOCK_HOURS_SCHEMA,
+    ResolvedGenericConstraints,
+    resolve_generic_constraints,
+)
 from novomodelo_bridge.novomodelo.cost_categories import (
     NOVOMODELO_COST_COMPONENT_COLUMNS,
 )
@@ -262,6 +267,51 @@ def read_novomodelo_generic_constraint_echo(
         return pl.read_parquet(path)
     except Exception as exc:
         raise NovomodeloReadError(f"Failed to read {path}") from exc
+
+
+def read_novomodelo_generic_constraints(novomodelo_case_dir: Path) -> list[dict]:
+    """``constraints/generic_constraints.json``'s constraints, by
+    :func:`_read_entity_list`'s contract; an absent file is a case without
+    generic constraints.
+
+    The objects are sense-free (no ``sense`` key): a label's direction comes
+    from the bounds' endpoints (see
+    :func:`novomodelo_bridge.core.generic_constraint_format.shape_from_bounds`).
+    """
+    path = novomodelo_case_dir / "constraints" / "generic_constraints.json"
+    if not path.exists():
+        return []
+    return _read_entity_list(
+        path,
+        "constraints/generic_constraints.json",
+        "the report leaves out the generic constraints.",
+        key="constraints",
+        entity=("constraint", "constraints"),
+    )
+
+
+def read_novomodelo_resolved_generic_constraints(
+    novomodelo_case_dir: Path, novomodelo_output_dir: Path
+) -> ResolvedGenericConstraints:
+    """The case's generic constraints with the coefficients and bounds novomodelo built.
+
+    See :func:`novomodelo_bridge.novomodelo.constraint_expr.resolve_generic_constraints`;
+    terms and bounds are empty when the run wrote no
+    ``generic_constraints/resolved_echo.parquet``, which is read only when
+    the case has generic constraints.
+    """
+    min_storage = {
+        hid: float(meta.get("min_storage_hm3") or 0.0)
+        for hid, meta in read_novomodelo_hydro_metadata(novomodelo_output_dir).items()
+    }
+    constraints = read_novomodelo_generic_constraints(novomodelo_case_dir)
+    return resolve_generic_constraints(
+        constraints,
+        read_novomodelo_generic_constraint_echo(novomodelo_output_dir)
+        if constraints
+        else None,
+        min_storage,
+    )
 
 
 def scan_simulation_entity(
@@ -2400,14 +2450,32 @@ def _missing_columns(required: Iterable[str], present: Iterable[str]) -> str:
     return f"no {', '.join(missing[:-1])} or {missing[-1]} columns"
 
 
-def _emit_system_json_unreadable(
-    path: Path, effect: str, reason: Exception | str
-) -> None:
-    """Warn that the ``system/`` JSON at *path* could not be parsed."""
-    emit(
-        report_file_unreadable_diagnostic(f"system/{path.name}", path, effect, reason),
-        logger=_LOG,
-    )
+def _read_entity_list(
+    path: Path, label: str, effect: str, *, key: str, entity: tuple[str, str]
+) -> list[dict]:
+    """The entries under *key* of the JSON object at *path*, shown as *label*.
+
+    A missing *key* is an empty list. A file that does not parse, holds no
+    list under *key*, or has an entry without an integer ``id`` yields ``[]``
+    with a ``report-file-unreadable`` warning naming *effect*; *entity* is the
+    singular and plural noun of one entry, for the warning's reason.
+    """
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        reason: Exception | str = exc
+    else:
+        singular, plural = entity
+        entries = data.get(key, []) if isinstance(data, dict) else None
+        if not isinstance(entries, list):
+            reason = f"no list of {plural}"
+        elif not all(isinstance(e, dict) and type(e.get("id")) is int for e in entries):
+            reason = f"a {singular} without an id"
+        else:
+            return entries
+    emit(report_file_unreadable_diagnostic(label, path, effect, reason), logger=_LOG)
+    return []
 
 
 def _read_system_list(
@@ -2422,12 +2490,9 @@ def _read_system_list(
     file, and the path it was read from.
 
     Resolved by :func:`_find_system_json`, so every reader of the file reads
-    the same one. *entity* is the singular and plural noun of one entry, for
-    the warning's reason. An absent file, or one without the key, yields
-    ``[]``, with a ``report-file-missing`` note for an absent file when
-    *absence_is_finding*. A file that does not parse, holds no list under the
-    key, or has an entry without an integer ``id`` yields ``[]`` with a
-    ``report-file-unreadable`` warning.
+    the same one, and read by :func:`_read_entity_list`. An absent file
+    yields ``[]``, with a ``report-file-missing`` note when
+    *absence_is_finding*.
     """
     path = _find_system_json(novomodelo_output_dir, filename)
     if path is None:
@@ -2436,21 +2501,9 @@ def _read_system_list(
         else:
             _LOG.debug("no system/%s near %s", filename, novomodelo_output_dir)
         return None, []
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as exc:
-        _emit_system_json_unreadable(path, effect, exc)
-        return path, []
-    singular, plural = entity
-    entries = data.get(path.stem, []) if isinstance(data, dict) else None
-    if not isinstance(entries, list):
-        _emit_system_json_unreadable(path, effect, f"no list of {plural}")
-        return path, []
-    if not all(isinstance(e, dict) and type(e.get("id")) is int for e in entries):
-        _emit_system_json_unreadable(path, effect, f"a {singular} without an id")
-        return path, []
-    return path, entries
+    return path, _read_entity_list(
+        path, f"system/{filename}", effect, key=path.stem, entity=entity
+    )
 
 
 #: What a report loses when ``lines.json`` cannot be read, the same from every

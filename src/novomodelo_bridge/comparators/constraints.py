@@ -1,8 +1,7 @@
-"""Shared novomodelo-side generic-constraint loaders, LHS evaluator, and bound resolution."""
+"""Shared novomodelo-side generic-constraint LHS evaluator and bound resolution."""
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import NamedTuple
@@ -18,70 +17,12 @@ from novomodelo_bridge.novomodelo.constraint_expr import (
     ResolvedGenericConstraints,
     evaluate_lhs,
     required_entities,
-    resolve_generic_constraints,
     stage_weighted_bounds,
     stage_weighted_lhs,
 )
 from novomodelo_bridge.novomodelo.readers import scan_simulation_entity
 
 _LOG = logging.getLogger(__name__)
-
-
-def load_generic_constraints(novomodelo_input_dir: Path) -> list[dict]:
-    """Load constraint definitions from ``constraints/generic_constraints.json``.
-
-    The objects are sense-free (no ``sense`` key); direction is derived
-    from the companion bounds table's endpoints when a label is needed (see
-    :func:`per_stage_bounds` / :func:`novomodelo_bridge.core.generic_constraint_format.
-    shape_from_bounds`). Returns an empty list when the file is missing or
-    malformed.
-    """
-    path = novomodelo_input_dir / "constraints" / "generic_constraints.json"
-    if not path.exists():
-        return []
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        emit(
-            report_file_unreadable_diagnostic(
-                "constraints/generic_constraints.json",
-                path,
-                "the report leaves out the generic constraints.",
-                exc,
-            ),
-            logger=_LOG,
-        )
-        return []
-    return list(data.get("constraints", []))
-
-
-def load_resolved_generic_constraints(
-    novomodelo_case_dir: Path, novomodelo_output_dir: Path
-) -> ResolvedGenericConstraints:
-    """The case's generic constraints with the coefficients and bounds novomodelo built.
-
-    See :func:`novomodelo_bridge.novomodelo.constraint_expr.resolve_generic_constraints`;
-    terms and bounds are empty when the run wrote no
-    ``generic_constraints/resolved_echo.parquet``, which is read only when
-    the case has generic constraints.
-    """
-    min_storage = {
-        hid: float(meta.get("min_storage_hm3") or 0.0)
-        for hid, meta in novomodelo_readers.read_novomodelo_hydro_metadata(
-            novomodelo_output_dir
-        ).items()
-    }
-    constraints = load_generic_constraints(novomodelo_case_dir)
-    return resolve_generic_constraints(
-        constraints,
-        novomodelo_readers.read_novomodelo_generic_constraint_echo(
-            novomodelo_output_dir
-        )
-        if constraints
-        else None,
-        min_storage,
-    )
 
 
 _LHS_SCHEMA = pl.Schema(

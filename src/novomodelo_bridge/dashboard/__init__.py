@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from novomodelo_bridge.core.errors import OutputWriteError
 from novomodelo_bridge.dashboard.data import DashboardData
 from novomodelo_bridge.dashboard.tabs import collect_required_js, get_renderable_tabs
 from novomodelo_bridge.ui.html.css import dashboard_css
@@ -20,7 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 def build_dashboard(case_dir: Path, output_path: Path) -> None:
-    """Build an interactive HTML dashboard from Novomodelo simulation results."""
+    """Build an interactive HTML dashboard from Novomodelo simulation results.
+
+    Raises:
+        NovomodeloOutputError: from :meth:`DashboardData.load`.
+        OutputWriteError: *output_path* could not be written.
+    """
     data = DashboardData.load(case_dir)
 
     renderable = get_renderable_tabs(data)
@@ -38,7 +44,13 @@ def build_dashboard(case_dir: Path, output_path: Path) -> None:
     )
 
     logger.info("Writing dashboard to %s", output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html, encoding="utf-8")
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(html, encoding="utf-8")
+    except OSError as exc:
+        raise OutputWriteError(
+            f"The dashboard could not be written ({exc.strerror or exc}).",
+            path=str(output_path),
+        ) from exc
     size_kb = output_path.stat().st_size / 1024
     logger.info("Dashboard written (%.0f KB)", size_kb)
