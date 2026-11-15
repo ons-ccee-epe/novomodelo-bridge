@@ -70,7 +70,13 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.anticipated import commitment_clamped_diagnostic
-from novomodelo_bridge.core.pandas_utils import as_float, as_frame, require_frame
+from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.pandas_utils import (
+    as_float,
+    as_frame,
+    as_int,
+    require_frame,
+)
 from novomodelo_bridge.core.policy_dates import hours_between
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
 from novomodelo_bridge.decomp.temporal import hours_weighted, weekly_stage_count
@@ -83,6 +89,7 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _LOG = logging.getLogger(__name__)
+_DADGNL = "dadgnl.rvN"
 
 _NONZERO_TOLERANCE = 1e-9
 _HOURS_PER_OPERATIVE_WEEK = 168  # 7 days x 24 h; the study/post-study grid step
@@ -267,9 +274,11 @@ def read_gnl_model(dadgnl: _GnlRegisters) -> GnlCommitmentModel | None:
 
     Raises
     ------
-    ValueError
+    FieldParseError
         If a ``gl`` register names a ``codigo_usina`` with no ``tg`` registry
-        entry (a committed dispatch for an unknown plant — a malformed deck).
+        entry (a committed dispatch for an unknown plant — a malformed deck),
+        a ``gl`` ``data_inicio`` is not a ``ddmmyyyy`` date, or a ``gs`` or
+        ``nl`` field is blank.
     """
     if not is_gnl_enabled(dadgnl):
         return None
@@ -316,17 +325,27 @@ def _read_gl_commitments(
     by_code: dict[int, list[GnlStageCommitment]] = {}
     for register in _gl_registers(dadgnl):
         code = int(register.codigo_usina)
+        estagio = int(register.estagio)
         if code not in known_codes:
-            raise ValueError(
-                f"gl declares a committed dispatch for code {code} with no tg "
-                "registry entry (a dispatch for an unknown plant)"
+            raise FieldParseError(
+                f"{_DADGNL} has a GL record for plant {code} at stage {estagio}, "
+                "but no TG record declares that plant",
+                field="GL plant code",
             )
+        try:
+            start_date = _parse_data_inicio(register.data_inicio)
+        except ValueError as exc:
+            raise FieldParseError(
+                f"{_DADGNL} has a GL record for plant {code} at stage {estagio} "
+                f"whose start date {register.data_inicio!r} is not a ddmmyyyy date",
+                field="GL start date",
+            ) from exc
         geracao = _as_floats(register.geracao)
         duracao = _as_floats(register.duracao)
         by_code.setdefault(code, []).append(
             GnlStageCommitment(
-                estagio=int(register.estagio),
-                start_date=_parse_data_inicio(register.data_inicio),
+                estagio=estagio,
+                start_date=start_date,
                 committed_mw=_block_weighted_mean(geracao, duracao),
                 hours=sum(duracao),
                 block_mw=tuple(geracao),
@@ -405,7 +424,13 @@ def _read_weeks_per_month(dadgnl: _GnlRegisters) -> dict[int, int]:
     frame = as_frame(dadgnl.gs(df=True))
     if frame is None or frame.empty:
         return {}
-    return {int(row["mes"]): int(row["semanas"]) for _, row in frame.iterrows()}
+    weeks: dict[int, int] = {}
+    for _, row in frame.iterrows():
+        month = _whole_number(row["mes"], "GS month", "the month of a GS record")
+        weeks[month] = _whole_number(
+            row["semanas"], "GS week count", f"the week count of GS month {month}"
+        )
+    return weeks
 
 
 def operative_week_months(
@@ -448,7 +473,24 @@ def _read_nl_lags(dadgnl: _GnlRegisters) -> dict[int, int]:
     frame = as_frame(dadgnl.nl(df=True))
     if frame is None or frame.empty:
         return {}
-    return {int(row["codigo_usina"]): int(row["lag"]) for _, row in frame.iterrows()}
+    lags: dict[int, int] = {}
+    for _, row in frame.iterrows():
+        code = _whole_number(
+            row["codigo_usina"], "NL plant code", "the plant code of an NL record"
+        )
+        lags[code] = _whole_number(row["lag"], "NL lag", f"the NL lag of plant {code}")
+    return lags
+
+
+def _whole_number(value: object, field: str, what: str) -> int:
+    """*value* as an ``int``; *what* names it in the error a blank field raises."""
+    try:
+        return as_int(value)
+    except (TypeError, ValueError) as exc:
+        raise FieldParseError(
+            f"{_DADGNL} leaves {what} blank or unreadable",
+            field=field,
+        ) from exc
 
 
 def fill_undeclared_block_hours(

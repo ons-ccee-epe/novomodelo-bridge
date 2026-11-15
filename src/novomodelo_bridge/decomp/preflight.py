@@ -558,7 +558,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             effective, cadastro_report = build_effective_cadastro(
                 dadger, hidr, calendar
             )
-        except (ValueError, KeyError, OSError) as exc:
+        except (ValueError, KeyError, OSError, FieldParseError) as exc:
             checks.append(
                 CheckItem(
                     label="AC cadastro overrides resolvable",

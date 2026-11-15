@@ -141,7 +141,12 @@ links are cobre-bridge's.
 - **`export dessem` reports a missing DECOMP deck directory as
   `source-file-missing` and a missing case directory as
   `novomodelo-output-unreadable`**, as `convert` and `dashboard` do, instead
-  of `conversion-error`.
+  of `conversion-error`. It and `convert decomp` report an empty `hidr.dat`
+  and a malformed `GL`, `GS` or `NL` record in `dadgnl.rvN` as
+  `source-field-parse`, and `export dessem` reports a checkpoint with no
+  trained cuts or an output directory it cannot write as
+  `dessem-fcf-export-failed` naming the failed step, where all of these
+  ended as `unexpected-error`.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.

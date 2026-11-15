@@ -37,7 +37,8 @@ and by name, and each must have an `NL` record.
 `CASE_DIR` is a Novomodelo case that novomodelo has solved, so `CASE_DIR/output/policy/`
 holds its policy checkpoint. The checkpoint is read through `novomodelo-python`, so
 it must have been written by the novomodelo release this bridge pairs with; an
-older checkpoint is refused with an error naming its format version. The
+older checkpoint is refused with an error naming its format version, and so is
+one that holds no cut past its warm-start cuts, from a run that trained none. The
 export also reads the case's `stages.json`, `initial_conditions.json`,
 `system/hydros.json`, `system/thermals.json`, and `system/buses.json`.
 
@@ -146,7 +147,7 @@ and every export copies it into `export_manifest.json`. In brief:
 | Code | Meaning |
 |------|---------|
 | 0 | Export succeeded. |
-| 1 | Export failed: deck or case not found, the deck is not the one the case was converted from, outputs exist without `--force`, unreadable checkpoint, a premise refused the case, or the read-back check failed. |
+| 1 | Export failed: deck or case not found, a deck file that cannot be read, the deck is not the one the case was converted from, outputs exist without `--force`, an output directory that cannot be written, an unreadable checkpoint or one with no trained cuts, a premise refused the case, or the read-back check failed. |
 | 2 | Invalid command line, such as a missing `DECOMP_DIR`. |
 
 ## Known limitations

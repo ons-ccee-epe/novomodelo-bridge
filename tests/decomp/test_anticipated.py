@@ -22,6 +22,7 @@ import pytest
 from idecomp.decomp import Dadgnl
 
 from novomodelo_bridge.core.diagnostics import Severity, collect
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.converters import anticipated
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlClass4Window,
@@ -225,8 +226,65 @@ def test_thermals_ascending_by_code() -> None:
 
 def test_gl_code_absent_from_tg_raises_naming_code() -> None:
     gl = [_GlReg(999, 1, "14032026", [168.0], [100.0])]
-    with pytest.raises(ValueError, match="999"):
+    with pytest.raises(FieldParseError, match="GL record for plant 999") as raised:
         read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))
+
+    assert raised.value.field == "GL plant code"
+    assert "dadgnl.rvN" in str(raised.value)
+
+
+@pytest.mark.parametrize("data_inicio", ["1403206", "32132026", "abcdefgh"])
+def test_unparseable_gl_start_date_raises_naming_plant_and_stage(
+    data_inicio: str,
+) -> None:
+    gl = [_GlReg(86, 3, data_inicio, [168.0], [100.0])]
+    with pytest.raises(
+        FieldParseError, match="GL record for plant 86 at stage 3"
+    ) as raised:
+        read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], []))
+
+    assert raised.value.field == "GL start date"
+    assert repr(data_inicio) in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("gs_rows", "nl_rows", "field", "what"),
+    [
+        (
+            [{"mes": 1, "semanas": 3}, {"mes": 2, "semanas": float("nan")}],
+            [],
+            "GS week count",
+            "the week count of GS month 2",
+        ),
+        (
+            [{"mes": float("nan"), "semanas": 3}],
+            [],
+            "GS month",
+            "the month of a GS record",
+        ),
+        (
+            [],
+            [{"codigo_usina": 86, "codigo_submercado": 1, "lag": float("nan")}],
+            "NL lag",
+            "the NL lag of plant 86",
+        ),
+        (
+            [],
+            [{"codigo_usina": float("nan"), "codigo_submercado": 1, "lag": 2}],
+            "NL plant code",
+            "the plant code of an NL record",
+        ),
+    ],
+)
+def test_blank_gs_or_nl_field_raises_naming_record_and_field(
+    gs_rows: list[dict], nl_rows: list[dict], field: str, what: str
+) -> None:
+    gl = [_GlReg(86, 1, "14032026", [168.0], [100.0])]
+    with pytest.raises(FieldParseError) as raised:
+        read_gnl_model(_StubDadgnl(gl, [_tg_row(86, "SANTA CRUZ")], gs_rows, nl_rows))
+
+    assert raised.value.field == field
+    assert str(raised.value) == f"dadgnl.rvN leaves {what} blank or unreadable"
 
 
 def test_registry_only_plant_has_empty_commitment() -> None:

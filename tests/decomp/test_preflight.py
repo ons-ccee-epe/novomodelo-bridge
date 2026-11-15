@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 from idecomp.decomp.modelos.dadger import (
     ACALTEFE,
     ACCOTVAZ,
@@ -184,6 +185,26 @@ class TestTabCharacterAdvisory:
         assert any(
             check.detail == "none found" and check.passed for check in result.checks
         )
+
+
+class TestEmptyHydroRegistry:
+    def test_an_empty_hidr_fails_the_cadastro_check(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        deck = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, deck)
+        (deck / "hidr.dat").write_bytes(b"")
+
+        with pytest.warns(UserWarning):
+            result = run_decomp_preflight(deck)
+
+        [check] = [
+            c for c in result.checks if c.label == "AC cadastro overrides resolvable"
+        ]
+        assert check.passed is False
+        assert check.detail is not None
+        assert check.detail.startswith("hidr.dat holds no hydro plant records")
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
 
 
 class TestOptionalInputAdvisory:
