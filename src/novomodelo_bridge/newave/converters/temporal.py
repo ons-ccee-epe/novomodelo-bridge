@@ -14,27 +14,30 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING, NamedTuple
 
+import pandas as pd
 from inewave.newave import Dger
 
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
     Severity,
+    counted,
     emit,
 )
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.penalties import INFLOW_NON_NEGATIVITY_METHOD
 from novomodelo_bridge.core.run_config import SIMULATION_CUT_SET
 from novomodelo_bridge.core.season_calendar import (
     block_names,
     monthly_season_definitions,
 )
-from novomodelo_bridge.newave.case import NewaveCase
+from novomodelo_bridge.newave.case import NewaveCase, hydro_plant_table
 from novomodelo_bridge.newave.horizon import stage_dates_for, study_horizon, study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    import pandas as pd
+    import pyarrow as pa
 
 logger = logging.getLogger(__name__)
 
@@ -808,6 +811,142 @@ def _estimation_section(
     if order_selection is not None:
         estimation["order_selection"] = order_selection
     return estimation
+
+
+#: The two ``confhd.dat`` columns that bound a plant's fit, as the manual names them.
+_FIT_WINDOW_FIELD = "INIC.HIST/FIM HIST"
+
+#: Plants named per window when a refusal lists the plants outside the main window.
+_MAX_NAMED_PLANTS = 10
+
+
+def convert_history_years(
+    case: NewaveCase, id_map: NewaveIdMap, inflow_history: pa.Table
+) -> dict[str, int] | None:
+    """Build ``estimation.history_years`` from ``confhd.dat``'s fit window.
+
+    The source model fits each plant's inflow model on the years from its
+    INIC.HIST to its FIM HIST; the case holds one window for every plant.
+    Returns ``None``, with a warning, when a converted plant leaves either year
+    blank: the source model then reads ``postos.dat``, which the conversion
+    does not, so the case fits on every year of *inflow_history*.
+
+    Raises
+    ------
+    UnsupportedSourceError
+        The converted plants give different windows.
+    FieldParseError
+        The window ends before it starts, or reaches outside the full years of
+        *inflow_history*.
+    """
+    if inflow_history.num_rows == 0:
+        return None
+    dates = inflow_history.column("start_date").unique().to_pylist()
+    years = {d.year for d in dates}
+    first, last = min(years), max(years)
+    # The history stops at the month before the study start.
+    last_full = (
+        last if any(d.year == last and d.month == 12 for d in dates) else last - 1
+    )
+
+    plants = hydro_plant_table(case.confhd)
+    plants = plants[plants["codigo_usina"].isin(id_map.all_hydro_codes)]
+    blank = plants["ano_inicio_historico"].isna() | plants["ano_fim_historico"].isna()
+    if blank.any():
+        emit(_blank_fit_window_diagnostic(plants[blank], first, last), logger=logger)
+        return None
+
+    windows: dict[tuple[int, int], list[str]] = {}
+    for name, start, end in zip(
+        plants["nome_usina"],
+        plants["ano_inicio_historico"],
+        plants["ano_fim_historico"],
+        strict=True,
+    ):
+        windows.setdefault((int(start), int(end)), []).append(str(name).strip())
+    if len(windows) > 1:
+        # TRACKED NOVOMODELO-GAP (C40): the source model fits each plant on its
+        # own window, novomodelo fits every plant on one. Remove when novomodelo
+        # accepts a window per plant.
+        raise UnsupportedSourceError(
+            "confhd.dat gives the converted plants different fit windows: "
+            f"{_describe_windows(windows)}. The case fits the inflow model on "
+            "one window for every plant, so give them all the same INIC.HIST "
+            "and FIM HIST.",
+            path="confhd.dat",
+            field=_FIT_WINDOW_FIELD,
+        )
+
+    [(start, end)] = windows
+    if start > end:
+        raise FieldParseError(
+            f"confhd.dat fits the inflow model on {start}-{end}, a window that "
+            "ends before it starts.",
+            path="confhd.dat",
+            field=_FIT_WINDOW_FIELD,
+        )
+    if start < first or end > last_full:
+        raise FieldParseError(
+            f"confhd.dat fits the inflow model on {start}-{end}, but the inflow "
+            "history in vazoes.dat before the study start covers the full years "
+            f"{first}-{last_full}, so the case cannot fit on those years.",
+            path="confhd.dat",
+            field=_FIT_WINDOW_FIELD,
+        )
+    return {"from": start, "to": end}
+
+
+def _describe_windows(windows: dict[tuple[int, int], list[str]]) -> str:
+    """Each window with its plants, the most common one by count only."""
+    ordered = sorted(windows.items(), key=lambda item: (-len(item[1]), item[0]))
+    (start, end), names = ordered[0]
+    parts = [f"{start}-{end} for {counted(len(names), 'plant')}"]
+    for (start, end), names in ordered[1:]:
+        shown = ", ".join(names[:_MAX_NAMED_PLANTS])
+        if len(names) > _MAX_NAMED_PLANTS:
+            shown += f" and {len(names) - _MAX_NAMED_PLANTS} more"
+        parts.append(f"{start}-{end} for {shown}")
+    return "; ".join(parts)
+
+
+def _blank_fit_window_diagnostic(
+    plants: pd.DataFrame, first: int, last: int
+) -> Diagnostic:
+    """The warning for converted plants with a blank INIC.HIST or FIM HIST."""
+
+    def year(value: object) -> str:
+        return "" if pd.isna(value) else f"{value:.0f}"
+
+    rows = [
+        [int(code), str(name).strip(), year(start), year(end)]
+        for code, name, start, end in zip(
+            plants["codigo_usina"],
+            plants["nome_usina"],
+            plants["ano_inicio_historico"],
+            plants["ano_fim_historico"],
+            strict=True,
+        )
+    ]
+    return Diagnostic(
+        code="hydro-fit-window-blank",
+        severity=Severity.WARNING,
+        category="Inflow scenarios",
+        title=f"Inflow model fitted on every year: confhd.dat window blank ({len(rows)})",
+        summary=(
+            "confhd.dat leaves INIC.HIST or FIM HIST blank for the listed "
+            "plants, so NEWAVE takes their years from postos.dat, which the "
+            "conversion does not read. The case fits the inflow model on every "
+            f"year of the history, {first}-{last}, so its inflow scenarios can "
+            "differ from NEWAVE's."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "INIC.HIST", "FIM HIST"], rows=rows
+        ),
+        remediation=(
+            "Fill INIC.HIST and FIM HIST in confhd.dat with the years postos.dat "
+            "gives these plants."
+        ),
+    )
 
 
 def convert_config(case: NewaveCase) -> dict:

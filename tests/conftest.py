@@ -808,6 +808,10 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:
             return_value=_FAKE_CONFIG,
         ),
         patch(
+            "novomodelo_bridge.newave.pipeline.temporal_conv.convert_history_years",
+            return_value=None,
+        ),
+        patch(
             "novomodelo_bridge.newave.pipeline.ic_conv.convert_initial_conditions",
             return_value=_FAKE_IC,
         ),

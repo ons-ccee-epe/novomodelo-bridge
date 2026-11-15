@@ -347,6 +347,11 @@ def _convert_temporal_and_stochastic(
 
     logger.debug("Converting inflow history from vazoes.dat")
     inflow_history_table = inflow_windows.convert_inflow_history_windows(case, id_map)
+    history_years = temporal_conv.convert_history_years(
+        case, id_map, inflow_history_table
+    )
+    if history_years is not None:
+        config_dict["estimation"]["history_years"] = history_years
 
     logger.debug("Converting water withdrawal")
     withdrawal_table = hydro_conv.convert_water_withdrawal(case, id_map)

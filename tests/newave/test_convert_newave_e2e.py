@@ -9,6 +9,7 @@ instead of passing silently.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -51,3 +52,14 @@ def test_newave_mini_deck_writes_json_floats_at_requested_digits(
     floats = case_json_floats(dst)
     assert floats
     assert all(value == float(f"{value:.{digits}g}") for value in floats)
+
+
+def test_newave_mini_deck_fits_the_inflow_model_on_the_confhd_window(
+    newave_mini_deck: Path, tmp_path: Path
+) -> None:
+    """The mini deck's confhd.dat gives every plant INIC.HIST 1931 and FIM HIST 2024."""
+    dst = tmp_path / "converted"
+    convert_newave_case(newave_mini_deck, dst)
+
+    config = json.loads((dst / "config.json").read_text(encoding="utf-8"))
+    assert config["estimation"]["history_years"] == {"from": 1931, "to": 2024}
