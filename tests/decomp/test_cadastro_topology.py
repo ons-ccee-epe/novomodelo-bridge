@@ -222,7 +222,7 @@ def test_jusena_override_sets_the_energy_link_only() -> None:
     assert [effective.energy_link(1, s) for s in range(3)] == [3, 3, 3]
     assert effective.energy_link(2, 0) is None
     assert effective.downstream_plant(1, 0) == 2
-    assert effective.energy_link_varies(1) is False
+    assert topology_varies_diagnostic(effective) is None
     assert report.applied["jusante_energia"] == 1
 
 
@@ -232,7 +232,6 @@ def test_temporal_jusena_override_varies() -> None:
     effective, _ = build_effective_cadastro(dadger, hidr, _calendar())
 
     assert [effective.energy_link(1, s) for s in range(3)] == [None, None, 3]
-    assert effective.energy_link_varies(1) is True
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +364,7 @@ def test_nposnw_override_sets_the_coupling_gauge_only() -> None:
     assert report.applied["posto_acoplamento"] == 1
     assert effective.coupling_gauge(1) == 99
     assert effective.inflow_gauge(1, 2) == 11
-    assert effective.inflow_gauge_varies(1) is False
+    assert topology_varies_diagnostic(effective) is None
     assert effective.coupling_gauge(2) == 12
 
 
@@ -442,7 +441,6 @@ def test_temporal_topology_is_reported_and_uses_stage0() -> None:
     assert effective.downstream_plant(1, 0) == 2
     assert effective.downstream_plant(1, 1) == 2
     assert effective.downstream_plant(1, 2) == 3
-    assert effective.downstream_plant_varies(1) is True
 
     _, parents = _incremental_context(effective, _ABC_ID_MAP)
     diagnostic = topology_varies_diagnostic(effective)
@@ -478,7 +476,6 @@ def test_temporal_gauge_is_reported_and_uses_stage0() -> None:
 
     assert effective.inflow_gauge(1, 0) == 11
     assert effective.inflow_gauge(1, 2) == 99
-    assert effective.inflow_gauge_varies(1) is True
 
     station_by_code, _ = _incremental_context(effective, _ABC_ID_MAP)
     diagnostic = topology_varies_diagnostic(effective)
