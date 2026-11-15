@@ -170,7 +170,7 @@ lists every register and field the converter leaves out. A warning carries a
 remediation line only when a change to the deck removes it; the conversion
 proceeds either way.
 
-A deck value the case cannot carry at all stops `convert decomp` with a
+A deck value the conversion does not convert stops `convert decomp` with a
 `source-unsupported` error that names the file and the record field and says
 what to change. Its message says the value "is not converted yet" when the
 conversion, not Novomodelo, is what is missing. `check decomp` fails with the
