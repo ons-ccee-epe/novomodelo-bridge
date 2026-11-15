@@ -373,7 +373,7 @@ def test_build_pee_ncs_id_map_sorted_offset_matches_pee_series() -> None:
     ncs_map = build_pee_ncs_id_map(case, id_map)
     assert ncs_map == {3: 2, 7: 3}
 
-    series = _pee_series(renovaveis, id_map, calendar, first_ncs_id=2)
+    series, _ = _pee_series(renovaveis, id_map, calendar, first_ncs_id=2)
     assert [s.ncs_id for s in series] == [ncs_map[3], ncs_map[7]]
     assert series[0].name.startswith("PARK3")
     assert series[1].name.startswith("PARK7")
@@ -405,7 +405,7 @@ def test_build_pee_ncs_id_map_deterministic_card_matches_pee_series() -> None:
     ncs_map = build_pee_ncs_id_map(case, id_map)
     assert ncs_map == {6: 1, 9: 2}
 
-    series = _pee_series(renovaveis, id_map, calendar, first_ncs_id=1)
+    series, _ = _pee_series(renovaveis, id_map, calendar, first_ncs_id=1)
     assert [s.ncs_id for s in series] == [ncs_map[6], ncs_map[9]]
 
 
