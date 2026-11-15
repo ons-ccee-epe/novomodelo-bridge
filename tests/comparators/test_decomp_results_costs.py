@@ -423,11 +423,11 @@ class TestCostFrames:
 
         assert set(nw_sin["stage"].unique().to_list()) == {1, 2}
 
-    def test_propagates_the_readers_raise_on_missing_relato(
+    def test_missing_relato_is_noted_and_leaves_both_frames_empty(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """No new swallowing: a missing/empty relato surfaces exactly the
-        error ``read_relato_costs`` raises."""
+        """``relato2`` alone yields no partial costs."""
+        self._patch(monkeypatch)
 
         def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
             raise FileNotFoundError("no relato.rvN found")
@@ -435,9 +435,81 @@ class TestCostFrames:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
         )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato2_costs",
+            lambda *_args, **_kwargs: _relato2_costs_frame(),
+        )
 
-        with pytest.raises(FileNotFoundError):
-            _cost_frames(tmp_path, {})
+        with dx.collect() as collected:
+            nw_costs, nw_sin = _cost_frames(tmp_path, {})
+
+        assert nw_costs == {}
+        assert nw_sin.is_empty()
+        [diag] = collected
+        assert (diag.code, diag.severity, diag.title) == (
+            "report-file-missing",
+            dx.Severity.INFO,
+            "relato.rvN not found",
+        )
+        assert "cost breakdown" in diag.summary
+
+    def test_relato_without_its_cost_table_is_one_warning_and_empty_frames(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._patch(monkeypatch)
+
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise ValueError("relato.rv0 has no relatorio_operacao_custos table")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_costs", _boom
+        )
+
+        with dx.collect() as collected:
+            nw_costs, nw_sin = _cost_frames(tmp_path, {})
+
+        assert nw_costs == {}
+        assert nw_sin.is_empty()
+        [diag] = collected
+        assert (diag.code, diag.severity, diag.title) == (
+            "report-file-unreadable",
+            dx.Severity.WARNING,
+            "relato.rvN could not be read",
+        )
+        assert "cost breakdown" in diag.summary
+
+    @pytest.mark.parametrize(
+        ("error", "code"),
+        [
+            (FileNotFoundError("dec_oper_sist.csv not found"), "report-file-missing"),
+            (ValueError("dec_oper_sist.csv parsed empty"), "report-file-unreadable"),
+        ],
+    )
+    def test_unavailable_dec_oper_sist_leaves_the_deficit_in_the_slack(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        error: Exception,
+        code: str,
+    ) -> None:
+        self._patch(monkeypatch)
+
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise error
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist", _boom
+        )
+
+        with dx.collect() as collected:
+            nw_costs, _nw_sin = _cost_frames(tmp_path, {1: 1000.0})
+
+        assert "DEFICIT" not in nw_costs
+        assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
+        assert nw_costs["GERACAO TERMICA"] == pytest.approx(220_000.0)
+        assert [(d.code, d.title.split()[0]) for d in collected] == [
+            (code, "dec_oper_sist.csv")
+        ]
 
 
 def _relato_costs_with_overlapping_fan_stage() -> pl.DataFrame:

@@ -264,6 +264,12 @@ links are cobre-bridge's.
 - **`compare` dropped the warnings its HTML report raised.** They now reach the
   comparison notes, the `--json` output and `comparison.json`, and a bad
   `--format` value now stops `compare` before it runs the comparison.
+- **`compare decomp` stopped with `unexpected-error` when `relato.rvN`,
+  `dec_oper_usih.csv`, `dec_oper_usit.csv` or `dec_oper_sist.csv` was missing
+  or could not be read**, such as a `relato.rvN` without its cost table. It
+  now leaves out what the file feeds, such as DECOMP's cost breakdown, and
+  says so in a `report-file-missing` note or a `report-file-unreadable`
+  warning.
 
 ## [0.20.0] - 2026-11-03
 

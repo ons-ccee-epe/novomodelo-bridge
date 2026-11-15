@@ -70,18 +70,6 @@ def _patch_aligned_frames(
         "read_novomodelo_bus_aggregates",
         lambda *_args, **_kwargs: pl.DataFrame(),
     )
-    # ``build_decomp_dataset`` also calls ``_cost_frames`` directly
-    # (outside ``_read_aligned_frames``), which reads ``read_relato_costs`` --
-    # unlike every other reader here, it RAISES on a missing/empty parse
-    # (the "no silent-empty" reader contract), which a bare
-    # ``tmp_path`` always trips. Stub it here too, so every fixture that does
-    # not care about the cost metadata keeps working against a bare
-    # ``tmp_path``; tests that DO care override this again afterwards
-    # (monkeypatch's last ``setattr`` wins).
-    monkeypatch.setattr(
-        "novomodelo_bridge.comparators.decomp.results._cost_frames",
-        lambda *_args, **_kwargs: ({}, pl.DataFrame()),
-    )
     # ``build_decomp_dataset`` also calls
     # ``read_novomodelo_hydro_bus_labels`` directly (outside ``_read_aligned_frames``).
     # Like ``read_novomodelo_bus_aggregates`` above, it reads the
@@ -371,8 +359,8 @@ def _usih_frame(rows: list[dict[str, object]]) -> pl.DataFrame:
 def _no_dec_oper(*_args: object, **_kwargs: object) -> pl.DataFrame:
     """A ``read_dec_oper_usih``/``read_dec_oper_usit`` stub for "this deck has
     no such table": raises ``FileNotFoundError`` like the real reader would,
-    so `_dec_oper_hydro_stage_frame`/`_dec_oper_thermal_stage_frame`'s own
-    degrade-to-empty ``except`` path is exercised -- a bare ``pl.DataFrame()``
+    so `_dec_oper_hydro_stage_frame`/`_dec_oper_thermal_stage_frame`'s
+    note-and-empty path is exercised -- a bare ``pl.DataFrame()``
     (no columns at all) is not a shape the real reader ever returns (it
     raises on an empty parse) and trips `_scenario_mean`'s ``group_by``."""
     raise FileNotFoundError("dec_oper_*.csv not found")
