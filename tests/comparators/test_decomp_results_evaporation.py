@@ -294,11 +294,12 @@ class TestEvaporationResultComparisons:
         assert results == []
         assert one_sided == []
 
-    def test_no_source_evaporation_table_degrades_to_no_rows(
+    def test_no_source_evaporation_table_degrades_to_no_rows_without_a_note(
         self, tmp_path: Path
     ) -> None:
         """``read_dec_oper_evap`` left unmocked -> raises ``FileNotFoundError``
-        -- a genuinely unavailable section, not a per-plant gap."""
+        -- DECOMP may leave the file out of a deck with no evaporating plant,
+        so its absence is no finding."""
         with dx.collect() as collected:
             results, one_sided = _evaporation_result_comparisons(
                 tmp_path,
@@ -311,6 +312,31 @@ class TestEvaporationResultComparisons:
         assert results == []
         assert one_sided == []
         assert collected == []
+
+    def test_unreadable_source_evaporation_table_is_reported_and_degrades_to_no_rows(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise ValueError("dec_oper_evap.csv parsed empty")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_evap", _boom
+        )
+
+        with dx.collect() as collected:
+            results, one_sided = _evaporation_result_comparisons(
+                tmp_path,
+                tmp_path,
+                _evap_aligned_fixture().novomodelo_hydro,
+                _ree_id_map(),
+                {0: "A", 1: "B"},
+            )
+
+        assert results == []
+        assert one_sided == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "dec_oper_evap.csv could not be read")
+        ]
 
     def test_no_evaporation_m3s_column_on_novomodelo_side_degrades_to_no_rows(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
