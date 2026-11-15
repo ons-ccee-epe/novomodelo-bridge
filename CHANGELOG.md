@@ -128,12 +128,13 @@ links are cobre-bridge's.
 - **`convert decomp` reports RE ceilings capped at a unit group's capacity as
   `decomp-re-unit-group-generation-clamped`**, apart from the plant ceilings
   that `decomp-re-generation-clamped` reports.
-- **`convert newave` stops on a malformed `restricao-eletrica.csv` formula**
-  with a `conversion-error` naming the constraint, where it left the
-  malformed part out and reported only an `ener_interc` with one subsystem,
-  as `electric-constraint-malformed-term`. `convert decomp`
-  now reads a LIBS coefficient written before a space or a parenthesis, and
-  stops on a function given the wrong number of arguments.
+- **`convert newave` and `convert decomp` stop on a malformed electrical
+  formula with a `source-field-parse` error naming the file, the constraint
+  and its record**, where `convert newave` left the malformed part out as
+  `electric-constraint-malformed-term` and `convert decomp` stopped with an
+  `unexpected-error`. `convert decomp` refuses a malformed activation rule
+  and a `RESTRICAO-ELETRICA-HABILITA` naming an undeclared rule the same way,
+  and now reads a LIBS coefficient written before a space or a parenthesis.
 - **`compare` and `dashboard` no longer stop on a `system/lines.json` they
   cannot read**: they treat the case as having no lines, leave out the
   interchange and the Network tab's lines, and say so in a

@@ -50,11 +50,13 @@ from novomodelo_bridge.core.electrical_expression import (
     CMO_DEMAND_TOKENS,
     AssembledBound,
     DataContext,
+    MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
     demand_in_cmo_diagnostic,
     term_text,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -69,12 +71,14 @@ from novomodelo_bridge.decomp.converters.constraints import (
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
     DISP_USIH_SUBSTITUTED,
+    _effective_inequacao_sides,
     active_cells,
     assemble_bound,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from pathlib import Path
 
     from novomodelo_bridge.decomp.converters.constraints import GenericConstraintResult
     from novomodelo_bridge.decomp.converters.libs_electrical import (
@@ -391,6 +395,8 @@ def emit_libs_electrical_generics(
     line_map: Mapping[tuple[int, int], int],
     big_m: float,
     allocator: ConstraintIdAllocator | None = None,
+    *,
+    source: Path,
 ) -> LibsElectricalResult:
     """Emit every resolved electrical restriction as one novomodelo generic
     constraint, feeding the **existing** ``GenericConstraintBuilder`` the
@@ -422,9 +428,14 @@ def emit_libs_electrical_generics(
       ``build_electrical_expression``'s own ``parse_linear_expression``
       call) drops **only this restriction** —
       ``deferred["unrecognized-token"]`` — WARNed here and skipped, never
-      aborting the rest of the deck. A malformed-DSL ``ValueError`` (not
-      this subclass) — including ``active_cells``' dangling-``HABILITA``
-      guard — is NOT caught here and still propagates, fail-loud.
+      aborting the rest of the deck. Malformed text
+      (:class:`~novomodelo_bridge.core.electrical_expression.
+      MalformedElectricalExpression`), a dangling ``HABILITA`` included,
+      stops the conversion as a :class:`~novomodelo_bridge.core.errors.
+      FieldParseError` naming *source* (the LIBS electrical file), the
+      restriction and the card: ``RESTRICAO-ELETRICA-REGRA-ATIVACAO`` for the
+      activation rule, else the card that declares the failing cell's
+      formula.
     - The surviving expression and per-active-cell bound values feed a
       synthesized :class:`~novomodelo_bridge.decomp.constraint_registers.
       ConstraintRecord` (``family="LIBS_ELEC"``, ``per_block=True``,
@@ -458,6 +469,7 @@ def emit_libs_electrical_generics(
                 line_map,
                 big_m,
                 allocator or ConstraintIdAllocator(),
+                source,
             )
     finally:
         for diagnostic in merge_tables(found):
@@ -476,6 +488,7 @@ def _emit_restrictions(
     line_map: Mapping[tuple[int, int], int],
     big_m: float,
     allocator: ConstraintIdAllocator,
+    source: Path,
 ) -> LibsElectricalResult:
     """The body of :func:`emit_libs_electrical_generics`, reporting each
     restriction's findings as it meets them, and the available power it held
@@ -510,6 +523,7 @@ def _emit_restrictions(
                     builder,
                     deferred,
                     demand_in_cmo,
+                    source,
                 )
         finally:
             for diagnostic in local:
@@ -533,6 +547,22 @@ def _emit_restrictions(
     )
 
 
+_RULE_CARD = "RESTRICAO-ELETRICA-REGRA-ATIVACAO"
+
+
+def _cell_card(
+    restriction: ElectricalRestriction, stage_index: int, block_index: int
+) -> str:
+    """The LIBS card that declares *restriction*'s formula at one cell: an
+    inequality's period row where one covers the cell, else its own card."""
+    if restriction.is_formula:
+        return "RESTRICAO-ELETRICA-FORMULA"
+    sides = _effective_inequacao_sides(restriction, stage_index, block_index + 1)
+    if sides == (restriction.lhs, restriction.operator, restriction.rhs):
+        return "RESTRICAO-ELETRICA-INEQUACAO"
+    return "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
+
+
 def _emit_restriction(
     code: int,
     restriction: ElectricalRestriction,
@@ -548,6 +578,7 @@ def _emit_restriction(
     builder: GenericConstraintBuilder,
     deferred: dict[str, list[int]],
     demand_in_cmo: list[tuple[int, str]],
+    source: Path,
 ) -> bool:
     """Add restriction *code* to *builder* and return ``True``, or record on
     *deferred* why it is dropped and return ``False``.
@@ -555,6 +586,7 @@ def _emit_restriction(
     A kept restriction's bound terms in :data:`CMO_DEMAND_TOKENS` are added to
     *demand_in_cmo*."""
     demand_terms: set[str] = set()
+    card = _RULE_CARD
     try:
         cells = active_cells(restriction, model, context_factory, calendar)
         if not cells:
@@ -563,6 +595,7 @@ def _emit_restriction(
 
         assembled_by_cell: dict[tuple[int, int], AssembledBound] = {}
         for stage_index, block_index in sorted(cells):
+            card = _cell_card(restriction, stage_index, block_index)
             assembled = assemble_bound(
                 restriction,
                 model,
@@ -598,6 +631,12 @@ def _emit_restriction(
         _emit_unrecognized_token(code, err.name)
         deferred["unrecognized-token"].append(code)
         return False
+    except MalformedElectricalExpression as err:
+        raise FieldParseError(
+            f"{source.name}: restriction {code} is malformed: {err}",
+            path=str(source),
+            field=card,
+        ) from err
 
     if isinstance(expression, Unresolved):
         _emit_unresolved_term(code, expression)

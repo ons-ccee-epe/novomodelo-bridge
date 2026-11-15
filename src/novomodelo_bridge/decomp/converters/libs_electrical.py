@@ -80,6 +80,7 @@ from novomodelo_bridge.core.electrical_expression import (
     AssembledBound,
     Bucket,
     DataContext,
+    MalformedElectricalExpression,
     ParsedTerm,
     classify_term,
     classify_terms,
@@ -243,10 +244,10 @@ class LibsElectricalModel:
     def is_alias(self, name: str) -> bool:
         return name in self.aliases
 
-    def restriction_formula(self, code: int) -> str:
+    def restriction_formula(self, code: int) -> str | None:
         restriction = self.restrictions.get(code)
         if restriction is None:
-            raise ValueError(f"re({code}) references unknown restriction {code}")
+            return None
         if restriction.lhs is None:
             raise ValueError(
                 f"re({code}) references restriction {code}, which is declared "
@@ -830,7 +831,7 @@ def _split_top_level(text: str, sep: str) -> list[str]:
 
     Raises
     ------
-    ValueError
+    MalformedElectricalExpression
         When *text*'s parentheses are unbalanced (a stray closing paren, or
         one left open at the end) — this would mean some paren group is not
         self-contained the way the grammar requires.
@@ -844,12 +845,16 @@ def _split_top_level(text: str, sep: str) -> list[str]:
         elif char == ")":
             depth -= 1
             if depth < 0:
-                raise ValueError(f"unbalanced parentheses in activation rule {text!r}")
+                raise MalformedElectricalExpression(
+                    f"unbalanced parentheses in activation rule {text!r}"
+                )
         elif char == sep and depth == 0:
             parts.append(text[start:pos])
             start = pos + 1
     if depth != 0:
-        raise ValueError(f"unbalanced parentheses in activation rule {text!r}")
+        raise MalformedElectricalExpression(
+            f"unbalanced parentheses in activation rule {text!r}"
+        )
     parts.append(text[start:])
     return parts
 
@@ -866,7 +871,7 @@ def _split_comparison(conjunct: str) -> tuple[str, str, str]:
 
     Raises
     ------
-    ValueError
+    MalformedElectricalExpression
         When the conjunct carries no comparison operator at all, or an
         operator-like character sequence that is not one of the six
         recognized operators (e.g. ``<>``, a lone ``=``) — both name the
@@ -887,34 +892,34 @@ def _split_comparison(conjunct: str) -> tuple[str, str, str]:
                 return conjunct[:pos], two_char, conjunct[pos + 2 :]
             next_char = conjunct[pos + 1 : pos + 2]
             if next_char in _COMPARISON_OP_CHARS:
-                raise ValueError(
+                raise MalformedElectricalExpression(
                     f"unrecognized comparison operator {two_char!r} in "
                     f"activation-rule conjunct {conjunct!r}"
                 )
             if char not in _COMPARISON_ONE_CHAR_OPS:
-                raise ValueError(
+                raise MalformedElectricalExpression(
                     f"unrecognized comparison operator {char!r} in "
                     f"activation-rule conjunct {conjunct!r}"
                 )
             return conjunct[:pos], char, conjunct[pos + 1 :]
         pos += 1
-    raise ValueError(
+    raise MalformedElectricalExpression(
         f"no comparison operator found in activation-rule conjunct {conjunct!r} "
         "(recognized operators: <, <=, >, >=, ==, !=)"
     )
 
 
 def _require_bucket_b(terms: Sequence[ParsedTerm], conjunct: str) -> None:
-    """Raise ``ValueError`` naming the offending token when any *terms* is
-    not bucket B — an activation-rule operand is always input data (spec
-    §4a), never a novomodelo decision term (bucket A) or the available-power
-    bucket-C term."""
+    """Raise :class:`MalformedElectricalExpression` naming the offending term
+    when any *terms* is not bucket B — an activation-rule operand is always
+    input data, never a novomodelo decision term (bucket A) or the
+    available-power bucket-C term."""
     for term in terms:
         if classify_term(term) is not Bucket.B:
-            raise ValueError(
-                f"activation-rule operand {term.token!r} in conjunct "
-                f"{conjunct!r} is not input data (bucket B); an activation "
-                "rule must gate on input data, never a decision term"
+            raise MalformedElectricalExpression(
+                f"activation-rule operand {term_text(term)} in conjunct "
+                f"{conjunct!r} is not input data; an activation rule reads "
+                "only input data, never a decision"
             )
 
 
@@ -939,11 +944,11 @@ def parse_activation_rule(text: str, model: LibsElectricalModel) -> ActivationRu
 
     Raises
     ------
-    ValueError
+    MalformedElectricalExpression
         Propagated from :func:`_split_top_level` on unbalanced parentheses,
-        from :func:`_split_comparison` on a missing/unrecognized operator, or
-        raised here when an operand term does not classify as bucket B
-        (naming the offending token).
+        from :func:`_split_comparison` on a missing/unrecognized operator,
+        from an operand's own parse, or raised here when an operand term does
+        not classify as bucket B (naming the offending term).
     """
     comparisons = tuple(
         _parse_comparison(conjunct, model) for conjunct in _split_top_level(text, "&")
@@ -1274,9 +1279,10 @@ def evaluate_se(
     selecting :attr:`ParsedTerm.branch_true` when it evaluates ``True``,
     else :attr:`ParsedTerm.branch_false`.
 
-    The selected branch is then parsed (:func:`parse_linear_expression`) and
-    classified (:func:`classify_terms`). A selected branch is only safe to
-    fold to a single float when it is
+    Both branches are parsed (:func:`parse_linear_expression`) and classified
+    (:func:`classify_terms`) before either is selected, so a malformed branch
+    fails the cell even where the other one is taken. A selected branch is
+    only safe to fold to a single float when it is
     entirely bucket B (input data): folding a branch that carries a
     bucket-A (novomodelo decision) or bucket-C (``disp_usih``) term would fold
     that term into a plain number and silently drop it from the LP. ``se``
@@ -1289,6 +1295,8 @@ def evaluate_se(
 
     Raises
     ------
+    MalformedElectricalExpression
+        When the condition or either branch is malformed.
     ValueError
         When *term* is not a ``se`` term or is missing its condition/branch
         text (a caller contract violation — the parser always populates all
@@ -1303,9 +1311,13 @@ def evaluate_se(
         )
 
     rule = parse_activation_rule(term.condition, model)
-    selected_text = term.branch_true if evaluate_rule(rule, ctx) else term.branch_false
-    branch_terms = parse_linear_expression(selected_text, model)
-    partition = classify_terms(branch_terms)
+    true_partition = classify_terms(parse_linear_expression(term.branch_true, model))
+    false_partition = classify_terms(parse_linear_expression(term.branch_false, model))
+    selected_text, partition = (
+        (term.branch_true, true_partition)
+        if evaluate_rule(rule, ctx)
+        else (term.branch_false, false_partition)
+    )
     decision_terms = partition[Bucket.A] + partition[Bucket.C]
     if decision_terms:
         offender = decision_terms[0]
@@ -1687,20 +1699,20 @@ def active_cells(
 
     Raises
     ------
-    ValueError
+    MalformedElectricalExpression
         When *restriction*'s ``habilita`` names a ``regra_id`` absent from
         ``model.rules`` — a dangling activation reference must fail loud,
-        naming both the restriction and the missing rule id.
+        naming the missing rule id — or when its rule is malformed.
     """
     if restriction.habilita is None:
         rule = ActivationRule(comparisons=())
     else:
         rule_text = model.rules.get(restriction.habilita)
         if rule_text is None:
-            raise ValueError(
-                f"restriction {restriction.code}: HABILITA names activation "
-                f"rule {restriction.habilita}, which is absent from the "
-                "model's rules"
+            raise MalformedElectricalExpression(
+                f"RESTRICAO-ELETRICA-HABILITA names activation rule "
+                f"{restriction.habilita}, which no RESTRICAO-ELETRICA-REGRA-ATIVACAO "
+                "record declares"
             )
         rule = parse_activation_rule(rule_text, model)
 

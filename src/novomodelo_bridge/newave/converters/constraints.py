@@ -43,6 +43,7 @@ from novomodelo_bridge.core.electrical_expression import (
     SE_TOKEN,
     Bucket,
     DataContext,
+    MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
     classify_terms,
@@ -1054,13 +1055,8 @@ class _NewaveFormulaScope:
     def is_alias(self, name: str) -> bool:
         return False
 
-    def restriction_formula(self, code: int) -> str:
-        try:
-            return self.formulas[code]
-        except KeyError:
-            raise ValueError(
-                f"re({code}) references unknown restriction {code}"
-            ) from None
+    def restriction_formula(self, code: int) -> str | None:
+        return self.formulas.get(code)
 
 
 def _read_formulas(
@@ -1085,7 +1081,7 @@ def _read_formulas(
                 cod, "unsupported", err.name, "the file declares no such name"
             )
             continue
-        except ValueError as err:
+        except MalformedElectricalExpression as err:
             raise FieldParseError(
                 f"{path.name}: the formula of constraint {cod} is malformed: {err}",
                 path=str(path),

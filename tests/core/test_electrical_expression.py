@@ -16,8 +16,10 @@ from novomodelo_bridge.core.electrical_expression import (
     PEQ_TOKEN,
     SE_TOKEN,
     Bucket,
+    MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    classify_term,
     classify_terms,
     evaluate_terms,
     fold_formula_bound,
@@ -37,10 +39,8 @@ class _Scope:
     def is_alias(self, name: str) -> bool:
         return False
 
-    def restriction_formula(self, code: int) -> str:
-        if code not in self.formulas:
-            raise ValueError(f"re({code}) references unknown restriction {code}")
-        return self.formulas[code]
+    def restriction_formula(self, code: int) -> str | None:
+        return self.formulas.get(code)
 
 
 def _terms(text: str, scope: _Scope | None = None) -> list[tuple[float, str, tuple]]:
@@ -85,15 +85,31 @@ def test_re_inlines_the_restriction_formula_under_its_coefficient() -> None:
 
 def test_re_to_a_restriction_the_scope_lacks_names_it() -> None:
     with pytest.raises(
-        ValueError, match=r"unknown restriction 9 in electrical expression 're\(9\)'"
+        MalformedElectricalExpression,
+        match=r"unknown restriction 9 in electrical expression 're\(9\)'",
     ):
         parse_linear_expression("re(9)", _Scope())
+
+
+@dataclass(frozen=True)
+class _ScopeThatCannotInline(_Scope):
+    def restriction_formula(self, code: int) -> str | None:
+        raise ValueError(f"restriction {code} has no single formula")
+
+
+def test_re_to_a_restriction_the_scope_cannot_inline_is_not_malformed() -> None:
+    with pytest.raises(ValueError, match="has no single formula") as err:
+        parse_linear_expression("re(3)", _ScopeThatCannotInline())
+
+    assert not isinstance(err.value, MalformedElectricalExpression)
 
 
 def test_a_cycle_through_re_is_refused() -> None:
     scope = _Scope(formulas={1: "re(2)", 2: "ger_usih(5) + re(1)"})
 
-    with pytest.raises(ValueError, match="cyclic electrical expression reference"):
+    with pytest.raises(
+        MalformedElectricalExpression, match="cyclic electrical expression reference"
+    ):
         parse_linear_expression("re(1)", scope)
 
 
@@ -103,13 +119,45 @@ def test_a_cycle_through_re_is_refused() -> None:
         ("ener_interc(1)", "ener_interc\\(...\\) expects 2 arguments"),
         ("ger_usih(1, 2)", "ger_usih\\(...\\) expects one argument"),
         ("demanda()", "demanda\\(...\\) expects one argument"),
+        ("re(1, 2)", "re\\(...\\) expects exactly one restriction id"),
+        ("se(demanda(1) > 0, 1)", "se\\(...\\) expects exactly 3 arguments"),
     ],
 )
 def test_a_function_given_the_wrong_number_of_arguments_is_refused(
     text: str, expected: str
 ) -> None:
-    with pytest.raises(ValueError, match=expected):
+    with pytest.raises(MalformedElectricalExpression, match=expected):
         parse_linear_expression(text, _Scope())
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("ger_usih(1) )", "unexpected trailing content"),
+        ("(ger_usih(1)", "expected '\\)' to close '\\('"),
+        ("ger_usih(1) +", "expected a term but reached the end"),
+        ("ger_usih(1) + #", "malformed token at '#'"),
+        ("ger_usih(1.5)", "expected an integer argument for 'ger_usih'"),
+        ("se(demanda(1) > 0, 1, 2", "unbalanced parentheses in se"),
+    ],
+)
+def test_text_the_grammar_rejects_is_malformed(text: str, expected: str) -> None:
+    with pytest.raises(MalformedElectricalExpression, match=expected):
+        parse_linear_expression(text, _Scope())
+
+
+def test_an_unknown_function_names_only_the_functions_a_formula_may_call() -> None:
+    (term,) = parse_linear_expression("ger_usina(66)", _Scope())
+
+    with pytest.raises(MalformedElectricalExpression) as err:
+        classify_term(term)
+
+    message = str(err.value)
+    assert message.startswith("unknown function ger_usina(...)")
+    assert "ger_usih" in message
+    assert "re" in message.split(", ")
+    for internal in ("__", "alias", "peq"):
+        assert internal not in message
 
 
 def test_an_undeclared_bare_name_is_its_own_error() -> None:

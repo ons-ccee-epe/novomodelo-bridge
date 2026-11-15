@@ -22,6 +22,7 @@ from novomodelo_bridge.core.electrical_expression import (
     ParsedTerm,
     UnrecognizedElectricalToken,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     soft_slack,
@@ -31,6 +32,7 @@ from novomodelo_bridge.decomp.converters.libs_electrical import (
     AvailablePower,
     ElectricalRestriction,
     LibsElectricalModel,
+    PeriodPatamarOverride,
     ViolationTreatment,
     _UnresolvableBucketBTerm,
 )
@@ -45,6 +47,8 @@ from novomodelo_bridge.decomp.converters.ncs import _pee_series, build_pee_ncs_i
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
 from tests.conftest import make_decomp_case
+
+_LIBS = Path("deck/lib_restricao-eletrica-especial.csv")
 
 # ---------------------------------------------------------------------------
 # _novomodelo_token — one bucket-A token kind at a time
@@ -546,6 +550,7 @@ def test_emit_reserve_a1_end_to_end_generation_cap() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
     )
 
     assert result.converted_codes == (407,)
@@ -588,6 +593,7 @@ def test_emit_reserve_a3_negative_cap_stays_feasible_via_slack() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
     )
 
     assert result.generic is not None
@@ -615,7 +621,7 @@ def test_emit_active_only_stage0_block0_single_bounds_row() -> None:
     a_h = AvailablePower(overlay={})
 
     result = emit_libs_electrical_generics(
-        model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0
+        model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0, source=_LIBS
     )
 
     assert result.generic is not None
@@ -653,6 +659,7 @@ def test_emit_violation_penalty_overrides_big_m() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
     )
 
     assert result.generic is not None
@@ -677,7 +684,7 @@ def test_emit_inactive_everywhere_defers_without_duplicate_diagnostic() -> None:
 
     with dx.collect() as sink:
         result = emit_libs_electrical_generics(
-            model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0
+            model, id_map, factory, a_h, calendar, {}, {}, {}, big_m=999.0, source=_LIBS
         )
 
     assert result.generic is None
@@ -708,6 +715,7 @@ def test_emit_unresolved_bucket_a_token_defers_without_partial_constraint() -> N
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.generic is None
@@ -740,6 +748,7 @@ def test_emit_merges_one_finding_across_restrictions_into_one_table() -> None:
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.deferred["unresolved-bucket-a"] == (705, 706)
@@ -781,6 +790,7 @@ def test_emit_unresolved_bucket_bc_term_defers_whole_restriction() -> None:
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.generic is None
@@ -831,6 +841,7 @@ def test_emit_cell_inconsistent_terms_raises_value_error_naming_restriction() ->
                 {},
                 {},
                 big_m=999.0,
+                source=_LIBS,
             )
 
 
@@ -859,6 +870,7 @@ def test_emit_sorted_restriction_codes_deterministic_ids() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
         allocator=ConstraintIdAllocator(5),
     )
 
@@ -902,6 +914,7 @@ def test_emit_unrecognized_token_defers_one_restriction_sibling_converts() -> No
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.converted_codes == (710,)
@@ -938,6 +951,7 @@ def test_emit_no_unrecognized_tokens_leaves_deferred_reason_empty() -> None:
         {},
         {},
         big_m=999.0,
+        source=_LIBS,
     )
 
     assert result.converted_codes == (711,)
@@ -982,6 +996,7 @@ def test_emit_propagates_plain_value_error_not_unrecognized_token() -> None:
                 {},
                 {},
                 big_m=999.0,
+                source=_LIBS,
             )
 
     assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
@@ -1021,6 +1036,7 @@ def test_emit_unrecognized_token_in_activation_rule_defers_one_restriction() -> 
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
     assert result.converted_codes == (721,)
@@ -1035,10 +1051,7 @@ def test_emit_unrecognized_token_in_activation_rule_defers_one_restriction() -> 
     assert warnings[0].table.rows == [[720, "mmgd_N_PCHgd"]]
 
 
-def test_emit_malformed_activation_rule_propagates_value_error() -> None:
-    # a malformed-DSL activation rule (unbalanced parens,
-    # not an undeclared identifier) must still fail loud, never be swallowed
-    # by the widened UnrecognizedElectricalToken-specific guard.
+def test_a_malformed_activation_rule_stops_the_conversion_naming_its_card() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
     calendar = _emit_calendar(1, n_blocks=1)
     restriction = _restriction(722, "ger_usih(1)", "<=", "500", habilita=30)
@@ -1050,7 +1063,7 @@ def test_emit_malformed_activation_rule_propagates_value_error() -> None:
     )
     a_h = AvailablePower(overlay={})
 
-    with pytest.raises(ValueError, match="unbalanced parentheses") as exc_info:
+    with pytest.raises(FieldParseError) as exc_info:
         emit_libs_electrical_generics(
             model,
             id_map,
@@ -1061,9 +1074,113 @@ def test_emit_malformed_activation_rule_propagates_value_error() -> None:
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
 
-    assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
+    assert str(exc_info.value).startswith(
+        "lib_restricao-eletrica-especial.csv: restriction 722 is malformed: "
+        "unbalanced parentheses in activation rule"
+    )
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == "RESTRICAO-ELETRICA-REGRA-ATIVACAO"
+
+
+@pytest.mark.parametrize(
+    ("restriction", "card"),
+    [
+        (
+            _restriction(730, "ger_usih(1", "<=", "500"),
+            "RESTRICAO-ELETRICA-INEQUACAO",
+        ),
+        (
+            ElectricalRestriction(
+                code=730,
+                lhs="ger_usih(1",
+                operator=None,
+                rhs=None,
+                is_formula=True,
+                limits={(0, None): (None, 500.0)},
+                overrides=(),
+            ),
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            ElectricalRestriction(
+                code=730,
+                lhs=None,
+                operator=None,
+                rhs=None,
+                is_formula=False,
+                limits={},
+                overrides=(
+                    PeriodPatamarOverride(0, 0, None, "ger_usih(1", "<=", "500"),
+                ),
+            ),
+            "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+        ),
+        (
+            ElectricalRestriction(
+                code=730,
+                lhs="ger_usih(1)",
+                operator="<=",
+                rhs="500",
+                is_formula=False,
+                limits={},
+                overrides=(PeriodPatamarOverride(0, 0, 1, "ger_usih(1", "<=", "500"),),
+            ),
+            "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
+        ),
+    ],
+)
+def test_a_malformed_formula_stops_the_conversion_naming_its_card(
+    restriction: ElectricalRestriction, card: str
+) -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={730: restriction}, rules={}
+    )
+
+    with pytest.raises(FieldParseError) as exc_info:
+        emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
+        )
+
+    assert "restriction 730 is malformed: expected ')'" in str(exc_info.value)
+    assert exc_info.value.path == str(_LIBS)
+    assert exc_info.value.field == card
+
+
+def test_a_dangling_habilita_stops_the_conversion_naming_the_rule_card() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    restriction = _restriction(731, "ger_usih(1)", "<=", "500", habilita=40)
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={731: restriction}, rules={}
+    )
+
+    with pytest.raises(FieldParseError, match="restriction 731 is malformed") as err:
+        emit_libs_electrical_generics(
+            model,
+            id_map,
+            lambda s, b: _dict_context({}),
+            AvailablePower(overlay={}),
+            _emit_calendar(1, n_blocks=1),
+            {},
+            {},
+            {},
+            big_m=999.0,
+            source=_LIBS,
+        )
+
+    assert err.value.field == "RESTRICAO-ELETRICA-REGRA-ATIVACAO"
 
 
 def test_emit_reports_findings_met_before_a_failing_restriction() -> None:
@@ -1079,7 +1196,7 @@ def test_emit_reports_findings_met_before_a_failing_restriction() -> None:
     )
 
     with dx.collect() as sink:
-        with pytest.raises(ValueError, match="unbalanced parentheses"):
+        with pytest.raises(FieldParseError, match="unbalanced parentheses"):
             emit_libs_electrical_generics(
                 model,
                 id_map,
@@ -1090,6 +1207,7 @@ def test_emit_reports_findings_met_before_a_failing_restriction() -> None:
                 {},
                 {},
                 big_m=999.0,
+                source=_LIBS,
             )
 
     assert [d.code for d in sink] == ["decomp-electrical-bucket-a-unresolved"]
@@ -1120,6 +1238,7 @@ def _emit_findings(
             {},
             {},
             big_m=999.0,
+            source=_LIBS,
         )
     return result, sink
 

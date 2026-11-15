@@ -777,7 +777,7 @@ class TestElectricFormula:
 
     @pytest.mark.parametrize(
         "formula",
-        ["ener_interc(1)", "ger_usih(66", "ger_usina(66)", "re(9)", "2 *"],
+        ["ener_interc(1)", "ger_usih(66", "ger_usina(66)", "re(9)", "re(1)", "2 *"],
     )
     def test_a_malformed_formula_is_refused(self, formula: str) -> None:
         with pytest.raises(

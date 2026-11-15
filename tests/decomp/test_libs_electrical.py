@@ -20,6 +20,7 @@ from novomodelo_bridge.core.electrical_expression import (
     AssembledBound,
     Bucket,
     DataContext,
+    MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
     classify_term,
@@ -530,39 +531,31 @@ def test_builtin_bare_tokens_kept_unexpanded() -> None:
         assert terms == [ParsedTerm(coefficient=1.0, token=name)]
 
 
-def test_cyclic_named_expression_reference_raises_value_error() -> None:
+def test_cyclic_named_expression_reference_is_malformed() -> None:
     model = _model(expressions={"A": "B", "B": "A"})
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(MalformedElectricalExpression) as exc_info:
         parse_linear_expression("A", model)
     message = str(exc_info.value)
     assert "A" in message
     assert "B" in message
 
 
-def test_unbalanced_parentheses_raises_value_error() -> None:
+def test_unbalanced_parentheses_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="ger_usih") as exc_info:
+    with pytest.raises(MalformedElectricalExpression, match="ger_usih"):
         parse_linear_expression("ger_usih(261", model)
-    # malformed syntax stays a plain ValueError, never the
-    # well-formed-but-undeclared-identifier subclass.
-    assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
 
 
-def test_non_numeric_function_argument_raises_value_error() -> None:
+def test_non_numeric_function_argument_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="abc") as exc_info:
+    with pytest.raises(MalformedElectricalExpression, match="abc"):
         parse_linear_expression("ger_usih(abc)", model)
-    assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
 
 
-def test_trailing_operator_with_no_operand_raises_plain_value_error() -> None:
-    # a trailing '+' with no following operand is
-    # malformed syntax, not an unrecognized identifier -- stays fail-loud as
-    # a plain ValueError.
+def test_trailing_operator_with_no_operand_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(MalformedElectricalExpression):
         parse_linear_expression("ger_usih(1) +", model)
-    assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
 
 
 def test_unrecognized_bare_identifier_raises_unrecognized_electrical_token() -> None:
@@ -795,27 +788,31 @@ def test_parse_activation_rule_multi_conjunct_splits_on_top_level_ampersand() ->
     )
 
 
-def test_parse_activation_rule_bucket_a_operand_raises_value_error() -> None:
+def test_parse_activation_rule_decision_operand_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="ger_usih"):
+    with pytest.raises(
+        MalformedElectricalExpression, match="ger_usih\\(5\\) .* is not input data"
+    ):
         parse_activation_rule("ger_usih(5) >= 100", model)
 
 
-def test_parse_activation_rule_conjunct_without_operator_raises_value_error() -> None:
+def test_parse_activation_rule_conjunct_without_operator_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="no comparison operator"):
+    with pytest.raises(MalformedElectricalExpression, match="no comparison operator"):
         parse_activation_rule("demanda_sin 50000", model)
 
 
-def test_parse_activation_rule_unrecognized_operator_raises_value_error() -> None:
+def test_parse_activation_rule_unrecognized_operator_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="unrecognized comparison operator"):
+    with pytest.raises(
+        MalformedElectricalExpression, match="unrecognized comparison operator"
+    ):
         parse_activation_rule("demanda_sin <> 50000", model)
 
 
-def test_parse_activation_rule_unbalanced_parens_raises_value_error() -> None:
+def test_parse_activation_rule_unbalanced_parens_is_malformed() -> None:
     model = _model()
-    with pytest.raises(ValueError, match="unbalanced parentheses"):
+    with pytest.raises(MalformedElectricalExpression, match="unbalanced parentheses"):
         parse_activation_rule("demanda(3 >= 5", model)
 
 
@@ -1451,6 +1448,16 @@ def test_evaluate_se_raises_on_decision_bearing_selected_branch() -> None:
         evaluate_se(term, model, 0, 0, ctx)
 
 
+def test_evaluate_se_refuses_a_malformed_branch_it_does_not_select() -> None:
+    model = _model()
+    (term,) = parse_linear_expression(
+        "se(demanda_sin > 1000, val_demanda(1), 2 +)", model
+    )
+    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
+    with pytest.raises(MalformedElectricalExpression, match="'2 \\+'"):
+        evaluate_se(term, model, 0, 0, ctx)
+
+
 # ---------------------------------------------------------------------------
 # active_cells
 # ---------------------------------------------------------------------------
@@ -1574,7 +1581,7 @@ def test_active_cells_inactive_everywhere_returns_empty_and_emits_info() -> None
     assert sink[0].table.rows == [[703, 0, 1]]
 
 
-def test_active_cells_dangling_habilita_raises_value_error_naming_both() -> None:
+def test_active_cells_dangling_habilita_is_malformed_naming_the_rule() -> None:
     model = LibsElectricalModel(expressions={}, aliases={}, restrictions={}, rules={})
     restriction = _restriction_with_horizon(
         704, stage_start=0, stage_end=1, habilita=999
@@ -1582,11 +1589,12 @@ def test_active_cells_dangling_habilita_raises_value_error_naming_both() -> None
     calendar = _ri_calendar(2, n_blocks=2)
     factory = _demanda_sin_context_factory({})
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(
+        MalformedElectricalExpression,
+        match="HABILITA names activation rule 999, which no "
+        "RESTRICAO-ELETRICA-REGRA-ATIVACAO record declares",
+    ):
         active_cells(restriction, model, factory, calendar)
-    message = str(exc_info.value)
-    assert "704" in message
-    assert "999" in message
 
 
 # ---------------------------------------------------------------------------
@@ -1914,10 +1922,16 @@ def test_assemble_bound_period_only_inequacao_uncovered_cell_raises() -> None:
         assemble_bound(_PERIOD_ONLY, _model(), 0, 1, _dict_context({}))
 
 
-def test_re_reference_to_period_only_inequacao_raises() -> None:
+def test_re_reference_to_period_only_inequacao_is_refused_but_not_malformed() -> None:
     model = replace(_model(), restrictions={460: _PERIOD_ONLY})
-    with pytest.raises(ValueError, match="declared only by period rows"):
+    with pytest.raises(ValueError, match="declared only by period rows") as exc_info:
         parse_linear_expression("re(460)", model)
+    assert not isinstance(exc_info.value, MalformedElectricalExpression)
+
+
+def test_re_reference_to_an_undeclared_restriction_is_malformed() -> None:
+    with pytest.raises(MalformedElectricalExpression, match="unknown restriction 461"):
+        parse_linear_expression("re(461)", _model())
 
 
 def test_assemble_bound_period_only_inequacao_no_limit_sentinel_is_unbounded() -> None:
