@@ -13,6 +13,7 @@ from novomodelo_bridge.core.diagnostics import (
     collect,
     finalize_diagnostics,
 )
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.ncs import (
     convert_ncs_factors,
@@ -417,8 +418,15 @@ def test_pee_series_park_with_two_operating_states_raises() -> None:
     det = pd.DataFrame(_deterministic_rows(4, 1, (10.0, 20.0, 30.0)))
     renov = _StubRenovaveis(cad, subm, pd.DataFrame(), det, config)
 
-    with pytest.raises(ValueError, match="more than one PEE-CONFIG-PER"):
+    with pytest.raises(
+        UnsupportedSourceError,
+        match=r"park 4 more than one PEE-CONFIG-PER operating state \(centralizado, fixo\)",
+    ) as raised:
         _pee_series(renov, _ID_MAP, _calendar(), 0)
+    assert (raised.value.path, raised.value.field) == (
+        "renovaveis.csv",
+        "PEE-CONFIG-PER estado_operacao",
+    )
 
 
 def test_pee_series_park_without_operating_state_is_must_run_and_warns(

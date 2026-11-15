@@ -22,6 +22,7 @@ import pytest
 from idecomp.decomp import Dadgnl
 
 from novomodelo_bridge.core.diagnostics import Severity, collect
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.decomp.converters import anticipated
 from novomodelo_bridge.decomp.converters.anticipated import (
     GnlClass4Window,
@@ -818,10 +819,11 @@ def test_convert_gnl_raises_on_differing_class4_end_across_plants() -> None:
         weeks_per_month=_EMIT_WEEKS_PER_MONTH,
         nl_lag_months={86: 2, 224: 2},
     )
-    with pytest.raises(ValueError, match="differing já-comandada cutoffs"):
+    with pytest.raises(UnsupportedSourceError, match="up to different dates") as raised:
         convert_gnl(
             model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
         )
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "GL data_inicio")
 
 
 def test_convert_gnl_reports_the_lag_before_differing_cutoffs_raise() -> None:
@@ -845,7 +847,7 @@ def test_convert_gnl_reports_the_lag_before_differing_cutoffs_raise() -> None:
         nl_lag_months={86: 2, 224: 3},
     )
     with collect() as found:
-        with pytest.raises(ValueError, match="differing já-comandada cutoffs"):
+        with pytest.raises(UnsupportedSourceError, match="up to different dates"):
             convert_gnl(
                 model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
             )
@@ -1340,13 +1342,17 @@ def test_convert_gnl_monthly_shorter_lag_prices_only_its_reach() -> None:
 
 
 def test_convert_gnl_monthly_rejects_a_gs_month_split_into_weeks() -> None:
-    with pytest.raises(ValueError, match=r"one gs interval per month.*\{3: 4\}"):
+    with pytest.raises(UnsupportedSourceError, match="month 3 into 4") as raised:
         _convert_monthly(_monthly_model(weeks_per_month={1: 1, 2: 1, 3: 4}))
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "GS semanas")
 
 
 def test_convert_gnl_monthly_rejects_a_lag_past_the_study() -> None:
-    with pytest.raises(ValueError, match="nl lag of 3 month"):
+    with pytest.raises(
+        UnsupportedSourceError, match="an NL lag of 3 months, but the study has 2"
+    ) as raised:
         _convert_monthly(_monthly_model(nl={86: 3, 224: 2}))
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "NL lag")
 
 
 def test_convert_gnl_monthly_rejects_a_plant_without_nl() -> None:
@@ -1357,8 +1363,11 @@ def test_convert_gnl_monthly_rejects_a_plant_without_nl() -> None:
 def test_convert_gnl_monthly_rejects_gl_past_the_horizon() -> None:
     late = (GnlStageCommitment(3, date(2026, 3, 1), 500.0, 0.0),)
 
-    with pytest.raises(ValueError, match="past the study horizon .2026-03-01."):
+    with pytest.raises(
+        UnsupportedSourceError, match=r"past the study horizon \(2026-03-01\)"
+    ) as raised:
         _convert_monthly(_monthly_model(extra_gl=late))
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "GL data_inicio")
 
 
 def test_convert_gnl_monthly_rejects_tg_past_the_post_study_months() -> None:

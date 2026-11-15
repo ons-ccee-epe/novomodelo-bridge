@@ -27,7 +27,7 @@ from novomodelo_bridge.core.diagnostics import (
     collect,
     counted,
 )
-from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
+from novomodelo_bridge.core.errors import BridgeError, diagnostic_from_exception
 from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightResult,
@@ -98,7 +98,7 @@ def _calendar_check(
 
     try:
         calendar = operative_calendar_from_dadger(dadger)
-    except (ValueError, AttributeError, TypeError) as exc:
+    except (BridgeError, ValueError, AttributeError, TypeError) as exc:
         return (
             CheckItem(
                 label=_CALENDAR_LABEL,
@@ -510,7 +510,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
 
     try:
         id_map = DecompIdMap.from_dadger(dadger)
-    except (FieldParseError, ValueError) as exc:
+    except (BridgeError, ValueError) as exc:
         checks.append(CheckItem(label="Entity id map", passed=False, detail=str(exc)))
         diagnostics.append(diagnostic_from_exception(exc, context=_CONTEXT))
         return PreflightResult(

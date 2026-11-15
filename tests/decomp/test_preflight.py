@@ -20,7 +20,7 @@ from idecomp.decomp.modelos.dadger import (
 )
 
 from novomodelo_bridge.core.diagnostics import Severity
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightResult,
@@ -104,10 +104,9 @@ def _decomp_files(tmp_path: Path) -> DecompFiles:
 
 
 class TestIdMapReconcile:
-    """The id-map ``except`` widens from ``ValueError`` alone to
-    ``(FieldParseError, ValueError)`` -- the typed ``from_dadger`` parse
-    boundary and the id map's own ``__post_init__`` invariant checks both
-    still degrade to a diagnosed ``WILL_NOT_CONVERT`` instead of crashing.
+    """A typed refusal from ``from_dadger`` (a parse failure or an SB record the
+    case cannot carry) and the id map's own invariant checks all degrade to a
+    diagnosed ``WILL_NOT_CONVERT`` instead of crashing.
     """
 
     def _run_with_id_map_error(self, tmp_path: Path, error: Exception):
@@ -146,6 +145,27 @@ class TestIdMapReconcile:
         id_map_check = next(c for c in result.checks if c.label == "Entity id map")
         assert id_map_check.passed is False
         assert any(d.code == "source-field-parse" for d in result.diagnostics)
+
+    def test_unsupported_source_error_reconciles_to_will_not_convert(
+        self, tmp_path: Path
+    ) -> None:
+        error = UnsupportedSourceError(
+            "dadger.rvN declares a subsystem named IV in SB.",
+            path="dadger.rvN",
+            field="SB nome_submercado",
+        )
+        result = self._run_with_id_map_error(tmp_path, error)
+
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
+        id_map_check = next(c for c in result.checks if c.label == "Entity id map")
+        assert id_map_check.passed is False
+        diagnostic = next(
+            d for d in result.diagnostics if d.code == "source-unsupported"
+        )
+        assert list(diagnostic.notes) == [
+            "file: dadger.rvN",
+            "field: SB nome_submercado",
+        ]
 
     def test_post_init_value_error_is_still_caught(self, tmp_path: Path) -> None:
         error = ValueError("bus codes must be strictly ascending; got (2, 1)")

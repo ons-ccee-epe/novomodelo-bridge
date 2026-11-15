@@ -37,6 +37,7 @@ from novomodelo_bridge.core.diversion import (
     is_unlimited_flow,
     unlimited_channels_diagnostic,
 )
+from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintResult,
@@ -899,7 +900,7 @@ def _water_bucket_stages(
 
     Raises
     ------
-    ValueError
+    UnsupportedSourceError
         If the largest travel time exceeds the stage's hours: Novomodelo
         refuses a water calendar shorter than the deepest travel time.
     """
@@ -909,10 +910,14 @@ def _water_bucket_stages(
     stage_hours = days_left * 24.0
     code = max(travel_time_hours, key=travel_time_hours.__getitem__)
     if travel_time_hours[code] > stage_hours:
-        raise ValueError(
-            f"plant {code} has a travel time of {travel_time_hours[code]:g} h, longer "
-            f"than the {stage_hours:g} h left in the month of the study horizon end "
-            f"{horizon_end.isoformat()}, the only post-study water stage"
+        raise UnsupportedSourceError(
+            f"dadger.rvN gives plant {code} a VI travel time of "
+            f"{travel_time_hours[code]:g} h, longer than the {stage_hours:g} h left "
+            f"in the month of the study horizon end {horizon_end.isoformat()}. The "
+            "case carries the water in transit on that one post-study stage, so "
+            f"give the plant a VI travel time of at most {stage_hours:g} h.",
+            path="dadger.rvN",
+            field="VI duracao",
         )
     return [{"start_date": horizon_end.isoformat(), "duration_hours": stage_hours}]
 

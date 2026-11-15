@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.pandas_utils import as_frame
 
 TRANSHIPMENT_BUS_NAME = "IV"
@@ -55,9 +55,12 @@ class DecompIdMap:
                     f"{label} codes must be strictly ascending; got {codes}"
                 )
         if TRANSHIPMENT_BUS_NAME in {n.strip() for n in self.bus_names}:
-            raise ValueError(
-                f"'{TRANSHIPMENT_BUS_NAME}' is reserved for the converter-created "
-                "transhipment bus but appears among the declared subsystems"
+            raise UnsupportedSourceError(
+                f"dadger.rvN declares a subsystem named {TRANSHIPMENT_BUS_NAME} in "
+                "SB, the name the conversion gives the transhipment node it adds. "
+                "Rename that subsystem in SB and in the records that name it.",
+                path="dadger.rvN",
+                field="SB nome_submercado",
             )
 
     @classmethod

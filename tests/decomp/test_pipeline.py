@@ -22,7 +22,7 @@ from typer.testing import CliRunner
 
 from novomodelo_bridge.cli import app
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
-from novomodelo_bridge.core.errors import EmissionCheckError
+from novomodelo_bridge.core.errors import EmissionCheckError, UnsupportedSourceError
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -272,8 +272,15 @@ class TestScenarioEmitters:
             ],
             ignore_index=True,
         )
-        with pytest.raises(ValueError, match="branch into multiple scenarios"):
+        with pytest.raises(
+            UnsupportedSourceError,
+            match=r"branches the inflow scenario tree at stages 2 \(counted from 1\)",
+        ) as raised:
             terminal_fan_probabilities(vazoes, _calendar())
+        assert (raised.value.path, raised.value.field) == (
+            "vazoes.rvN",
+            "probabilidades cenario",
+        )
 
     def test_multi_month_external_inflows(self) -> None:
         """Multi-month deck: weekly stages from previsoes, monthly trunk +
@@ -331,6 +338,39 @@ class TestScenarioEmitters:
         # Terminal fan stage 4, scenario 1, hydro 1 → 145.0
         fan = table[(table["stage_id"] == 4) & (table["scenario_id"] == 1)]
         assert fan[fan["hydro_id"] == 1]["value_m3s"].iloc[0] == pytest.approx(145.0)
+
+    def test_monthly_trunk_scenario_raises(self) -> None:
+        hours = (
+            [[24.0, 64.0, 80.0]] * 3 + [[216.0, 216.0, 216.0]] + [[248.0, 248.0, 248.0]]
+        )
+        calendar = build_operative_calendar(date(2026, 3, 14), hours)
+
+        class _BranchingTrunkVazoes:
+            previsoes = pd.DataFrame(
+                [{"estagio": stage, "11": 100.0, "12": 150.0} for stage in (1, 2, 3)]
+            )
+            cenarios_gerados = pd.DataFrame(
+                [
+                    {"estagio": 4, "cenario": 2, "11": 80.0, "12": 130.0},
+                    {"estagio": 5, "cenario": 1, "11": 90.0, "12": 140.0},
+                ]
+            )
+
+        with pytest.raises(
+            UnsupportedSourceError, match="monthly stage 4 .*inflow scenario 2"
+        ) as raised:
+            convert_external_inflows(
+                make_decomp_case(Path("unused"), calendar=calendar),
+                _ID_MAP,
+                vazoes=_BranchingTrunkVazoes(),
+                effective=EffectiveCadastro(
+                    base=_hidr_frame(), n_stages=len(calendar), stage_varying={}
+                ),
+            )
+        assert (raised.value.path, raised.value.field) == (
+            "vazoes.rvN",
+            "cenarios_gerados cenario",
+        )
 
     def test_pre_terminal_fan_raises(self) -> None:
         vazoes = _StubVazoes()

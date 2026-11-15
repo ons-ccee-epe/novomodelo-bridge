@@ -351,10 +351,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
         compare_status,
     )
     from novomodelo_bridge.core import diagnostics as dx
-    from novomodelo_bridge.core.errors import (
-        FieldParseError,
-        NovomodeloPartitionMissingError,
-    )
+    from novomodelo_bridge.core.errors import BridgeError
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
     from novomodelo_bridge.ui.compare_summary import print_results_summary_from_dataset
@@ -385,8 +382,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
                 )
         except (
             NovomodeloReadError,
-            NovomodeloPartitionMissingError,
-            FieldParseError,
+            BridgeError,
             FileNotFoundError,
             ValueError,
         ) as exc:
