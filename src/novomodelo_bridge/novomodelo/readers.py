@@ -50,7 +50,10 @@ from novomodelo_bridge.core.diagnostics import (
     report_file_missing_diagnostic,
     report_file_unreadable_diagnostic,
 )
-from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.core.errors import (
+    NovomodeloOutputError,
+    NovomodeloPartitionMissingError,
+)
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.tolerances import BIG_M
 from novomodelo_bridge.novomodelo.case_io import (
@@ -92,7 +95,7 @@ _NON_CONTROLLABLE_SOURCES_EFFECT = (
 _BUSES_EFFECT = "the report shows the buses without their names."
 
 
-class NovomodeloReadError(RuntimeError):
+class NovomodeloReadError(NovomodeloOutputError):
     """A Novomodelo output file/dir existed but could not be read or parsed.
 
     Raised when a reader fails while reading an *already-confirmed-present*

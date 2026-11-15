@@ -20,7 +20,6 @@ from novomodelo_bridge.ui.console import (
 def _run_dashboard(args: DashboardArgs) -> None:
     """Execute the dashboard subcommand."""
     from novomodelo_bridge.dashboard import build_dashboard
-    from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
 
     case_dir: Path = args.case_dir.resolve()
     if not (case_dir / "output" / "simulation").exists():
@@ -47,9 +46,7 @@ def _run_dashboard(args: DashboardArgs) -> None:
                 no_color=args.no_color,
             ):
                 build_dashboard(case_dir, output_path)
-        # Disjoint hierarchies (a RuntimeError and every BridgeError): either
-        # one left out escapes as a bare traceback with no --json envelope.
-        except (NovomodeloReadError, BridgeError) as exc:
+        except BridgeError as exc:
             _fail("dashboard", args, exc, 1, found_before=dash_diags)
     dash_diags = dx.finalize_diagnostics(dash_diags)
     size_kb = output_path.stat().st_size / 1024

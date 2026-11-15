@@ -477,7 +477,7 @@ class TestDashboardReadFailure:
         document = json.loads(result.stdout)
         assert [(d["code"], d["severity"]) for d in document["diagnostics"]] == [
             ("report-file-unreadable", "warning"),
-            ("unexpected-error", "error"),
+            ("novomodelo-output-unreadable", "error"),
         ]
 
     def test_an_unreadable_stages_json_is_one_error_envelope(

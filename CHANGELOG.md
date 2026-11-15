@@ -147,6 +147,9 @@ links are cobre-bridge's.
   `source-file-missing` and a missing case directory as
   `novomodelo-output-unreadable`**, as `convert` and `dashboard` do, instead
   of `conversion-error`.
+- **`compare` and `dashboard` report a Novomodelo output file they cannot read
+  as `novomodelo-output-unreadable`** instead of `unexpected-error`, with the
+  same exit codes as before.
 - **`convert` reports a converted case that fails its own checks as
   `case-self-check-failed`** instead of `unexpected-error`, with the panels of
   each failed check.
