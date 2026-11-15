@@ -437,10 +437,11 @@ def emit_libs_electrical_generics(
       FieldParseError` naming *source* (the LIBS electrical file), the
       restriction and the card: ``RESTRICAO-ELETRICA-REGRA-ATIVACAO`` for the
       activation rule, else the card that declares the failing cell's
-      formula. A valid restriction the conversion cannot carry stops it as
-      an :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError`
-      naming the same file, restriction and card, or the card the refusal
-      itself names (the formula's limits, or the period rows).
+      formula, or the formula's limits card when an active cell has no
+      limit. A valid restriction the conversion does not convert yet stops
+      it as an :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError`
+      naming the same file, restriction and card, or the period rows when
+      its decision terms differ between cells.
     - The surviving expression and per-active-cell bound values feed a
       synthesized :class:`~novomodelo_bridge.decomp.constraint_registers.
       ConstraintRecord` (``family="LIBS_ELEC"``, ``per_block=True``,
@@ -643,15 +644,16 @@ def _emit_restriction(
         _emit_unrecognized_token(code, err.name)
         deferred["unrecognized-token"].append(code)
         return False
-    except MalformedElectricalExpression as err:
+    except (MalformedElectricalExpression, FieldParseError) as err:
+        field = err.field if isinstance(err, FieldParseError) else None
         raise FieldParseError(
             f"{source.name}: restriction {code} is malformed: {err}",
             path=str(source),
-            field=card,
+            field=field or card,
         ) from err
     except UnsupportedSourceError as err:
         raise UnsupportedSourceError(
-            f"{source.name}: restriction {code} cannot be converted: {err}",
+            f"{source.name}: restriction {code} is not converted yet: {err}",
             path=str(source),
             field=err.field or card,
         ) from err

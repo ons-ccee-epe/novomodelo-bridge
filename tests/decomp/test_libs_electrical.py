@@ -895,6 +895,22 @@ def test_parse_activation_rule_unbalanced_parens_is_malformed() -> None:
         parse_activation_rule("demanda(3 >= 5", model)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "demanda_sin < 0 | demanda_sin > 10",
+        "demanda(1) > 0 & demanda_sin<0|demanda_sin>9",
+    ],
+)
+def test_parse_activation_rule_with_an_or_is_not_converted_yet(text: str) -> None:
+    # The source model joins comparisons with | (OR) as well as & (AND).
+    with pytest.raises(UnsupportedSourceError) as exc_info:
+        parse_activation_rule(text, _model())
+    assert str(exc_info.value) == (
+        f"the condition {text!r} joins comparisons with | (OR)"
+    )
+
+
 def test_evaluate_rule_and_of_comparisons_true() -> None:
     model = _model()
     rule = parse_activation_rule("demanda_sin >= 50000 & demanda(1) < 1000", model)
@@ -1274,7 +1290,9 @@ def test_build_data_context_gnl_reads_commanded_generation_per_block() -> None:
 def test_build_data_context_gnl_uncommanded_stage_is_unsupported() -> None:
     term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
     with pytest.raises(
-        UnsupportedSourceError, match="no dadgnl GL record commands in período 2"
+        UnsupportedSourceError,
+        match=r"^ger_usit\(86\) names a GNL plant that no dadgnl GL record commands "
+        "in período 2$",
     ):
         _gnl_factory()(1, 0)(term)
 
@@ -1515,21 +1533,31 @@ def test_evaluate_se_folds_a_pure_bucket_b_selected_branch() -> None:
         0
     ]
     ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
-    assert evaluate_se(term, model, 0, 0, ctx) == 300.0
+    assert evaluate_se(term, model, ctx) == 300.0
 
 
-def test_evaluate_se_refuses_a_decision_bearing_selected_branch() -> None:
-    # a se(...) selected branch carrying
-    # a bucket-A/-C term cannot be folded to a float without silently
-    # dropping that term from the LP -- fail loud instead.
+@pytest.mark.parametrize(
+    ("text", "branch", "term"),
+    [
+        ("se(demanda_sin > 1000, ger_usih(1), 0)", "ger_usih(1)", "ger_usih(1)"),
+        ("se(demanda_sin > 1000, 0, 2*ger_usit(3))", "2*ger_usit(3)", "ger_usit(3)"),
+        ("se(demanda_sin > 1000, disp_usih(1), 0)", "disp_usih(1)", "disp_usih(1)"),
+    ],
+)
+def test_evaluate_se_refuses_a_branch_that_is_not_input_data(
+    text: str, branch: str, term: str
+) -> None:
+    # The source model defines a se(...) branch as a number; folding a
+    # decision term in either branch would drop it from the LP.
     model = _model()
-    term = parse_linear_expression("se(demanda_sin > 1000, ger_usih(1), 0)", model)[0]
+    (se_term,) = parse_linear_expression(text, model)
     ctx = _dict_context({"demanda_sin": 1500.0})
-    with pytest.raises(
-        UnsupportedSourceError,
-        match="in período 1, patamar 1, se\\(...\\) takes the branch 'ger_usih\\(1\\)'",
-    ):
-        evaluate_se(term, model, 0, 0, ctx)
+    with pytest.raises(MalformedElectricalExpression) as exc_info:
+        evaluate_se(se_term, model, ctx)
+    assert str(exc_info.value) == (
+        f"se(...) branch {branch!r} carries {term}, which is not input data; "
+        "a se(...) branch reads only input data, never a decision"
+    )
 
 
 def test_evaluate_se_refuses_a_malformed_branch_it_does_not_select() -> None:
@@ -1539,7 +1567,7 @@ def test_evaluate_se_refuses_a_malformed_branch_it_does_not_select() -> None:
     )
     ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
     with pytest.raises(MalformedElectricalExpression, match="'2 \\+'"):
-        evaluate_se(term, model, 0, 0, ctx)
+        evaluate_se(term, model, ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -1844,14 +1872,16 @@ def test_assemble_bound_formula_with_disp_usih_is_unsupported() -> None:
         assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
 
 
-def test_assemble_bound_formula_without_a_limit_on_an_active_cell_is_unsupported() -> (
+def test_assemble_bound_formula_without_a_limit_on_an_active_cell_is_malformed() -> (
     None
 ):
+    # The source model needs a limit on every período and patamar of the
+    # horizon, so a missing one is a hole in the deck, not an unbounded side.
     restriction = _formula(422, "ger_usih(1)", {(0, None): (None, 100.0)})
     with pytest.raises(
-        UnsupportedSourceError,
+        FieldParseError,
         match="^no RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR row covers "
-        "período 2, patamar 1",
+        "período 2, patamar 1 of its horizon",
     ) as exc_info:
         assemble_bound(restriction, _model(), 1, 0, _dict_context({}))
     assert exc_info.value.field == "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"

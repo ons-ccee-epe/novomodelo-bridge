@@ -833,25 +833,54 @@ def test_period_rows_that_change_the_decision_terms_are_unsupported() -> None:
         )
 
     assert str(exc_info.value) == (
-        "lib_restricao-eletrica-especial.csv: restriction 706 cannot be "
-        "converted: its decision terms in período 1, patamar 1 differ from "
-        "those in período 1, patamar 2; the conversion carries one set of "
-        "decision terms per restriction"
+        "lib_restricao-eletrica-especial.csv: restriction 706 is not converted "
+        "yet: its decision terms in período 1, patamar 1 differ from those in "
+        "período 1, patamar 2; the conversion carries one set of decision "
+        "terms per restriction"
     )
     assert exc_info.value.path == str(_LIBS)
     assert exc_info.value.field == "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR"
 
 
 @pytest.mark.parametrize(
-    ("limits", "lhs", "card"),
+    ("limits", "lhs", "rules", "error", "outcome", "card"),
     [
-        ({(0, None): (None, 100.0)}, "disp_usih(1)", "RESTRICAO-ELETRICA-FORMULA"),
-        ({}, "ger_usih(1)", "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"),
+        (
+            {(0, None): (None, 100.0)},
+            "disp_usih(1)",
+            {},
+            UnsupportedSourceError,
+            "is not converted yet: its RESTRICAO-ELETRICA-FORMULA carries a "
+            "disp_usih term",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1)",
+            {1: "demanda_sin < 0 | demanda_sin > 10"},
+            UnsupportedSourceError,
+            "is not converted yet: the condition 'demanda_sin < 0 | demanda_sin "
+            "> 10' joins comparisons with | (OR)",
+            "RESTRICAO-ELETRICA-REGRA-ATIVACAO",
+        ),
+        (
+            {},
+            "ger_usih(1)",
+            {},
+            FieldParseError,
+            "is malformed: no RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR "
+            "row covers período 1, patamar 1 of its horizon; DECOMP needs a "
+            "limit on every período and patamar there",
+            "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR",
+        ),
     ],
 )
-def test_a_restriction_the_conversion_cannot_carry_stops_it_naming_the_card(
+def test_a_restriction_the_conversion_refuses_stops_it_naming_the_card(
     limits: dict[tuple[int, int | None], tuple[float | None, float | None]],
     lhs: str,
+    rules: dict[int, str],
+    error: type[FieldParseError | UnsupportedSourceError],
+    outcome: str,
     card: str,
 ) -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
@@ -863,12 +892,13 @@ def test_a_restriction_the_conversion_cannot_carry_stops_it_naming_the_card(
         is_formula=True,
         limits=limits,
         overrides=(),
+        habilita=next(iter(rules), None),
     )
     model = LibsElectricalModel(
-        expressions={}, aliases={}, restrictions={707: restriction}, rules={}
+        expressions={}, aliases={}, restrictions={707: restriction}, rules=rules
     )
 
-    with pytest.raises(UnsupportedSourceError) as exc_info:
+    with pytest.raises(error) as exc_info:
         emit_libs_electrical_generics(
             model,
             id_map,
@@ -883,12 +913,16 @@ def test_a_restriction_the_conversion_cannot_carry_stops_it_naming_the_card(
         )
 
     assert str(exc_info.value).startswith(
-        "lib_restricao-eletrica-especial.csv: restriction 707 cannot be converted: "
+        f"lib_restricao-eletrica-especial.csv: restriction 707 {outcome}"
     )
     assert exc_info.value.path == str(_LIBS)
     assert exc_info.value.field == card
     diagnostic = diagnostic_from_exception(exc_info.value, context="Conversion")
-    assert diagnostic.code == "source-unsupported"
+    assert diagnostic.code == (
+        "source-unsupported"
+        if error is UnsupportedSourceError
+        else "source-field-parse"
+    )
 
 
 def test_emit_sorted_restriction_codes_deterministic_ids() -> None:

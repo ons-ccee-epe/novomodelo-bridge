@@ -992,10 +992,9 @@ def parse_activation_rule(text: str, model: LibsElectricalModel) -> ActivationRu
     novomodelo decision term.
 
     This is the closed six-operator + ``&`` grammar verified against every
-    rule in the source model's decks — it has no ``|``
-    (disjunction) and no ``se`` literal at the rule-text level, so neither is
-    supported here; a deck that needs either is out of scope, not a silent
-    extension.
+    rule in the source model's decks; it has no ``se`` literal at the
+    rule-text level. The source model also joins comparisons with ``|``
+    (OR), which this grammar does not read.
 
     Raises
     ------
@@ -1004,7 +1003,13 @@ def parse_activation_rule(text: str, model: LibsElectricalModel) -> ActivationRu
         from :func:`_split_comparison` on a missing/unrecognized operator,
         from an operand's own parse, or raised here when an operand term does
         not classify as bucket B (naming the offending term).
+    UnsupportedSourceError
+        When *text* joins comparisons with ``|``.
     """
+    if "|" in text:
+        raise UnsupportedSourceError(
+            f"the condition {text!r} joins comparisons with | (OR)"
+        )
     comparisons = tuple(
         _parse_comparison(conjunct, model) for conjunct in _split_top_level(text, "&")
     )
@@ -1185,18 +1190,16 @@ def _gnl_block_generation(
     ------
     UnsupportedSourceError
         When the plant's generation is not commanded at the cell's stage
-        (no ``gl`` week starts in it): the term would be a decision the
-        abatement cannot represent, so the conversion aborts.
+        (no ``gl`` week starts in it): the conversion folds only a commanded
+        generation into the bound.
     """
     code = term.args[0]
     per_stage = gnl_generation.get(code)
     blocks = per_stage[stage_index] if per_stage is not None else None
     if blocks is None:
         raise UnsupportedSourceError(
-            f"ger_usit({code}) names a GNL plant whose generation no dadgnl GL "
-            f"record commands in período {stage_index + 1}; the conversion "
-            "folds a GNL plant's generation into the bound only where GL "
-            "commands it"
+            f"ger_usit({code}) names a GNL plant that no dadgnl GL record "
+            f"commands in período {stage_index + 1}"
         )
     return blocks[block_index]
 
@@ -1308,7 +1311,7 @@ def build_data_context(
                     gnl_generation, term, stage_index, block_index
                 )
             if term.token == SE_TOKEN:
-                return evaluate_se(term, model, stage_index, block_index, resolve)
+                return evaluate_se(term, model, resolve)
             raise ValueError(
                 f"Cannot resolve electrical-constraint data term {term.token!r}."
             )
@@ -1319,14 +1322,10 @@ def build_data_context(
 
 
 def evaluate_se(
-    term: ParsedTerm,
-    model: LibsElectricalModel,
-    stage_index: int,
-    block_index: int,
-    ctx: DataContext,
+    term: ParsedTerm, model: LibsElectricalModel, ctx: DataContext
 ) -> float:
-    """Evaluate one structural ``se(cond, X, Y)`` term to a float for one
-    (stage, block) cell.
+    """Evaluate one structural ``se(cond, X, Y)`` term to a float for the
+    (stage, block) cell *ctx* is scoped to.
 
     ``cond`` is parsed and evaluated by reusing the activation-rule
     engine (:func:`parse_activation_rule` + :func:`evaluate_rule`) — the
@@ -1336,25 +1335,18 @@ def evaluate_se(
 
     Both branches are parsed (:func:`parse_linear_expression`) and classified
     (:func:`classify_terms`) before either is selected, so a malformed branch
-    fails the cell even where the other one is taken. A selected branch is
-    only safe to fold to a single float when it is
-    entirely bucket B (input data): folding a branch that carries a
-    bucket-A (novomodelo decision) or bucket-C (``disp_usih``) term would fold
-    that term into a plain number and silently drop it from the LP. ``se``
-    does not appear on the target deck (gating is via
-    ``REGRA-ATIVACAO``, not inline ``se()``), so this guard is defensive
-    hardening, not a gap in coverage — keeping a decision-bearing branch's
-    bucket-A/-C terms structural (folding only its bucket-B terms, the way
-    :func:`assemble_bound` does for a whole restriction) is out of scope
-    here; this fails loud instead.
+    fails the cell even where the other one is taken. The source model
+    defines each branch as a number, so a branch carrying a bucket-A
+    (decision) or bucket-C (``disp_usih``) term is malformed: folding it
+    would turn that term into a plain number and drop it from the LP.
 
     Raises
     ------
     MalformedElectricalExpression
-        When the condition or either branch is malformed.
+        When the condition or either branch is malformed, a branch carrying
+        a non-bucket-B term included (naming it).
     UnsupportedSourceError
-        When the selected branch carries any non-bucket-B term (naming it and
-        the cell).
+        Propagated from :func:`parse_activation_rule` on the condition.
     ValueError
         When *term* is not a ``se`` term or is missing its condition/branch
         text (a caller contract violation — the parser always populates all
@@ -1370,21 +1362,18 @@ def evaluate_se(
     rule = parse_activation_rule(term.condition, model)
     true_partition = classify_terms(parse_linear_expression(term.branch_true, model))
     false_partition = classify_terms(parse_linear_expression(term.branch_false, model))
-    selected_text, partition = (
-        (term.branch_true, true_partition)
-        if evaluate_rule(rule, ctx)
-        else (term.branch_false, false_partition)
-    )
-    decision_terms = partition[Bucket.A] + partition[Bucket.C]
-    if decision_terms:
-        offender = decision_terms[0]
-        raise UnsupportedSourceError(
-            f"in período {stage_index + 1}, patamar {block_index + 1}, se(...) "
-            f"takes the branch {selected_text!r}, which carries the decision "
-            f"term {term_text(offender)}; the conversion folds a se(...) "
-            "branch into the bound only when it reads input data alone"
-        )
-    return evaluate_terms(partition[Bucket.B], ctx)
+    for branch, partition in (
+        (term.branch_true, true_partition),
+        (term.branch_false, false_partition),
+    ):
+        if offenders := partition[Bucket.A] + partition[Bucket.C]:
+            raise MalformedElectricalExpression(
+                f"se(...) branch {branch!r} carries {term_text(offenders[0])}, "
+                "which is not input data; a se(...) branch reads only input "
+                "data, never a decision"
+            )
+    selected = true_partition if evaluate_rule(rule, ctx) else false_partition
+    return evaluate_terms(selected[Bucket.B], ctx)
 
 
 _FORMULA_LIMITS_CARD = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"
@@ -1421,17 +1410,19 @@ def _fold_formula_bound(
 
     Raises
     ------
-    UnsupportedSourceError
-        When *restriction* declares no limit at all for this active cell.
+    FieldParseError
+        When *restriction* declares no limit at all for this active cell: the
+        source model requires one for every período and patamar of the
+        restriction's horizon. It names the limits card but no path.
     """
     limit = restriction.limits.get((stage_index, patamar))
     if limit is None:
         limit = restriction.limits.get((stage_index, None))
     if limit is None:
-        raise UnsupportedSourceError(
+        raise FieldParseError(
             f"no {_FORMULA_LIMITS_CARD} row covers período {stage_index + 1}, "
-            f"patamar {patamar}, where the restriction is active, and the "
-            "conversion does not know how DECOMP bounds it there",
+            f"patamar {patamar} of its horizon; DECOMP needs a limit on every "
+            "período and patamar there",
             field=_FORMULA_LIMITS_CARD,
         )
     lower, upper = limit
@@ -1577,9 +1568,11 @@ def assemble_bound(
 
     Raises
     ------
+    FieldParseError
+        When a FORMULA restriction carries no limit at all for this cell
+        (:func:`_fold_formula_bound`).
     UnsupportedSourceError
-        When a FORMULA restriction carries no limit at all for this cell,
-        when a FORMULA restriction carries a bucket-C term (out of the
+        When a FORMULA restriction carries a bucket-C term (out of the
         documented pattern's scope), when a restriction uses ``disp_usih``
         outside the documented reserve sign structure
         (:func:`_fold_reserve_disp_usih`'s CRITICAL-pitfall guard), or from
@@ -1765,6 +1758,8 @@ def active_cells(
         When *restriction*'s ``habilita`` names a ``regra_id`` absent from
         ``model.rules`` — a dangling activation reference must fail loud,
         naming the missing rule id — or when its rule is malformed.
+    UnsupportedSourceError
+        When its rule joins comparisons with ``|`` (:func:`parse_activation_rule`).
     """
     if restriction.habilita is None:
         rule = ActivationRule(comparisons=())
