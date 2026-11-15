@@ -181,6 +181,17 @@ class MalformedElectricalExpression(ValueError):
     """
 
 
+class UnsupportedElectricalExpression(ValueError):
+    """Formula text the source model accepts but this grammar does not read
+    yet: a constant factor written after its term (``ger_usih(1) * 2``,
+    ``se(...) / 2``, ``50.0 * 2.0``).
+
+    Distinct from :class:`MalformedElectricalExpression` so the caller that
+    knows the file and the constraint reports it as not converted yet, an
+    :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError`.
+    """
+
+
 class UnrecognizedElectricalToken(ValueError):
     """A well-formed but undeclared bare identifier, *name*: neither a
     named expression or data alias the scope declares, nor a member of
@@ -250,17 +261,63 @@ class _ExpressionParser:
             sign = -1.0 if self._text[self._pos] == "-" else 1.0
             self._pos += 1
         terms.extend(self._parse_term(scale * sign))
+        self._refuse_trailing_constant_factor()
         while self._peek() in ("+", "-"):
             sign = -1.0 if self._text[self._pos] == "-" else 1.0
             self._pos += 1
             terms.extend(self._parse_term(scale * sign))
+            self._refuse_trailing_constant_factor()
         return terms
+
+    def _constant_at(self, pos: int) -> str | None:
+        """The signed number starting at *pos* (after blanks) when it stands
+        alone, not a coefficient against a name or a ``(``; else ``None``."""
+        while pos < len(self._text) and self._text[pos].isspace():
+            pos += 1
+        sign = ""
+        if pos < len(self._text) and self._text[pos] in "+-":
+            sign = self._text[pos]
+            pos += 1
+        number = _NUMBER_RE.match(self._text, pos)
+        if number is None:
+            return None
+        probe = number.end()
+        while probe < len(self._text) and self._text[probe].isspace():
+            probe += 1
+        if probe < len(self._text) and (
+            self._text[probe] == "(" or _IDENT_RE.match(self._text, probe)
+        ):
+            return None
+        return sign + number.group()
+
+    def _refuse_trailing_constant_factor(self) -> None:
+        """Refuse a ``*`` or ``/`` by a constant right after a complete term:
+        valid source algebra this grammar does not read. Any other text after
+        the term is left to the caller to accept or refuse as malformed."""
+        operator = self._peek()
+        if operator not in ("*", "/"):
+            return
+        constant = self._constant_at(self._pos + 1)
+        if constant is None:
+            return
+        if operator == "/" and float(constant) == 0.0:
+            raise MalformedElectricalExpression(
+                f"division by zero in electrical expression {self._text!r}"
+            )
+        verb = "multiplies" if operator == "*" else "divides"
+        raise UnsupportedElectricalExpression(
+            f"electrical expression {self._text!r} {verb} a term by the "
+            f"constant {constant} written after it; the conversion reads a "
+            "constant factor only as a coefficient written before its term"
+        )
 
     def _parse_term(self, scale: float) -> list[ParsedTerm]:
         """``[NUMBER ['*']] factor`` — a bare number alone is a constant term.
 
         NEWAVE writes a coefficient against its term (``0.5ger_usih(66)``);
-        a number followed by anything but a name or ``(`` stands alone.
+        a number followed by anything but a name or ``(`` stands alone, and
+        so does one multiplied by another constant (``50.0 * 2.0``), which
+        :meth:`_parse_expr` then refuses as a trailing constant factor.
         """
         self._skip_ws()
         number = _NUMBER_RE.match(self._text, self._pos)
@@ -269,7 +326,11 @@ class _ExpressionParser:
         probe = number.end()
         while probe < len(self._text) and self._text[probe].isspace():
             probe += 1
-        if probe < len(self._text) and self._text[probe] == "*":
+        if (
+            probe < len(self._text)
+            and self._text[probe] == "*"
+            and self._constant_at(probe + 1) is None
+        ):
             self._pos = probe + 1
             return self._parse_factor(scale * float(number.group()))
         if probe < len(self._text) and (
@@ -487,6 +548,9 @@ def parse_linear_expression(
     MalformedElectricalExpression
         On text the grammar rejects, ``re(R)`` to an undeclared restriction
         or to one with no formula, or a reference cycle.
+    UnsupportedElectricalExpression
+        On a constant factor written after its term, which the source model
+        accepts and this grammar does not read yet.
     UnrecognizedElectricalToken
         On a bare identifier that is well-formed but undeclared — neither a
         named expression, a data alias, nor a built-in bare token.

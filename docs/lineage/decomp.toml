@@ -3490,6 +3490,11 @@ note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os ca
   note = "O modelo de origem junta comparações com `&` (E) ou `|` (OU). O conversor só lê `&`: uma regra de ativação ou condição de `se(...)` com `|` interrompe a conversão com erro `source-unsupported`. Converter exige avaliar a disjunção em cada estágio e patamar, como a conjunção já é avaliada."
 
   [[source.item]]
+  item = "fator constante escrito depois do termo (ger_usih(1) * 2, ger_usih(1) / 2)"
+  status = "deferred"
+  note = "O modelo de origem aceita uma expressão algébrica com números reais e fórmulas condicionais, como `se (demanda_sin > 0, 50.0, 0) * 2 + 50.0 * 2.0`. O conversor só lê um fator constante escrito antes do termo, como coeficiente: uma fórmula ou regra de ativação com `*` ou `/` por uma constante depois de um termo interrompe a conversão com erro `source-unsupported`, salvo num ramo de `se(...)` que o período e patamar não selecionam. Converter exige aplicar o fator ao termo que o precede."
+
+  [[source.item]]
   item = "restricao_eletrica_formula_periodo_patamar"
   status = "unread"
   note = "Fórmula da restrição variando por intervalo de estágios e patamar. Não lida: só a fórmula fixa e os limites por período e patamar são lidos."

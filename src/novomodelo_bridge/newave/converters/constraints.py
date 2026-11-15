@@ -46,13 +46,19 @@ from novomodelo_bridge.core.electrical_expression import (
     MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     classify_terms,
     demand_in_cmo_diagnostic,
     evaluate_terms,
     parse_linear_expression,
     term_text,
 )
-from novomodelo_bridge.core.errors import BridgeError, FieldParseError, SourceFileError
+from novomodelo_bridge.core.errors import (
+    BridgeError,
+    FieldParseError,
+    SourceFileError,
+    UnsupportedSourceError,
+)
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintBuilder,
@@ -1069,6 +1075,8 @@ def _read_formulas(
         FieldParseError: a formula is malformed: unbalanced, with an unknown
             function or one given the wrong number of arguments, or with an
             ``re(X)`` that names no constraint of the file.
+        UnsupportedSourceError: a formula holds algebra the conversion does
+            not read yet, a constant factor written after its term.
     """
     scope = _NewaveFormulaScope(expressions)
     formulas: dict[int, _ElectricFormula] = {}
@@ -1084,6 +1092,13 @@ def _read_formulas(
         except MalformedElectricalExpression as err:
             raise FieldParseError(
                 f"{path.name}: the formula of constraint {cod} is malformed: {err}",
+                path=str(path),
+                field="RE",
+            ) from err
+        except UnsupportedElectricalExpression as err:
+            raise UnsupportedSourceError(
+                f"{path.name}: the formula of constraint {cod} is not converted "
+                f"yet: {err}",
                 path=str(path),
                 field="RE",
             ) from err

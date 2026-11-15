@@ -19,6 +19,7 @@ from novomodelo_bridge.core.electrical_expression import (
     MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     classify_term,
     classify_terms,
     evaluate_terms,
@@ -138,6 +139,8 @@ def test_a_function_given_the_wrong_number_of_arguments_is_refused(
     ("text", "expected"),
     [
         ("ger_usih(1) )", "unexpected trailing content"),
+        ("ger_usih(1) * ger_usih(2)", "unexpected trailing content '\\* ger_usih"),
+        ("ger_usih(1) / 0", "division by zero"),
         ("(ger_usih(1)", "expected '\\)' to close '\\('"),
         ("ger_usih(1) +", "expected a term but reached the end"),
         ("ger_usih(1) + #", "malformed token at '#'"),
@@ -148,6 +151,26 @@ def test_a_function_given_the_wrong_number_of_arguments_is_refused(
 def test_text_the_grammar_rejects_is_malformed(text: str, expected: str) -> None:
     with pytest.raises(MalformedElectricalExpression, match=expected):
         parse_linear_expression(text, _Scope())
+
+
+@pytest.mark.parametrize(
+    ("text", "constant"),
+    [
+        ("se (demanda_sin > 0, 50.0, 0) * 2 + 50.0 * 2.0", "2"),
+        ("ger_usih(1) * 2", "2"),
+        ("ger_usih(1) / 4", "4"),
+        ("50.0 * 2.0", "2.0"),
+        ("ger_usih(3) + (ger_usih(1) - ger_usih(2)) * -0.5", "-0.5"),
+    ],
+)
+def test_a_constant_factor_after_its_term_is_not_read_yet(
+    text: str, constant: str
+) -> None:
+    with pytest.raises(UnsupportedElectricalExpression) as err:
+        parse_linear_expression(text, _Scope())
+
+    assert not isinstance(err.value, MalformedElectricalExpression)
+    assert f"by the constant {constant} written after it" in str(err.value)
 
 
 def test_an_unknown_function_names_only_the_functions_a_formula_may_call() -> None:

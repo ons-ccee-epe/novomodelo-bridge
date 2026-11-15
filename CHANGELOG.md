@@ -134,11 +134,14 @@ links are cobre-bridge's.
   `electric-constraint-malformed-term` and `convert decomp` stopped with an
   `unexpected-error`. `convert decomp` refuses the same way a malformed
   activation rule, a `RESTRICAO-ELETRICA-HABILITA` naming an undeclared rule,
-  a `se(...)` branch holding a decision term, a LIBS formula restriction with
-  no limit on a period and block where it is active, and a LIBS inequality
-  whose operator is not `>=` or `<=` (`check decomp` reports the operator
-  too), and now reads a LIBS coefficient written before a space or a
-  parenthesis.
+  a decision term in either branch of a `se(...)`, a LIBS formula restriction
+  with no limit on a period and block where it is active, and a LIBS
+  inequality whose operator is not `>=` or `<=` (`check decomp` reports the
+  operator too), and now reads a LIBS coefficient written before a space or a
+  parenthesis. Both commands stop with `source-unsupported` on a formula that
+  multiplies or divides a term by a constant written after it
+  (`ger_usih(1) * 2`), which the source model accepts but the conversion does
+  not read yet.
 - **`compare` and `dashboard` no longer stop on a `system/lines.json` they
   cannot read**: they treat the case as having no lines, leave out the
   interchange and the Network tab's lines, and say so in a

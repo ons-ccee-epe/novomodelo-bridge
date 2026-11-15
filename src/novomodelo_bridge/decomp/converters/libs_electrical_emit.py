@@ -53,6 +53,7 @@ from novomodelo_bridge.core.electrical_expression import (
     MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     demand_in_cmo_diagnostic,
     term_text,
 )
@@ -438,10 +439,13 @@ def emit_libs_electrical_generics(
       restriction and the card: ``RESTRICAO-ELETRICA-REGRA-ATIVACAO`` for the
       activation rule, else the card that declares the failing cell's
       formula, or the formula's limits card when an active cell has no
-      limit. A valid restriction the conversion does not convert yet stops
-      it as an :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError`
-      naming the same file, restriction and card, or the period rows when
-      its decision terms differ between cells.
+      limit. A valid restriction the conversion does not convert yet, a
+      formula the grammar does not read yet
+      (:class:`~novomodelo_bridge.core.electrical_expression.
+      UnsupportedElectricalExpression`) included, stops it as an
+      :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError` naming
+      the same file, restriction and card, or the period rows when its
+      decision terms differ between cells.
     - The surviving expression and per-active-cell bound values feed a
       synthesized :class:`~novomodelo_bridge.decomp.constraint_registers.
       ConstraintRecord` (``family="LIBS_ELEC"``, ``per_block=True``,
@@ -651,11 +655,12 @@ def _emit_restriction(
             path=str(source),
             field=field or card,
         ) from err
-    except UnsupportedSourceError as err:
+    except (UnsupportedElectricalExpression, UnsupportedSourceError) as err:
+        field = err.field if isinstance(err, UnsupportedSourceError) else None
         raise UnsupportedSourceError(
             f"{source.name}: restriction {code} is not converted yet: {err}",
             path=str(source),
-            field=err.field or card,
+            field=field or card,
         ) from err
 
     if isinstance(expression, Unresolved):

@@ -3515,6 +3515,11 @@ note = "Localizado pela chave `RESTRICAO-ELETRICA-ESPECIAL` de `indices.csv` e l
   note = "O caso não tem variável de energia comercial, de potência disponível nem de geração por conjunto de máquinas, e o conversor não lê parques eólicos, a carga da ANDE, séries de pequenas usinas nem termos condicionais. A restrição que usa um desses termos fica de fora, com o aviso `electric-constraint-term-unsupported`."
 
   [[source.item]]
+  item = "fator constante escrito depois do termo (ger_usih(1) * 2, ger_usih(1) / 2)"
+  status = "deferred"
+  note = "O conversor só lê um fator constante escrito antes do termo, como coeficiente (`2*ger_usih(1)` ou `2ger_usih(1)`): uma fórmula com `*` ou `/` por uma constante depois de um termo interrompe a conversão com erro `source-unsupported`. Converter exige aplicar o fator ao termo que o precede."
+
+  [[source.item]]
   item = "registros RHE, RHQ, RHV e seus RHE/RHQ/RHV-HORIZ-PER, -LIM-FORM-PER, -LS-LPP-*"
   status = "unread"
   note = "Restrições hidráulicas de energia, vazão e volume (inclusive as LPP lineares por partes). O conversor só usa os registros `RE`, `RE-HORIZ-PER` e `RE-LIM-FORM-PER-PAT`; converter exigiria restrições genéricas sobre `hydro_storage_final`/`hydro_outflow`."

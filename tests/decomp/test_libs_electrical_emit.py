@@ -864,6 +864,52 @@ def test_period_rows_that_change_the_decision_terms_are_unsupported() -> None:
             "RESTRICAO-ELETRICA-REGRA-ATIVACAO",
         ),
         (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1) * 2",
+            {},
+            UnsupportedSourceError,
+            "is not converted yet: electrical expression 'ger_usih(1) * 2' "
+            "multiplies a term by the constant 2 written after it",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1) / 4",
+            {},
+            UnsupportedSourceError,
+            "is not converted yet: electrical expression 'ger_usih(1) / 4' "
+            "divides a term by the constant 4 written after it",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1) + se (demanda_sin > 0, 50.0, 0) * 2 + 50.0 * 2.0",
+            {},
+            UnsupportedSourceError,
+            "is not converted yet: electrical expression 'ger_usih(1) + se "
+            "(demanda_sin > 0, 50.0, 0) * 2 + 50.0 * 2.0' multiplies a term by "
+            "the constant 2 written after it",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1)",
+            {1: "demanda_sin * 2 > 10"},
+            UnsupportedSourceError,
+            "is not converted yet: electrical expression 'demanda_sin * 2 ' "
+            "multiplies a term by the constant 2 written after it",
+            "RESTRICAO-ELETRICA-REGRA-ATIVACAO",
+        ),
+        (
+            {(0, None): (None, 100.0)},
+            "ger_usih(1) )",
+            {},
+            FieldParseError,
+            "is malformed: unexpected trailing content ')' in electrical "
+            "expression 'ger_usih(1) )'",
+            "RESTRICAO-ELETRICA-FORMULA",
+        ),
+        (
             {},
             "ger_usih(1)",
             {},

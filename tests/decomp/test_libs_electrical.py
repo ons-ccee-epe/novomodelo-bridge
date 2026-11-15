@@ -23,6 +23,7 @@ from novomodelo_bridge.core.electrical_expression import (
     MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     classify_term,
     classify_terms,
     parse_linear_expression,
@@ -1560,27 +1561,34 @@ def test_evaluate_se_refuses_a_branch_that_is_not_input_data(
     )
 
 
-def test_evaluate_se_ignores_an_undeclared_name_in_the_branch_it_does_not_select() -> (
-    None
-):
+#: A se(...) branch the conversion cannot read: an undeclared name, and a
+#: constant factor written after its term.
+_UNREAD_BRANCHES = ["undeclared_alias", "val_demanda(1) / 2"]
+
+
+@pytest.mark.parametrize("unread", _UNREAD_BRANCHES)
+def test_evaluate_se_ignores_a_branch_it_does_not_select_and_cannot_read(
+    unread: str,
+) -> None:
     model = _model()
     (term,) = parse_linear_expression(
-        "se(demanda_sin > 1000, val_demanda(1), undeclared_alias)", model
+        f"se(demanda_sin > 1000, val_demanda(1), {unread})", model
     )
     ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
     assert evaluate_se(term, model, ctx) == 300.0
 
 
-def test_a_restriction_whose_unselected_se_branch_names_an_undeclared_alias_converts() -> (
-    None
-):
+@pytest.mark.parametrize("unread", _UNREAD_BRANCHES)
+def test_a_restriction_whose_unselected_se_branch_cannot_be_read_converts(
+    unread: str,
+) -> None:
     calendar = _ri_calendar(1, n_blocks=1)
     dadger = _StubElectricalDadger(dp=_dp((1, 1, 1, 1500.0), n_patamares=1))
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
     model = _model()
     restriction = _formula(
         470,
-        "ger_usih(1) + se(demanda_sin > 1000, 100, undeclared_alias)",
+        f"ger_usih(1) + se(demanda_sin > 1000, 100, {unread})",
         {(0, None): (None, 500.0)},
     )
     ctx = build_data_context(_case(dadger, calendar), id_map, model=model)(0, 0)
@@ -1591,15 +1599,29 @@ def test_a_restriction_whose_unselected_se_branch_names_an_undeclared_alias_conv
     )
 
 
-def test_evaluate_se_keeps_an_undeclared_name_in_the_branch_it_selects() -> None:
+@pytest.mark.parametrize(
+    ("unread", "error", "match"),
+    [
+        ("undeclared_alias", UnrecognizedElectricalToken, "'undeclared_alias'"),
+        (
+            "val_demanda(1) / 2",
+            UnsupportedElectricalExpression,
+            "divides a term by the constant 2",
+        ),
+    ],
+)
+def test_evaluate_se_raises_on_a_branch_it_selects_and_cannot_read(
+    unread: str,
+    error: type[UnrecognizedElectricalToken | UnsupportedElectricalExpression],
+    match: str,
+) -> None:
     model = _model()
     (term,) = parse_linear_expression(
-        "se(demanda_sin > 1000, undeclared_alias, val_demanda(1))", model
+        f"se(demanda_sin > 1000, {unread}, val_demanda(1))", model
     )
     ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
-    with pytest.raises(UnrecognizedElectricalToken) as exc_info:
+    with pytest.raises(error, match=match):
         evaluate_se(term, model, ctx)
-    assert exc_info.value.name == "undeclared_alias"
 
 
 def test_evaluate_se_refuses_a_malformed_branch_it_does_not_select() -> None:

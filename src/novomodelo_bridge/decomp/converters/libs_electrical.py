@@ -83,6 +83,7 @@ from novomodelo_bridge.core.electrical_expression import (
     MalformedElectricalExpression,
     ParsedTerm,
     UnrecognizedElectricalToken,
+    UnsupportedElectricalExpression,
     classify_term,
     classify_terms,
     evaluate_terms,
@@ -1004,6 +1005,8 @@ def parse_activation_rule(text: str, model: LibsElectricalModel) -> ActivationRu
         from :func:`_split_comparison` on a missing/unrecognized operator,
         from an operand's own parse, or raised here when an operand term does
         not classify as bucket B (naming the offending term).
+    UnsupportedElectricalExpression
+        Propagated from an operand's own parse.
     UnsupportedSourceError
         When *text* joins comparisons with ``|``.
     """
@@ -1340,8 +1343,8 @@ def evaluate_se(
     defines each branch as a number, so a branch carrying a bucket-A
     (decision) or bucket-C (``disp_usih``) term is malformed: folding it
     would turn that term into a plain number and drop it from the LP. An
-    undeclared name only matters in the branch the cell takes: the other
-    branch is never evaluated.
+    undeclared name, or algebra this grammar does not read yet, only matters
+    in the branch the cell takes: the other branch is never evaluated.
 
     Raises
     ------
@@ -1351,6 +1354,9 @@ def evaluate_se(
     UnrecognizedElectricalToken
         When the condition, or the branch the cell takes, names an
         undeclared identifier.
+    UnsupportedElectricalExpression
+        When the condition, or the branch the cell takes, holds algebra this
+        grammar does not read yet.
     UnsupportedSourceError
         Propagated from :func:`parse_activation_rule` on the condition.
     """
@@ -1360,11 +1366,15 @@ def evaluate_se(
     assert term.branch_false is not None  # parser invariant for a se term
 
     rule = parse_activation_rule(term.condition, model)
-    branches: list[dict[Bucket, list[ParsedTerm]] | UnrecognizedElectricalToken] = []
+    branches: list[
+        dict[Bucket, list[ParsedTerm]]
+        | UnrecognizedElectricalToken
+        | UnsupportedElectricalExpression
+    ] = []
     for branch in (term.branch_true, term.branch_false):
         try:
             partition = classify_terms(parse_linear_expression(branch, model))
-        except UnrecognizedElectricalToken as err:
+        except (UnrecognizedElectricalToken, UnsupportedElectricalExpression) as err:
             branches.append(err)
             continue
         if offenders := partition[Bucket.A] + partition[Bucket.C]:
@@ -1375,7 +1385,9 @@ def evaluate_se(
             )
         branches.append(partition)
     selected = branches[0] if evaluate_rule(rule, ctx) else branches[1]
-    if isinstance(selected, UnrecognizedElectricalToken):
+    if isinstance(
+        selected, UnrecognizedElectricalToken | UnsupportedElectricalExpression
+    ):
         raise selected
     return evaluate_terms(selected[Bucket.B], ctx)
 
