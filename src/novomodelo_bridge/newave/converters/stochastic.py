@@ -852,7 +852,6 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
     rows_mean: list[float] = []
     rows_std: list[float] = []
 
-    subsystem_codes_processed: set[int] = set()
     undeclared: list[int] = []
 
     for subsystem_code, group in df_load.groupby("codigo_submercado", sort=True):
@@ -862,7 +861,6 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
         except KeyError:
             undeclared.append(sub_int)
             continue
-        subsystem_codes_processed.add(sub_int)
 
         # Build a month-keyed lookup: study-period months by (year, month),
         # post-study months (year=9999) by calendar month for seasonal repeat.

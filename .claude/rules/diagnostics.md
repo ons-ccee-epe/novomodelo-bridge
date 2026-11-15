@@ -23,8 +23,11 @@ and over every log call.
   the plant already has.
 
 Never raise a severity to draw attention, and never lower one to quiet a
-deck. Moving a finding between WARNING and INFO changes neither the exit code
-nor the `--json` status; moving it to or from ERROR changes both.
+deck. Moving a finding between WARNING and INFO leaves the exit code and
+`--json` status of `convert`, `compare`, `dashboard` and `export` unchanged,
+but flips `check` between `ok` (exit 0) and `warnings` (exit 1) for a code
+`check` emits; say so in the CHANGELOG entry. Moving a finding to or from
+ERROR changes both on every command.
 
 ## 2. A finding is a Diagnostic, never a log line
 

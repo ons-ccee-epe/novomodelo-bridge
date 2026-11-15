@@ -1066,6 +1066,35 @@ def test_emit_malformed_activation_rule_propagates_value_error() -> None:
     assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
 
 
+def test_emit_reports_findings_met_before_a_failing_restriction() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            1: _restriction(1, "ger_usih(99)", "<=", "500"),
+            2: _restriction(2, "ger_usih(1)", "<=", "500", habilita=30),
+        },
+        rules={30: "demanda(3 >= 5"},
+    )
+
+    with dx.collect() as sink:
+        with pytest.raises(ValueError, match="unbalanced parentheses"):
+            emit_libs_electrical_generics(
+                model,
+                id_map,
+                lambda s, b: _dict_context({}),
+                AvailablePower(overlay={}),
+                _emit_calendar(1, n_blocks=1),
+                {},
+                {},
+                {},
+                big_m=999.0,
+            )
+
+    assert [d.code for d in sink] == ["decomp-electrical-bucket-a-unresolved"]
+
+
 # ---------------------------------------------------------------------------
 # The findings each dropped or rewritten restriction reports, by code
 # ---------------------------------------------------------------------------
@@ -1125,6 +1154,23 @@ def test_emit_reserve_restriction_reports_each_stage_available_power_used() -> N
         "Available power (MW)",
     ]
     assert finding.table.rows == [[407, 1, 0, 1000.0], [407, 1, 1, 900.0]]
+
+
+def test_emit_dropped_reserve_restriction_reports_no_available_power_used() -> None:
+    restriction = _reserve_restriction(407, plant_code=1, threshold=300.0)
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={407: restriction}, rules={}
+    )
+
+    result, sink = _emit_findings(
+        model,
+        calendar=_emit_calendar(2, n_blocks=2),
+        a_h=AvailablePower(overlay={(1, 0): 1000.0}),
+    )
+
+    assert result.converted_codes == ()
+    assert result.deferred["unresolved-bucket-bc"] == (407,)
+    assert [d.code for d in sink] == ["decomp-electrical-disp-usih-unresolved"]
 
 
 def test_emit_restriction_without_disp_usih_reports_nothing() -> None:
@@ -1188,6 +1234,39 @@ def test_emit_restriction_active_on_one_cell_is_not_reported_inactive() -> None:
     assert result.converted_codes == (701,)
     assert result.deferred["inactive"] == ()
     assert sink == []
+
+
+def test_emit_lists_kept_restrictions_with_a_bare_demand_term() -> None:
+    # 802's val_ form, 803's activation rule and the dropped 804 are not
+    # listed: only a kept bound's demanda/demanda_sin counts in the CMO.
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            801: _restriction(801, "ger_usih(1) - demanda(1)", "<=", "500"),
+            802: _restriction(802, "ger_usih(1) - val_demanda(1)", "<=", "500"),
+            803: _restriction(803, "ger_usih(1)", "<=", "500", habilita=10),
+            804: _restriction(804, "ener_comerc(1) - demanda_sin", "<=", "500"),
+        },
+        rules={10: "demanda_sin >= 0"},
+    )
+    context = _dict_context(
+        {"demanda(1)": 10.0, "val_demanda(1)": 10.0, "demanda_sin": 10.0}
+    )
+
+    result, sink = _emit_findings(
+        model, calendar=_emit_calendar(1, n_blocks=1), factory=lambda s, b: context
+    )
+
+    assert result.converted_codes == (801, 802, 803)
+    assert result.deferred["unresolved-bucket-a"] == (804,)
+    [finding] = [d for d in sink if d.code == "decomp-electrical-demand-in-cmo"]
+    assert finding.severity is dx.Severity.WARNING
+    assert finding.title == "Electric constraint demand terms left out of the CMO (1)"
+    assert finding.table is not None
+    assert finding.table.rows == [[801, "demanda(1)"]]
+    assert finding.remediation is not None
+    assert "RESTRICAO-ELETRICA-ESPECIAL" in finding.remediation
 
 
 def test_emit_undeclared_names_in_formula_and_rule_are_one_warning() -> None:

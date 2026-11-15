@@ -708,17 +708,19 @@ def test_constraint_without_a_term_at_its_first_stage_is_rejected() -> None:
 _NAN = float("nan")
 
 
-def _qdef_ceiling_and_floor(*, floor_first: bool = False) -> _FakeDadger:
-    """Plant 118 with ``QDEF <= 0`` (HQ 116) and ``QDEF >= 6`` (HQ 170) over
-    stages 1-2, the floor declared first when *floor_first*."""
+def _qdef_ceiling_and_floor(
+    *, floor_first: bool = False, variable: str = "QDEF"
+) -> _FakeDadger:
+    """Code 118 with ``variable <= 0`` (HQ 116) and ``variable >= 6`` (HQ 170)
+    over stages 1-2, the floor declared first when *floor_first*."""
     ceiling = (
         (116, 1, 2),
-        (116, 118, 1.0, 1, "QDEF"),
+        (116, 118, 1.0, 1, variable),
         (116, 1, _NAN, 0.0, _NAN, 0.0, _NAN, 0.0),
     )
     floor = (
         (170, 1, 2),
-        (170, 118, 1.0, 1, "QDEF"),
+        (170, 118, 1.0, 1, variable),
         (170, 1, 6.0, _NAN, 6.0, _NAN, 6.0, _NAN),
     )
     first, second = (floor, ceiling) if floor_first else (ceiling, floor)
@@ -950,6 +952,38 @@ def test_drop_unknown_entities_leaves_out_bound_and_generic_records_alike() -> N
     assert diagnostic.table.rows == [[7, 99], [8, 98]]
 
 
+@pytest.mark.parametrize(
+    ("family", "variable", "code"),
+    [
+        ("RE", "generation", "decomp-re-plant-not-operated"),
+        ("HQ", "QDEF", "decomp-rhq-plant-not-operated"),
+        ("HQ", "QTUR", "decomp-rhq-plant-not-operated"),
+        ("HQ", "QDES", "decomp-rhq-plant-not-operated"),
+        ("HQ", "QVER", "decomp-rhq-plant-not-operated"),
+        ("HV", "VDEF", "decomp-rhv-varm-plant-uncadastred"),
+        ("HV", "VDES", "decomp-rhv-varm-plant-uncadastred"),
+    ],
+)
+def test_drop_unknown_entities_leaves_out_every_term_on_a_plant_not_operated(
+    family: str, variable: str, code: str
+) -> None:
+    on_operated = _record(
+        family, 1, ConstraintTerm(code=5, coefficient=1.0, variable=variable)
+    )
+    not_operated = _record(
+        family, 2, ConstraintTerm(code=99, coefficient=1.0, variable=variable)
+    )
+
+    census, diagnostics = _screen(on_operated, not_operated)
+
+    assert (*census.to_bounds, *census.to_generic) == (on_operated,)
+    [diagnostic] = diagnostics
+    assert diagnostic.code == code
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[2, 99]]
+
+
 def test_drop_unknown_entities_reports_each_kind_of_term_once() -> None:
     _, diagnostics = _screen(
         _record(
@@ -967,3 +1001,16 @@ def test_drop_unknown_entities_reports_each_kind_of_term_once() -> None:
         ("decomp-rhq-qbom-no-station", [[2, 4]]),
         ("decomp-rhv-vbom-no-station", [[3, 4], [4, 4]]),
     ]
+
+
+def test_drop_unknown_entities_leaves_out_their_bound_conflicts() -> None:
+    census = read_constraints(_qdef_ceiling_and_floor(variable="QBOM"))
+    assert census.bound_conflicts
+
+    screened, diagnostics = drop_unknown_entities(
+        census, hydro_codes=(118,), thermal_codes=(), pumping_codes=()
+    )
+
+    assert screened.bound_conflicts == ()
+    assert screened.to_generic == ()
+    assert [d.code for d in diagnostics] == ["decomp-rhq-qbom-no-station"]

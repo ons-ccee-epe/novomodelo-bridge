@@ -33,8 +33,11 @@ from novomodelo_bridge.decomp.constraint_registers import (
 )
 from novomodelo_bridge.decomp.converters.anticipated import GnlEmission
 from novomodelo_bridge.decomp.converters.cadastro import (
+    CadastroResolutionReport,
     DiversionChannel,
     EffectiveCadastro,
+    OutOfHorizon,
+    ac_overrides_deferred_diagnostic,
 )
 from novomodelo_bridge.decomp.converters.hydro import TurbineLimits
 from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
@@ -48,6 +51,7 @@ from novomodelo_bridge.decomp.pipeline import (
     DecompCaseArtifacts,
     DiversionChannels,
     _base_diversion_channels,
+    _cadastro_overrides_diagnostic,
     _close_diversion,
     _convert_config_and_stages,
     _couple_diversion_channels,
@@ -70,6 +74,8 @@ from tests.decomp.conftest import flat_turbine_limits
 from tests.decomp.test_constraint_registers import _qdef_ceiling_and_floor
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from idecomp.decomp import Dadger, Vazoes
 
     from novomodelo_bridge.decomp.case import DecompCase
@@ -625,6 +631,12 @@ class TestConstraintCensusConflictDiagnostic:
     def test_deck_without_restrictions_reports_no_conflict(self) -> None:
         assert self._census(_FakeDadger()) == []
 
+    def test_a_conflict_on_a_missing_pumping_station_is_not_reported(self) -> None:
+        """The restrictions the entity check leaves out are not reported as
+        conflicting."""
+        diagnostics = self._census(_qdef_ceiling_and_floor(variable="QBOM"))
+        assert [d.code for d in diagnostics] == ["decomp-rhq-qbom-no-station"]
+
 
 class TestEmissionCheckWiring:
     """The post-emission self-checks run inside
@@ -909,11 +921,16 @@ class _CadastroDadger:
         def of_type(_register: type) -> list[object]:
             return []
 
-    def __init__(self, ac_volmax_frame: pd.DataFrame | None) -> None:
+    def __init__(
+        self,
+        ac_volmax_frame: pd.DataFrame | None,
+        ac_frames: Mapping[type, pd.DataFrame] | None = None,
+    ) -> None:
         self.tx = self._Tx()
         self.data = self._Data()
         self._uh = _cadastro_uh_frame()
         self._ac_volmax_frame = ac_volmax_frame
+        self._ac_frames = ac_frames or {}
 
     def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
@@ -943,7 +960,7 @@ class _CadastroDadger:
 
         if modificacao is ACVOLMAX:
             return self._ac_volmax_frame
-        return None
+        return self._ac_frames.get(modificacao) if modificacao else None
 
 
 def _run_cadastro_pipeline(
@@ -960,6 +977,7 @@ def _run_cadastro_pipeline(
     convert_gnl_mock_out: list[MagicMock] | None = None,
     turbine_limits: TurbineLimits | None = None,
     gnl_ct_thermals: list[dict] | None = None,
+    ac_frames: Mapping[type, pd.DataFrame] | None = None,
 ) -> Path:
     """Run ``convert_decomp_case`` against the fully synthetic mock deck
     above, patching every converter not under test to a canned
@@ -1004,6 +1022,7 @@ def _run_cadastro_pipeline(
     *gnl_emission* (``[]`` drives a deck whose only thermals are GNL).
 
     *turbine_limits* replaces the default flat turbined-flow limits.
+    *ac_frames* gives the mock deck the ``AC`` frames of other registers.
     """
     from novomodelo_bridge.decomp.files import DecompFiles
     from novomodelo_bridge.decomp.pipeline import convert_decomp_case
@@ -1017,7 +1036,7 @@ def _run_cadastro_pipeline(
         renovaveis=None,
         polinjus=None,
     )
-    dadger = _CadastroDadger(ac_volmax_frame)
+    dadger = _CadastroDadger(ac_volmax_frame, ac_frames)
     hidr = _cadastro_hidr_frame()
     calendar = _calendar()
     case = make_decomp_case(
@@ -1527,6 +1546,47 @@ class TestCadastroPipelineWiring:
         assert cadastro_diagnostics[0].table is not None
         assert cadastro_diagnostics[0].table.rows == [["VOLMAX", 1]]
 
+    def test_only_overrides_after_the_horizon_are_reported_as_changing_nothing(
+        self,
+    ) -> None:
+        diagnostic = _cadastro_overrides_diagnostic(
+            CadastroResolutionReport(
+                applied={},
+                out_of_horizon=(
+                    OutOfHorizon(code=1, param="volume_maximo", mes=12, ano=2026),
+                ),
+            )
+        )
+
+        assert diagnostic.code == "cadastro-overrides-applied"
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.title.endswith(" (1)")
+        assert "(0)" not in diagnostic.title
+        assert "below" not in diagnostic.summary
+        assert diagnostic.table is None
+
+    def test_an_unconverted_ac_register_warns_as_check_decomp_does(
+        self, tmp_path: Path
+    ) -> None:
+        """``convert decomp`` raises the ``AC`` WARNING ``check decomp`` raises
+        for a register it does not read, from the same builder."""
+        from idecomp.decomp.modelos.dadger import ACCOTVAZ
+
+        ac_frames: dict[type, pd.DataFrame] = {
+            ACCOTVAZ: pd.DataFrame([{"codigo_usina": 1}])
+        }
+        collected: list[Diagnostic] = []
+        _run_cadastro_pipeline(
+            tmp_path, None, ac_frames=ac_frames, diagnostics_out=collected
+        )
+
+        [deferred] = [d for d in collected if d.code == "decomp-ac-overrides-deferred"]
+        assert deferred == ac_overrides_deferred_diagnostic(
+            _CadastroDadger(None, ac_frames)
+        )
+        assert deferred.table is not None
+        assert deferred.table.rows == [["COTVAZ"]]
+
 
 # Synthetic RE/RHQ/RHV/RHE ``to_generic`` records for
 # ``TestGenericConstraintWiring`` below. Every record uses plant codes 1/2 —
@@ -1681,6 +1741,31 @@ class TestGenericConstraintWiring:
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
         assert not (dst / "constraints" / "generic_constraints.json").exists()
         assert not (dst / "constraints" / "generic_constraint_bounds.parquet").exists()
+
+    def test_an_hq_constraint_on_a_plant_not_operated_is_left_out(
+        self, tmp_path: Path
+    ) -> None:
+        base = _synthetic_rhq_record()
+        on_unoperated = dataclasses.replace(
+            base,
+            terms=(
+                base.terms[0],
+                ConstraintTerm(code=3, coefficient=1.0, variable="QDEF"),
+            ),
+        )
+        found: list[Diagnostic] = []
+
+        dst = _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            to_generic=(on_unoperated,),
+            diagnostics_out=found,
+        )
+
+        [left_out] = [d for d in found if d.code == "decomp-rhq-plant-not-operated"]
+        assert left_out.table is not None
+        assert left_out.table.rows == [[902, 3]]
+        assert not (dst / "constraints" / "generic_constraints.json").exists()
 
     def test_stage_varying_coefficient_is_declared_without_rhe(
         self, tmp_path: Path

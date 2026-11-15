@@ -7,8 +7,7 @@ branch (including the ``bus=`` selector and the fail-loud raises), the
 ``FI``-interchange line resolver (``build_fi_line_map``/``resolve_fi_term``,
 direct/reverse/no-line/unknown-name), the ``FE``-contract resolver
 (``build_contract_token_map``/``resolve_fe_term``, import/export/unknown/
-ambiguous), the ``_format_expression``
-coefficient-formatting rules, ``big_m_penalty``, the ``slots_from_record``
+ambiguous), ``big_m_penalty``, the ``slots_from_record``
 slot-enumeration helper, ``emit_re_generics``'s per-record
 resolve-or-skip-whole-constraint behaviour (mixed hydro+interchange,
 hydro+contract, GNL/unknown-thermal, frequency-split, no-line ``FI``, and an all-skipped
@@ -39,7 +38,6 @@ from novomodelo_bridge.decomp.constraint_registers import (
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.constraints import (
     Unresolved,
-    _format_expression,
     _hydro_generation_token,
     _variable_token,
     big_m_penalty,
@@ -292,57 +290,6 @@ def test_resolve_fe_term_without_submarket_raises() -> None:
 def test_variable_token_refuses_a_contract_term(id_map: DecompIdMap) -> None:
     with pytest.raises(ValueError, match="FE contract resolution path"):
         _variable_token(_fe_term(1, 1), id_map, {})
-
-
-# ---------------------------------------------------------------------------
-# _format_expression
-# ---------------------------------------------------------------------------
-
-
-def test_format_expression_acceptance_string() -> None:
-    terms = [
-        (1.0, "hydro_generation(0)"),
-        (-1.0, "thermal_generation(2)"),
-        (2.0, "line_direct(1)"),
-    ]
-    assert (
-        _format_expression(terms)
-        == "hydro_generation(0) - thermal_generation(2) + 2.0 * line_direct(1)"
-    )
-
-
-def test_format_expression_unit_positive() -> None:
-    assert _format_expression([(1.0, "hydro_outflow(0)")]) == "hydro_outflow(0)"
-
-
-def test_format_expression_unit_negative() -> None:
-    assert _format_expression([(-1.0, "hydro_outflow(0)")]) == "- hydro_outflow(0)"
-
-
-def test_format_expression_fractional_positive() -> None:
-    assert _format_expression([(0.5, "hydro_outflow(0)")]) == "0.5 * hydro_outflow(0)"
-
-
-def test_format_expression_fractional_negative_first_term() -> None:
-    assert (
-        _format_expression([(-0.5, "hydro_outflow(0)")]) == "- 0.5 * hydro_outflow(0)"
-    )
-
-
-def test_format_expression_multi_term_join() -> None:
-    terms = [
-        (1.0, "hydro_outflow(0)"),
-        (0.5, "hydro_outflow(1)"),
-        (-1.0, "hydro_outflow(2)"),
-    ]
-    assert (
-        _format_expression(terms)
-        == "hydro_outflow(0) + 0.5 * hydro_outflow(1) - hydro_outflow(2)"
-    )
-
-
-def test_format_expression_empty_returns_none() -> None:
-    assert _format_expression([]) is None
 
 
 # ---------------------------------------------------------------------------
@@ -930,16 +877,6 @@ def test_emit_rhq_rhv_generics_rhv_vbom_via_pumping_map(
 
     assert result is not None
     assert result.constraints[0]["expression"] == "pumping_volume(1)"
-
-
-def test_format_expression_parameter_weight() -> None:
-    assert (
-        _format_expression([(-1.0, "hydro_outflow(0)"), ("coef_x", "hydro_outflow(1)")])
-        == "- hydro_outflow(0) + @coef_x * hydro_outflow(1)"
-    )
-    assert _format_expression([("coef_x", "hydro_outflow(1)")]) == (
-        "@coef_x * hydro_outflow(1)"
-    )
 
 
 def test_emit_rhq_rhv_generics_late_term_reads_a_per_stage_parameter(

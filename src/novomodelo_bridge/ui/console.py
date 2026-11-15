@@ -58,7 +58,7 @@ DEFAULT_WIDTH = 100
 
 #: Cap on detail-table rows actually printed; the overflow is summarised in a caption
 #: so a case with hundreds of affected entities does not flood the terminal. The full
-#: set is always available via ``--diagnostics-json``.
+#: set is always available via ``--json``, which every command accepts.
 MAX_TABLE_ROWS = 20
 
 #: Severity → Rich style. Amber/red track the dashboard palette; INFO is muted.
@@ -401,9 +401,7 @@ def _diagnostic_panel(diag: Diagnostic) -> Panel:
         )
         if len(rows) > MAX_TABLE_ROWS:
             overflow = len(rows) - MAX_TABLE_ROWS
-            body.add_row(
-                Text(f"… and {overflow} more (see --diagnostics-json)", style="dim")
-            )
+            body.add_row(Text(f"… and {overflow} more (see --json)", style="dim"))
 
     for note in diag.notes:
         body.add_row(Text(f"• {note}", style="dim"))

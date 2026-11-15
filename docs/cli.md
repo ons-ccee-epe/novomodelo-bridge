@@ -86,7 +86,7 @@ $ novomodelo-bridge convert newave [OPTIONS] {src} {dst}
 
 * `--validate`: After conversion, validate the output with the novomodelo package.
 * `--force`: Overwrite destination directory if it already contains files.
-* `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON.
+* `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON once the conversion completes.
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `--dry-run`: Run the full conversion in memory and report what would be written, without creating or modifying the destination directory.
 * `--json-float-digits N`: Write every float in the case&#x27;s JSON files with N significant digits (1-17); 17 keeps full precision. Parquet files are unaffected. Below 10 digits novomodelo may reject the case, since it cross-checks JSON values against Parquet tables and unit-group sums to a 1e-9 relative tolerance.  [default: 15; 1&lt;=x&lt;=17]
@@ -120,7 +120,7 @@ $ novomodelo-bridge convert decomp [OPTIONS] {src} {dst}
 
 * `--force`: Overwrite destination directory if it already contains files.
 * `--validate`: After conversion, validate the output with the novomodelo package.
-* `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON.
+* `--diagnostics-json PATH`: Also write the conversion diagnostics (counts + findings) as JSON once the conversion completes.
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `--dry-run`: Run the full conversion in memory and report what would be written, without creating or modifying the destination directory.
 * `--json-float-digits N`: Write every float in the case&#x27;s JSON files with N significant digits (1-17); 17 keeps full precision. Parquet files are unaffected. Below 10 digits novomodelo may reject the case, since it cross-checks JSON values against Parquet tables and unit-group sums to a 1e-9 relative tolerance.  [default: 15; 1&lt;=x&lt;=17]

@@ -23,12 +23,18 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
+from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
 #: Built-in bare (argument-less) input-data tokens. A bare name the scope does
 #: not declare, and not in this set, is an unrecognized identifier.
 BUILTIN_BARE_TOKENS = frozenset({"demanda_sin", "val_demanda_sin", "carga_ande"})
+
+#: The demand terms whose constraint multiplier the source model adds to the
+#: submarket's marginal cost; their ``val_`` forms are the same load without it.
+CMO_DEMAND_TOKENS = frozenset({"demanda", "demanda_sin"})
 
 #: Reserved token for a bare ``peq_<PQ name>_<subsystem>`` reference to one
 #: ``dadger`` ``PQ`` series' generation. The series name keeps its own
@@ -606,6 +612,38 @@ def fold_formula_bound(
         terms=tuple(partition[Bucket.A]),
         lower=None if lower is None else lower - data_sum,
         upper=None if upper is None else upper - data_sum,
+    )
+
+
+def demand_in_cmo_diagnostic(
+    code: str, rows: Sequence[tuple[int, str]], *, source: str
+) -> Diagnostic:
+    """The warning for converted constraints with a :data:`CMO_DEMAND_TOKENS`
+    term, one ``(constraint, term)`` row each; *source* names the file that
+    holds the formulas."""
+    unique = sorted(set(rows))
+    return Diagnostic(
+        code=code,
+        severity=Severity.WARNING,
+        category="Special constraints",
+        title=f"Electric constraint demand terms left out of the CMO ({len(unique)})",
+        summary=(
+            "The listed constraints write their demand as demanda or demanda_sin, "
+            "so the source model adds each constraint's multiplier to the "
+            "marginal cost (CMO) of every submarket whose load the term reads. "
+            "The case folds the demand into the constraint's limits and cannot "
+            "do that, so wherever a listed constraint binds, the case's CMO "
+            "differs from the source model's."
+        ),
+        table=DiagnosticTable(
+            columns=["Constraint", "Term"],
+            rows=[list(row) for row in unique],
+            justify=["right", "left"],
+        ),
+        remediation=(
+            "If the constraint's multiplier should not count in the CMO, write "
+            f"the term as val_demanda or val_demanda_sin in {source}."
+        ),
     )
 
 

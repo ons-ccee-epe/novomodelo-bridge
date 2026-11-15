@@ -248,12 +248,12 @@ class TestReeResultComparisons:
         by_variable = {r.variable: r for r in results}
         assert by_variable["ena_mwmes"].novomodelo_value == pytest.approx(150.0)
 
-    def test_no_membership_table_degrades_to_no_rows_no_diagnostic(
+    def test_no_membership_table_degrades_to_no_rows_and_notes_the_missing_relato(
         self, tmp_path: Path
     ) -> None:
         """A missing relato (``read_relato_membership`` raising against a
-        bare ``tmp_path``) is a genuinely unavailable REE section, not a
-        per-plant gap -- no diagnostic, just an empty result."""
+        bare ``tmp_path``) is an unavailable REE section, not a per-plant
+        gap: one missing-file note and an empty result."""
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
                 tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
@@ -261,9 +261,33 @@ class TestReeResultComparisons:
 
         assert results == []
         assert unmapped == []
-        assert collected == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-missing", "relato.rvN not found")
+        ]
 
-    def test_no_dec_oper_ree_table_degrades_to_no_rows(
+    def test_unreadable_membership_table_is_reported_and_degrades_to_no_rows(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise ValueError("relato.rv0 has no uhes_rees_submercados table")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_membership",
+            _boom,
+        )
+
+        with dx.collect() as collected:
+            results, unmapped = _ree_result_comparisons(
+                tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
+            )
+
+        assert results == []
+        assert unmapped == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "relato.rvN could not be read")
+        ]
+
+    def test_no_dec_oper_ree_table_is_noted_and_degrades_to_no_rows(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
@@ -272,12 +296,41 @@ class TestReeResultComparisons:
         )
         # ``read_dec_oper_ree`` left unmocked -> raises FileNotFoundError.
 
-        results, unmapped = _ree_result_comparisons(
-            tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
-        )
+        with dx.collect() as collected:
+            results, unmapped = _ree_result_comparisons(
+                tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
+            )
 
         assert results == []
         assert unmapped == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-missing", "dec_oper_ree.csv not found")
+        ]
+
+    def test_unreadable_dec_oper_ree_table_is_reported_and_degrades_to_no_rows(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+            raise ValueError("dec_oper_ree.csv parsed empty")
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_relato_membership",
+            lambda *_a, **_k: _ree_membership_fixture(),
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_ree", _boom
+        )
+
+        with dx.collect() as collected:
+            results, unmapped = _ree_result_comparisons(
+                tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
+            )
+
+        assert results == []
+        assert unmapped == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "dec_oper_ree.csv could not be read")
+        ]
 
 
 class TestBuildDecompDatasetRee:

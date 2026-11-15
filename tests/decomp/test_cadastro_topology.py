@@ -24,20 +24,18 @@ import pandas as pd
 import pytest
 from idecomp.decomp.modelos.dadger import ACJUSENA, ACNPOSNW, ACNUMJUS, ACNUMPOS
 
-from novomodelo_bridge.core.diagnostics import collect
+from novomodelo_bridge.core.diagnostics import Severity, collect
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
+    topology_varies_diagnostic,
 )
 from novomodelo_bridge.decomp.converters.hydro import (
     convert_hydros,
     convert_initial_storage,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.pipeline import (
-    _topology_relink_diagnostic,
-    _topology_varies_diagnostic,
-)
+from novomodelo_bridge.decomp.pipeline import _topology_relink_diagnostic
 from novomodelo_bridge.decomp.scenarios import (
     _incremental_context,
     convert_external_inflows,
@@ -224,7 +222,7 @@ def test_jusena_override_sets_the_energy_link_only() -> None:
     assert [effective.energy_link(1, s) for s in range(3)] == [3, 3, 3]
     assert effective.energy_link(2, 0) is None
     assert effective.downstream_plant(1, 0) == 2
-    assert effective.energy_link_varies(1) is False
+    assert topology_varies_diagnostic(effective) is None
     assert report.applied["jusante_energia"] == 1
 
 
@@ -234,7 +232,6 @@ def test_temporal_jusena_override_varies() -> None:
     effective, _ = build_effective_cadastro(dadger, hidr, _calendar())
 
     assert [effective.energy_link(1, s) for s in range(3)] == [None, None, 3]
-    assert effective.energy_link_varies(1) is True
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +364,7 @@ def test_nposnw_override_sets_the_coupling_gauge_only() -> None:
     assert report.applied["posto_acoplamento"] == 1
     assert effective.coupling_gauge(1) == 99
     assert effective.inflow_gauge(1, 2) == 11
-    assert effective.inflow_gauge_varies(1) is False
+    assert topology_varies_diagnostic(effective) is None
     assert effective.coupling_gauge(2) == 12
 
 
@@ -444,10 +441,9 @@ def test_temporal_topology_is_reported_and_uses_stage0() -> None:
     assert effective.downstream_plant(1, 0) == 2
     assert effective.downstream_plant(1, 1) == 2
     assert effective.downstream_plant(1, 2) == 3
-    assert effective.downstream_plant_varies(1) is True
 
     _, parents = _incremental_context(effective, _ABC_ID_MAP)
-    diagnostic = _topology_varies_diagnostic(effective)
+    diagnostic = topology_varies_diagnostic(effective)
 
     assert diagnostic is not None
     assert diagnostic.code == "decomp-ac-topology-varies"
@@ -480,10 +476,9 @@ def test_temporal_gauge_is_reported_and_uses_stage0() -> None:
 
     assert effective.inflow_gauge(1, 0) == 11
     assert effective.inflow_gauge(1, 2) == 99
-    assert effective.inflow_gauge_varies(1) is True
 
     station_by_code, _ = _incremental_context(effective, _ABC_ID_MAP)
-    diagnostic = _topology_varies_diagnostic(effective)
+    diagnostic = topology_varies_diagnostic(effective)
 
     assert station_by_code[1] == "11"
     assert diagnostic is not None
@@ -495,7 +490,7 @@ def test_temporal_jusena_is_reported_with_no_first_stage_link() -> None:
     dadger = _FakeDadger({ACJUSENA: _numjus_override(1, 3, mes="AGO", semana=1.0)})
     effective, _ = build_effective_cadastro(dadger, _abc_hidr(), _calendar())
 
-    diagnostic = _topology_varies_diagnostic(effective)
+    diagnostic = topology_varies_diagnostic(effective)
 
     assert diagnostic is not None
     assert diagnostic.table is not None
@@ -506,7 +501,7 @@ def test_a_register_constant_over_the_horizon_is_not_reported() -> None:
     dadger = _FakeDadger({ACNUMJUS: _numjus_override(1, 3)})
     effective, _ = build_effective_cadastro(dadger, _abc_hidr(), _calendar())
 
-    assert _topology_varies_diagnostic(effective) is None
+    assert topology_varies_diagnostic(effective) is None
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +520,9 @@ def _two_plant_case(
     return case, id_map, effective
 
 
-def _hydro_findings(hidr: pd.DataFrame) -> dict[str, Diagnostic]:
+def _hydro_findings(
+    hidr: pd.DataFrame, *, fpha_codes: set[int] | None = None
+) -> dict[str, Diagnostic]:
     case, id_map, effective = _two_plant_case(hidr)
     with collect() as found:
         convert_hydros(
@@ -533,6 +530,7 @@ def _hydro_findings(hidr: pd.DataFrame) -> dict[str, Diagnostic]:
             id_map,
             effective=effective,
             turbine_limits=flat_turbine_limits(id_map, len(_calendar())),
+            fpha_codes=fpha_codes,
         )
     return {diagnostic.code: diagnostic for diagnostic in found}
 
@@ -563,6 +561,28 @@ def test_a_plant_without_a_forebay_curve_is_reported_with_its_stages() -> None:
     diagnostic = found["hydro-forebay-curve-missing"]
     assert diagnostic.table is not None
     assert diagnostic.table.rows == [[2, "B", "0-2"]]
+
+
+@pytest.mark.parametrize(
+    ("specific_productivity", "capped_rows"),
+    [(0.012, [[1, "A", 1.2232]]), (0.0089, None)],
+)
+def test_a_capped_fpha_efficiency_is_reported(
+    specific_productivity: float, capped_rows: list[list[object]] | None
+) -> None:
+    a = _plant_row(jusante=2, posto=11, name="A")
+    a["produtibilidade_especifica"] = specific_productivity
+    hidr = _hidr_frame({1: a, 2: _plant_row(jusante=0, posto=12, name="B")})
+
+    found = _hydro_findings(hidr, fpha_codes={1})
+
+    if capped_rows is None:
+        assert "fpha-efficiency-capped" not in found
+        return
+    diagnostic = found["fpha-efficiency-capped"]
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == capped_rows
 
 
 def test_a_declared_initial_dead_volume_is_reported() -> None:

@@ -27,9 +27,10 @@ or without an index; when both name one, they must agree. Apart from that file,
 a deck without `FA` has no LIBS records. An index key listed without a file
 name, or a declared file that is not in the deck directory, makes the deck fail
 to convert. A file with a usual LIBS name, such as `renovaveis.csv`, that
-nothing declares is ignored, and `check decomp` and `convert decomp` warn about
-it. The index is read as UTF-8 when it is valid UTF-8 and as Latin-1 otherwise.
-In the electrical-constraint file a card name is recognized only in upper case,
+nothing declares is ignored, and `check decomp` and `convert decomp` list it in
+a `libs-unindexed-file` note (`-v` prints it in full). The index is read as
+UTF-8 when it is valid UTF-8 and as Latin-1 otherwise. In the
+electrical-constraint file a card name is recognized only in upper case,
 as the manual writes it, and `convert decomp` warns about every line that is
 not a card it reads (`libs-unread-lines`).
 

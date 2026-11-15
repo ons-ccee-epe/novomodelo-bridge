@@ -24,13 +24,16 @@ from novomodelo_bridge.comparators.decomp.results import (
     _decomp_max_stage,
     _decomp_tim_iterations,
     _decomp_tim_stages,
+    _ree_result_comparisons,
     build_decomp_dataset,
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.core import diagnostics as dx
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
     _patch_aligned_frames,
+    _ree_id_map,
 )
 
 
@@ -353,7 +356,7 @@ class TestDecompTimStages:
 
         assert stages == {"Tempo Total": 141.0, "Calculo da Politica": 0.0}
 
-    def test_missing_decomp_tim_degrades_to_an_empty_dict(
+    def test_missing_decomp_tim_is_noted_and_degrades_to_an_empty_dict(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
@@ -363,9 +366,15 @@ class TestDecompTimStages:
             "novomodelo_bridge.comparators.decomp.results.read_decomp_tim", _boom
         )
 
-        assert _decomp_tim_stages(tmp_path) == {}
+        with dx.collect() as collected:
+            stages = _decomp_tim_stages(tmp_path)
 
-    def test_empty_decomp_tim_value_error_degrades_to_an_empty_dict(
+        assert stages == {}
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-missing", "decomp.tim not found")
+        ]
+
+    def test_empty_decomp_tim_is_reported_unreadable_and_degrades_to_an_empty_dict(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
@@ -375,7 +384,13 @@ class TestDecompTimStages:
             "novomodelo_bridge.comparators.decomp.results.read_decomp_tim", _boom
         )
 
-        assert _decomp_tim_stages(tmp_path) == {}
+        with dx.collect() as collected:
+            stages = _decomp_tim_stages(tmp_path)
+
+        assert stages == {}
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "decomp.tim could not be read")
+        ]
 
 
 class TestDecompTimIterations:
@@ -416,7 +431,7 @@ class TestDecompTimIterations:
         assert "backward_seconds" not in frame.columns
         assert set(frame.columns) == {"iteration", "total_seconds"}
 
-    def test_missing_relato_degrades_to_an_empty_canonical_frame(
+    def test_missing_relato_is_noted_and_degrades_to_an_empty_canonical_frame(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
@@ -427,12 +442,16 @@ class TestDecompTimIterations:
             _boom,
         )
 
-        frame = _decomp_tim_iterations(tmp_path)
+        with dx.collect() as collected:
+            frame = _decomp_tim_iterations(tmp_path)
 
         assert frame.is_empty()
         assert frame.schema == self._CANONICAL_SCHEMA
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-missing", "relato.rvN not found")
+        ]
 
-    def test_empty_relato_value_error_degrades_to_an_empty_canonical_frame(
+    def test_empty_relato_is_reported_unreadable_and_degrades_to_an_empty_frame(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
@@ -443,10 +462,55 @@ class TestDecompTimIterations:
             _boom,
         )
 
-        frame = _decomp_tim_iterations(tmp_path)
+        with dx.collect() as collected:
+            frame = _decomp_tim_iterations(tmp_path)
 
         assert frame.is_empty()
         assert frame.schema == self._CANONICAL_SCHEMA
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "relato.rvN could not be read")
+        ]
+
+
+def test_a_missing_relato_is_one_note_across_every_relato_reader(
+    tmp_path: Path,
+) -> None:
+    """The convergence, time-per-iteration and REE membership reads all miss
+    ``relato.rvN`` in a bare directory; the three notes reduce to one."""
+    with dx.collect() as collected:
+        _decomp_convergence_frame(tmp_path)
+        _decomp_tim_iterations(tmp_path)
+        _ree_result_comparisons(
+            tmp_path, _aligned_fixture().novomodelo_hydro, _ree_id_map()
+        )
+
+    assert len(collected) == 3
+    assert [(d.code, d.title) for d in dx.finalize_diagnostics(collected)] == [
+        ("report-file-missing", "relato.rvN not found")
+    ]
+
+
+def test_a_relato_without_its_convergence_table_is_one_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both readers of the convergence table meet the same failure, so their
+    warnings reduce to one."""
+
+    def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+        raise ValueError("relato.rv0 has no convergencia table")
+
+    monkeypatch.setattr(
+        "novomodelo_bridge.comparators.decomp.results.read_relato_convergence",
+        _boom,
+    )
+
+    with dx.collect() as collected:
+        _decomp_convergence_frame(tmp_path)
+        _decomp_tim_iterations(tmp_path)
+
+    assert [(d.code, d.title) for d in dx.finalize_diagnostics(collected)] == [
+        ("report-file-unreadable", "relato.rvN could not be read")
+    ]
 
 
 class TestDecompMaxStage:

@@ -6,7 +6,6 @@ Synthetic fixtures only: no deck, no novomodelo binary.
 
 from __future__ import annotations
 
-import logging
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -130,14 +129,12 @@ def test_emit_import_diagnostics_without_drops_or_plan_reports_only_the_summary(
     ]
 
 
-def test_import_boundary_fcf_no_cut_files_is_noop(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_import_boundary_fcf_no_cut_files_is_noop(tmp_path: Path) -> None:
     case_dir = tmp_path / "case"
     case_dir.mkdir()
     case = make_decomp_case(tmp_path)
 
-    with caplog.at_level(logging.INFO):
+    with dx.collect() as found:
         result = import_boundary_fcf(
             case_dir,
             case,
@@ -147,7 +144,7 @@ def test_import_boundary_fcf_no_cut_files_is_noop(
 
     assert result is None
     assert not (case_dir / "boundary").exists()
-    assert "boundary FCF skipped" in caplog.text
+    assert [d.code for d in found] == ["boundary-fcf-cut-files-absent"]
 
 
 # ---------------------------------------------------------------------------

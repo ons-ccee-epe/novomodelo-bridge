@@ -69,13 +69,15 @@ def scan_entity(case_dir: Path, entity: str) -> pl.LazyFrame:
 def load_names(case_dir: Path) -> dict[tuple[str, int], str]:
     """Load entity name mappings from system JSON files."""
     names: dict[tuple[str, int], str] = {}
-    for entity in ("hydros", "buses", "thermals", "lines", "non_controllable_sources"):
+    for entity in ("hydros", "buses", "thermals", "non_controllable_sources"):
         path = case_dir / "system" / f"{entity}.json"
         if path.exists():
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             for item in data.get(entity, []):
                 names[(entity, item["id"])] = item.get("name", str(item["id"]))
+    for item in read_novomodelo_lines(case_dir / "output"):
+        names[("lines", item["id"])] = item.get("name", str(item["id"]))
     return names
 
 
@@ -507,20 +509,13 @@ def load_temporal_context(case_dir: Path) -> TemporalContext:
     """Load config.json / stages.json and the derived stage & block hour maps."""
     config_path = case_dir / "config.json"
     config: dict = {}
+    config_error: json.JSONDecodeError | None = None
     if config_path.exists():
         try:
             with config_path.open(encoding="utf-8") as f:
                 config = json.load(f)
         except json.JSONDecodeError as exc:
-            emit(
-                report_file_unreadable_diagnostic(
-                    "config.json",
-                    config_path,
-                    "the dashboard discounts no cost to present value.",
-                    exc,
-                ),
-                logger=logger,
-            )
+            config_error = exc
     discount_rate = float(config.get("discount_rate", 0.0))
 
     stages_json_path = case_dir / "stages.json"
@@ -531,6 +526,16 @@ def load_temporal_context(case_dir: Path) -> TemporalContext:
     pg_rate = stages_data.get("policy_graph", {}).get("annual_discount_rate")
     if pg_rate is not None:
         discount_rate = float(pg_rate)
+    elif config_error is not None:
+        emit(
+            report_file_unreadable_diagnostic(
+                "config.json",
+                config_path,
+                "the Overview shows a 0.0% discount rate.",
+                config_error,
+            ),
+            logger=logger,
+        )
 
     stage_hours: dict[int, float] = {}
     for s in stages_data["stages"]:

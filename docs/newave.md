@@ -26,7 +26,8 @@ tailrace curves, no electrical constraints from the CSV, and no plane
 reduction, which Novomodelo then leaves off. A key listed without a file name,
 or whose file is not in the directory, makes the case fail to convert. A file
 with a usual LIBS name, such as `polinjus.csv`, that the index does not list is
-ignored, and `check newave` and `convert newave` warn about it. `indices.csv`,
+ignored, and `check newave` and `convert newave` list it in a
+`libs-unindexed-file` note (`-v` prints it in full). `indices.csv`,
 the plane-reduction file and the electrical-constraint file are each read as
 UTF-8 when they are valid UTF-8 and as Latin-1 otherwise.
 
@@ -199,8 +200,8 @@ The converter reads pumping station data from LIBS files declared in
 | `ESTACAO-BOMBEAMENTO-SUBMERCADO` | Station-to-subsystem mapping |
 
 Both keys must be listed for pumping conversion to proceed. Files present
-in the deck directory but not declared in `indices.csv` are ignored (with
-a warning).
+in the deck directory but not declared in `indices.csv` are ignored and
+listed in the `libs-unindexed-file` note.
 
 ### Switch
 

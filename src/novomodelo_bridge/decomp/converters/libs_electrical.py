@@ -1205,6 +1205,10 @@ def build_data_context(
     )
     n_submarkets = len(id_map.bus_codes)
 
+    # TRACKED NOVOMODELO-GAP (C36): the case has no load term in a generic
+    # constraint, so the demand is folded into the bound and a bare
+    # demanda/demanda_sin multiplier is not added to the CMO as the source
+    # model does; decomp-electrical-demand-in-cmo lists them.
     def context_for_cell(stage_index: int, block_index: int) -> DataContext:
         def resolve(term: ParsedTerm) -> float:
             if term.token == CONST_TOKEN:
@@ -1848,6 +1852,9 @@ def _flip_operator(sense: str) -> str:
     raise ValueError(f"_flip_operator: unknown operator {sense!r}")
 
 
+DISP_USIH_SUBSTITUTED = "decomp-electrical-disp-usih-substituted"
+
+
 def _emit_disp_usih_substitution(
     restriction_code: int,
     plant_code: int,
@@ -1858,7 +1865,7 @@ def _emit_disp_usih_substitution(
     plant code, the stage, and the ``A_h`` value used."""
     emit(
         Diagnostic(
-            code="decomp-electrical-disp-usih-substituted",
+            code=DISP_USIH_SUBSTITUTED,
             severity=Severity.INFO,
             category="Special constraints",
             title="Available power held constant in reserve restrictions",

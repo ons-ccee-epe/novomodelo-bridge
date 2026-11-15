@@ -26,7 +26,8 @@ cannot drift far from the tree without a failing build. All paths are under
    hierarchy, the conversion runner both tracks call (`run_conversion`, which
    refuses an occupied destination without `--force` and rolls back a failed
    run), hydro physics and productivity, calendar and stage weighting,
-   the generic-constraint builder, the electrical-constraint formula
+   the generic-constraint wire format (expression text and bound intervals)
+   and builder, the electrical-constraint formula
    language NEWAVE and DECOMP write their constraint files in, bound-table
    merging, and the emission
    self-checks run on output tables before they are written.

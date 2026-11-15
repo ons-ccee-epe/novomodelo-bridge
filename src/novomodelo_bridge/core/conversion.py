@@ -77,6 +77,25 @@ def _remove_empty_dirs(dirs: list[Path]) -> None:
             return
 
 
+def _rollback_incomplete_diagnostic(dst: Path, exc: OSError) -> dx.Diagnostic:
+    return dx.Diagnostic(
+        code="output-rollback-incomplete",
+        severity=dx.Severity.ERROR,
+        category="Conversion failure",
+        title="Failed conversion left a partial case",
+        summary=(
+            f"The conversion failed and the files it wrote to {dst} could not "
+            "all be removed, so that directory holds a partial case that must "
+            "not be run."
+        ),
+        notes=[f"Reason: {dx.exception_reason(exc)}"],
+        remediation=(
+            "Delete the output directory, or re-run with --force once no other "
+            "program holds its files open."
+        ),
+    )
+
+
 def run_conversion(
     convert: Callable[[], ConversionReport],
     dst: Path,
@@ -88,11 +107,12 @@ def run_conversion(
     """Run one track's *convert* into *dst* and return its report with every finding.
 
     A *dst* that already holds files raises :class:`OutputExistsError` unless
-    *force*, which first clears *artifacts* from it. On a failure, *artifacts*
-    and the directories this run created are removed, the findings collected
-    so far are emitted on the caller's sink (an early warning such as a tab in
-    a fixed-column file often explains the failure, and a failed self-check
-    details it), and the exception propagates. A dry run never changes *dst*.
+    *force*, which first clears *artifacts* from it. On a failure, the
+    findings collected so far are emitted on the caller's sink (an early
+    warning such as a tab in a fixed-column file often explains the failure,
+    and a failed self-check details it), *artifacts* and the directories this
+    run created are removed, with an ERROR finding when the files cannot all
+    be, and the original exception propagates. A dry run never changes *dst*.
     """
     # Refused before the rollback below can delete the earlier case.
     if dst.exists() and any(dst.iterdir()):
@@ -109,13 +129,16 @@ def run_conversion(
         with dx.collect() as collected:
             report = convert()
     except BaseException:
+        for diagnostic in dx.finalize_diagnostics(collected):
+            dx.emit(diagnostic)
         # A half-written case must never be mistaken for a complete one, nor
         # refuse a re-run.
         if not dry_run:
-            clear_dst_contents(dst, artifacts)
+            try:
+                clear_dst_contents(dst, artifacts)
+            except OSError as cleanup_err:
+                dx.emit(_rollback_incomplete_diagnostic(dst, cleanup_err))
             _remove_empty_dirs(created)
-        for diagnostic in dx.finalize_diagnostics(collected):
-            dx.emit(diagnostic)
         raise
     report.diagnostics = dx.finalize_diagnostics(collected)
     report.warnings = [
