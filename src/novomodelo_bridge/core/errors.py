@@ -62,12 +62,12 @@ class FieldParseError(BridgeError):
 
 
 class UnsupportedSourceError(BridgeError, ValueError):
-    """A valid source-model input the conversion cannot carry.
+    """A valid source-model input the conversion does not convert.
 
     Unlike :class:`FieldParseError`, the value is well formed: the source model
-    accepts it, but the case has no way to represent it. Also subclasses
-    :class:`ValueError` so existing ``except ValueError`` handlers keep
-    catching it.
+    accepts it, but either the case cannot represent it or the conversion does
+    not convert it yet. Also subclasses :class:`ValueError` so existing
+    ``except ValueError`` handlers keep catching it.
     """
 
     def __init__(
@@ -136,7 +136,7 @@ _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
     UnsupportedSourceError: (
         "source-unsupported",
         "Change the named field as the message says: the source model accepts "
-        "this value, but the conversion cannot carry it.",
+        "this value, but the conversion does not convert it.",
     ),
     NovomodeloOutputError: (
         "novomodelo-output-unreadable",

@@ -1,4 +1,5 @@
-"""A valid DECOMP deck the conversion cannot carry fails as ``source-unsupported``.
+"""A valid DECOMP deck the conversion does not convert fails as
+``source-unsupported``.
 
 Each case edits a copy of the DECOMP mini-deck. ``convert decomp`` stops on it
 with exit 1, and ``check decomp`` never crashes on it and, where it reaches the
