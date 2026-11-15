@@ -17,32 +17,8 @@ from tests.newave.conftest import (
     _make_confhd_df,
     _make_hidr_cadastro,
     _make_prod_model_dger_mock,
+    assert_no_repo_internal_leaks,
 )
-
-# The title/summary/remediation/notes strings productivity.py emits reach a
-# pip-installed user with no repo checkout — none may leak a repo-internal
-# reference (mirrors test_constraints.py's own marker scan).
-_REPO_INTERNAL_LEAKS = (
-    "docs/",
-    "plans/",
-    "~/git",
-    "feat/",
-    "ticket-",
-    "epic-",
-    "src/",
-    ".py",
-)
-
-
-def _assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
-    for diag in collected:
-        strings = [diag.title, diag.summary, *diag.notes]
-        if diag.remediation is not None:
-            strings.append(diag.remediation)
-        for s in strings:
-            for leak in _REPO_INTERNAL_LEAKS:
-                assert leak not in s, f"diagnostic {diag.code!r} leaks {leak!r}: {s!r}"
-
 
 # ---------------------------------------------------------------------------
 # _per_stage_productivities: sazonaliza_cfuga_cmont behaviour
@@ -1502,7 +1478,7 @@ class TestParseFphaPlaneReductionDiagnostics:
         assert "tratamento-fpha.csv" in diag.summary
         assert "angle" in diag.summary
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_single_method_emits_no_diagnostic(self, tmp_path: Path) -> None:
         from novomodelo_bridge.newave.converters.hydro import (

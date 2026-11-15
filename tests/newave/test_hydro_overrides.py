@@ -10,32 +10,11 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from tests.conftest import make_case, make_nw_files, modif_mock
-from tests.newave.conftest import _make_hidr_cadastro, _read_modif
-
-# The title/summary/remediation/notes strings overrides.py emits reach a
-# pip-installed user with no repo checkout — none may leak a repo-internal
-# reference (mirrors test_constraints.py's own marker scan).
-_REPO_INTERNAL_LEAKS = (
-    "docs/",
-    "plans/",
-    "~/git",
-    "feat/",
-    "ticket-",
-    "epic-",
-    "src/",
-    ".py",
+from tests.newave.conftest import (
+    _make_hidr_cadastro,
+    _read_modif,
+    assert_no_repo_internal_leaks,
 )
-
-
-def _assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
-    for diag in collected:
-        strings = [diag.title, diag.summary, *diag.notes]
-        if diag.remediation is not None:
-            strings.append(diag.remediation)
-        for s in strings:
-            for leak in _REPO_INTERNAL_LEAKS:
-                assert leak not in s, f"diagnostic {diag.code!r} leaks {leak!r}: {s!r}"
-
 
 # ---------------------------------------------------------------------------
 # _apply_permanent_overrides unit tests
@@ -270,7 +249,7 @@ class TestApplyPermanentOverrides:
         assert diag.table.columns == ["Code", "Name"]
         assert diag.table.rows == [[999, ""]]
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_temporal_records_skipped_in_permanent_pass(self, tmp_path) -> None:
         """Temporal override types are ignored in _apply_permanent_overrides."""
@@ -792,7 +771,7 @@ class TestApplyPermanentOverridesDiagnostics:
         assert diag.table.columns == ["Code", "Name", "Record"]
         assert diag.table.rows == [[1, "", "VMINP"], [2, "", "SOME_FUTURE_TYPE"]]
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_defaultregister_stays_debug_and_emits_no_diagnostic(
         self, tmp_path, caplog
@@ -926,7 +905,7 @@ class TestExtractTemporalOverridesDiagnostics:
         assert diag.severity is Severity.WARNING
         assert diag.table is not None
         assert diag.table.rows == [[1, "", "VAZMINT"], [1, "", "VAZMINT"]]
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_no_sink_fallback_logs_one_warning(self, tmp_path, caplog) -> None:
         import logging

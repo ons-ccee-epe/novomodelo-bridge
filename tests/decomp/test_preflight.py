@@ -654,7 +654,7 @@ class TestSpecialConstraintCoverage:
         )
         assert rha_diagnostic == expected
 
-    def test_deferred_libs_electrical_diagnostic_is_sourced_from_the_e1_helper(
+    def test_deferred_libs_electrical_diagnostic_is_sourced_from_its_detector(
         self, tmp_path: Path
     ) -> None:
         dadger = _ConstraintFakeDadger()

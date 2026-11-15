@@ -47,31 +47,7 @@ from novomodelo_bridge.newave.converters.constraints import (
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo.scalar_parameters import build_scalar_parameters
 from tests.conftest import make_case, make_nw_files
-
-# The remediation/summary/title/notes strings constraints.py emits reach a
-# pip-installed user with no repo checkout — none may leak a repo-internal
-# reference (mirrors test_decomp_fcf_capability.py's own marker scan, plus the
-# two extra markers the migration calls out).
-_REPO_INTERNAL_LEAKS = (
-    "docs/",
-    "plans/",
-    "~/git",
-    "feat/",
-    "ticket-",
-    "epic-",
-    "src/",
-    ".py",
-)
-
-
-def _assert_no_repo_internal_leaks(collected: list[dx.Diagnostic]) -> None:
-    for diag in collected:
-        strings = [diag.title, diag.summary, *diag.notes]
-        if diag.remediation is not None:
-            strings.append(diag.remediation)
-        for s in strings:
-            for leak in _REPO_INTERNAL_LEAKS:
-                assert leak not in s, f"diagnostic {diag.code!r} leaks {leak!r}: {s!r}"
+from tests.newave.conftest import assert_no_repo_internal_leaks
 
 
 def _make_cadastro() -> pd.DataFrame:
@@ -584,7 +560,7 @@ class TestConvertVminopConstraintsEmission:
         assert diag.table.rows[0][0] == 1
         assert diag.table.rows[0][1] == "SUDESTE"
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_nonpositive_penalty_emits_clamp_diagnostic(self, tmp_path: Path) -> None:
         from datetime import datetime as _dt
@@ -641,9 +617,7 @@ class TestConvertVminopConstraintsEmission:
         ]
         assert diag.table.rows == [[1, "SUDESTE", -5.0, 1000.0]]
 
-        _assert_no_repo_internal_leaks(collected)
-
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
 
 # ---------------------------------------------------------------------------
@@ -1159,7 +1133,7 @@ class TestConvertElectricConstraintsEmission:
         assert rows == {(1, 9999, "restricao-eletrica.csv"), (2, 9998, "re.dat")}
         assert "electric-constraint-skipped" not in by_code
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_idle_plant_from_formula_and_re_dat_sources(self, tmp_path: Path) -> None:
         """A term on a plant that generates nothing is left out of its sum and
@@ -1181,7 +1155,7 @@ class TestConvertElectricConstraintsEmission:
         assert rows == {(1, 9999, "restricao-eletrica.csv"), (2, 9998, "re.dat")}
         assert "electric-constraint-hydro-unmapped" not in by_code
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_interchange_no_line_is_left_out_of_the_sum(self, tmp_path: Path) -> None:
         case, id_map = _make_electric_re_case(
@@ -1205,7 +1179,7 @@ class TestConvertElectricConstraintsEmission:
         assert diag.severity is Severity.INFO
         assert diag.remediation is None
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_malformed_formula_is_refused(self, tmp_path: Path) -> None:
         case, id_map = _make_electric_re_case(
@@ -1248,7 +1222,7 @@ class TestConvertElectricConstraintsEmission:
         ]
         assert "electric-constraint-skipped" not in by_code
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_demand_terms_fold_into_each_block_limit(self, tmp_path: Path) -> None:
         """``ger_usih(10) - demanda(1) + 100`` in ``[50, 200]`` keeps the
@@ -1416,7 +1390,7 @@ class TestConvertElectricConstraintsEmission:
         assert diag.table is not None
         assert diag.table.rows == [[1, 5, "restricao-eletrica.csv"]]
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_constraint_skipped_no_valid_terms_and_no_bound_data(
         self, tmp_path: Path
@@ -1469,7 +1443,7 @@ class TestConvertElectricConstraintsEmission:
         assert unbounded.table is not None
         assert unbounded.table.rows == [[2]]
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_electric_penalty_unreadable_records_exception_text(
         self, tmp_path: Path
@@ -1521,7 +1495,7 @@ class TestConvertElectricConstraintsEmission:
         assert diag.table is None
         assert diag.notes == ["Reason: ValueError: corrupt PENALID.DAT"]
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_re_dat_unreadable_records_diagnostic(self, tmp_path: Path) -> None:
         re_path = tmp_path / "restricao-eletrica.csv"
@@ -1568,7 +1542,7 @@ class TestConvertElectricConstraintsEmission:
         assert diag.severity is Severity.WARNING
         assert "none of its generation limits" in diag.summary
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_individualizado_cutoff_unknown_no_entries(self, tmp_path: Path) -> None:
         re_path = tmp_path / "restricao-eletrica.csv"
@@ -1611,7 +1585,7 @@ class TestConvertElectricConstraintsEmission:
         assert diag.severity is Severity.WARNING
         assert diag.table is None
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
     def test_individualizado_cutoff_blank_records_reason(self, tmp_path: Path) -> None:
         blank_ree = MagicMock()
@@ -1635,7 +1609,7 @@ class TestConvertElectricConstraintsEmission:
         assert "could not be read from ree.dat" in diag.summary
         assert diag.notes == ["Reason: ValueError: cannot convert float NaN to integer"]
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
 
 # ---------------------------------------------------------------------------
@@ -2131,7 +2105,7 @@ class TestConvertAgrintConstraintsEmission:
         assert empty_group.table.columns == ["Group"]
         assert empty_group.table.rows == [[2]]
 
-        _assert_no_repo_internal_leaks(collected)
+        assert_no_repo_internal_leaks(collected)
 
 
 class TestNewaveCrossEmitterAllocatorContiguity:
