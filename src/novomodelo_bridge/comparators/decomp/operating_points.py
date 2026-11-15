@@ -31,11 +31,14 @@ import polars as pl
 
 from novomodelo_bridge.comparators.analyze import build_fpha_comparison
 from novomodelo_bridge.comparators.decomp.readers import (
+    DEC_OPER_SIST_EFFECT,
+    DEC_OPER_USIH_EFFECT,
     read_avl_cortesfpha,
     read_dec_desvfpha,
     read_dec_oper_sist,
     read_dec_oper_usih,
     read_eco_fpha,
+    read_or_note,
 )
 from novomodelo_bridge.comparators.operating_points import (
     LINK_SCHEMA,
@@ -74,6 +77,20 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger(__name__)
 
+#: What the report leaves out when an FPHA report does not parse, completing
+#: ``"<file> could not be read, so ..."``. These reports are optional: an
+#: absent one is no finding.
+_AVL_CORTESFPHA_EFFECT = (
+    "the report leaves out the comparison with DECOMP's production function."
+)
+_ECO_FPHA_EFFECT = (
+    "the production-function comparison leaves out DECOMP's fitting windows."
+)
+_DEC_DESVFPHA_EFFECT = (
+    "the production-function comparison leaves out its check against "
+    "DECOMP's printed deviations."
+)
+
 #: ``avl_cortesfpha`` coefficient -> the shared plane column.
 _PLANE_COLUMNS = {
     "rhs": "gamma_0",
@@ -99,11 +116,15 @@ def compare_operating_points(
     no per-block hydro operation. The FPHA frames are empty when either model
     fitted no planes.
     """
-    try:
-        usih = read_dec_oper_usih(decomp_dir)
-        sist = read_dec_oper_sist(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model per-block operation: %s", exc)
+    usih = read_or_note(
+        read_dec_oper_usih, "dec_oper_usih.csv", decomp_dir, DEC_OPER_USIH_EFFECT
+    )
+    if usih is None:
+        return None
+    sist = read_or_note(
+        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, DEC_OPER_SIST_EFFECT
+    )
+    if sist is None:
         return None
     eff, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
     source = _source_points(usih, sist, case, eff, probabilities)
@@ -243,10 +264,14 @@ def _fpha_frames(
 ) -> dict[str, pl.DataFrame]:
     """The :class:`OperatingPointComparison` FPHA fields; empty when either
     model fitted no planes."""
-    try:
-        source_planes = read_avl_cortesfpha(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model FPHA planes: %s", exc)
+    source_planes = read_or_note(
+        read_avl_cortesfpha,
+        "avl_cortesfpha_dec.rvN",
+        decomp_dir,
+        _AVL_CORTESFPHA_EFFECT,
+        note_missing=False,
+    )
+    if source_planes is None:
         return {}
     novomodelo_planes = novomodelo_readers.read_novomodelo_fpha_planes(
         novomodelo_output_dir
@@ -257,11 +282,9 @@ def _fpha_frames(
         or source_planes.is_empty()
     ):
         return {}
-    try:
-        eco = read_eco_fpha(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model FPHA fit windows (eco_fpha_): %s", exc)
-        eco = None
+    eco = read_or_note(
+        read_eco_fpha, "eco_fpha_.rvN", decomp_dir, _ECO_FPHA_EFFECT, note_missing=False
+    )
 
     code_to_novomodelo = {c: case.id_map.hydro_id(c) for c in case.id_map.hydro_codes}
     source_planes = source_planes.rename(_PLANE_COLUMNS).with_columns(
@@ -453,10 +476,14 @@ def _exact_check(
     printed deviation points, with its printed storage, flows, ``VU`` lateral
     flow and the downstream plant's printed forebay; empty without the table.
     """
-    try:
-        printed = read_dec_desvfpha(decomp_dir)
-    except (FileNotFoundError, ValueError) as exc:
-        _LOG.info("No source-model FPHA deviation table: %s", exc)
+    printed = read_or_note(
+        read_dec_desvfpha,
+        "dec_desvfpha.rvN",
+        decomp_dir,
+        _DEC_DESVFPHA_EFFECT,
+        note_missing=False,
+    )
+    if printed is None:
         return {}
     keys = ["estagio", "no", "patamar"]
     forebay = {

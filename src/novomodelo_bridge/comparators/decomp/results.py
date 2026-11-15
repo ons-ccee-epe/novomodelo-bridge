@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
@@ -58,6 +58,9 @@ from novomodelo_bridge.comparators.decomp.operating_points import (
     compare_operating_points,
 )
 from novomodelo_bridge.comparators.decomp.readers import (
+    DEC_OPER_SIST_EFFECT,
+    DEC_OPER_USIH_EFFECT,
+    DEC_OPER_USIT_EFFECT,
     read_dec_estatfpha,
     read_dec_oper_evap,
     read_dec_oper_interc,
@@ -67,6 +70,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_oper_usih,
     read_dec_oper_usit,
     read_decomp_tim,
+    read_or_note,
     read_relato2_costs,
     read_relato_convergence,
     read_relato_costs,
@@ -117,23 +121,6 @@ _RELATO_COSTS_UNREADABLE_EFFECT = (
     "the report leaves out DECOMP's cost breakdown and stage costs."
 )
 _DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
-#: What the report leaves out without each operation table, completing
-#: ``"<file> was not found, so ..."`` and ``"<file> could not be read, so
-#: ..."``; every reader of one table shares its effect, so the note is one.
-_DEC_OPER_USIH_EFFECT = (
-    "the report leaves out DECOMP's hydro plant operation and productivities, "
-    "the production-function comparison and DECOMP's side of the generic "
-    "constraints with hydro terms."
-)
-_DEC_OPER_USIT_EFFECT = (
-    "the report leaves out DECOMP's thermal generation and DECOMP's side of the "
-    "generic constraints with thermal terms."
-)
-_DEC_OPER_SIST_EFFECT = (
-    "the report leaves out DECOMP's submarket results, its energy balance and "
-    "the production-function comparison, and the cost breakdown leaves "
-    "DECOMP's deficit cost in the unitemized constraint slack."
-)
 
 
 def _emit_missing(file_name: str, decomp_dir: Path, effect: str) -> None:
@@ -147,23 +134,6 @@ def _emit_unreadable(
         report_file_unreadable_diagnostic(file_name, decomp_dir, effect, exc),
         logger=_LOG,
     )
-
-
-def _read_dec_oper_table(
-    read: Callable[[Path], pl.DataFrame],
-    file_name: str,
-    decomp_dir: Path,
-    effect: str,
-) -> pl.DataFrame | None:
-    """*read*'s operation table, or ``None`` after the note for a missing or
-    unreadable *file_name*."""
-    try:
-        return read(decomp_dir)
-    except FileNotFoundError:
-        _emit_missing(file_name, decomp_dir, effect)
-    except ValueError as exc:
-        _emit_unreadable(file_name, decomp_dir, effect, exc)
-    return None
 
 
 #: Minimum turbined flow (m³/s) for the derived gen/turbined productivity
@@ -637,8 +607,8 @@ def _hydro_side(
     the real tree probabilities instead of :func:`_scenario_mean`'s plain
     mean; ``None`` (the default) keeps the unweighted fold. Empty, with no
     unmapped code, when the table is unavailable."""
-    table = _read_dec_oper_table(
-        read_dec_oper_usih, "dec_oper_usih.csv", decomp_dir, _DEC_OPER_USIH_EFFECT
+    table = read_or_note(
+        read_dec_oper_usih, "dec_oper_usih.csv", decomp_dir, DEC_OPER_USIH_EFFECT
     )
     if table is None:
         return pl.DataFrame(), []
@@ -663,8 +633,8 @@ def _thermal_side(
     """Per-(thermal, stage) ``dec_oper_usit`` means. See :func:`_hydro_side`
     for *probabilities*'s scenario-weighting contract and the unavailable
     table."""
-    table = _read_dec_oper_table(
-        read_dec_oper_usit, "dec_oper_usit.csv", decomp_dir, _DEC_OPER_USIT_EFFECT
+    table = read_or_note(
+        read_dec_oper_usit, "dec_oper_usit.csv", decomp_dir, DEC_OPER_USIT_EFFECT
     )
     if table is None:
         return pl.DataFrame(), []
@@ -688,8 +658,8 @@ def _bus_side(
 ) -> tuple[pl.DataFrame, list[int]]:
     """Per-(bus, stage) ``dec_oper_sist`` means. See :func:`_hydro_side` for
     *probabilities*'s scenario-weighting contract and the unavailable table."""
-    table = _read_dec_oper_table(
-        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, _DEC_OPER_SIST_EFFECT
+    table = read_or_note(
+        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, DEC_OPER_SIST_EFFECT
     )
     if table is None:
         return pl.DataFrame(), []
@@ -1174,8 +1144,8 @@ def _energy_balance_frames(
     added before NET_LOAD is formed.
     """
     empty = _empty_market_frame()
-    table = _read_dec_oper_table(
-        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, _DEC_OPER_SIST_EFFECT
+    table = read_or_note(
+        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, DEC_OPER_SIST_EFFECT
     )
     if table is None:
         return empty, empty, empty
@@ -1418,8 +1388,8 @@ def _deficit_cost(
     unitemized slack, and so does every deficit when ``dec_oper_sist`` is
     unavailable (``None``).
     """
-    sist = _read_dec_oper_table(
-        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, _DEC_OPER_SIST_EFFECT
+    sist = read_or_note(
+        read_dec_oper_sist, "dec_oper_sist.csv", decomp_dir, DEC_OPER_SIST_EFFECT
     )
     if sist is None:
         return None
@@ -2513,8 +2483,8 @@ def _dec_oper_hydro_stage_frame(
     unreadable ``dec_oper_usih.csv`` -- every caller already treats an empty
     frame as "nothing to look up".
     """
-    table = _read_dec_oper_table(
-        read_dec_oper_usih, "dec_oper_usih.csv", decomp_dir, _DEC_OPER_USIH_EFFECT
+    table = read_or_note(
+        read_dec_oper_usih, "dec_oper_usih.csv", decomp_dir, DEC_OPER_USIH_EFFECT
     )
     if table is None:
         return pl.DataFrame()
@@ -2543,8 +2513,8 @@ def _dec_oper_thermal_stage_frame(
     generation, averaged over node/scenario. Mirrors
     `_dec_oper_hydro_stage_frame`, including the same degrade-to-empty and
     the same *probabilities* scenario-weighting contract."""
-    table = _read_dec_oper_table(
-        read_dec_oper_usit, "dec_oper_usit.csv", decomp_dir, _DEC_OPER_USIT_EFFECT
+    table = read_or_note(
+        read_dec_oper_usit, "dec_oper_usit.csv", decomp_dir, DEC_OPER_USIT_EFFECT
     )
     if table is None:
         return pl.DataFrame()

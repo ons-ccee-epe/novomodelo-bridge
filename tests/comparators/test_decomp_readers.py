@@ -47,6 +47,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_oper_sist,
     read_decomp_tim,
     read_eco_fpha,
+    read_or_note,
     read_relato2_costs,
     read_relato_balance,
     read_relato_convergence,
@@ -55,6 +56,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_relato_membership,
 )
 from novomodelo_bridge.comparators.decomp.results import reconcile_kdollars_to_reais
+from novomodelo_bridge.core import diagnostics as dx
 
 _RESULTS_EXCERPT = Path(__file__).resolve().parents[1] / "fixtures" / "decomp_results"
 
@@ -1275,3 +1277,63 @@ class TestReconcileKdollarsToReais:
         assert docstring is not None
         assert "project_decomp_fcf_unit_conversion_bug" in docstring
         assert "k$" in docstring
+
+
+class TestReadOrNote:
+    """`read_or_note`: a reader's raise becomes the report-file finding."""
+
+    _EFFECT = "the report leaves out the section."
+
+    def test_a_read_table_is_returned_without_a_finding(self, tmp_path: Path) -> None:
+        table = pl.DataFrame({"estagio": [1]})
+
+        with dx.collect() as collected:
+            result = read_or_note(lambda _d: table, "x.csv", tmp_path, self._EFFECT)
+
+        assert result is table
+        assert collected == []
+
+    def test_an_absent_file_is_a_note(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
+            result = read_or_note(read_dec_oper_sist, "x.csv", tmp_path, self._EFFECT)
+
+        assert result is None
+        [note] = collected
+        assert (note.code, note.severity) == ("report-file-missing", dx.Severity.INFO)
+        assert note.summary == f"x.csv was not found, so {self._EFFECT}"
+
+    def test_an_optional_absent_file_is_no_finding(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
+            result = read_or_note(
+                read_avl_cortesfpha,
+                "x.rvN",
+                tmp_path,
+                self._EFFECT,
+                note_missing=False,
+            )
+
+        assert result is None
+        assert collected == []
+
+    @pytest.mark.parametrize("note_missing", [True, False])
+    def test_an_empty_parse_is_a_warning(
+        self, tmp_path: Path, note_missing: bool
+    ) -> None:
+        (tmp_path / "avl_cortesfpha_dec.rv0").touch()
+
+        with dx.collect() as collected:
+            result = read_or_note(
+                read_avl_cortesfpha,
+                "x.rvN",
+                tmp_path,
+                self._EFFECT,
+                note_missing=note_missing,
+            )
+
+        assert result is None
+        [warning] = collected
+        assert (warning.code, warning.severity) == (
+            "report-file-unreadable",
+            dx.Severity.WARNING,
+        )
+        assert warning.summary == f"x.rvN could not be read, so {self._EFFECT}"
