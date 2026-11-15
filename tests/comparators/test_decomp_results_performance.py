@@ -490,6 +490,29 @@ def test_a_missing_relato_is_one_note_across_every_relato_reader(
     ]
 
 
+def test_a_relato_without_its_convergence_table_is_one_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both readers of the convergence table meet the same failure, so their
+    warnings reduce to one."""
+
+    def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
+        raise ValueError("relato.rv0 has no convergencia table")
+
+    monkeypatch.setattr(
+        "novomodelo_bridge.comparators.decomp.results.read_relato_convergence",
+        _boom,
+    )
+
+    with dx.collect() as collected:
+        _decomp_convergence_frame(tmp_path)
+        _decomp_tim_iterations(tmp_path)
+
+    assert [(d.code, d.title) for d in dx.finalize_diagnostics(collected)] == [
+        ("report-file-unreadable", "relato.rvN could not be read")
+    ]
+
+
 class TestDecompMaxStage:
     """``_decomp_max_stage``: the max already-aligned (0-based) ``stage_id``
     across every level, derived without an extra read."""

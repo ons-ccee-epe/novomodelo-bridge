@@ -107,6 +107,12 @@ _RELATO_MISSING_EFFECT = (
     "the report leaves out DECOMP's convergence, its time per iteration and the "
     "REE energy comparison."
 )
+#: The same for a relato.rvN without its convergence table, which both readers
+#: of that table meet, completing ``"relato.rvN could not be read, so ..."``.
+_RELATO_CONVERGENCE_UNREADABLE_EFFECT = (
+    "the report shows Novomodelo's convergence alone, without DECOMP's time per "
+    "iteration."
+)
 _DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
 
 
@@ -564,10 +570,7 @@ def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
         return pl.DataFrame(schema=_CONVERGENCE_SCHEMA)
     except ValueError as exc:
         _emit_unreadable(
-            "relato.rvN",
-            decomp_dir,
-            "the report shows Novomodelo's convergence alone.",
-            exc,
+            "relato.rvN", decomp_dir, _RELATO_CONVERGENCE_UNREADABLE_EFFECT, exc
         )
         return pl.DataFrame(schema=_CONVERGENCE_SCHEMA)
 
@@ -1645,10 +1648,7 @@ def _decomp_tim_iterations(decomp_dir: Path) -> pl.DataFrame:
         return empty
     except ValueError as exc:
         _emit_unreadable(
-            "relato.rvN",
-            decomp_dir,
-            "the report leaves out DECOMP's time per iteration.",
-            exc,
+            "relato.rvN", decomp_dir, _RELATO_CONVERGENCE_UNREADABLE_EFFECT, exc
         )
         return empty
 
