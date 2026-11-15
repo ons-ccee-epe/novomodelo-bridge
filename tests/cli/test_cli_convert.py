@@ -2561,6 +2561,66 @@ class TestCliInProcess:
             "importer-warning",
         }
 
+    def test_convert_decomp_error_finding_omits_the_run_command(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An importer ERROR fails the run, so the command that runs the case
+        is withheld, with and without ``--json``, while the summary still
+        records the boundary FCF that was written."""
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.core.conversion import ConversionReport
+
+        src = _make_fake_decomp_dir_with_cuts(tmp_path)
+        fake_report = ConversionReport(
+            hydro_count=1, thermal_count=1, bus_count=1, line_count=0, stage_count=4
+        )
+
+        def _convert(dst: Path, *extra: str) -> tuple[int, str, str]:
+            def _fake_import(*args: object, **kwargs: object) -> Path:
+                dx.emit(
+                    dx.Diagnostic(
+                        code="boundary-fcf-unowned-plants",
+                        severity=dx.Severity.ERROR,
+                        category="Boundary FCF",
+                        title="Plants with no boundary-cut term (1)",
+                        summary="synthetic",
+                    )
+                )
+                return dst / "boundary"
+
+            with (
+                patch(
+                    "novomodelo_bridge.decomp.pipeline.convert_decomp_case",
+                    return_value=fake_report,
+                ),
+                patch(
+                    "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+                ),
+                patch(
+                    "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
+                    side_effect=_fake_import,
+                ),
+            ):
+                return self._invoke_main(
+                    ["convert", "decomp", str(src), str(dst), *extra], monkeypatch
+                )
+
+        code, _stdout, stderr = _convert(tmp_path / "dst")
+        assert code == 1
+        assert "Conversion notes: 1 error" in stderr
+        assert "Run this case with" not in stderr
+        assert "novomodelo run" not in stderr
+
+        code, stdout, stderr = _convert(tmp_path / "dst_json", "--json")
+        assert code == 1
+        payload = json.loads(stdout)
+        assert payload["status"] == "error"
+        assert payload["summary"]["boundary_fcf"] == {
+            "imported": True,
+            "path": "boundary",
+        }
+        assert "novomodelo run" not in stderr
+
     def test_convert_decomp_boundary_fcf_importer_diagnostics_reach_sidecar(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

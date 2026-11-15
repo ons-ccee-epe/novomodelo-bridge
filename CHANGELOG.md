@@ -42,9 +42,11 @@ links are cobre-bridge's.
 
 - **BREAKING: `check decomp` raises the warnings `convert decomp` raises for
   the special constraints and `AC` registers it leaves out**
-  (`decomp-re-thermal-not-normal`, `decomp-rhq-qbom-no-station`,
+  (`decomp-re-thermal-not-normal`, `decomp-re-plant-not-operated`,
+  `decomp-rhq-qbom-no-station`, `decomp-rhq-plant-not-operated`,
   `decomp-rhv-vbom-no-station`, `decomp-rhv-varm-plant-uncadastred`,
-  `decomp-ac-topology-varies`), so it exits 1 on such decks and
+  `decomp-electrical-period-rows-unused`, `decomp-ac-topology-varies`), so it
+  exits 1 on such decks and
   `decomp-special-constraints-converted` no longer counts those constraints;
   `convert decomp` in turn warns about the `AC` registers it does not read
   with `decomp-ac-overrides-deferred`. Update scripts that expect `check
@@ -67,6 +69,8 @@ links are cobre-bridge's.
   plant's minimum now warns as `hydro-bounds-raised-to-declared-minimum`, and
   DECOMP plants kept only for the NEWAVE coupling are listed in a
   `decomp-coupling-only-plants-excluded` note instead of a log warning.
+  `check` therefore exits 0 with status `ok` on a deck whose only warnings
+  were `libs-unindexed-file` or `decomp-ac-out-of-horizon`.
 - **Every command reports each kind of finding once, with a table of the
   plants, records or constraints it concerns**, where `convert decomp`,
   `compare` and `dashboard` gave one panel and one `--json` entry per record;
@@ -192,13 +196,20 @@ links are cobre-bridge's.
 
 - **A failed `convert newave` or `convert decomp` left an empty case directory
   behind.** The directories the run created are now removed with its partial
-  outputs.
+  outputs. When a file cannot be removed, the command still reports the error
+  that stopped the conversion and adds an `output-rollback-incomplete` error
+  saying the directory holds a partial case; delete it before running.
 - **Error and warning panels cut a long path short with "…".** They now wrap
   it onto the next line.
-- **`convert decomp` stopped on an `HV` constraint on the stored volume of a
-  plant in `hidr.dat` with no `UH` record.** It now leaves the constraint out
-  with a `decomp-rhv-varm-plant-uncadastred` warning, as for a plant missing
-  from `hidr.dat`.
+- **`convert decomp` stopped on an `RE`, `HQ` or `HV` constraint on a plant
+  the case does not operate**, such as a plant in `hidr.dat` with no `UH`
+  record. It now leaves the constraint out with a
+  `decomp-re-plant-not-operated`, `decomp-rhq-plant-not-operated` or
+  `decomp-rhv-varm-plant-uncadastred` warning.
+- **`check decomp` warned that a `RESTRICAO-ELETRICA-ESPECIAL` file
+  `convert decomp` converts was left out** (`decomp-libs-electrical-present`)
+  and exited 1. It now warns only when `convert decomp` leaves the file out,
+  and fails on a file `convert decomp` cannot read.
 - **`check decomp` reported `AC NPOSNW` as not converted**
   (`decomp-ac-overrides-deferred`), although `convert decomp` applies it.
 - **`convert decomp` listed `HQ` restrictions on a missing `UE` pumping

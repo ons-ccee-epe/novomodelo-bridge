@@ -33,8 +33,10 @@ from novomodelo_bridge.decomp.constraint_registers import (
 )
 from novomodelo_bridge.decomp.converters.anticipated import GnlEmission
 from novomodelo_bridge.decomp.converters.cadastro import (
+    CadastroResolutionReport,
     DiversionChannel,
     EffectiveCadastro,
+    OutOfHorizon,
     ac_overrides_deferred_diagnostic,
 )
 from novomodelo_bridge.decomp.converters.hydro import TurbineLimits
@@ -49,6 +51,7 @@ from novomodelo_bridge.decomp.pipeline import (
     DecompCaseArtifacts,
     DiversionChannels,
     _base_diversion_channels,
+    _cadastro_overrides_diagnostic,
     _close_diversion,
     _convert_config_and_stages,
     _couple_diversion_channels,
@@ -1543,6 +1546,25 @@ class TestCadastroPipelineWiring:
         assert cadastro_diagnostics[0].table is not None
         assert cadastro_diagnostics[0].table.rows == [["VOLMAX", 1]]
 
+    def test_only_overrides_after_the_horizon_are_reported_as_changing_nothing(
+        self,
+    ) -> None:
+        diagnostic = _cadastro_overrides_diagnostic(
+            CadastroResolutionReport(
+                applied={},
+                out_of_horizon=(
+                    OutOfHorizon(code=1, param="volume_maximo", mes=12, ano=2026),
+                ),
+            )
+        )
+
+        assert diagnostic.code == "cadastro-overrides-applied"
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.title.endswith(" (1)")
+        assert "(0)" not in diagnostic.title
+        assert "below" not in diagnostic.summary
+        assert diagnostic.table is None
+
     def test_an_unconverted_ac_register_warns_as_check_decomp_does(
         self, tmp_path: Path
     ) -> None:
@@ -1719,6 +1741,31 @@ class TestGenericConstraintWiring:
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
         assert not (dst / "constraints" / "generic_constraints.json").exists()
         assert not (dst / "constraints" / "generic_constraint_bounds.parquet").exists()
+
+    def test_an_hq_constraint_on_a_plant_not_operated_is_left_out(
+        self, tmp_path: Path
+    ) -> None:
+        base = _synthetic_rhq_record()
+        on_unoperated = dataclasses.replace(
+            base,
+            terms=(
+                base.terms[0],
+                ConstraintTerm(code=3, coefficient=1.0, variable="QDEF"),
+            ),
+        )
+        found: list[Diagnostic] = []
+
+        dst = _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            to_generic=(on_unoperated,),
+            diagnostics_out=found,
+        )
+
+        [left_out] = [d for d in found if d.code == "decomp-rhq-plant-not-operated"]
+        assert left_out.table is not None
+        assert left_out.table.rows == [[902, 3]]
+        assert not (dst / "constraints" / "generic_constraints.json").exists()
 
     def test_stage_varying_coefficient_is_declared_without_rhe(
         self, tmp_path: Path

@@ -14,7 +14,11 @@ from novomodelo_bridge.core.conversion import (
     ConversionReport,
     run_conversion,
 )
-from novomodelo_bridge.core.errors import EmissionCheckError, OutputExistsError
+from novomodelo_bridge.core.errors import (
+    EmissionCheckError,
+    FieldParseError,
+    OutputExistsError,
+)
 
 _ARTIFACTS = ClearedArtifacts(subdirs=("system",), files=("config.json",))
 
@@ -139,10 +143,32 @@ def test_a_failure_removes_the_directories_the_run_created(tmp_path: Path) -> No
         _write_outputs(dst)
         raise RuntimeError("boom")
 
-    with dx.collect(), pytest.raises(RuntimeError, match="boom"):
+    with dx.collect() as outer, pytest.raises(RuntimeError, match="boom"):
         run_conversion(convert, dst, _ARTIFACTS, force=False, dry_run=False)
 
     assert list(tmp_path.iterdir()) == []
+    assert [d.code for d in outer] == []
+
+
+def test_a_failed_rollback_keeps_the_original_error_and_its_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _held_open(path: Path) -> None:
+        raise PermissionError(32, "in use")
+
+    monkeypatch.setattr("novomodelo_bridge.core.conversion.shutil.rmtree", _held_open)
+
+    def convert() -> ConversionReport:
+        _write_outputs(tmp_path)
+        dx.emit(_diagnostic("early", dx.Severity.WARNING))
+        raise FieldParseError("bad field", path="deck.dat", field="X")
+
+    with dx.collect() as outer, pytest.raises(FieldParseError, match="bad field"):
+        run_conversion(convert, tmp_path, _ARTIFACTS, force=False, dry_run=False)
+
+    assert [d.code for d in outer] == ["early", "output-rollback-incomplete"]
+    assert outer[1].severity is dx.Severity.ERROR
+    assert (tmp_path / "system").is_dir()
 
 
 def test_a_failure_keeps_a_dst_that_existed(tmp_path: Path) -> None:

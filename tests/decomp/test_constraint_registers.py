@@ -952,6 +952,38 @@ def test_drop_unknown_entities_leaves_out_bound_and_generic_records_alike() -> N
     assert diagnostic.table.rows == [[7, 99], [8, 98]]
 
 
+@pytest.mark.parametrize(
+    ("family", "variable", "code"),
+    [
+        ("RE", "generation", "decomp-re-plant-not-operated"),
+        ("HQ", "QDEF", "decomp-rhq-plant-not-operated"),
+        ("HQ", "QTUR", "decomp-rhq-plant-not-operated"),
+        ("HQ", "QDES", "decomp-rhq-plant-not-operated"),
+        ("HQ", "QVER", "decomp-rhq-plant-not-operated"),
+        ("HV", "VDEF", "decomp-rhv-varm-plant-uncadastred"),
+        ("HV", "VDES", "decomp-rhv-varm-plant-uncadastred"),
+    ],
+)
+def test_drop_unknown_entities_leaves_out_every_term_on_a_plant_not_operated(
+    family: str, variable: str, code: str
+) -> None:
+    on_operated = _record(
+        family, 1, ConstraintTerm(code=5, coefficient=1.0, variable=variable)
+    )
+    not_operated = _record(
+        family, 2, ConstraintTerm(code=99, coefficient=1.0, variable=variable)
+    )
+
+    census, diagnostics = _screen(on_operated, not_operated)
+
+    assert (*census.to_bounds, *census.to_generic) == (on_operated,)
+    [diagnostic] = diagnostics
+    assert diagnostic.code == code
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == [[2, 99]]
+
+
 def test_drop_unknown_entities_reports_each_kind_of_term_once() -> None:
     _, diagnostics = _screen(
         _record(

@@ -824,6 +824,35 @@ def test_convert_gnl_raises_on_differing_class4_end_across_plants() -> None:
         )
 
 
+def test_convert_gnl_reports_the_lag_before_differing_cutoffs_raise() -> None:
+    model = GnlCommitmentModel(
+        tg=_TG,
+        thermals=(_SANTA, _PSERG),
+        commitments={
+            86: GnlCommitment(
+                86,
+                (
+                    GnlStageCommitment(1, date(2026, 3, 14), 0.0, 168.0),
+                    GnlStageCommitment(8, date(2026, 5, 2), 0.0, 0.0),
+                    GnlStageCommitment(9, date(2026, 5, 9), 500.0, 0.0),
+                ),
+            ),
+            224: GnlCommitment(
+                224, (GnlStageCommitment(1, date(2026, 3, 14), 0.0, 168.0),)
+            ),
+        },
+        weeks_per_month=_EMIT_WEEKS_PER_MONTH,
+        nl_lag_months={86: 2, 224: 3},
+    )
+    with collect() as found:
+        with pytest.raises(ValueError, match="differing já-comandada cutoffs"):
+            convert_gnl(
+                model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
+            )
+
+    assert "decomp-gnl-lag-nonuniform" in [d.code for d in found]
+
+
 def test_convert_gnl_thermal_bounds_match_capability_and_cost() -> None:
     e = convert_gnl(
         _emit_model(), first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR

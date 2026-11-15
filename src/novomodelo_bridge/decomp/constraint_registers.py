@@ -94,7 +94,7 @@ class ConstraintTerm:
     (RE hydro, ``FU``), ``thermal_generation`` (RE thermal, ``FT``),
     ``interchange`` (RE submarket pair, ``FI``), ``contract`` (RE ``CI``/``CE``
     contract, ``FE``), the ``CQ.tipo`` flow
-    (``QDEF``/``QTUR``/``QDES``/``QBOM``) for HQ, the ``CV.tipo`` volume
+    (``QDEF``/``QTUR``/``QDES``/``QVER``/``QBOM``) for HQ, the ``CV.tipo`` volume
     (``VARM``/``VDEF``/``VDES``/``VBOM``) for HV, or ``energy`` for HE.
     ``frequency`` is the 50/60 Hz tag carried only by RE ``FU`` terms
     (``None`` elsewhere); a plant split across both frequencies contributes two
@@ -920,10 +920,10 @@ def bound_conflicts_diagnostic(
 
 @dataclass(frozen=True)
 class _EntityCheck:
-    """A term variable whose code must name an entity the case holds."""
+    """Term variables whose code must name an entity the case holds."""
 
     family: str
-    variable: str
+    variables: frozenset[str]
     entity: str
     diagnostic_code: str
     title: str
@@ -935,7 +935,7 @@ class _EntityCheck:
 _ENTITY_CHECKS = (
     _EntityCheck(
         family="RE",
-        variable="thermal_generation",
+        variables=frozenset({"thermal_generation"}),
         entity="thermal",
         diagnostic_code="decomp-re-thermal-not-normal",
         title="RE constraints on thermals without a CT record",
@@ -951,8 +951,26 @@ _ENTITY_CHECKS = (
         ),
     ),
     _EntityCheck(
+        family="RE",
+        variables=frozenset({"generation"}),
+        entity="hydro",
+        diagnostic_code="decomp-re-plant-not-operated",
+        title="RE constraints on plants the case does not operate",
+        summary=(
+            "The listed RE constraints have an FU term on a plant with no UH "
+            "record giving an initial volume in dadger.rvN, so the case does not "
+            "operate it. The conversion leaves each constraint out, so the case "
+            "runs without the limits DECOMP applies."
+        ),
+        code_column="Plant code",
+        remediation=(
+            "Give each listed plant a UH record with an initial volume in "
+            "dadger.rvN, or remove its FU term."
+        ),
+    ),
+    _EntityCheck(
         family="HQ",
-        variable="QBOM",
+        variables=frozenset({"QBOM"}),
         entity="pumping",
         diagnostic_code="decomp-rhq-qbom-no-station",
         title="HQ constraints on missing pumping stations",
@@ -969,8 +987,26 @@ _ENTITY_CHECKS = (
         ),
     ),
     _EntityCheck(
+        family="HQ",
+        variables=frozenset({"QDEF", "QTUR", "QDES", "QVER"}),
+        entity="hydro",
+        diagnostic_code="decomp-rhq-plant-not-operated",
+        title="HQ constraints on plants the case does not operate",
+        summary=(
+            "The listed HQ constraints have a CQ QDEF, QTUR, QDES or QVER term on "
+            "a plant with no UH record giving an initial volume in dadger.rvN, so "
+            "the case does not operate it. The conversion leaves each constraint "
+            "out, so the case runs without the limits DECOMP applies."
+        ),
+        code_column="Plant code",
+        remediation=(
+            "Give each listed plant a UH record with an initial volume in "
+            "dadger.rvN, or remove its CQ term."
+        ),
+    ),
+    _EntityCheck(
         family="HV",
-        variable="VBOM",
+        variables=frozenset({"VBOM"}),
         entity="pumping",
         diagnostic_code="decomp-rhv-vbom-no-station",
         title="HV constraints on missing pumping stations",
@@ -988,20 +1024,20 @@ _ENTITY_CHECKS = (
     ),
     _EntityCheck(
         family="HV",
-        variable="VARM",
+        variables=frozenset({"VARM", "VDEF", "VDES"}),
         entity="hydro",
         diagnostic_code="decomp-rhv-varm-plant-uncadastred",
         title="HV constraints on plants the case does not operate",
         summary=(
-            "The listed HV constraints have a CV VARM term on a plant with no UH "
-            "record giving an initial volume in dadger.rvN, so the case has no "
-            "storage for it. The conversion leaves each constraint out, so the "
-            "case runs without the limits DECOMP applies."
+            "The listed HV constraints have a CV VARM, VDEF or VDES term on a "
+            "plant with no UH record giving an initial volume in dadger.rvN, so "
+            "the case does not operate it. The conversion leaves each constraint "
+            "out, so the case runs without the limits DECOMP applies."
         ),
         code_column="Plant code",
         remediation=(
             "Give each listed plant a UH record with an initial volume in "
-            "dadger.rvN, or remove its CV VARM term."
+            "dadger.rvN, or remove its CV VARM, VDEF or VDES term."
         ),
     ),
 )
@@ -1017,8 +1053,9 @@ def drop_unknown_entities(
     """Leave out every constraint with a term on an entity the case lacks.
 
     Checks the ``FT`` thermal, the ``QBOM``/``VBOM`` pumping station and the
-    ``VARM`` plant of each term against *thermal_codes*, *pumping_codes* and
-    *hydro_codes* (the operated plants). A constraint with any such term is
+    plant of each ``FU``, ``QDEF``/``QTUR``/``QDES``/``QVER`` and
+    ``VARM``/``VDEF``/``VDES`` term against *thermal_codes*, *pumping_codes*
+    and *hydro_codes* (the operated plants). A constraint with any such term is
     dropped from both lowering buckets and from ``bound_conflicts``, never
     lowered in part, and reported
     once per kind of term as a WARNING listing the constraint and the code.
@@ -1037,7 +1074,7 @@ def drop_unknown_entities(
                 continue
             for term in record.terms:
                 if (
-                    term.variable == check.variable
+                    term.variable in check.variables
                     and term.code not in known[check.entity]
                 ):
                     rows[check.diagnostic_code].append(

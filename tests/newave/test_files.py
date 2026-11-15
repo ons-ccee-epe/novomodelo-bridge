@@ -205,8 +205,8 @@ def test_pumping_files_none_when_not_in_index(tmp_path: Path) -> None:
     assert files.estacao_bombeamento_submercado is None
 
 
-def test_pumping_files_unindexed_warning(tmp_path: Path) -> None:
-    """Unlisted pumping file produces libs-unindexed-file warning."""
+def test_pumping_files_unindexed_note(tmp_path: Path) -> None:
+    """Unlisted pumping file produces the libs-unindexed-file note."""
     deck = _mini_deck(
         tmp_path,
         "",  # Empty indices.csv

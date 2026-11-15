@@ -442,21 +442,24 @@ def emit_libs_electrical_generics(
     0) when omitted; the pipeline threads one shared instance across every
     emitter.
     """
-    with collect() as found:
-        result = _emit_restrictions(
-            model,
-            id_map,
-            context_factory,
-            a_h,
-            calendar,
-            ncs_id_by_pee_code,
-            conjh_bus_by_code_group,
-            line_map,
-            big_m,
-            allocator or ConstraintIdAllocator(),
-        )
-    for diagnostic in merge_tables(found):
-        emit(diagnostic)
+    found: list[Diagnostic] = []
+    try:
+        with collect() as found:
+            result = _emit_restrictions(
+                model,
+                id_map,
+                context_factory,
+                a_h,
+                calendar,
+                ncs_id_by_pee_code,
+                conjh_bus_by_code_group,
+                line_map,
+                big_m,
+                allocator or ConstraintIdAllocator(),
+            )
+    finally:
+        for diagnostic in merge_tables(found):
+            emit(diagnostic)
     return result
 
 
@@ -485,27 +488,31 @@ def _emit_restrictions(
     }
 
     for code in sorted(model.restrictions):
-        with collect() as local:
-            kept = _emit_restriction(
-                code,
-                model.restrictions[code],
-                model,
-                id_map,
-                context_factory,
-                a_h,
-                calendar,
-                ncs_id_by_pee_code,
-                conjh_bus_by_code_group,
-                line_map,
-                big_m,
-                builder,
-                deferred,
-            )
+        kept = False
+        local: list[Diagnostic] = []
+        try:
+            with collect() as local:
+                kept = _emit_restriction(
+                    code,
+                    model.restrictions[code],
+                    model,
+                    id_map,
+                    context_factory,
+                    a_h,
+                    calendar,
+                    ncs_id_by_pee_code,
+                    conjh_bus_by_code_group,
+                    line_map,
+                    big_m,
+                    builder,
+                    deferred,
+                )
+        finally:
+            for diagnostic in local:
+                if kept or diagnostic.code != DISP_USIH_SUBSTITUTED:
+                    emit(diagnostic)
         if kept:
             converted.append(code)
-        for diagnostic in local:
-            if kept or diagnostic.code != DISP_USIH_SUBSTITUTED:
-                emit(diagnostic)
 
     return LibsElectricalResult(
         generic=builder.result(),

@@ -24,6 +24,7 @@ from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
     Severity,
+    collect,
     counted,
 )
 from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
@@ -306,6 +307,8 @@ def _special_constraint_coverage(
     libs_file: Path | None,
     id_map: DecompIdMap,
     pumping_ids: Mapping[int, int],
+    *,
+    libs_long_form: bool | None = False,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify the deck's special constraints into converted (RE/HQ/HV/HE,
     split into bounds-lowered vs generic-emitted), left out (a term on an
@@ -318,11 +321,18 @@ def _special_constraint_coverage(
     :func:`~novomodelo_bridge.decomp.constraint_registers.drop_unknown_entities`
     against *id_map* and the ``UE`` codes of *pumping_ids*. Always returns
     exactly one passing summary :class:`CheckItem` (coverage never blocks
-    conversion) plus an ``INFO`` for the converted split when any constraint
-    converts, and the WARNINGs of the screen and of the detection helpers
-    (:func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`,
-    :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`)
-    verbatim, as ``convert decomp`` raises them.
+    conversion), an ``INFO`` for the converted split when any constraint
+    converts, and, verbatim as ``convert decomp`` raises them, the screen's
+    WARNINGs, the one of
+    :func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`
+    and, when *libs_long_form* is ``False`` (the LIBS file has no long-form
+    card ``convert decomp`` reads; ``None`` when the read failed, which its own
+    failed check reports), the one of
+    :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`.
+    :func:`_libs_electrical_read` raises the LIBS file's own
+    ``decomp-electrical-period-rows-unused``. Neither raises
+    ``decomp-conflicting-flow-restrictions``, which ``convert decomp`` raises
+    for the census's ``bound_conflicts``.
     """
     census, unknown = constraint_registers.drop_unknown_entities(
         constraint_registers.read_constraints(dadger),
@@ -392,10 +402,44 @@ def _special_constraint_coverage(
     if rha_diagnostic is not None:
         diagnostics.append(rha_diagnostic)
     libs_diagnostic = constraint_registers.detect_libs_electrical(libs_file)
-    if libs_diagnostic is not None:
+    if libs_diagnostic is not None and libs_long_form is False:
         diagnostics.append(libs_diagnostic)
 
     return checks, diagnostics
+
+
+def _libs_electrical_read(
+    case: DecompCase, calendar: list[OperativeStage]
+) -> tuple[bool | None, list[CheckItem], list[Diagnostic]]:
+    """Read the LIBS ``RESTRICAO-ELETRICA-ESPECIAL`` file as ``convert decomp`` does.
+
+    Returns whether it has a long-form card ``convert decomp`` reads, with the
+    WARNINGs the read raises. A file it cannot read gives ``None`` and a failed
+    check, since ``convert decomp`` stops on it.
+    """
+    from novomodelo_bridge.decomp.converters import libs_electrical
+
+    found: list[Diagnostic] = []
+    try:
+        with collect() as found:
+            restricoes = case.libs_restricao_eletrica
+            model = (
+                libs_electrical.read_libs_electrical(restricoes, calendar)
+                if restricoes is not None
+                else None
+            )
+    except Exception as exc:
+        failed = CheckItem(
+            label="LIBS electrical restrictions readable",
+            passed=False,
+            detail=str(exc),
+        )
+        return (
+            None,
+            [failed],
+            [*found, diagnostic_from_exception(exc, context=_CONTEXT)],
+        )
+    return model is not None, [], found
 
 
 def run_decomp_preflight(src: Path) -> PreflightResult:
@@ -527,11 +571,18 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             checks.extend(cov_checks)
             diagnostics.extend(cov_diags)
 
+        libs_long_form, electrical_checks, electrical_diags = _libs_electrical_read(
+            case, calendar
+        )
+        checks.extend(electrical_checks)
+        diagnostics.extend(electrical_diags)
+
         sc_checks, sc_diags = _special_constraint_coverage(
             dadger,
             files.libs_restricao_eletrica,
             id_map,
             pumping_station_id_map(dadger),
+            libs_long_form=libs_long_form,
         )
         checks.extend(sc_checks)
         diagnostics.extend(sc_diags)

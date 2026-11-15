@@ -24,7 +24,7 @@ import pandas as pd
 import pytest
 from idecomp.decomp.modelos.dadger import ACJUSENA, ACNPOSNW, ACNUMJUS, ACNUMPOS
 
-from novomodelo_bridge.core.diagnostics import collect
+from novomodelo_bridge.core.diagnostics import Severity, collect
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
@@ -520,7 +520,9 @@ def _two_plant_case(
     return case, id_map, effective
 
 
-def _hydro_findings(hidr: pd.DataFrame) -> dict[str, Diagnostic]:
+def _hydro_findings(
+    hidr: pd.DataFrame, *, fpha_codes: set[int] | None = None
+) -> dict[str, Diagnostic]:
     case, id_map, effective = _two_plant_case(hidr)
     with collect() as found:
         convert_hydros(
@@ -528,6 +530,7 @@ def _hydro_findings(hidr: pd.DataFrame) -> dict[str, Diagnostic]:
             id_map,
             effective=effective,
             turbine_limits=flat_turbine_limits(id_map, len(_calendar())),
+            fpha_codes=fpha_codes,
         )
     return {diagnostic.code: diagnostic for diagnostic in found}
 
@@ -558,6 +561,28 @@ def test_a_plant_without_a_forebay_curve_is_reported_with_its_stages() -> None:
     diagnostic = found["hydro-forebay-curve-missing"]
     assert diagnostic.table is not None
     assert diagnostic.table.rows == [[2, "B", "0-2"]]
+
+
+@pytest.mark.parametrize(
+    ("specific_productivity", "capped_rows"),
+    [(0.012, [[1, "A", 1.2232]]), (0.0089, None)],
+)
+def test_a_capped_fpha_efficiency_is_reported(
+    specific_productivity: float, capped_rows: list[list[object]] | None
+) -> None:
+    a = _plant_row(jusante=2, posto=11, name="A")
+    a["produtibilidade_especifica"] = specific_productivity
+    hidr = _hidr_frame({1: a, 2: _plant_row(jusante=0, posto=12, name="B")})
+
+    found = _hydro_findings(hidr, fpha_codes={1})
+
+    if capped_rows is None:
+        assert "fpha-efficiency-capped" not in found
+        return
+    diagnostic = found["fpha-efficiency-capped"]
+    assert diagnostic.severity is Severity.WARNING
+    assert diagnostic.table is not None
+    assert diagnostic.table.rows == capped_rows
 
 
 def test_a_declared_initial_dead_volume_is_reported() -> None:

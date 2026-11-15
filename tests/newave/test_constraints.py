@@ -810,12 +810,18 @@ _TWO_SIDED_RE = (
 
 
 def _make_electric_re_case(
-    tmp_path: Path, re_text: str = _TWO_SIDED_RE
+    tmp_path: Path,
+    re_text: str = _TWO_SIDED_RE,
+    *,
+    patamar: MagicMock | None = None,
+    re_dat: MagicMock | None = None,
+    ree: MagicMock | None = None,
 ) -> tuple[NewaveCase, NewaveIdMap]:
     """Return a ``(case, id_map)`` pair whose ``restricao-eletrica.csv`` is
     *re_text*, by default a two-sided ``[50, 200]`` limit on ``ger_usih(10)``
     over 2020, with ``dger``/``sistema`` mocked to a 1-year 2020 study carrying
-    no exchange/deficit data.
+    no exchange/deficit data. *patamar*, *re_dat* and *ree* replace the
+    one-block patamar.dat, the absent re.dat and the REE-less ree.dat.
     """
     re_path = tmp_path / "restricao-eletrica.csv"
     re_path.write_text(re_text, encoding="latin-1")
@@ -830,12 +836,17 @@ def _make_electric_re_case(
     sistema.limites_intercambio = None
     sistema.custo_deficit = None
 
-    case = make_case(
-        make_nw_files(tmp_path, restricao_eletrica=re_path),
-        dger=dger,
-        sistema=sistema,
-        re_dat=None,
+    parsed: dict[str, object] = {"dger": dger, "sistema": sistema, "re_dat": re_dat}
+    if patamar is not None:
+        parsed["patamar"] = patamar
+    if ree is not None:
+        parsed["ree"] = ree
+    files = make_nw_files(
+        tmp_path,
+        restricao_eletrica=re_path,
+        re_dat=None if re_dat is None else tmp_path / "re.dat",
     )
+    case = make_case(files, **parsed)
     id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
     return case, id_map
 
@@ -1202,6 +1213,91 @@ class TestConvertElectricConstraintsEmission:
             if r["bound_upper"] is not None
         ) == [(stage, stage + 130.0) for stage in range(12)]
 
+    _DEMAND_ON_THREE_BLOCKS = (
+        "RE;1;ger_usih(10) - demanda(1) + 100\n"
+        "RE-HORIZ-PER;1;2020/01;2020/12\n"
+        + "".join(
+            f"RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;{p};50.;200.\n" for p in (1, 2, 3)
+        )
+    )
+
+    @staticmethod
+    def _three_block_loads() -> dict[tuple[int, int], list[float]]:
+        return {(0, s): [10.0 * (b + 1) + s for b in range(3)] for s in range(12)}
+
+    def test_demand_terms_fold_on_each_block_of_a_multi_block_case(
+        self, tmp_path: Path
+    ) -> None:
+        case, _ = _make_electric_re_case(
+            tmp_path,
+            self._DEMAND_ON_THREE_BLOCKS,
+            patamar=MagicMock(numero_patamares=3),
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[10], thermal_codes=[])
+
+        result = convert_electric_constraints(
+            case, id_map, block_loads=self._three_block_loads()
+        )
+
+        assert result is not None
+        rows = result.bounds.to_pylist()
+        cells = [(s, b) for s in range(12) for b in range(3)]
+        assert sorted(
+            (r["stage_id"], r["block_id"], r["bound_upper"])
+            for r in rows
+            if r["bound_upper"] is not None
+        ) == [(s, b, 100.0 + 10.0 * (b + 1) + s) for s, b in cells]
+        assert sorted(
+            (r["stage_id"], r["block_id"], r["bound_lower"])
+            for r in rows
+            if r["bound_lower"] is not None
+        ) == [(s, b, -50.0 + 10.0 * (b + 1) + s) for s, b in cells]
+
+    def test_demand_terms_fold_on_the_re_dat_ceiling_after_the_cutoff(
+        self, tmp_path: Path
+    ) -> None:
+        """Constraint 1's re.dat ceiling of 500 replaces the csv's 200 on
+        stage 11, the first after the individualized period, and loses the
+        same demand offset per block."""
+        re_dat_reader = MagicMock()
+        re_dat_reader.usinas_conjuntos = pd.DataFrame(
+            {"conjunto": [1], "codigo_usina": [10]}
+        )
+        re_dat_reader.restricoes = pd.DataFrame(
+            {
+                "conjunto": [1],
+                "mes_inicio": [1],
+                "ano_inicio": [2020],
+                "mes_fim": [12],
+                "ano_fim": [2020],
+                "patamar": [0],
+                "restricao": [500.0],
+            }
+        )
+        case, _ = _make_electric_re_case(
+            tmp_path,
+            self._DEMAND_ON_THREE_BLOCKS,
+            patamar=MagicMock(numero_patamares=3),
+            re_dat=re_dat_reader,
+            ree=_valid_ree_reader(),
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[10], thermal_codes=[])
+
+        result = convert_electric_constraints(
+            case, id_map, block_loads=self._three_block_loads()
+        )
+
+        assert result is not None
+        assert sorted(
+            (r["stage_id"], r["block_id"], r["bound_upper"])
+            for r in result.bounds.to_pylist()
+            if r["bound_upper"] is not None
+        ) == [
+            (s, b, (500.0 if s == 11 else 200.0) - 100.0 + 10.0 * (b + 1) + s)
+            for s in range(12)
+            for b in range(3)
+        ]
+
     def test_thermal_outside_the_case_is_left_out_of_the_sum(
         self, tmp_path: Path
     ) -> None:
@@ -1414,6 +1510,30 @@ class TestConvertElectricConstraintsEmission:
         diag = by_code["individualizado-cutoff-unknown"]
         assert diag.severity is Severity.WARNING
         assert diag.table is None
+
+        _assert_no_repo_internal_leaks(collected)
+
+    def test_individualizado_cutoff_blank_records_reason(self, tmp_path: Path) -> None:
+        blank_ree = MagicMock()
+        blank_ree.rees = pd.DataFrame(
+            {
+                "codigo": [1],
+                "nome": ["SUDESTE"],
+                "submercado": [1],
+                "mes_fim_individualizado": [float("nan")],
+                "ano_fim_individualizado": [float("nan")],
+            }
+        )
+        case, id_map = _make_electric_re_case(tmp_path, ree=blank_ree)
+
+        with dx.collect() as collected:
+            result = convert_electric_constraints(case, id_map, block_loads={})
+
+        assert result is not None
+        diag = {d.code: d for d in collected}["individualizado-cutoff-unknown"]
+        assert diag.severity is Severity.WARNING
+        assert "could not be read from ree.dat" in diag.summary
+        assert diag.notes == ["Reason: ValueError: cannot convert float NaN to integer"]
 
         _assert_no_repo_internal_leaks(collected)
 

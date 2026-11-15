@@ -1300,7 +1300,7 @@ def _get_individualizado_cutoff(
         end_month = int(row["mes_fim_individualizado"])
         end_year = int(row["ano_fim_individualizado"])
         return (end_year - start_year) * 12 + (end_month - start_month)
-    except Exception:
+    except (OSError, ValueError, KeyError) as exc:
         emit(
             Diagnostic(
                 code="individualizado-cutoff-unknown",
@@ -1311,6 +1311,7 @@ def _get_individualizado_cutoff(
                     "The end of the individualized period could not be read "
                     f"from ree.dat. {_CUTOFF_EFFECT}"
                 ),
+                notes=[f"Reason: {exception_reason(exc)}"],
             ),
             logger=_LOG,
         )

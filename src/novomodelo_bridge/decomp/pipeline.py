@@ -1002,17 +1002,26 @@ def _cadastro_overrides_diagnostic(
         [cadastro_conv.AC_REGISTER_BY_PARAM[param], count]
         for param, count in report.applied.items()
     )
+    late = len(report.out_of_horizon)
+    late_sentence = (
+        f"{dx.counted(late, 'AC override')} "
+        f"{'takes' if late == 1 else 'take'} effect after the study "
+        f"horizon and {'changes' if late == 1 else 'change'} nothing"
+    )
+    if not rows:
+        return dx.Diagnostic(
+            code="cadastro-overrides-applied",
+            severity=dx.Severity.INFO,
+            category="Cadastro overrides",
+            title=f"AC registry overrides after the study horizon ({late})",
+            summary=f"{late_sentence}, as in DECOMP.",
+        )
     summary = (
         "The deck's AC registers change the hidr.dat registry of the plants "
         "below from the stage each one takes effect, as in DECOMP."
     )
-    if report.out_of_horizon:
-        late = len(report.out_of_horizon)
-        summary += (
-            f" {dx.counted(late, 'AC override')} "
-            f"{'takes' if late == 1 else 'take'} effect after the study "
-            f"horizon and {'changes' if late == 1 else 'change'} nothing."
-        )
+    if late:
+        summary += f" {late_sentence}."
     present = {row[0] for row in rows}
     per_unit_set = [name for name in _UNIT_SET_AC_REGISTERS if name in present]
     notes = (
@@ -1030,9 +1039,7 @@ def _cadastro_overrides_diagnostic(
             columns=["AC register", "Plants"],
             rows=rows,
             justify=["left", "right"],
-        )
-        if rows
-        else None,
+        ),
         notes=notes,
     )
 

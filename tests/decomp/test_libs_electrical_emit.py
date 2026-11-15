@@ -1066,6 +1066,35 @@ def test_emit_malformed_activation_rule_propagates_value_error() -> None:
     assert not isinstance(exc_info.value, UnrecognizedElectricalToken)
 
 
+def test_emit_reports_findings_met_before_a_failing_restriction() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1,))
+    model = LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            1: _restriction(1, "ger_usih(99)", "<=", "500"),
+            2: _restriction(2, "ger_usih(1)", "<=", "500", habilita=30),
+        },
+        rules={30: "demanda(3 >= 5"},
+    )
+
+    with dx.collect() as sink:
+        with pytest.raises(ValueError, match="unbalanced parentheses"):
+            emit_libs_electrical_generics(
+                model,
+                id_map,
+                lambda s, b: _dict_context({}),
+                AvailablePower(overlay={}),
+                _emit_calendar(1, n_blocks=1),
+                {},
+                {},
+                {},
+                big_m=999.0,
+            )
+
+    assert [d.code for d in sink] == ["decomp-electrical-bucket-a-unresolved"]
+
+
 # ---------------------------------------------------------------------------
 # The findings each dropped or rewritten restriction reports, by code
 # ---------------------------------------------------------------------------

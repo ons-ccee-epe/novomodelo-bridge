@@ -23,9 +23,11 @@ from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.preflight import (
     CheckItem,
+    PreflightResult,
     PreflightVerdict,
     optional_input_advisory,
 )
+from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
     detect_libs_electrical,
     detect_unconverted_rha,
@@ -61,6 +63,11 @@ from tests.decomp.test_constraint_registers import (
     _lv,
 )
 from tests.decomp.test_constraint_registers import _FakeDadger as _ConstraintFakeDadger
+from tests.decomp.test_libs_electrical import (
+    _re_formula,
+    _re_inequacao_per_pat,
+    _StubRestricoes,
+)
 from tests.decomp.test_network_load import (
     _ID_MAP,
     _calendar_rv3,
@@ -373,8 +380,8 @@ class TestAcCoverage:
         assert diagnostics == []
 
 
-#: The plant the synthetic special-constraint deck's HV VARM term names.
-_SC_ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(40,))
+#: The plants the synthetic special-constraint deck's FU, CQ and CV terms name.
+_SC_ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(21, 31, 40))
 
 
 class TestSpecialConstraintCoverage:
@@ -479,12 +486,16 @@ class TestSpecialConstraintCoverage:
 
         converted, *unknown = diagnostics
         assert unknown == expected
-        assert [d.code for d in unknown] == ["decomp-rhv-varm-plant-uncadastred"]
-        assert converted.title == "Special constraints converted (3)"
+        assert [d.code for d in unknown] == [
+            "decomp-re-plant-not-operated",
+            "decomp-rhq-plant-not-operated",
+            "decomp-rhv-varm-plant-uncadastred",
+        ]
+        assert converted.title == "Special constraints converted (1)"
         assert converted.table is not None
-        assert [row[0] for row in converted.table.rows] == ["HE", "HQ", "RE"]
+        assert [row[0] for row in converted.table.rows] == ["HE"]
         assert checks[0].detail == (
-            "2 records lowered to bounds, 1 emitted as generic constraints, "
+            "0 records lowered to bounds, 1 emitted as generic constraints, "
             "4 families present in the deck"
         )
 
@@ -518,6 +529,19 @@ class TestSpecialConstraintCoverage:
 
         assert diagnostics == [expected]
 
+    def test_a_libs_file_with_a_long_form_card_raises_no_libs_warning(
+        self, tmp_path: Path
+    ) -> None:
+        _checks, diagnostics = _special_constraint_coverage(
+            _ConstraintFakeDadger(),
+            tmp_path / "lib_restricao-eletrica-especial.csv",
+            _SC_ID_MAP,
+            {},
+            libs_long_form=True,
+        )
+
+        assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics}
+
     def test_no_special_constraints_deck_emits_only_the_passing_summary(
         self,
     ) -> None:
@@ -532,6 +556,107 @@ class TestSpecialConstraintCoverage:
             "0 families present in the deck"
         )
         assert diagnostics == []
+
+
+class TestLibsElectricalWarning:
+    """``check decomp`` warns that the LIBS electrical constraints are not
+    converted only when ``convert decomp`` reads no long-form card from the
+    file, as ``convert decomp`` does."""
+
+    _LIBS_FILE = "lib_restricao-eletrica-especial.csv"
+
+    def _run(
+        self,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        cards: object,
+        **reader: object,
+    ) -> PreflightResult:
+        """Check the mini deck with a LIBS file whose cards are *cards*, read
+        by the real reader unless *reader* patches it."""
+        deck = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, deck)
+        with (deck / "indices.csv").open("a", encoding="utf-8") as index:
+            index.write(f" RESTRICAO-ELETRICA-ESPECIAL ;eletricas ;{self._LIBS_FILE}\n")
+        (deck / self._LIBS_FILE).write_text("", encoding="utf-8")
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(DecompCase, "libs_restricao_eletrica", new=cards)
+            )
+            if reader:
+                stack.enter_context(
+                    patch(
+                        "novomodelo_bridge.decomp.converters.libs_electrical"
+                        ".read_libs_electrical",
+                        **reader,
+                    )
+                )
+            return run_decomp_preflight(deck)
+
+    def test_a_file_with_a_long_form_card_raises_no_libs_warning(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        result = self._run(decomp_mini_deck, tmp_path, object(), return_value=object())
+
+        codes = {d.code for d in result.diagnostics}
+        assert "decomp-libs-electrical-present" not in codes
+
+    def test_a_file_without_a_long_form_card_warns(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        result = self._run(decomp_mini_deck, tmp_path, object(), return_value=None)
+
+        codes = {d.code for d in result.diagnostics}
+        assert "decomp-libs-electrical-present" in codes
+
+    def test_a_period_row_that_does_not_fit_its_restriction_warns_once(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        cards = _StubRestricoes(
+            restricao_eletrica_formula=_re_formula((401, "ger_usih(1)")),
+            restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+                (401, 1, 1, None, "ger_usih(1)", "<=", "10"),
+            ),
+        )
+
+        result = self._run(decomp_mini_deck, tmp_path, cards)
+
+        [unused] = [
+            d
+            for d in result.diagnostics
+            if d.code == "decomp-electrical-period-rows-unused"
+        ]
+        assert unused.severity is Severity.WARNING
+        assert unused.table is not None
+        assert unused.table.rows == [
+            ["RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", 401]
+        ]
+        assert "decomp-libs-electrical-present" not in {
+            d.code for d in result.diagnostics
+        }
+        assert result.verdict is PreflightVerdict.WARNINGS
+
+    def test_an_unreadable_file_fails_the_check(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        result = self._run(
+            decomp_mini_deck,
+            tmp_path,
+            object(),
+            side_effect=ValueError("restriction 7 is malformed"),
+        )
+
+        [readable] = [
+            c
+            for c in result.checks
+            if c.label == "LIBS electrical restrictions readable"
+        ]
+        assert readable.passed is False
+        assert readable.detail == "restriction 7 is malformed"
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
+        assert "decomp-libs-electrical-present" not in {
+            d.code for d in result.diagnostics
+        }
 
 
 class TestLoadFactorCheck:

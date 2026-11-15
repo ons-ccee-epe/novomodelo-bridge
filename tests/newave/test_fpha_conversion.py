@@ -371,6 +371,101 @@ class TestFphaConverters:
         assert all(h["generation"]["model"] == "constant_productivity" for h in hydros)
         assert all(h["efficiency"] is None for h in hydros)
 
+    def test_hydros_report_a_plant_without_a_forebay_curve(
+        self, tmp_path: Path
+    ) -> None:
+        case = self._case(tmp_path)
+
+        with dx.collect() as collected:
+            convert_hydros(case, self._id_map())
+
+        [diagnostic] = [d for d in collected if d.code == "hydro-forebay-curve-missing"]
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [
+            [2, "USINA_B", f"0-{case.horizon.total_stages - 1}"]
+        ]
+
+    @staticmethod
+    def _cmont(year: int, month: int) -> MagicMock:
+        record = MagicMock()
+        type(record).__name__ = "CMONT"
+        record.data_inicio = datetime.datetime(year, month, 1)
+        record.nivel = 350.0
+        return record
+
+    @staticmethod
+    def _undated_vazmint() -> MagicMock:
+        record = MagicMock()
+        type(record).__name__ = "VAZMINT"
+        record.mes = None
+        record.periodo = None
+        record.data_inicio = None
+        return record
+
+    def test_hydros_report_a_plant_without_a_forebay_curve_before_its_cmont(
+        self, tmp_path: Path
+    ) -> None:
+        case = self._case(tmp_path, modif=modif_mock((2, [self._cmont(2025, 7)])))
+
+        with dx.collect() as collected:
+            convert_hydros(case, self._id_map())
+
+        [diagnostic] = [d for d in collected if d.code == "hydro-forebay-curve-missing"]
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [[2, "USINA_B", "0-5"]]
+
+    def test_hydros_do_not_report_a_plant_whose_cmont_covers_the_study(
+        self, tmp_path: Path
+    ) -> None:
+        case = self._case(tmp_path, modif=modif_mock((2, [self._cmont(2025, 1)])))
+
+        with dx.collect() as collected:
+            convert_hydros(case, self._id_map())
+
+        assert [d for d in collected if d.code == "hydro-forebay-curve-missing"] == []
+
+    def test_forebay_report_keeps_every_undated_record_of_the_run(
+        self, tmp_path: Path
+    ) -> None:
+        """The undated-record table lists the curved plant 1 too, though the
+        forebay report runs first and is about plant 2 alone."""
+        modif = modif_mock(
+            (1, [self._undated_vazmint()]), (2, [self._undated_vazmint()])
+        )
+        case = self._case(tmp_path, modif=modif)
+
+        with dx.collect() as collected:
+            convert_hydros(case, self._id_map())
+            convert_hydro_energy_productivity(case, self._id_map())
+
+        [diagnostic] = [
+            d
+            for d in dx.finalize_diagnostics(collected)
+            if d.code == "modif-temporal-override-undated"
+        ]
+        assert diagnostic.table is not None
+        assert [row[0] for row in diagnostic.table.rows] == [1, 2]
+
+    def test_hydros_report_a_capped_fpha_efficiency(self, tmp_path: Path) -> None:
+        case = self._case(tmp_path, plant_1={"produtibilidade_especifica": 0.012})
+
+        with dx.collect() as collected:
+            hydros = convert_hydros(case, self._id_map())["hydros"]
+
+        [diagnostic] = [d for d in collected if d.code == "fpha-efficiency-capped"]
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [[1, "USINA_A", 1.2232]]
+        reservoir = next(h for h in hydros if h["id"] == 0)
+        assert reservoir["efficiency"] == {"type": "constant", "value": 1.0}
+
+    def test_hydros_do_not_report_an_efficiency_below_one(self, tmp_path: Path) -> None:
+        with dx.collect() as collected:
+            convert_hydros(self._case(tmp_path), self._id_map())
+
+        assert [d for d in collected if d.code == "fpha-efficiency-capped"] == []
+
     @pytest.mark.parametrize("fpha", [True, False])
     def test_turbined_cap_is_the_head_corrected_engolimento(
         self, tmp_path: Path, fpha: bool

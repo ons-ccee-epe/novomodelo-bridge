@@ -125,7 +125,7 @@ and every export copies it into `export_manifest.json`. In brief:
 
 | Premise | Effect |
 |---------|--------|
-| P1 | `mapcut` physical records (indices 4–17) are written as zeros, which every export reports in its `dessem-fcf-mapcut-fields-zero` warning. |
+| P1 | `mapcut` physical records (0-based indices 4–17) are written as zeros, which every export reports in its `dessem-fcf-mapcut-fields-zero` warning. |
 | P2 | Intercepts and the storage and in-transit water coefficients are divided by 1000 (R$ to 10³ R$); GNL coefficients stay in R$/MWh. |
 | P3 | Travel-time plants follow the deck's `VI` records; each release's in-transit water is valued from the transit buckets it arrives in. A bucket with no arrival window (water that would arrive after the study ends) takes no weight; a coefficient found on one is dropped with a warning. |
 | P4 | GNL coefficients change sign (Novomodelo negative, DECOMP positive). |
@@ -135,8 +135,8 @@ and every export copies it into `export_manifest.json`. In brief:
 | P8 | Inflow-lag coefficients are dropped; a policy that has any gets a `dessem-fcf-inflow-lag-coefficients-dropped` warning counting them per pool. |
 | P9 | Discount factors are `(1+r)^(-days/365.25)` from the stage dates. |
 | P10 | Every populated cut past the warm-start slots is written; `is_active` is recorded, not used as a filter. |
-| P11 | `mapcut` record 10 holds the committed GNL cost from the case's commitment windows, load-block hours and plant costs, in 10³ R$ and not discounted; its other four cost parcels are written as zeros. |
-| P12 | `mapcut` record 9's trailing GNL hours block holds the delivery stage's load-block hours from `stages.json`. |
+| P11 | `mapcut` register 10 holds the committed GNL cost from the case's commitment windows, load-block hours and plant costs, in 10³ R$ and not discounted; its other four cost parcels are written as zeros. |
+| P12 | `mapcut` register 9's trailing GNL hours block holds the delivery stage's load-block hours from `stages.json`. |
 | P13 | `cortdeco` holds one extra record duplicating the last cut. |
 | P14 | The first cut-building node's cuts carry each GNL plant's coefficient for the delivery of the case's second stage, divided by that stage's hours; the other GNL coefficients are dropped and counted in the `dessem-fcf-gnl-coefficients-exported` note. |
 | P15 | GNL lag months are read from the deck's `NL` records; a GNL plant with no `NL` record is refused. |
@@ -160,7 +160,7 @@ and every export copies it into `export_manifest.json`. In brief:
 2. **One GNL value per delivery (P5).** Novomodelo prices one value per GNL
    delivery, so the file holds the same value on every load block, where
    DECOMP prices each load block separately.
-3. **`mapcut` record 10's other cost parcels are zeros (P11).** The
+3. **`mapcut` register 10's other cost parcels are zeros (P11).** The
    thermal minimum-generation cost, the import and export contract minimum
    costs and the signalled GNL generation are DECOMP quantities that a
    Novomodelo policy does not hold. Every export lists them, with the

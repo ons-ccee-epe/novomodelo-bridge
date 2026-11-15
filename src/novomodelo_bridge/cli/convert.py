@@ -459,8 +459,8 @@ def _conclude_decomp_conversion(
     """Write the sidecar, validate, emit the verdict and gate the exit code.
 
     The sidecar, verdict and status carry the merged converter + boundary-FCF
-    diagnostics. A validated case with an imported boundary FCF ends on the
-    command that runs it.
+    diagnostics. A case with an imported boundary FCF that neither failed
+    validation nor carries an ERROR ends on the command that runs it.
     """
     if args.diagnostics_json is not None:
         # The --diagnostics-json sidecar coexists with --json (both can be
@@ -486,7 +486,7 @@ def _conclude_decomp_conversion(
 
     status = _convert_status(combined_diagnostics, success="ok")
 
-    if "boundary_fcf" in summary and not validation_failed:
+    if "boundary_fcf" in summary and not validation_failed and status != "error":
         print_status(
             f"Boundary FCF imported. Run this case with: novomodelo run {args.dst}",
             console=err_console,

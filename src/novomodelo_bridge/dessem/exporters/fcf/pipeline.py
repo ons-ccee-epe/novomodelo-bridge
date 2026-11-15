@@ -259,16 +259,21 @@ def _mapcut_zero_fields_diagnostic(mapcut_name: str) -> Diagnostic:
             "effect on its results is not known."
         ),
         table=DiagnosticTable(
-            columns=["Record", "Field", "Premise"],
+            columns=["Location", "Field", "Premise"],
             rows=[
                 [
-                    f"{PHYSICAL_RECORD_FIRST}-{PHYSICAL_RECORD_LAST}",
+                    f"records {PHYSICAL_RECORD_FIRST}-{PHYSICAL_RECORD_LAST}",
                     "physical hydro data",
                     "P1",
                 ],
-                *(["10", name, "P11"] for name in _ZERO_COST_PARCELS.values()),
+                *(
+                    ["reg 10, one record per stage", name, "P11"]
+                    for name in _ZERO_COST_PARCELS.values()
+                ),
             ],
-            caption="Record indices are 0-based.",
+            caption=(
+                "Record indices are 0-based; reg numbers are DECOMP's register numbers."
+            ),
         ),
     )
 
@@ -512,7 +517,7 @@ def _emit_gnl_committed_cost(
             category="FCF export",
             title=f"GNL committed cost exported ({len(rows)})",
             summary=(
-                "Record 10 of mapcut holds the cost of the GNL generation "
+                "Reg 10 of mapcut holds the cost of the GNL generation "
                 "committed before the study for each listed stage."
             ),
             table=DiagnosticTable(
