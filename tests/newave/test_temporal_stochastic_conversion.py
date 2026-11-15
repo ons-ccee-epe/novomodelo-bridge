@@ -23,7 +23,11 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError
-from novomodelo_bridge.newave.converters.stochastic import _posto_count, _read_vazoes
+from novomodelo_bridge.newave.converters.stochastic import (
+    _posto_count,
+    _read_vazoes,
+    block_loads,
+)
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files
 
@@ -2125,6 +2129,35 @@ class TestLoadFactorsWithoutBlockFactors:
         assert undeclared.code == "load-factor-subsystem-undeclared"
         assert undeclared.table is not None
         assert undeclared.table.rows == [[9]]
+
+
+def test_block_loads_scale_the_mean_load_by_each_block_factor() -> None:
+    load_stats = pa.table(
+        {
+            "bus_id": pa.array([0, 0, 1], type=pa.int32()),
+            "stage_id": pa.array([0, 1, 0], type=pa.int32()),
+            "mean_mw": [100.0, 200.0, 50.0],
+            "std_mw": [0.0, 0.0, 0.0],
+        }
+    )
+    factors = {
+        "load_factors": [
+            {
+                "bus_id": 0,
+                "stage_id": 0,
+                "block_factors": [
+                    {"block_id": 0, "factor": 1.2},
+                    {"block_id": 1, "factor": 0.8},
+                ],
+            }
+        ]
+    }
+
+    assert block_loads(load_stats, factors, 2) == {
+        (0, 0): [120.0, 80.0],
+        (0, 1): [200.0, 200.0],
+        (1, 0): [50.0, 50.0],
+    }
 
 
 class TestLoadInputFindings:

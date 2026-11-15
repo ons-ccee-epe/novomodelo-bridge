@@ -12,6 +12,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.electrical_expression import ParsedTerm
 from novomodelo_bridge.core.errors import FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
     GENERIC_BOUNDS_SCHEMA,
@@ -23,10 +24,14 @@ from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.constraints import (
     _cascade_sum,
     _curve_seasonalizes,
+    _demand_context,
+    _ElectricConstraintSkip,
+    _ElectricExpression,
     _ElectricTermSkip,
+    _formula_expression,
     _is_stored_energy_reservoir,
-    _parse_formula,
     _parse_re_dat,
+    _read_formulas,
     _warn_if_non_fixa_penalization,
     compute_accumulated_integrated_productivities,
     compute_accumulated_productivities,
@@ -637,151 +642,159 @@ class TestConvertVminopConstraintsEmission:
 
 
 # ---------------------------------------------------------------------------
-# _parse_formula unit tests
+# restricao-eletrica.csv formula translation
 # ---------------------------------------------------------------------------
 
+_CSV = Path("restricao-eletrica.csv")
 
-class TestParseFormula:
-    """Unit tests for the formula parser used by electric constraints."""
 
-    def _id_map(self) -> NewaveIdMap:
-        # hydro codes 66, 204, 261, 284, 285, 287 with deterministic IDs
-        return NewaveIdMap(
-            subsystem_ids=[1, 2, 3, 4, 11],
-            hydro_codes=[66, 204, 261, 284, 285, 287],
-            thermal_codes=[],
-        )
+class TestElectricFormula:
+    """A restricao-eletrica.csv formula read and laid on the case's entities."""
 
-    def _line_map(self) -> dict[tuple[int, int], int]:
-        # Mirrors the real data: canonical pairs sorted
-        # (1,2)=0, (1,3)=1, (1,4)=2, (1,11)=3, (3,11)=4, (4,11)=5
-        return {
-            (1, 2): 0,
-            (1, 3): 1,
-            (1, 4): 2,
-            (1, 11): 3,
-            (3, 11): 4,
-            (4, 11): 5,
+    # Ids follow the sorted codes: hydros 66 -> 0, 204 -> 1, ..., 287 -> 5;
+    # thermal 7 -> 0; lines number the sorted subsystem pairs.
+    _ID_MAP = NewaveIdMap(
+        subsystem_ids=[1, 2, 3, 4, 11],
+        hydro_codes=[66, 204, 261, 284, 285, 287],
+        thermal_codes=[7],
+    )
+    _LINES = {(1, 2): 0, (1, 3): 1, (1, 4): 2, (1, 11): 3, (3, 11): 4, (4, 11): 5}
+
+    def _translate(
+        self, formula: str, **others: str
+    ) -> tuple[_ElectricExpression | _ElectricConstraintSkip, list[_ElectricTermSkip]]:
+        """Constraint 1's translation of *formula*, with *others* (``c2=...``)
+        as the file's other constraints, and the terms it left out."""
+        expressions = {1: formula} | {
+            int(name.removeprefix("c")): text for name, text in others.items()
         }
+        read = _read_formulas(expressions, _CSV)[1]
+        if isinstance(read, _ElectricConstraintSkip):
+            return read, []
+        skips: list[_ElectricTermSkip] = []
+        return _formula_expression(1, read, self._ID_MAP, self._LINES, skips), skips
 
-    def test_simple_ger_usih(self) -> None:
-        """Single hydro generation term with implicit coefficient."""
-        id_map = self._id_map()
-        line_map = self._line_map()
-        result = _parse_formula(
-            "ger_usih(285) + ger_usih(287)", id_map, line_map, constraint_code=1
+    def _text(self, formula: str, **others: str) -> str:
+        expression, skips = self._translate(formula, **others)
+        assert isinstance(expression, _ElectricExpression)
+        assert skips == []
+        return expression.text
+
+    @pytest.mark.parametrize(
+        ("formula", "text"),
+        [
+            (
+                "ger_usih(285) + ger_usih(287)",
+                "hydro_generation(4) + hydro_generation(5)",
+            ),
+            ("0.5ger_usih(66)", "0.5 * hydro_generation(0)"),
+            ("ger_usit(7)", "thermal_generation(0)"),
+            (
+                "1.0ener_interc(2,1) + 0.5ger_usih(66)",
+                "line_reverse(0) + 0.5 * hydro_generation(0)",
+            ),
+            (
+                "2(ger_usih(66) - ger_usih(204))",
+                "2.0 * hydro_generation(0) - 2.0 * hydro_generation(1)",
+            ),
+        ],
+    )
+    def test_a_decision_term_becomes_its_case_variable(
+        self, formula: str, text: str
+    ) -> None:
+        assert self._text(formula) == text
+
+    def test_ener_interc_names_the_line_by_its_direction(self) -> None:
+        """The source model's interchange is non-negative and directional,
+        so the pair's order picks ``line_direct`` or ``line_reverse`` and the
+        coefficient keeps its sign."""
+        assert self._text("1.0ener_interc(1,2)") == "line_direct(0)"
+        assert self._text("1.0ener_interc(2,1)") == "line_reverse(0)"
+
+    def test_re_inlines_another_constraint_of_the_file(self) -> None:
+        assert (
+            self._text("re(2) + ger_usih(66)", c2="ger_usih(204)")
+            == "hydro_generation(1) + hydro_generation(0)"
         )
-        assert result is not None
-        assert "hydro_generation(" in result
-        # Both plants must appear; no coefficient prefix for coeff=1.0
-        assert "* hydro_generation" not in result
 
-    def test_explicit_coefficient_on_ger_usih(self) -> None:
-        """Coefficient of 0.5 must appear in the expression."""
-        id_map = self._id_map()
-        line_map = self._line_map()
-        result = _parse_formula("0.5ger_usih(66)", id_map, line_map, constraint_code=1)
-        assert result is not None
-        assert "0.5 * hydro_generation(" in result
+    def test_demand_and_constant_terms_are_kept_for_the_limits(self) -> None:
+        expression, _ = self._translate("ger_usih(66) - demanda(1) + 100")
 
-    def test_ener_interc_canonical_direction(self) -> None:
-        """ener_interc(A,B) with A<B (canonical) emits ``line_direct``.
+        assert isinstance(expression, _ElectricExpression)
+        assert expression.text == "hydro_generation(0)"
+        assert [(t.coefficient, t.token) for t in expression.data_terms] == [
+            (-1.0, "demanda"),
+            (100.0, "__const__"),
+        ]
 
-        The source model's directional interchange is non-negative, so the converter
-        chooses between ``line_direct`` and ``line_reverse`` based on the flow
-        direction; the literal coefficient stays positive.
-        """
-        id_map = self._id_map()
-        line_map = self._line_map()
-        result = _parse_formula(
-            "1.0ener_interc(1,2)", id_map, line_map, constraint_code=1
-        )
-        assert result is not None
-        assert "line_direct(0)" in result
-        assert "line_reverse" not in result
-        assert "line_exchange" not in result
+    @pytest.mark.parametrize(
+        ("kind", "formula", "code"),
+        [
+            ("hydro-unmapped", "ger_usih(9999)", 9999),
+            ("thermal-unmapped", "ger_usit(8)", 8),
+        ],
+    )
+    def test_a_plant_outside_the_case_is_left_out_of_the_sum(
+        self, kind: str, formula: str, code: int
+    ) -> None:
+        expression, skips = self._translate(f"ger_usih(66) + {formula}")
 
-    def test_ener_interc_reversed_direction(self) -> None:
-        """ener_interc(B,A) with B>A (reverse of canonical) emits ``line_reverse``."""
-        id_map = self._id_map()
-        line_map = self._line_map()
-        result = _parse_formula(
-            "1.0ener_interc(2,1)", id_map, line_map, constraint_code=1
-        )
-        assert result is not None
-        assert "line_reverse(0)" in result
-        # No legacy signed line_exchange in the new output.
-        assert "line_exchange" not in result
-        # Coefficient stays positive — direction is encoded by the variable.
-        assert "- " not in result
+        assert isinstance(expression, _ElectricExpression)
+        assert expression.text == "hydro_generation(0)"
+        assert [(s.constraint_code, s.kind, s.plant_code, s.source) for s in skips] == [
+            (1, kind, code, "restricao-eletrica.csv")
+        ]
 
-    def test_unknown_hydro_code_skipped(self) -> None:
-        """Unknown hydro code drops the term (and, when recorded, is captured
-        as a ``hydro-unmapped`` skip naming the constraint and the code)."""
-        id_map = self._id_map()
-        line_map = self._line_map()
-        skipped: list[_ElectricTermSkip] = []
-        result = _parse_formula(
-            "ger_usih(9999)", id_map, line_map, constraint_code=7, skipped=skipped
-        )
-        assert result is None  # all terms dropped => None
-        assert len(skipped) == 1
-        assert skipped[0].constraint_code == 7
-        assert skipped[0].kind == "hydro-unmapped"
-        assert skipped[0].source == "restricao-eletrica.csv"
-        assert skipped[0].hydro_code == 9999
+    def test_a_pair_without_interchange_is_left_out_of_the_sum(self) -> None:
+        expression, skips = self._translate("ener_interc(2,3)")
 
-    def test_unknown_hydro_code_not_recorded_by_default(self) -> None:
-        """The default ``skipped=None`` records nothing — the seam that keeps
-        a direct unit-test call unchanged."""
-        id_map = self._id_map()
-        line_map = self._line_map()
-        result = _parse_formula("ger_usih(9999)", id_map, line_map, constraint_code=1)
-        assert result is None
+        assert expression == _ElectricConstraintSkip(1, "termless")
+        assert [(s.kind, s.sys_from, s.sys_to) for s in skips] == [("no-line", 2, 3)]
 
-    def test_ener_interc_malformed_args_recorded(self) -> None:
-        """``ener_interc`` with fewer than 2 args is dropped and recorded as
-        ``malformed``, carrying the raw argument fragment."""
-        id_map = self._id_map()
-        line_map = self._line_map()
-        skipped: list[_ElectricTermSkip] = []
-        result = _parse_formula(
-            "ener_interc(1)", id_map, line_map, constraint_code=3, skipped=skipped
-        )
-        assert result is None
-        assert len(skipped) == 1
-        assert skipped[0].kind == "malformed"
-        assert skipped[0].raw == "1"
+    @pytest.mark.parametrize(
+        ("formula", "term", "reason"),
+        [
+            ("ener_comerc(1)", "ener_comerc(1)", "commercial energy"),
+            ("ger_pee(3)", "ger_pee(3)", "renewable parks"),
+            ("ger_conjh(66, 1)", "ger_conjh(66, 1)", "unit-group generation"),
+            ("disp_usih(66)", "disp_usih(66)", "available-power"),
+            ("carga_ande", "carga_ande", "ANDE load"),
+            ("peq_PCH_NE", "peq_PCH_NE", "small-plant series"),
+            ("se(demanda(1) > 10, 1, 0)", "se(demanda(1) > 10, 1, 0)", "conditional"),
+            ("FLUXO", "FLUXO", "declares no such name"),
+            ("demanda(9)", "demanda(9)", "subsystem sistema.dat does not declare"),
+        ],
+    )
+    def test_a_term_the_case_cannot_carry_leaves_the_constraint_out(
+        self, formula: str, term: str, reason: str
+    ) -> None:
+        expression, skips = self._translate(f"ger_usih(9999) + {formula}")
 
-    def test_ener_interc_no_line_recorded(self) -> None:
-        """An interchange pair with no matching novomodelo line is dropped and
-        recorded as ``no-line``, naming both subsystems."""
-        id_map = self._id_map()
-        line_map = self._line_map()
-        skipped: list[_ElectricTermSkip] = []
-        result = _parse_formula(
-            "ener_interc(2,3)", id_map, line_map, constraint_code=5, skipped=skipped
-        )
-        assert result is None
-        assert len(skipped) == 1
-        assert skipped[0].kind == "no-line"
-        assert skipped[0].sys_from == 2
-        assert skipped[0].sys_to == 3
+        assert isinstance(expression, _ElectricConstraintSkip)
+        assert (expression.kind, expression.term) == ("unsupported", term)
+        assert expression.reason is not None and reason in expression.reason
+        assert skips == []
 
-    def test_mixed_formula(self) -> None:
-        """Mixed ener_interc and ger_usih terms are both translated."""
-        id_map = self._id_map()
-        line_map = self._line_map()
-        result = _parse_formula(
-            "1.0ener_interc(2,1) + 0.5ger_usih(66)",
-            id_map,
-            line_map,
-            constraint_code=1,
-        )
-        assert result is not None
-        # ener_interc(2,1) → reverse direction → line_reverse
-        assert "line_reverse(" in result
-        assert "hydro_generation(" in result
+    @pytest.mark.parametrize(
+        "formula",
+        ["ener_interc(1)", "ger_usih(66", "ger_usina(66)", "re(9)", "2 *"],
+    )
+    def test_a_malformed_formula_is_refused(self, formula: str) -> None:
+        with pytest.raises(
+            FieldParseError,
+            match=r"restricao-eletrica\.csv: the formula of constraint 1 is malformed",
+        ):
+            _read_formulas({1: formula}, _CSV)
+
+
+def test_demand_context_reads_the_block_load_of_a_subsystem_or_all() -> None:
+    id_map = NewaveIdMap(subsystem_ids=[1, 2], hydro_codes=[], thermal_codes=[])
+    context = _demand_context({(0, 3): [10.0, 20.0], (1, 3): [5.0, 7.0]}, id_map, 3, 1)
+
+    assert context(ParsedTerm(1.0, "demanda", (2,))) == 7.0
+    assert context(ParsedTerm(1.0, "val_demanda", (1,))) == 20.0
+    assert context(ParsedTerm(1.0, "demanda_sin")) == 27.0
+    assert _demand_context({}, id_map, 3, 1)(ParsedTerm(1.0, "val_demanda_sin")) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -833,7 +846,7 @@ class TestConvertElectricConstraints:
         case.dger.restricoes_eletricas_especiais = 0
 
         with dx.collect() as collected:
-            assert convert_electric_constraints(case, id_map) is None
+            assert convert_electric_constraints(case, id_map, block_loads={}) is None
 
         assert [d.code for d in collected] == ["dger-switch-off"]
         assert "restricao-eletrica.csv" in collected[0].title
@@ -850,7 +863,7 @@ class TestConvertElectricConstraints:
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
         with dx.collect() as collected:
-            assert convert_electric_constraints(case, id_map) is None
+            assert convert_electric_constraints(case, id_map, block_loads={}) is None
 
         assert [d.code for d in collected] == ["dger-switch-off"]
         assert "re.dat" in collected[0].title
@@ -858,7 +871,7 @@ class TestConvertElectricConstraints:
     def test_returns_none_when_the_deck_declares_no_csv(self, tmp_path: Path) -> None:
         case = make_case(tmp_path, re_dat=None)
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[], thermal_codes=[])
-        assert convert_electric_constraints(case, id_map) is None
+        assert convert_electric_constraints(case, id_map, block_loads={}) is None
 
     def test_two_sided_bound_yields_two_single_sided_f3_constraints(
         self, tmp_path: Path
@@ -871,7 +884,7 @@ class TestConvertElectricConstraints:
         populated, the other null."""
         case, id_map = _make_electric_re_case(tmp_path)
 
-        result = convert_electric_constraints(case, id_map)
+        result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         constraints, bounds = result
@@ -916,7 +929,7 @@ class TestConvertElectricConstraints:
         track), pinned here so it stays intentional rather than drifting."""
         case, id_map = _make_electric_re_case(tmp_path)
 
-        result = convert_electric_constraints(case, id_map)
+        result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         assert result.bounds.schema.equals(GENERIC_BOUNDS_SCHEMA)
@@ -939,7 +952,7 @@ class TestConvertElectricConstraints:
             f"RE;1;1.0ger_usih(10)\nRE-LIM-FORM-PER-PAT;1;2020/01;2020/12;{limits}\n",
         )
 
-        result = convert_electric_constraints(case, id_map)
+        result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         assert len(result.constraints) == 1
@@ -956,7 +969,7 @@ class TestConvertElectricConstraints:
         )
 
         with pytest.raises(SourceFileError, match="which is not a number") as err:
-            convert_electric_constraints(case, id_map)
+            convert_electric_constraints(case, id_map, block_loads={})
         assert "se(demanda(1) < 1000, 10000, 8500)" in str(err.value)
         assert err.value.field == "RE-LIM-FORM-PER-PAT"
 
@@ -969,7 +982,7 @@ class TestConvertElectricConstraints:
         with pytest.raises(
             SourceFileError, match=r"RE-HORIZ-PER line without a readable start period"
         ):
-            convert_electric_constraints(case, id_map)
+            convert_electric_constraints(case, id_map, block_loads={})
 
     def test_lines_the_reader_keeps_as_text_are_warned(self, tmp_path: Path) -> None:
         case, id_map = _make_electric_re_case(
@@ -979,7 +992,7 @@ class TestConvertElectricConstraints:
         )
 
         with dx.collect() as collected:
-            result = convert_electric_constraints(case, id_map)
+            result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         assert {c["name"] for c in result.constraints} == {"RE_1"}
@@ -1061,7 +1074,7 @@ class TestConvertElectricConstraintsEmission:
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
         with dx.collect() as collected:
-            result = convert_electric_constraints(case, id_map)
+            result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         by_code = {d.code: d for d in collected}
@@ -1104,7 +1117,7 @@ class TestConvertElectricConstraintsEmission:
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
         with dx.collect() as collected:
-            result = convert_electric_constraints(case, id_map)
+            result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         by_code = {d.code: d for d in collected}
@@ -1117,43 +1130,100 @@ class TestConvertElectricConstraintsEmission:
 
         _assert_no_repo_internal_leaks(collected)
 
-    def test_malformed_term_recorded(self, tmp_path: Path) -> None:
-        re_path = tmp_path / "restricao-eletrica.csv"
-        re_path.write_text(
+    def test_malformed_formula_is_refused(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
             "RE;1;1.0ger_usih(10) + 1.0ener_interc(2)\n"
             "RE-HORIZ-PER;1;2020/01;2020/12\n"
             "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
-            encoding="latin-1",
         )
 
-        dger = MagicMock()
-        dger.mes_inicio_estudo = 1
-        dger.ano_inicio_estudo = 2020
-        dger.num_anos_estudo = 1
-        dger.num_anos_pos_estudo = 0
+        with pytest.raises(FieldParseError) as err:
+            convert_electric_constraints(case, id_map, block_loads={})
 
-        sistema = MagicMock()
-        sistema.limites_intercambio = None
-        sistema.custo_deficit = None
-
-        case = make_case(
-            make_nw_files(tmp_path, restricao_eletrica=re_path),
-            dger=dger,
-            sistema=sistema,
-            re_dat=None,
-            ree=_valid_ree_reader(),
+        assert str(err.value).startswith(
+            "restricao-eletrica.csv: the formula of constraint 1 is malformed: "
+            "ener_interc(...) expects 2 arguments"
         )
-        id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
+        assert err.value.path == str(tmp_path / "restricao-eletrica.csv")
+        assert err.value.field == "RE"
+
+    def test_unsupported_term_leaves_its_constraint_out(self, tmp_path: Path) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            "RE;1;ger_usih(10) + ener_comerc(1)\n"
+            "RE;2;ger_usih(10)\n"
+            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n"
+            "RE-LIM-FORM-PER-PAT;2;2020/01;2020/12;1;50.;200.\n",
+        )
 
         with dx.collect() as collected:
-            result = convert_electric_constraints(case, id_map)
+            result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
+        assert {c["name"] for c in result.constraints} == {"RE_2"}
         by_code = {d.code: d for d in collected}
-        diag = by_code["electric-constraint-malformed-term"]
+        diag = by_code["electric-constraint-term-unsupported"]
+        assert diag.severity is Severity.WARNING
         assert diag.table is not None
-        assert diag.table.columns == ["Constraint", "Term"]
-        assert diag.table.rows == [[1, "2"]]
+        assert diag.table.rows == [
+            [1, "ener_comerc(1)", "the case has no commercial energy variable"]
+        ]
+        assert "electric-constraint-skipped" not in by_code
+
+        _assert_no_repo_internal_leaks(collected)
+
+    def test_demand_terms_fold_into_each_block_limit(self, tmp_path: Path) -> None:
+        """``ger_usih(10) - demanda(1) + 100`` in ``[50, 200]`` keeps the
+        generation on the left and moves the demand and the constant onto
+        both limits at each stage's block load."""
+        case, _ = _make_electric_re_case(
+            tmp_path,
+            "RE;1;ger_usih(10) - demanda(1) + 100\n"
+            "RE-HORIZ-PER;1;2020/01;2020/12\n"
+            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
+        )
+        id_map = NewaveIdMap(subsystem_ids=[1], hydro_codes=[10], thermal_codes=[])
+        loads = {(0, stage): [30.0 + stage] for stage in range(12)}
+
+        result = convert_electric_constraints(case, id_map, block_loads=loads)
+
+        assert result is not None
+        assert {c["expression"] for c in result.constraints} == {"hydro_generation(0)"}
+        rows = result.bounds.to_pylist()
+        assert sorted(
+            (r["stage_id"], r["bound_lower"])
+            for r in rows
+            if r["bound_lower"] is not None
+        ) == [(stage, stage - 20.0) for stage in range(12)]
+        assert sorted(
+            (r["stage_id"], r["bound_upper"])
+            for r in rows
+            if r["bound_upper"] is not None
+        ) == [(stage, stage + 130.0) for stage in range(12)]
+
+    def test_thermal_outside_the_case_is_left_out_of_the_sum(
+        self, tmp_path: Path
+    ) -> None:
+        case, id_map = _make_electric_re_case(
+            tmp_path,
+            "RE;1;ger_usih(10) + ger_usit(5)\n"
+            "RE-HORIZ-PER;1;2020/01;2020/12\n"
+            "RE-LIM-FORM-PER-PAT;1;2020/01;2020/12;1;50.;200.\n",
+        )
+
+        with dx.collect() as collected:
+            result = convert_electric_constraints(case, id_map, block_loads={})
+
+        assert result is not None
+        assert {c["expression"] for c in result.constraints} == {"hydro_generation(0)"}
+        diag = {d.code: d for d in collected}["electric-constraint-thermal-unmapped"]
+        assert diag.severity is Severity.INFO
+        assert (
+            diag.title == "Electric-constraint terms on thermals outside the case (1)"
+        )
+        assert diag.table is not None
+        assert diag.table.rows == [[1, 5, "restricao-eletrica.csv"]]
 
         _assert_no_repo_internal_leaks(collected)
 
@@ -1193,7 +1263,7 @@ class TestConvertElectricConstraintsEmission:
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
         with dx.collect() as collected:
-            result = convert_electric_constraints(case, id_map)
+            result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is None  # both codes dropped -> no surviving constraint
         by_code = {d.code: d for d in collected}
@@ -1248,7 +1318,7 @@ class TestConvertElectricConstraintsEmission:
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
         with dx.collect() as collected:
-            result = convert_electric_constraints(case, id_map)
+            result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         by_code = {d.code: d for d in collected}
@@ -1295,7 +1365,7 @@ class TestConvertElectricConstraintsEmission:
             id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
             with dx.collect() as collected:
-                result = convert_electric_constraints(case, id_map)
+                result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         by_code = {d.code: d for d in collected}
@@ -1337,7 +1407,7 @@ class TestConvertElectricConstraintsEmission:
         id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
         with dx.collect() as collected:
-            result = convert_electric_constraints(case, id_map)
+            result = convert_electric_constraints(case, id_map, block_loads={})
 
         assert result is not None
         by_code = {d.code: d for d in collected}
@@ -1870,7 +1940,7 @@ class TestNewaveCrossEmitterAllocatorContiguity:
             return_value={(1, 3): 0},
         ):
             electric_result = convert_electric_constraints(
-                electric_case, electric_id_map, allocator=allocator
+                electric_case, electric_id_map, allocator=allocator, block_loads={}
             )
             agrint_result = convert_agrint_constraints(
                 agrint_case, agrint_id_map, allocator=allocator
@@ -2254,7 +2324,7 @@ def test_restricao_eletrica_bounds_stop_at_the_declared_end(tmp_path: Path) -> N
     )
     id_map = NewaveIdMap(subsystem_ids=[], hydro_codes=[10], thermal_codes=[])
 
-    result = convert_electric_constraints(case, id_map)
+    result = convert_electric_constraints(case, id_map, block_loads={})
 
     assert result is not None
     df = result[1].to_pandas()

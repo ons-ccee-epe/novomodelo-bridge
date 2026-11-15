@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -948,3 +948,30 @@ def convert_load_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
             "std_mw": pa.array(rows_std, type=pa.float64()),
         }
     )
+
+
+def block_loads(
+    load_stats: pa.Table, load_factors: Mapping[str, Any], num_blocks: int
+) -> dict[tuple[int, int], list[float]]:
+    """Each ``(bus_id, stage_id)``'s load in MW on each of its *num_blocks*
+    blocks, as the case gives it: the mean load of *load_stats* times the
+    block's factor in *load_factors* (:func:`convert_load_factors`), which is
+    1 where the case gives none."""
+    factors = {
+        (entry["bus_id"], entry["stage_id"]): {
+            block["block_id"]: block["factor"] for block in entry["block_factors"]
+        }
+        for entry in load_factors["load_factors"]
+    }
+    loads: dict[tuple[int, int], list[float]] = {}
+    for bus_id, stage_id, mean_mw in zip(
+        load_stats.column("bus_id").to_pylist(),
+        load_stats.column("stage_id").to_pylist(),
+        load_stats.column("mean_mw").to_pylist(),
+        strict=True,
+    ):
+        block_factor = factors.get((bus_id, stage_id), {})
+        loads[(bus_id, stage_id)] = [
+            mean_mw * block_factor.get(block_id, 1.0) for block_id in range(num_blocks)
+        ]
+    return loads

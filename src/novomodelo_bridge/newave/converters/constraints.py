@@ -9,8 +9,9 @@ integrated accumulated productivity in MWh/hm³ — from below by the curve frac
 its maximum useful stored energy (:mod:`novomodelo_bridge.core.stored_energy`).
 
 Electric constraints from ``restricao-eletrica.csv`` (discovered via
-``indices.csv``) are converted into Novomodelo generic constraints with
-``hydro_generation`` and ``line_exchange`` variables.
+``indices.csv``) and ``re.dat`` are converted into Novomodelo generic constraints
+over ``hydro_generation``, ``thermal_generation`` and the line flows, with each
+formula's demand and constant terms folded into its limits.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
@@ -33,6 +35,19 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     exception_reason,
     unreadable_file_diagnostic,
+)
+from novomodelo_bridge.core.electrical_expression import (
+    CONST_TOKEN,
+    PEQ_TOKEN,
+    SE_TOKEN,
+    Bucket,
+    DataContext,
+    ParsedTerm,
+    UnrecognizedElectricalToken,
+    classify_terms,
+    evaluate_terms,
+    parse_linear_expression,
+    term_text,
 )
 from novomodelo_bridge.core.errors import BridgeError, FieldParseError, SourceFileError
 from novomodelo_bridge.core.generic_constraint_builder import (
@@ -63,7 +78,7 @@ from novomodelo_bridge.newave.switches import switch_off_diagnostic
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from collections.abc import Set as AbstractSet
 
     from inewave.libs.restricoes import Restricoes
@@ -99,24 +114,27 @@ class _VminopPenaltyClamp:
 
 @dataclass
 class _ElectricTermSkip:
-    """One electric-constraint expression term dropped while translating it."""
+    """One electric-constraint term on an entity outside the case, left out of
+    its constraint."""
 
     constraint_code: int
-    kind: Literal["hydro-unmapped", "no-line", "malformed"]
+    kind: Literal["hydro-unmapped", "thermal-unmapped", "no-line"]
     source: Literal["restricao-eletrica.csv", "re.dat"]
-    hydro_code: int | None = None
+    plant_code: int | None = None
     sys_from: int | None = None
     sys_to: int | None = None
-    raw: str | None = None
 
 
 @dataclass
 class _ElectricConstraintSkip:
-    """One electric constraint code dropped entirely: no term the case can
-    carry, or no limit when *unbounded*."""
+    """One electric constraint left out: no term the case can carry
+    (*termless*), no limit (*unbounded*), or a *term* the case cannot carry,
+    for *reason* (*unsupported*)."""
 
     constraint_code: int
-    unbounded: bool
+    kind: Literal["termless", "unbounded", "unsupported"]
+    term: str | None = None
+    reason: str | None = None
 
 
 @dataclass
@@ -992,14 +1010,6 @@ def _electric_limit(value: object, cod: int, path: Path) -> float | None:
     return None if limit <= _UNBOUNDED_THRESHOLD else limit
 
 
-# Term regex: optional sign and float coefficient, then function name and args.
-# The sign group captures a leading '+' or '-' (possibly preceded by whitespace).
-_TERM_RE = re.compile(
-    r"(?P<sign>[+-])?\s*(?P<coeff>\d+\.?\d*)?\s*\*?\s*"
-    r"(?P<fn>ger_usih|ener_interc)\((?P<args>\d+(?:,\s*\d+)*)\)"
-)
-
-
 def _render_signed_expression(parsed_terms: list[tuple[float, str]]) -> str:
     """Render (coefficient, variable) pairs into a signed sum expression string.
 
@@ -1022,98 +1032,215 @@ def _render_signed_expression(parsed_terms: list[tuple[float, str]]) -> str:
     return " ".join(parts)
 
 
-def _parse_formula(
-    formula: str,
-    id_map: NewaveIdMap,
-    line_id_map: dict[tuple[int, int], int],
-    *,
-    constraint_code: int,
-    # Recording seam: `None` (the direct-unit-test default) means "do not
-    # record"; convert_electric_constraints passes its own accumulator so the
-    # dropped terms it reports carry which constraint they came from.
-    skipped: list[_ElectricTermSkip] | None = None,
-) -> str | None:
-    """Translate a source-model RE formula into a Novomodelo expression string.
+#: The demand terms of restricao-eletrica.csv formulas, folded into the
+#: limits at the case's own block load.
+_BUS_DEMAND_TOKENS = frozenset({"demanda", "val_demanda"})
+_SYSTEM_DEMAND_TOKENS = frozenset({"demanda_sin", "val_demanda_sin"})
 
-    Unknown plant codes or interchange pairs are skipped. Returns ``None`` if
-    no valid terms remain after translation. See
-    :func:`_render_signed_expression` for the output formatting rules.
-    """
-    # Each element: (effective_coeff: float, variable_str: str)
-    parsed_terms: list[tuple[float, str]] = []
+#: Why the case cannot carry a formula term, by token. A constraint with one
+#: is left out whole: without the term its sum is not the source model's.
+_UNSUPPORTED_TERM_REASONS = {
+    "ener_comerc": "the case has no commercial energy variable",
+    "ger_pee": "renewable parks are not converted",
+    "ger_conjh": "the case has no unit-group generation variable",
+    "disp_usih": "the case has no available-power variable",
+    "carga_ande": "the ANDE load is not converted",
+    PEQ_TOKEN: "small-plant series are not converted",
+    SE_TOKEN: "conditional terms are not converted",
+}
 
-    for match in _TERM_RE.finditer(formula):
-        sign = match.group("sign")
-        coeff_str = match.group("coeff")
-        coeff = float(coeff_str) if coeff_str else 1.0
-        if sign == "-":
-            coeff = -coeff
-        fn = match.group("fn")
-        args_str = match.group("args")
-        args = [int(a.strip()) for a in args_str.split(",")]
+type _ElectricFormula = dict[Bucket, list[ParsedTerm]] | _ElectricConstraintSkip
 
-        if fn == "ger_usih":
-            plant_code = args[0]
-            try:
-                novomodelo_id = id_map.hydro_id(plant_code)
-            except KeyError:
-                if skipped is not None:
-                    skipped.append(
-                        _ElectricTermSkip(
-                            constraint_code=constraint_code,
-                            kind="hydro-unmapped",
-                            source="restricao-eletrica.csv",
-                            hydro_code=plant_code,
-                        )
-                    )
-                continue
-            parsed_terms.append((coeff, f"hydro_generation({novomodelo_id})"))
 
-        elif fn == "ener_interc":
-            if len(args) < 2:
-                if skipped is not None:
-                    skipped.append(
-                        _ElectricTermSkip(
-                            constraint_code=constraint_code,
-                            kind="malformed",
-                            source="restricao-eletrica.csv",
-                            raw=args_str,
-                        )
-                    )
-                continue
-            from_sys, to_sys = args[0], args[1]
-            src, tgt = (from_sys, to_sys) if from_sys < to_sys else (to_sys, from_sys)
-            line_id = line_id_map.get((src, tgt))
-            if line_id is None:
-                if skipped is not None:
-                    skipped.append(
-                        _ElectricTermSkip(
-                            constraint_code=constraint_code,
-                            kind="no-line",
-                            source="restricao-eletrica.csv",
-                            sys_from=from_sys,
-                            sys_to=to_sys,
-                        )
-                    )
-                continue
+@dataclass(frozen=True)
+class _NewaveFormulaScope:
+    """restricao-eletrica.csv as the scope of its own formulas: ``re(X)``
+    names another of its constraints, the file declares no named expression
+    or data alias, and every ``ger_usit`` is a decision."""
 
-            # The source model's ``ener_interc(A, B)`` is the directional flow from A to
-            # B as a non-negative variable.  Map to Novomodelo's
-            # ``line_direct``/``line_reverse`` so the sign is encoded by the variable
-            # choice rather than by negating the coefficient (the latter would dilute
-            # the bound when LP solutions route in the non-canonical direction).  See
-            # ``_agrint_expression`` for the same rule applied to AGRINT terms.
-            var = (
-                f"line_direct({line_id})"
-                if from_sys < to_sys
-                else f"line_reverse({line_id})"
-            )
-            parsed_terms.append((coeff, var))
+    formulas: Mapping[int, str]
 
-    if not parsed_terms:
+    @property
+    def gnl_thermal_codes(self) -> frozenset[int]:
+        return frozenset()
+
+    def expression_formula(self, name: str) -> str | None:
         return None
 
-    return _render_signed_expression(parsed_terms)
+    def is_alias(self, name: str) -> bool:
+        return False
+
+    def restriction_formula(self, code: int) -> str:
+        try:
+            return self.formulas[code]
+        except KeyError:
+            raise ValueError(
+                f"re({code}) references unknown restriction {code}"
+            ) from None
+
+
+def _read_formulas(
+    expressions: Mapping[int, str], path: Path
+) -> dict[int, _ElectricFormula]:
+    """Each restricao-eletrica.csv formula's terms by bucket, or the skip of
+    its constraint when it has a term the case cannot carry.
+
+    Raises:
+        FieldParseError: a formula is malformed: unbalanced, with an unknown
+            function or one given the wrong number of arguments, or with an
+            ``re(X)`` that names no constraint of the file.
+    """
+    scope = _NewaveFormulaScope(expressions)
+    formulas: dict[int, _ElectricFormula] = {}
+    for cod, text in expressions.items():
+        try:
+            terms = parse_linear_expression(text, scope)
+            partition = classify_terms(terms)
+        except UnrecognizedElectricalToken as err:
+            formulas[cod] = _ElectricConstraintSkip(
+                cod, "unsupported", err.name, "the file declares no such name"
+            )
+            continue
+        except ValueError as err:
+            raise FieldParseError(
+                f"{path.name}: the formula of constraint {cod} is malformed: {err}",
+                path=str(path),
+                field="RE",
+            ) from err
+        unsupported = next(
+            (term for term in terms if term.token in _UNSUPPORTED_TERM_REASONS), None
+        )
+        formulas[cod] = (
+            partition
+            if unsupported is None
+            else _ElectricConstraintSkip(
+                cod,
+                "unsupported",
+                term_text(unsupported),
+                _UNSUPPORTED_TERM_REASONS[unsupported.token],
+            )
+        )
+    return formulas
+
+
+class _ElectricExpression(NamedTuple):
+    """One electric constraint's decision terms as a novomodelo expression,
+    and the data terms its limits are folded on."""
+
+    text: str
+    data_terms: tuple[ParsedTerm, ...] = ()
+
+
+def _formula_expression(
+    cod: int,
+    partition: dict[Bucket, list[ParsedTerm]],
+    id_map: NewaveIdMap,
+    line_id_map: dict[tuple[int, int], int],
+    term_skips: list[_ElectricTermSkip],
+) -> _ElectricExpression | _ElectricConstraintSkip:
+    """Constraint ``cod``'s formula with every term on the case's entities,
+    or its skip: no decision term is left, or a demand term names a subsystem
+    the case lacks."""
+    data_terms = partition[Bucket.B]
+    declared = set(id_map.all_bus_ids)
+    for term in data_terms:
+        if term.token in _BUS_DEMAND_TOKENS and term.args[0] not in declared:
+            return _ElectricConstraintSkip(
+                cod,
+                "unsupported",
+                term_text(term),
+                "names a subsystem sistema.dat does not declare",
+            )
+    variables = [
+        (term.coefficient, variable)
+        for term in partition[Bucket.A]
+        if (variable := _decision_variable(cod, term, id_map, line_id_map, term_skips))
+        is not None
+    ]
+    if not variables:
+        return _ElectricConstraintSkip(cod, "termless")
+    return _ElectricExpression(_render_signed_expression(variables), tuple(data_terms))
+
+
+def _decision_variable(
+    cod: int,
+    term: ParsedTerm,
+    id_map: NewaveIdMap,
+    line_id_map: dict[tuple[int, int], int],
+    term_skips: list[_ElectricTermSkip],
+) -> str | None:
+    """*term*'s novomodelo variable, or ``None``, with the skip recorded on
+    *term_skips*, when it names a plant or a subsystem pair outside the case."""
+    if term.token == "ener_interc":
+        sys_from, sys_to = term.args
+        line_id = line_id_map.get((min(sys_from, sys_to), max(sys_from, sys_to)))
+        if line_id is None:
+            term_skips.append(
+                _ElectricTermSkip(
+                    cod,
+                    "no-line",
+                    "restricao-eletrica.csv",
+                    sys_from=sys_from,
+                    sys_to=sys_to,
+                )
+            )
+            return None
+        # The source model's ``ener_interc(A, B)`` is the directional flow from A to
+        # B as a non-negative variable.  Map to Novomodelo's
+        # ``line_direct``/``line_reverse`` so the sign is encoded by the variable
+        # choice rather than by negating the coefficient (the latter would dilute
+        # the bound when LP solutions route in the non-canonical direction).  See
+        # ``_agrint_expression`` for the same rule applied to AGRINT terms.
+        if sys_from < sys_to:
+            return f"line_direct({line_id})"
+        return f"line_reverse({line_id})"
+
+    (plant_code,) = term.args
+    if term.token == "ger_usih":
+        lookup, kind, variable = id_map.hydro_id, "hydro-unmapped", "hydro_generation"
+    else:
+        lookup, kind, variable = (
+            id_map.thermal_id,
+            "thermal-unmapped",
+            "thermal_generation",
+        )
+    try:
+        entity_id = lookup(plant_code)
+    except KeyError:
+        term_skips.append(
+            _ElectricTermSkip(
+                cod, kind, "restricao-eletrica.csv", plant_code=plant_code
+            )
+        )
+        return None
+    return f"{variable}({entity_id})"
+
+
+def _demand_context(
+    loads: Mapping[tuple[int, int], Sequence[float]],
+    id_map: NewaveIdMap,
+    stage_id: int,
+    block_id: int,
+) -> DataContext:
+    """The value of a formula's data term at one (stage, block): a
+    subsystem's block load for ``demanda(X)`` and ``val_demanda(X)``, all
+    subsystems' for their ``_sin`` forms, and 1 for a constant, whose value
+    is its coefficient."""
+
+    def bus_load(code: int) -> float:
+        block_loads = loads.get((id_map.bus_id(code), stage_id))
+        return 0.0 if block_loads is None else block_loads[block_id]
+
+    def resolve(term: ParsedTerm) -> float:
+        if term.token in _BUS_DEMAND_TOKENS:
+            return bus_load(term.args[0])
+        if term.token in _SYSTEM_DEMAND_TOKENS:
+            return sum(bus_load(code) for code in id_map.all_bus_ids)
+        if term.token == CONST_TOKEN:
+            return 1.0
+        raise ValueError(f"no value for the electric-constraint term {term_text(term)}")
+
+    return resolve
 
 
 def _stage_ids_between(
@@ -1303,6 +1430,8 @@ def convert_electric_constraints(
     case: NewaveCase,
     id_map: NewaveIdMap,
     allocator: ConstraintIdAllocator | None = None,
+    *,
+    block_loads: Mapping[tuple[int, int], Sequence[float]],
 ) -> GenericConstraintResult | None:
     """Convert electric constraints from restricao-eletrica.csv and RE.DAT.
 
@@ -1323,6 +1452,10 @@ def convert_electric_constraints(
         Shared id source; defaults to a fresh :class:`ConstraintIdAllocator`
         (ids from 0) when omitted. The pipeline threads one instance across
         every emitter so IDs do not collide with VminOP constraints.
+    block_loads:
+        Each ``(bus_id, stage_id)``'s load in MW on each block
+        (:func:`~novomodelo_bridge.newave.converters.stochastic.block_loads`),
+        which the formulas' demand terms read.
 
     Returns
     -------
@@ -1340,7 +1473,7 @@ def convert_electric_constraints(
         return None
 
     sources, grid = _read_electric_sources(case, re_path, has_re_dat=has_re_dat)
-    if not sources.expressions and not sources.re_conjuntos:
+    if not sources.formulas and not sources.re_conjuntos:
         _LOG.debug("No electric constraints found; skipping.")
         return None
 
@@ -1362,25 +1495,22 @@ def convert_electric_constraints(
     elec_term_skips: list[_ElectricTermSkip] = []
     elec_constraint_skips: list[_ElectricConstraintSkip] = []
 
-    for cod in sorted(set(sources.expressions) | set(sources.re_conjuntos)):
-        novomodelo_expr = _electric_expression(
+    data_context = partial(_demand_context, block_loads, id_map)
+    for cod in sorted(set(sources.formulas) | set(sources.re_conjuntos)):
+        expression = _electric_expression(
             cod, sources, id_map, line_id_map, elec_term_skips
         )
-        if novomodelo_expr is None:
-            elec_constraint_skips.append(
-                _ElectricConstraintSkip(constraint_code=cod, unbounded=False)
-            )
+        if isinstance(expression, _ElectricConstraintSkip):
+            elec_constraint_skips.append(expression)
             continue
 
         bounds = _electric_bounds(cod, sources, grid.horizon)
         if not bounds.has_sup and not bounds.has_inf:
-            elec_constraint_skips.append(
-                _ElectricConstraintSkip(constraint_code=cod, unbounded=True)
-            )
+            elec_constraint_skips.append(_ElectricConstraintSkip(cod, "unbounded"))
             continue
 
         _add_electric_constraint(
-            builder, cod, novomodelo_expr, slack_config, bounds, grid
+            builder, cod, expression, slack_config, bounds, grid, data_context
         )
 
     _emit_electric_term_skips(elec_term_skips)
@@ -1405,7 +1535,7 @@ def convert_electric_constraints(
 class _ElectricSources:
     """restricao-eletrica.csv's and RE.DAT's electric constraints, by constraint code."""
 
-    expressions: dict[int, str]
+    formulas: dict[int, _ElectricFormula]
     horizons: dict[int, tuple[_YearMonth, _YearMonth]]
     csv_bounds: dict[int, list[_ElectricLimit]]
     re_conjuntos: dict[int, list[int]]
@@ -1455,7 +1585,7 @@ def _read_electric_sources(
     case: NewaveCase, re_path: Path | None, *, has_re_dat: bool
 ) -> tuple[_ElectricSources, _ElectricGrid]:
     """Read restricao-eletrica.csv and RE.DAT, and the grid they are laid on."""
-    expressions: dict[int, str] = {}
+    formulas: dict[int, _ElectricFormula] = {}
     horizons: dict[int, tuple[_YearMonth, _YearMonth]] = {}
     csv_bounds: dict[int, list[_ElectricLimit]] = {}
     if re_path is not None and (restricoes := case.restricao_eletrica) is not None:
@@ -1465,6 +1595,7 @@ def _read_electric_sources(
         expressions, horizons, csv_bounds = _read_restricao_eletrica(
             restricoes, re_path
         )
+        formulas = _read_formulas(expressions, re_path)
 
     horizon = case.horizon
     patamar = case.patamar
@@ -1483,7 +1614,7 @@ def _read_electric_sources(
         )
 
     sources = _ElectricSources(
-        expressions, horizons, csv_bounds, re_conjuntos, re_dat_bounds
+        formulas, horizons, csv_bounds, re_conjuntos, re_dat_bounds
     )
     return sources, _ElectricGrid(horizon, num_patamares, cutoff)
 
@@ -1547,20 +1678,18 @@ def _electric_expression(
     id_map: NewaveIdMap,
     line_id_map: dict[tuple[int, int], int],
     term_skips: list[_ElectricTermSkip],
-) -> str | None:
+) -> _ElectricExpression | _ElectricConstraintSkip:
     """Constraint ``cod``'s expression, from its restricao-eletrica.csv formula
-    when it has one, else the sum of its RE.DAT plants' ``hydro_generation``.
+    when it has one, else the sum of its RE.DAT plants' ``hydro_generation``,
+    or the constraint's skip.
 
-    Every dropped term is recorded on *term_skips*; ``None`` when none is left.
+    Every term left out is recorded on *term_skips*.
     """
-    if cod in sources.expressions:
-        return _parse_formula(
-            sources.expressions[cod],
-            id_map,
-            line_id_map,
-            constraint_code=cod,
-            skipped=term_skips,
-        )
+    formula = sources.formulas.get(cod)
+    if isinstance(formula, _ElectricConstraintSkip):
+        return formula
+    if formula is not None:
+        return _formula_expression(cod, formula, id_map, line_id_map, term_skips)
 
     terms: list[str] = []
     for plant_code in sorted(sources.re_conjuntos[cod]):
@@ -1572,12 +1701,14 @@ def _electric_expression(
                     constraint_code=cod,
                     kind="hydro-unmapped",
                     source="re.dat",
-                    hydro_code=plant_code,
+                    plant_code=plant_code,
                 )
             )
             continue
         terms.append(f"hydro_generation({novomodelo_id})")
-    return " + ".join(terms) if terms else None
+    if not terms:
+        return _ElectricConstraintSkip(cod, "termless")
+    return _ElectricExpression(" + ".join(terms))
 
 
 def _electric_bounds(
@@ -1617,15 +1748,17 @@ def _electric_bounds(
 def _add_electric_constraint(
     builder: GenericConstraintBuilder,
     cod: int,
-    expression: str,
+    expression: _ElectricExpression,
     slack: dict[str, object],
     bounds: _ElectricBounds,
     grid: _ElectricGrid,
+    data_context: Callable[[int, int], DataContext],
 ) -> None:
     """Add ``RE_{cod}``'s ceiling and floor and one row per declared (stage, block).
 
     The ceiling is RE.DAT's from the individualizado cutoff on and the csv's
-    elsewhere; the floor is the csv's.
+    elsewhere; the floor is the csv's. Each limit is net of the expression's
+    data terms at its (stage, block), read by *data_context*.
     """
     sup_id: int | None = None
     inf_id: int | None = None
@@ -1634,14 +1767,14 @@ def _add_electric_constraint(
         sup_id = builder.add_constraint(
             name=f"RE_{cod}",
             description=f"Electric constraint {cod}",
-            expression=expression,
+            expression=expression.text,
             slack=slack,
         )
     if bounds.has_inf:
         inf_id = builder.add_constraint(
             name=f"RE_{cod}",
             description=f"Electric constraint {cod}",
-            expression=expression,
+            expression=expression.text,
             slack=slack,
         )
 
@@ -1662,7 +1795,10 @@ def _add_electric_constraint(
                         stage_id=stage_id,
                         block_id=block_id,
                         lower=None,
-                        upper=sup_val,
+                        upper=sup_val
+                        - evaluate_terms(
+                            expression.data_terms, data_context(stage_id, block_id)
+                        ),
                     )
 
             # Lower bound.
@@ -1675,46 +1811,63 @@ def _add_electric_constraint(
                         inf_id,
                         stage_id=stage_id,
                         block_id=block_id,
-                        lower=inf_val,
+                        lower=inf_val
+                        - evaluate_terms(
+                            expression.data_terms, data_context(stage_id, block_id)
+                        ),
                         upper=None,
                     )
 
 
 def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
-    """Emit one diagnostic per kind of dropped electric-constraint term."""
+    """Emit one diagnostic per kind of electric-constraint term left out."""
     if not skips:
         return
     by_kind: dict[str, list[_ElectricTermSkip]] = defaultdict(list)
     for skip in skips:
         by_kind[skip.kind].append(skip)
 
-    hydro_unmapped = by_kind.get("hydro-unmapped", [])
-    if hydro_unmapped:
-        emit(
-            Diagnostic(
-                code="electric-constraint-hydro-unmapped",
-                severity=Severity.INFO,
-                category=_CATEGORY,
-                title=(
-                    "Electric-constraint terms on plants outside the case "
-                    f"({len(hydro_unmapped)})"
+    for kind, code, plants, plant in (
+        (
+            "hydro-unmapped",
+            "electric-constraint-hydro-unmapped",
+            "plants",
+            "hydro plant",
+        ),
+        (
+            "thermal-unmapped",
+            "electric-constraint-thermal-unmapped",
+            "thermals",
+            "thermal plant",
+        ),
+    ):
+        unmapped = by_kind.get(kind, [])
+        if unmapped:
+            emit(
+                Diagnostic(
+                    code=code,
+                    severity=Severity.INFO,
+                    category=_CATEGORY,
+                    title=(
+                        f"Electric-constraint terms on {plants} outside the case "
+                        f"({len(unmapped)})"
+                    ),
+                    summary=(
+                        f"The listed electric-constraint terms name a {plant} "
+                        "that is not in the case, so it generates nothing and "
+                        "the conversion leaves the term out."
+                    ),
+                    table=DiagnosticTable(
+                        columns=["Constraint", "Plant code", "Source"],
+                        rows=[
+                            [s.constraint_code, s.plant_code, s.source]
+                            for s in unmapped
+                        ],
+                        justify=["right", "right", "left"],
+                    ),
                 ),
-                summary=(
-                    "The listed electric-constraint terms name a "
-                    "hydro plant that is not in the case, so it generates "
-                    "nothing and the conversion leaves the term out."
-                ),
-                table=DiagnosticTable(
-                    columns=["Constraint", "Plant code", "Source"],
-                    rows=[
-                        [s.constraint_code, s.hydro_code, s.source]
-                        for s in hydro_unmapped
-                    ],
-                    justify=["right", "right", "left"],
-                ),
-            ),
-            logger=_LOG,
-        )
+                logger=_LOG,
+            )
 
     no_line = by_kind.get("no-line", [])
     if no_line:
@@ -1742,39 +1895,40 @@ def _emit_electric_term_skips(skips: list[_ElectricTermSkip]) -> None:
             logger=_LOG,
         )
 
-    malformed = by_kind.get("malformed", [])
-    if malformed:
+
+def _emit_electric_constraint_skips(skips: list[_ElectricConstraintSkip]) -> None:
+    """Emit the constraints left out: those with a term the case cannot carry
+    (``electric-constraint-term-unsupported``), with no term it can
+    (``electric-constraint-skipped``) and with no limit
+    (``electric-constraint-unbounded``)."""
+    unsupported = sorted(
+        (s for s in skips if s.kind == "unsupported"), key=lambda s: s.constraint_code
+    )
+    termless = sorted(s.constraint_code for s in skips if s.kind == "termless")
+    unbounded = sorted(s.constraint_code for s in skips if s.kind == "unbounded")
+    if unsupported:
         emit(
             Diagnostic(
-                code="electric-constraint-malformed-term",
+                code="electric-constraint-term-unsupported",
                 severity=Severity.WARNING,
                 category=_CATEGORY,
-                title=f"Malformed electric-constraint terms ({len(malformed)})",
+                title=(
+                    "Electric constraints with an unsupported term not converted "
+                    f"({len(unsupported)})"
+                ),
                 summary=(
-                    "The listed ener_interc terms of "
-                    "restricao-eletrica.csv name fewer than two subsystems, so "
-                    "the conversion leaves them out of their constraint."
+                    "The listed electric constraints of restricao-eletrica.csv "
+                    "have a term the case cannot carry, so the conversion leaves "
+                    "them out and the case runs without these limits."
                 ),
                 table=DiagnosticTable(
-                    columns=["Constraint", "Term"],
-                    rows=[[s.constraint_code, s.raw] for s in malformed],
-                    justify=["right", "left"],
-                ),
-                remediation=(
-                    "Give each listed ener_interc term both subsystems in "
-                    "restricao-eletrica.csv."
+                    columns=["Constraint", "Term", "Reason"],
+                    rows=[[s.constraint_code, s.term, s.reason] for s in unsupported],
+                    justify=["right", "left", "left"],
                 ),
             ),
             logger=_LOG,
         )
-
-
-def _emit_electric_constraint_skips(skips: list[_ElectricConstraintSkip]) -> None:
-    """Emit the constraints left out: those with no term the case can carry
-    (``electric-constraint-skipped``) and those with no limit
-    (``electric-constraint-unbounded``)."""
-    termless = sorted(s.constraint_code for s in skips if not s.unbounded)
-    unbounded = sorted(s.constraint_code for s in skips if s.unbounded)
     if termless:
         emit(
             Diagnostic(
@@ -1783,9 +1937,9 @@ def _emit_electric_constraint_skips(skips: list[_ElectricConstraintSkip]) -> Non
                 category=_CATEGORY,
                 title=f"Electric constraints without a term not converted ({len(termless)})",
                 summary=(
-                    "The listed electric constraints have no ger_usih "
-                    "or ener_interc term the case can carry, so the conversion "
-                    "leaves them out."
+                    "The listed electric constraints have no ger_usih, "
+                    "ger_usit or ener_interc term the case can carry, so the "
+                    "conversion leaves them out."
                 ),
                 table=DiagnosticTable(
                     columns=["Constraint"],
