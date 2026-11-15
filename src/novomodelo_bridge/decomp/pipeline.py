@@ -40,6 +40,7 @@ from novomodelo_bridge.core.diversion import (
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
     GenericConstraintResult,
+    is_bounded,
 )
 from novomodelo_bridge.core.libs_index import unread_lines_diagnostic
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame, as_int
@@ -1661,6 +1662,35 @@ def _resolve_line_bounds(
     ).sort_by([("line_id", "ascending"), *_BOUND_SORT_KEYS])
 
 
+#: Contributor prefix of a special-constraint bound -> the register its
+#: report names.
+_SPECIAL_CONSTRAINT_REGISTERS: dict[str, str] = {"RE": "RE", "HQ": "RHQ"}
+
+
+def _special_constraint_labels(
+    contribs: Sequence[bounds_accumulator.BoundContribution],
+) -> emission_checks.BoundLabels:
+    """The RE and RHQ constraints behind each ``hydro_bounds`` cell, each with
+    the value it sets, for the capacity clamp's report."""
+    labels: dict[tuple[int, int, int | None, str], list[tuple[str, float]]] = {}
+    for contrib in contribs:
+        prefix, _, constraint_id = contrib.contributor.partition("_")
+        register = _SPECIAL_CONSTRAINT_REGISTERS.get(prefix)
+        if contrib.family != "hydro" or register is None:
+            continue
+        spec = bounds_accumulator.axis_spec("hydro", contrib.axis)
+        for column, value in (
+            (spec.lower_column, contrib.lower),
+            (spec.upper_column, contrib.upper),
+        ):
+            if column is not None and is_bounded(value):
+                labels.setdefault(
+                    (contrib.entity_id, contrib.stage_id, contrib.block_id, column),
+                    [],
+                ).append((f"{register} {constraint_id}", value))
+    return labels
+
+
 def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     """The ``step("Resolving bounds")`` phase: resolve every hydro/thermal/
     pumping/line bound, fold in the TI irrigation withdrawal and the
@@ -1687,20 +1717,6 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     thermal_generation_contribs, thermal_cost_table = (
         thermal_conv.convert_thermal_bounds(case, id_map)
     )
-    # The RE `FU` single-hydro-generation and the RHQ `QTUR`/turbined bound
-    # producers each clamp their emitted upper to the plant's own declared
-    # max_generation_mw/max_turbined_m3s, so a looser source-declared ceiling
-    # on either axis (a real cross-source mismatch — see BELO MONTE's RE
-    # ceiling on both real decks) never trips novomodelo rule 43
-    # (emission_checks.check_hydro_bounds_no_raising, self-checked below).
-    hydro_capacities: dict[int, single_term_bounds.HydroCapacities] = {
-        hydro["id"]: single_term_bounds.HydroCapacities(
-            name=hydro["name"],
-            max_generation_mw=hydro["generation"]["max_generation_mw"],
-            max_turbined_m3s=hydro["generation"]["max_turbined_m3s"],
-        )
-        for hydro in hydros_dict["hydros"]
-    }
     unregulated_codes = _released_runofriver_codes(effective, id_map)
     availability_values = hydro_conv.convert_hydro_group_availability(
         case, id_map, effective=effective, turbine_limits=turbine_limits
@@ -1731,7 +1747,6 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             census=census,
             pumping_station_ids=pumping_ids,
             effective=effective,
-            hydro_capacities=hydro_capacities,
         ),
     ]
     base_diversion_channels = _base_diversion_channels(
@@ -1747,9 +1762,16 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     bound_tables = bounds_accumulator.build_bound_tables(
         bounds_accumulator.resolve(contribs, block_counts)
     )
-    hydro_bounds = bound_tables.hydro.sort_by(
-        [("hydro_id", "ascending"), *_BOUND_SORT_KEYS]
+    # An RE or RHQ QTUR ceiling can sit above the plant's declared capacity
+    # (BELO MONTE's RE does on both real decks); novomodelo rule 43 rejects it.
+    hydro_bounds = emission_checks.clamp_hydro_bounds_to_declared(
+        hydros_dict,
+        bound_tables.hydro.sort_by([("hydro_id", "ascending"), *_BOUND_SORT_KEYS]),
+        source_codes={id_map.hydro_id(code): code for code in id_map.hydro_codes},
+        raise_to_minimum=False,
+        labels=_special_constraint_labels(contribs),
     )
+    assert hydro_bounds is not None
     # Fold in the TI irrigation withdrawal (a consumptive water use novomodelo reads
     # from hydro_bounds.water_withdrawal_m3s): water lost to irrigation is
     # unavailable for generation, so omitting it lets novomodelo turbine the extra

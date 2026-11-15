@@ -68,8 +68,8 @@ links are cobre-bridge's.
   NEWAVE's or DECOMP's**: `fpha-spill-outside-tailrace`,
   `boundary-fcf-transit-water-priced` and
   `boundary-fcf-gnl-anticipated-deviation` are now warnings, while
-  `hydro-bounds-clamped-to-declared-capacity`, `decomp-re-generation-clamped`,
-  `decomp-qtur-turbined-clamped`, `modif-override-plant-uncadastred`,
+  `hydro-bounds-clamped-to-declared-capacity`,
+  `modif-override-plant-uncadastred`,
   `vminop-ree-not-expressible`, `electric-constraint-hydro-unmapped`,
   `electric-constraint-interchange-no-line`, `agrint-interchange-no-line`,
   `agrint-group-empty`, `artificial-gauge-data-ignored`, `libs-unindexed-file`
@@ -125,9 +125,13 @@ links are cobre-bridge's.
   fails still reports what it found before the failure, and `compare newave`
   reports what it finds while reading the deck, such as
   `fictitious-plants-excluded`.
-- **`convert decomp` reports RE ceilings capped at a unit group's capacity as
-  `decomp-re-unit-group-generation-clamped`**, apart from the plant ceilings
-  that `decomp-re-generation-clamped` reports.
+- **BREAKING: `convert decomp` reports RE and RHQ `QTUR` ceilings capped at a
+  plant's capacity as `hydro-bounds-clamped-to-declared-capacity`, as `convert
+  newave` does**, in place of `decomp-re-generation-clamped` and
+  `decomp-qtur-turbined-clamped`, and those capped at a unit group's capacity
+  as `decomp-re-unit-group-generation-clamped`; update scripts that filter on
+  the old ids. Neither command lists a ceiling that equals the capacity at the
+  deck's written precision, such as BELO MONTE's 11000 MW `RE`.
 - **`convert newave` stops on a malformed `restricao-eletrica.csv` formula**
   with a `conversion-error` naming the constraint, where it left the
   malformed part out and reported only an `ener_interc` with one subsystem,

@@ -468,6 +468,7 @@ def _resolve_hydro_bounds(
         hydros_dict,
         hydro_bounds_table,
         source_codes={id_map.hydro_id(code): code for code in id_map.all_hydro_codes},
+        raise_to_minimum=True,
     )
 
 

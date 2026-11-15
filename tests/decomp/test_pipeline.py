@@ -712,6 +712,21 @@ class TestEmissionCheckWiring:
         assert _convert_status([], success="ok") == "ok"
 
 
+def _re_generation_record(
+    constraint_id: int, *, lower: float | None, upper: float | None
+) -> ConstraintRecord:
+    """A single-term RE on plant 1's generation, on every block of stage 0."""
+    return ConstraintRecord(
+        family="RE",
+        constraint_id=constraint_id,
+        stage_start=0,
+        stage_end=0,
+        terms=(ConstraintTerm(code=1, coefficient=1.0, variable="generation"),),
+        bounds={0: StageBounds(lower=(lower,) * 3, upper=(upper,) * 3)},
+        per_block=True,
+    )
+
+
 class TestBoundAccumulatorWiring:
     """The bounds accumulator is the *single* merge point
     for every per-entity bound, and the new pumping family is wired
@@ -733,6 +748,67 @@ class TestBoundAccumulatorWiring:
         source = inspect.getsource(pipeline)
         assert source.count("concat_tables") == 1
         assert "pa.concat_tables(generic_bound_tables)" in source
+
+    def test_re_ceiling_above_capacity_is_capped_naming_the_constraint(
+        self, tmp_path: Path
+    ) -> None:
+        diagnostics: list[Diagnostic] = []
+        dst = _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            to_bounds=(_re_generation_record(12, lower=None, upper=1e6),),
+            diagnostics_out=diagnostics,
+        )
+
+        hydro = json.loads(
+            (dst / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"][0]
+        capacity = hydro["generation"]["max_generation_mw"]
+        table = pq.read_table(dst / "constraints" / "hydro_bounds.parquet")
+        assert set(table["max_generation_mw"].drop_null().to_pylist()) == {capacity}
+        (capped,) = [
+            d
+            for d in diagnostics
+            if d.code == "hydro-bounds-clamped-to-declared-capacity"
+        ]
+        assert capped.table is not None
+        assert capped.table.rows == [
+            [
+                1,
+                hydro["name"],
+                "Max generation (MW)",
+                "RE 12",
+                "0",
+                1e6,
+                round(capacity, 6),
+            ]
+        ]
+
+    def test_re_ceiling_below_the_plant_minimum_stays(self, tmp_path: Path) -> None:
+        """A ceiling below the plant's declared minimum is written as the deck
+        has it, not raised to the minimum."""
+        negated = ConstraintRecord(
+            family="RE",
+            constraint_id=12,
+            stage_start=0,
+            stage_end=0,
+            terms=(ConstraintTerm(code=1, coefficient=-1.0, variable="generation"),),
+            bounds={0: StageBounds(lower=(5.0,) * 3, upper=(None,) * 3)},
+            per_block=True,
+        )
+        diagnostics: list[Diagnostic] = []
+        dst = _run_cadastro_pipeline(
+            tmp_path,
+            ac_volmax_frame=None,
+            to_bounds=(negated,),
+            diagnostics_out=diagnostics,
+        )
+
+        table = pq.read_table(dst / "constraints" / "hydro_bounds.parquet")
+        assert table["max_generation_mw"].drop_null().to_pylist() == [-5.0] * 3
+        assert "hydro-bounds-raised-to-declared-minimum" not in {
+            d.code for d in diagnostics
+        }
 
     def test_no_pumping_records_writes_no_pumping_bounds_file(
         self, tmp_path: Path
@@ -968,6 +1044,7 @@ def _run_cadastro_pipeline(
     ac_volmax_frame: pd.DataFrame | None,
     *,
     to_generic: tuple[ConstraintRecord, ...] = (),
+    to_bounds: tuple[ConstraintRecord, ...] = (),
     rha_detection: object | None = None,
     libs_electrical: object | None = None,
     diagnostics_out: list[Diagnostic] | None = None,
@@ -987,7 +1064,8 @@ def _run_cadastro_pipeline(
     ``ConstraintCensus.to_generic`` — every RE/RHQ/RHV/RHE record the
     generic-constraint emitters consume, none of which the mock deck's
     ``Dadger`` can produce for real (it exposes no
-    ``RE``/``HQ``/``HV``/``HE``/``CM`` accessors).
+    ``RE``/``HQ``/``HV``/``HE``/``CM`` accessors); *to_bounds* feeds its
+    ``to_bounds``, the single-term records lowered to entity bounds.
     *rha_detection*/*libs_electrical* feed the
     detection helpers the same way — both otherwise patched to their
     empty/absent default so this shared fixture keeps regressing the
@@ -1151,7 +1229,7 @@ def _run_cadastro_pipeline(
         # logic is under test, not the special-constraint reader or the
         # pumping id map (both out of scope, exercised elsewhere).
         "novomodelo_bridge.decomp.pipeline.constraint_registers.read_constraints": (
-            ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)
+            ConstraintCensus(by_family={}, to_bounds=to_bounds, to_generic=to_generic)
         ),
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
         # The mock deck has no RHA accessors and no real files

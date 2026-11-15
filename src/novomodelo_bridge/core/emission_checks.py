@@ -41,8 +41,8 @@ unit-testable against hand-built artifacts.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 import pyarrow as pa
@@ -57,7 +57,10 @@ from novomodelo_bridge.core.diagnostics import (
     format_stage_ranges,
 )
 from novomodelo_bridge.core.errors import EmissionCheckError
-from novomodelo_bridge.core.tolerances import relative_tolerance
+from novomodelo_bridge.core.tolerances import (
+    beyond_written_precision,
+    relative_tolerance,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -74,13 +77,14 @@ _DEFECT_REMEDIATION = (
 #: Both guarded columns for rule 43 / rule 41, checked independently.
 _ENVELOPE_COLUMNS: tuple[str, ...] = ("max_turbined_m3s", "max_generation_mw")
 
-#: Per-stage ``hydro_bounds`` MAX columns clamped into the plant's declared
-#: envelope, each as ``(bounds column, hydros block, declared-min key,
-#: declared-max key)``. See :func:`clamp_hydro_bounds_to_declared`.
-_CLAMP_COLUMNS: tuple[tuple[str, str, str, str], ...] = (
-    ("max_turbined_m3s", "generation", "min_turbined_m3s", "max_turbined_m3s"),
-    ("max_generation_mw", "generation", "min_generation_mw", "max_generation_mw"),
-    ("max_outflow_m3s", "outflow", "min_outflow_m3s", "max_outflow_m3s"),
+#: Per-stage ``hydro_bounds`` ceilings held to the plant's declared envelope,
+#: each as ``(ceiling column, hydros block, declared-min key)``; the
+#: ``hydros.json`` block declares the max under the ceiling's own name. See
+#: :func:`clamp_hydro_bounds_to_declared`.
+_CLAMP_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("max_turbined_m3s", "generation", "min_turbined_m3s"),
+    ("max_generation_mw", "generation", "min_generation_mw"),
+    ("max_outflow_m3s", "outflow", "min_outflow_m3s"),
 )
 
 _CLAMP_LIMIT_LABELS: dict[str, str] = {
@@ -88,6 +92,16 @@ _CLAMP_LIMIT_LABELS: dict[str, str] = {
     "max_generation_mw": "Max generation (MW)",
     "max_outflow_m3s": "Max outflow (m³/s)",
 }
+
+#: The deck constraints behind each ``hydro_bounds`` cell, keyed ``(hydro_id,
+#: stage_id, block_id, column)``, each with the value it sets in that column.
+#: A ``None`` block_id covers every block of the stage.
+type BoundLabels = Mapping[
+    tuple[int, int, int | None, str], Sequence[tuple[str, float]]
+]
+
+#: A ``hydro_bounds`` row's ``(hydro_id, stage_id, block_id)``.
+type _Cell = tuple[int, int, int | None]
 
 
 def _tolerance(declared: float) -> float:
@@ -164,9 +178,8 @@ def check_hydro_bounds_no_raising(
     Lowering is fine; every other column is untouched by this rule.
 
     Structurally inapplicable when *hydro_bounds* is ``None`` or carries
-    neither guarded column — DECOMP writes only ``min_outflow_m3s`` there, so
-    its exposure is nil by construction. That is reported as an explicit INFO
-    finding, never a silent pass.
+    neither guarded column. That is reported as an explicit INFO finding,
+    never a silent pass.
     """
     columns = (
         [c for c in _ENVELOPE_COLUMNS if c in hydro_bounds.column_names]
@@ -254,8 +267,8 @@ def check_hydro_bounds_no_raising(
 def _hydro_declared_bounds(
     hydros: Mapping[str, object],
 ) -> dict[int, dict[str, tuple[float | None, float | None]]]:
-    """``{hydro_id: {bounds_column: (declared_min, declared_max)}}`` for every
-    column in :data:`_CLAMP_COLUMNS`.
+    """``{hydro_id: {ceiling column: (declared_min, declared_max)}}`` for every
+    limit in :data:`_CLAMP_COLUMNS`.
 
     A bound is ``None`` when the plant declares no value for it (e.g. a
     run-of-river plant with ``outflow.max_outflow_m3s = null`` has no ceiling to
@@ -273,12 +286,12 @@ def _hydro_declared_bounds(
         if not isinstance(hydro_id, int):
             continue
         entry: dict[str, tuple[float | None, float | None]] = {}
-        for column, block_name, min_key, max_key in _CLAMP_COLUMNS:
+        for column, block_name, floor_column in _CLAMP_COLUMNS:
             block = hydro.get(block_name)
             if not isinstance(block, Mapping):
                 continue
-            raw_min = block.get(min_key)
-            raw_max = block.get(max_key)
+            raw_min = block.get(floor_column)
+            raw_max = block.get(column)
             declared_min = float(raw_min) if isinstance(raw_min, int | float) else None
             declared_max = float(raw_max) if isinstance(raw_max, int | float) else None
             if declared_min is not None or declared_max is not None:
@@ -288,88 +301,184 @@ def _hydro_declared_bounds(
     return declared
 
 
+@dataclass
+class _EnvelopeFinding:
+    """A plant limit outside its declared envelope: the declared bound, each
+    ``(stage, deck value)`` past it, and the deck constraints that set them."""
+
+    bound: float
+    occurrences: list[tuple[int, float]] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+
+    def add(self, stage_id: int, value: float, constraints: Iterable[str]) -> None:
+        self.occurrences.append((stage_id, value))
+        for constraint in constraints:
+            if constraint not in self.constraints:
+                self.constraints.append(constraint)
+
+
+#: Findings keyed ``(hydro_id, column)``.
+type _Findings = dict[tuple[int, str], _EnvelopeFinding]
+
+#: ``{hydro_id: {ceiling column: (declared_min, declared_max)}}``.
+type _DeclaredBounds = Mapping[int, Mapping[str, tuple[float | None, float | None]]]
+
+
 def clamp_hydro_bounds_to_declared(
     hydros: Mapping[str, object],
     hydro_bounds: pa.Table | None,
     *,
     source_codes: Mapping[int, int],
+    raise_to_minimum: bool,
+    labels: BoundLabels | None = None,
 ) -> pa.Table | None:
-    """Clamp every per-stage ``hydro_bounds`` MAX column into the owning plant's
+    """Hold every per-stage ``hydro_bounds`` ceiling to the owning plant's
     declared ``[min, max]`` envelope from ``hydros.json``, returning the clamped
     table.
 
-    A per-stage override (TURBMAXT, VAZMAXT) can set a MAX column outside the
-    plant's declaration, which novomodelo rejects on load (rule 43 and its
-    outflow analogue). The declared value is the authority. A value above the
-    declared max is capped at it, which changes no result because the plant
-    cannot exceed its declared capacity anyway, so an INFO note reports it. A
-    value below the declared min is raised to it, which loosens the deck's
-    limit, so a WARNING reports it. *source_codes* maps each hydro id to its
-    source-deck code for those reports. Returns *hydro_bounds* unchanged (same
-    object) when it is ``None``, carries no clampable column, or nothing fell
-    outside its envelope.
+    A per-stage ceiling (TURBMAXT, VAZMAXT, a special-constraint ceiling) can
+    sit outside the plant's declaration. novomodelo rejects a turbined or
+    generation ceiling above the declared value on load (rule 43). The declared
+    value is the authority. A ceiling above the declared max is capped at it,
+    which changes no result because the plant cannot exceed its declared
+    capacity anyway, so an INFO note reports it. With *raise_to_minimum*, a
+    ceiling below the declared min is raised to it, which loosens the deck's
+    limit, so a WARNING reports it; without, it is written as the deck has it.
+    Either move is reported only past the deck's written precision
+    (:func:`~novomodelo_bridge.core.tolerances.beyond_written_precision`), and
+    made silently nearer.
+
+    *source_codes* maps each hydro id to its source-deck code for those
+    reports. *labels*, when given, names the deck constraints behind each cell,
+    and each report then lists those past the declared bound. Returns
+    *hydro_bounds* unchanged (same object) when it is ``None``, carries no
+    clamped column, or nothing fell outside its envelope.
     """
     if hydro_bounds is None:
         return None
-    present = [
-        column for column, *_ in _CLAMP_COLUMNS if column in hydro_bounds.column_names
+    ceilings = [
+        ceiling
+        for ceiling, _, _ in _CLAMP_COLUMNS
+        if ceiling in hydro_bounds.column_names
     ]
-    if not present:
-        return hydro_bounds
     declared = _hydro_declared_bounds(hydros)
-    if not declared:
+    if not ceilings or not declared:
         return hydro_bounds
 
-    hydro_ids = hydro_bounds["hydro_id"].to_pylist()
-    stage_ids = hydro_bounds["stage_id"].to_pylist()
-    column_values = {column: hydro_bounds[column].to_pylist() for column in present}
-
-    # (hydro_id, column) -> (declared bound, [(stage, deck value), ...])
-    capped: dict[tuple[int, str], tuple[float, list[tuple[int, float]]]] = {}
-    raised: dict[tuple[int, str], tuple[float, list[tuple[int, float]]]] = {}
-    for i, hydro_id in enumerate(hydro_ids):
-        entry = declared.get(hydro_id)
-        if entry is None:
-            continue
-        for column in present:
-            envelope = entry.get(column)
-            if envelope is None:
-                continue
-            declared_min, declared_max = envelope
-            value = column_values[column][i]
-            if value is None:
-                continue
-            if declared_max is not None and value > declared_max + _tolerance(
-                declared_max
-            ):
-                bound, found = declared_max, capped
-            elif declared_min is not None and value < declared_min - _tolerance(
-                declared_min
-            ):
-                bound, found = declared_min, raised
-            else:
-                continue
-            column_values[column][i] = bound
-            found.setdefault((hydro_id, column), (bound, []))[1].append(
-                (stage_ids[i], value)
+    cells = _cells(hydro_bounds)
+    capped: _Findings = {}
+    raised: _Findings = {}
+    table = hydro_bounds
+    for ceiling in ceilings:
+        values = table[ceiling].to_pylist()
+        if _clamp_ceilings(
+            ceiling,
+            values,
+            cells,
+            declared,
+            labels,
+            capped,
+            raised if raise_to_minimum else None,
+        ):
+            table = table.set_column(
+                table.column_names.index(ceiling),
+                ceiling,
+                pa.array(values, type=pa.float64()),
             )
 
-    if not capped and not raised:
-        return hydro_bounds
-
-    table = hydro_bounds
-    for column in {column for _, column in (*capped, *raised)}:
-        index = table.column_names.index(column)
-        table = table.set_column(
-            index, column, pa.array(column_values[column], type=pa.float64())
-        )
-
     names = _hydro_names(hydros)
+    labelled = labels is not None
     if capped:
-        emit(_capped_to_capacity_diagnostic(capped, names, source_codes), logger=_LOG)
+        emit(
+            _capped_to_capacity_diagnostic(capped, names, source_codes, labelled),
+            logger=_LOG,
+        )
     if raised:
-        emit(_raised_to_minimum_diagnostic(raised, names, source_codes), logger=_LOG)
+        emit(
+            _raised_to_minimum_diagnostic(raised, names, source_codes, labelled),
+            logger=_LOG,
+        )
     return table
+
+
+def _cells(table: pa.Table) -> list[_Cell]:
+    """Each row's ``(hydro_id, stage_id, block_id)``; ``block_id`` is ``None``
+    throughout a table without that column."""
+    blocks = (
+        table["block_id"].to_pylist()
+        if "block_id" in table.column_names
+        else [None] * table.num_rows
+    )
+    return list(
+        zip(
+            table["hydro_id"].to_pylist(),
+            table["stage_id"].to_pylist(),
+            blocks,
+            strict=True,
+        )
+    )
+
+
+def _cell_labels(
+    labels: BoundLabels | None, cell: _Cell, column: str
+) -> list[tuple[str, float]]:
+    """The ``(constraint, value)`` pairs *labels* gives *column* of *cell*; a
+    stage-wide (``None`` block) entry counts for every block."""
+    if labels is None:
+        return []
+    hydro_id, stage_id, block_id = cell
+    entries = list(labels.get((hydro_id, stage_id, block_id, column), ()))
+    if block_id is not None:
+        entries.extend(labels.get((hydro_id, stage_id, None, column), ()))
+    return entries
+
+
+def _clamp_ceilings(
+    column: str,
+    values: list[float | None],
+    cells: Sequence[_Cell],
+    declared: _DeclaredBounds,
+    labels: BoundLabels | None,
+    capped: _Findings,
+    raised: _Findings | None,
+) -> bool:
+    """Move each of ceiling *column*'s *values* into its plant's declared
+    envelope in place, recording in *capped* or *raised* every move past the
+    written precision; returns whether any value moved. A ``None`` *raised*
+    leaves a value below the declared min where it is."""
+    moved = False
+    for row, cell in enumerate(cells):
+        value = values[row]
+        envelope = declared.get(cell[0], {}).get(column)
+        if value is None or envelope is None:
+            continue
+        declared_min, declared_max = envelope
+        if declared_max is not None and value > declared_max + _tolerance(declared_max):
+            bound, found = declared_max, capped
+        elif (
+            raised is not None
+            and declared_min is not None
+            and value < declared_min - _tolerance(declared_min)
+        ):
+            bound, found = declared_min, raised
+        else:
+            continue
+        values[row] = bound
+        moved = True
+        if not beyond_written_precision(value, bound):
+            continue
+        above = value > bound
+        found.setdefault((cell[0], column), _EnvelopeFinding(bound)).add(
+            cell[1],
+            value,
+            (
+                constraint
+                for constraint, deck_value in _cell_labels(labels, cell, column)
+                if (deck_value > bound) is above
+                and beyond_written_precision(deck_value, bound)
+            ),
+        )
+    return moved
 
 
 def _hydro_names(hydros: Mapping[str, object]) -> dict[int, str]:
@@ -386,81 +495,110 @@ def _hydro_names(hydros: Mapping[str, object]) -> dict[int, str]:
     }
 
 
-def _clamp_rows(
-    found: Mapping[tuple[int, str], tuple[float, list[tuple[int, float]]]],
+def _clamp_table(
+    found: _Findings,
     names: Mapping[int, str],
     source_codes: Mapping[int, int],
-) -> list[list[object]]:
-    """One ``[code, name, limit, stages, deck value, declared]`` row per clamped
-    ``(hydro, column)``; the deck value is the one furthest from the declared
-    bound."""
+    labelled: bool,
+    *,
+    declared: str,
+    caption: str,
+) -> DiagnosticTable:
+    """One ``[code, name, limit, constraints, stages, deck value, declared]``
+    row per ``(hydro, column)`` in *found*, the constraints only when
+    *labelled*; the deck value is the one furthest from the declared bound."""
     rows: list[list[object]] = []
-    for (hydro_id, column), (bound, occurrences) in sorted(
+    for (hydro_id, column), finding in sorted(
         found.items(), key=lambda item: (source_codes[item[0][0]], item[0][1])
     ):
         furthest = max(
-            (value for _, value in occurrences), key=lambda v: abs(v - bound)
+            (value for _, value in finding.occurrences),
+            key=lambda v: abs(v - finding.bound),
         )
         rows.append(
             [
                 source_codes[hydro_id],
                 names.get(hydro_id, ""),
                 _CLAMP_LIMIT_LABELS[column],
-                format_stage_ranges(stage for stage, _ in occurrences),
+                *([", ".join(finding.constraints)] if labelled else []),
+                format_stage_ranges(stage for stage, _ in finding.occurrences),
                 round(furthest, 6),
-                round(bound, 6),
+                round(finding.bound, 6),
             ]
         )
-    return rows
+    constraints = ["Constraints"] if labelled else []
+    justify: list[ColumnJustify] = ["right", "left", "left"]
+    justify += ["left"] * len(constraints)
+    justify += ["left", "right", "right"]
+    return DiagnosticTable(
+        columns=[
+            "Code",
+            "Name",
+            "Limit",
+            *constraints,
+            "Stages",
+            "Deck value",
+            declared,
+        ],
+        rows=rows,
+        justify=justify,
+        caption=caption,
+    )
 
 
 def _capped_to_capacity_diagnostic(
-    found: Mapping[tuple[int, str], tuple[float, list[tuple[int, float]]]],
+    found: _Findings,
     names: Mapping[int, str],
     source_codes: Mapping[int, int],
+    labelled: bool,
 ) -> Diagnostic:
-    rows = _clamp_rows(found, names, source_codes)
+    table = _clamp_table(
+        found,
+        names,
+        source_codes,
+        labelled,
+        declared="Capacity",
+        caption="Stage ids are 0-based; the deck value shown is the highest.",
+    )
     return Diagnostic(
         code="hydro-bounds-clamped-to-declared-capacity",
         severity=Severity.INFO,
         category="Hydro capacity",
-        title=f"Stage limits above the plant capacity capped ({len(rows)})",
+        title=f"Stage limits above the plant capacity capped ({len(table.rows)})",
         summary=(
             "The listed per-stage limits in the deck sit above the plant's "
             "own capacity and were capped at it. The plant cannot exceed its "
             "capacity, so the cap leaves the results unchanged."
         ),
-        table=DiagnosticTable(
-            columns=["Code", "Name", "Limit", "Stages", "Deck value", "Capacity"],
-            rows=rows,
-            justify=["right", "left", "left", "left", "right", "right"],
-            caption="Stage ids are 0-based; the deck value shown is the highest.",
-        ),
+        table=table,
     )
 
 
 def _raised_to_minimum_diagnostic(
-    found: Mapping[tuple[int, str], tuple[float, list[tuple[int, float]]]],
+    found: _Findings,
     names: Mapping[int, str],
     source_codes: Mapping[int, int],
+    labelled: bool,
 ) -> Diagnostic:
-    rows = _clamp_rows(found, names, source_codes)
+    table = _clamp_table(
+        found,
+        names,
+        source_codes,
+        labelled,
+        declared="Minimum",
+        caption="Stage ids are 0-based; the deck value shown is the lowest.",
+    )
     return Diagnostic(
         code="hydro-bounds-raised-to-declared-minimum",
         severity=Severity.WARNING,
         category="Hydro capacity",
-        title=f"Stage limits below the plant minimum raised ({len(rows)})",
+        title=f"Stage limits below the plant minimum raised ({len(table.rows)})",
         summary=(
             "The listed per-stage limits in the deck sit below the plant's "
             "own minimum and were raised to it, so on those stages the case "
             "allows more than the deck does."
         ),
-        table=DiagnosticTable(
-            columns=["Code", "Name", "Limit", "Stages", "Deck value", "Minimum"],
-            rows=rows,
-            justify=["right", "left", "left", "left", "right", "right"],
-            caption="Stage ids are 0-based; the deck value shown is the lowest.",
-        ),
+        table=table,
     )
 
 

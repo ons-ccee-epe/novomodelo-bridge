@@ -14,6 +14,7 @@ from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.emission_checks import (
     BoundFamily,
+    BoundLabels,
     check_block_id_not_on_anticipated_thermal,
     check_bound_block_id_range,
     check_bound_row_uniqueness,
@@ -102,10 +103,7 @@ class TestHydroBoundsNoRaising:
         assert collected[0].code == "hydro-bounds-raising-not-applicable"
         assert collected[0].severity is Severity.INFO
 
-    def test_decomp_shaped_table_without_guarded_columns_is_not_applicable(
-        self,
-    ) -> None:
-        """DECOMP's hydro_bounds carries only min_outflow_m3s."""
+    def test_table_without_guarded_columns_is_not_applicable(self) -> None:
         hydros = _hydros(_hydro(0, max_turbined_m3s=100.0, max_generation_mw=50.0))
         hydro_bounds = pa.table(
             {
@@ -220,11 +218,11 @@ _CODES = {0: 6, 1: 11, 4: 24, 7: 58}
 
 
 class TestClampHydroBoundsToDeclared:
-    """``clamp_hydro_bounds_to_declared`` ceils/floors each per-stage MAX bound
-    into the plant's declared envelope, so novomodelo rule 43 (and its outflow
-    analogue) holds without raising the declaration to fit a per-stage
-    override. A cap at the declared max is a note; a raise to the declared min
-    loosens the deck's limit and is a warning."""
+    """``clamp_hydro_bounds_to_declared`` holds each per-stage ceiling to the
+    plant's declared envelope, so novomodelo rule 43 holds without raising the
+    declaration to fit a per-stage override. A cap at the declared max is a
+    note; a raise to the declared min, when asked for, loosens the deck's limit
+    and is a warning; floors stay as the deck has them."""
 
     def test_turbined_above_declared_max_is_capped_with_a_note(self) -> None:
         hydros = _hydros(_hydro_with_envelope(0, turbined=(0.0, 100.0)))
@@ -239,7 +237,7 @@ class TestClampHydroBoundsToDeclared:
 
         with dx.collect() as collected:
             result = clamp_hydro_bounds_to_declared(
-                hydros, hydro_bounds, source_codes=_CODES
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
             )
 
         # The raised value is clamped to the declaration; the in-envelope one is
@@ -252,6 +250,14 @@ class TestClampHydroBoundsToDeclared:
         assert diag.code == "hydro-bounds-clamped-to-declared-capacity"
         assert diag.severity is Severity.INFO
         assert diag.table is not None
+        assert diag.table.columns == [
+            "Code",
+            "Name",
+            "Limit",
+            "Stages",
+            "Deck value",
+            "Capacity",
+        ]
         assert diag.table.rows == [
             [6, "Hydro 0", "Max turbined flow (m³/s)", "0", 150.0, 100.0]
         ]
@@ -273,7 +279,7 @@ class TestClampHydroBoundsToDeclared:
 
         with dx.collect() as collected:
             result = clamp_hydro_bounds_to_declared(
-                hydros, hydro_bounds, source_codes=_CODES
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
             )
 
         assert result is not None
@@ -295,7 +301,7 @@ class TestClampHydroBoundsToDeclared:
 
         with dx.collect() as collected:
             result = clamp_hydro_bounds_to_declared(
-                hydros, hydro_bounds, source_codes=_CODES
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
             )
 
         assert result is hydro_bounds  # unchanged object
@@ -315,7 +321,7 @@ class TestClampHydroBoundsToDeclared:
 
         with dx.collect() as collected:
             result = clamp_hydro_bounds_to_declared(
-                hydros, hydro_bounds, source_codes=_CODES
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
             )
 
         assert result is not None
@@ -341,7 +347,7 @@ class TestClampHydroBoundsToDeclared:
 
         with dx.collect() as collected:
             result = clamp_hydro_bounds_to_declared(
-                hydros, hydro_bounds, source_codes=_CODES
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
             )
 
         assert result is hydro_bounds
@@ -349,7 +355,165 @@ class TestClampHydroBoundsToDeclared:
 
     def test_none_table_returns_none(self) -> None:
         hydros = _hydros(_hydro_with_envelope(0, turbined=(0.0, 100.0)))
-        assert clamp_hydro_bounds_to_declared(hydros, None, source_codes=_CODES) is None
+        assert (
+            clamp_hydro_bounds_to_declared(
+                hydros, None, source_codes=_CODES, raise_to_minimum=True
+            )
+            is None
+        )
+
+    def test_cap_within_written_precision_is_silent(self) -> None:
+        # BELO MONTE: 18 units of 611.111 MW declare 10999.998 MW; its RE
+        # ceiling writes 11000 MW, the same number at the deck's precision.
+        hydros = _hydros(_hydro_with_envelope(0, generation=(0.0, 10999.998)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([0], type=pa.int32()),
+                "max_generation_mw": pa.array([11000.0], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
+            )
+
+        assert result is not None
+        assert result["max_generation_mw"].to_pylist() == [10999.998]
+        assert collected == []
+
+    def test_raise_within_written_precision_is_silent(self) -> None:
+        hydros = _hydros(_hydro_with_envelope(4, outflow=(131.0, 800.0)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([4], type=pa.int32()),
+                "stage_id": pa.array([0], type=pa.int32()),
+                "max_outflow_m3s": pa.array([130.9999], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
+            )
+
+        assert result is not None
+        assert result["max_outflow_m3s"].to_pylist() == [131.0]
+        assert collected == []
+
+    def test_labels_name_the_constraints_above_the_capacity(self) -> None:
+        hydros = _hydros(_hydro_with_envelope(0, generation=(0.0, 100.0)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0, 0], type=pa.int32()),
+                "stage_id": pa.array([0, 0], type=pa.int32()),
+                "block_id": pa.array([0, 1], type=pa.int32()),
+                "max_generation_mw": pa.array([150.0, 120.0], type=pa.float64()),
+            }
+        )
+        labels: BoundLabels = {
+            (0, 0, 0, "max_generation_mw"): [("RE 654", 150.0)],
+            # RE 656 sits below the capacity and is not the one capped.
+            (0, 0, 1, "max_generation_mw"): [("RE 655", 120.0), ("RE 656", 90.0)],
+            (0, 0, None, "max_generation_mw"): [("RE 657", 200.0)],
+        }
+
+        with dx.collect() as collected:
+            clamp_hydro_bounds_to_declared(
+                hydros,
+                hydro_bounds,
+                source_codes=_CODES,
+                raise_to_minimum=True,
+                labels=labels,
+            )
+
+        (diag,) = collected
+        assert diag.code == "hydro-bounds-clamped-to-declared-capacity"
+        assert diag.table is not None
+        assert diag.table.columns == [
+            "Code",
+            "Name",
+            "Limit",
+            "Constraints",
+            "Stages",
+            "Deck value",
+            "Capacity",
+        ]
+        assert diag.table.rows == [
+            [
+                6,
+                "Hydro 0",
+                "Max generation (MW)",
+                "RE 654, RE 657, RE 655",
+                "0",
+                150.0,
+                100.0,
+            ]
+        ]
+
+    def test_floors_stay_as_the_deck_has_them(self) -> None:
+        # The ceiling is capped at 100; the 120 floor beside it is not moved.
+        hydros = _hydros(_hydro_with_envelope(0, generation=(0.0, 100.0)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([2], type=pa.int32()),
+                "min_generation_mw": pa.array([120.0], type=pa.float64()),
+                "max_generation_mw": pa.array([130.0], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
+            )
+
+        assert result is not None
+        assert result["min_generation_mw"].to_pylist() == [120.0]
+        assert result["max_generation_mw"].to_pylist() == [100.0]
+        assert [(d.code, d.severity) for d in collected] == [
+            ("hydro-bounds-clamped-to-declared-capacity", Severity.INFO)
+        ]
+
+    def test_without_raise_to_minimum_a_low_ceiling_stays(self) -> None:
+        hydros = _hydros(_hydro_with_envelope(0, outflow=(131.0, None)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([0], type=pa.int32()),
+                "max_outflow_m3s": pa.array([90.0], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=False
+            )
+
+        assert result is hydro_bounds
+        assert collected == []
+
+    def test_without_raise_to_minimum_a_high_ceiling_is_still_capped(self) -> None:
+        hydros = _hydros(_hydro_with_envelope(0, turbined=(10.0, 100.0)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0, 0], type=pa.int32()),
+                "stage_id": pa.array([0, 1], type=pa.int32()),
+                "max_turbined_m3s": pa.array([150.0, 5.0], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=False
+            )
+
+        assert result is not None
+        assert result["max_turbined_m3s"].to_pylist() == [100.0, 5.0]
+        assert [(d.code, d.severity) for d in collected] == [
+            ("hydro-bounds-clamped-to-declared-capacity", Severity.INFO)
+        ]
 
 
 # ---------------------------------------------------------------------------
