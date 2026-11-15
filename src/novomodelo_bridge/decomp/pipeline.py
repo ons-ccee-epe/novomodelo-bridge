@@ -836,21 +836,10 @@ _LIBS_LEFT_OUT = {
 def _libs_electrical_census_diagnostic(
     result: libs_electrical_emit.LibsElectricalResult,
 ) -> dx.Diagnostic:
-    """The ``decomp-libs-electrical-converted`` INFO diagnostic:
-    the authoritative per-restriction census for the deck's LIBs-era
-    long-form electrical file -- how many restrictions converted to a novomodelo
-    generic constraint, and how many were dropped, broken down by
-    :class:`~novomodelo_bridge.decomp.converters.libs_electrical_emit.LibsElectricalResult`'s
-    four drop reasons (``inactive``/``unrecognized-token``/
-    ``unresolved-bucket-bc``/``unresolved-bucket-a``, each already carrying
-    its own per-restriction WARNING/INFO diagnostic).
-
-    This supersedes the flat ``decomp-libs-electrical-present`` warning for
-    the converted subset (:func:`_emit_constraint_detection_diagnostics`
-    suppresses that warning once a model converts) -- this is the one place a
-    caller reads how much of the entry actually converted, so no "not
-    converted" claim survives over it.
-    """
+    """The ``decomp-libs-electrical-converted`` INFO census: the converted
+    restrictions plus one row per
+    :attr:`~novomodelo_bridge.decomp.converters.libs_electrical_emit.LibsElectricalResult.deferred`
+    reason, labelled by :data:`_LIBS_LEFT_OUT`."""
     n_converted = len(result.converted_codes)
     total = n_converted + sum(len(codes) for codes in result.deferred.values())
     rows: list[list[object]] = [["Converted", n_converted]]
