@@ -66,6 +66,7 @@ from novomodelo_bridge.decomp.converters.constraints import (
     slots_from_record,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
+    DISP_USIH_SUBSTITUTED,
     active_cells,
     assemble_bound,
 )
@@ -474,7 +475,8 @@ def _emit_restrictions(
     allocator: ConstraintIdAllocator,
 ) -> LibsElectricalResult:
     """The body of :func:`emit_libs_electrical_generics`, reporting each
-    restriction's findings as it meets them."""
+    restriction's findings as it meets them, and the available power it held
+    constant only for a restriction it keeps."""
     builder = GenericConstraintBuilder(allocator)
     converted: list[int] = []
     deferred: dict[str, list[int]] = {
@@ -485,83 +487,116 @@ def _emit_restrictions(
     }
 
     for code in sorted(model.restrictions):
-        restriction = model.restrictions[code]
-        try:
-            cells = active_cells(restriction, model, context_factory, calendar)
-            if not cells:
-                deferred["inactive"].append(code)
-                continue
-
-            assembled_by_cell: dict[tuple[int, int], AssembledBound] = {}
-            bucket_bc_unresolved = False
-            for stage_index, block_index in sorted(cells):
-                assembled = assemble_bound(
-                    restriction,
-                    model,
-                    stage_index,
-                    block_index,
-                    context_factory(stage_index, block_index),
-                    a_h,
-                )
-                if assembled is None:
-                    bucket_bc_unresolved = True
-                    break
-                assembled_by_cell[(stage_index, block_index)] = assembled
-            if bucket_bc_unresolved:
-                deferred["unresolved-bucket-bc"].append(code)
-                continue
-
-            reference_cell, reference_assembled = next(iter(assembled_by_cell.items()))
-            for cell, assembled in assembled_by_cell.items():
-                if assembled.terms != reference_assembled.terms:
-                    raise ValueError(
-                        f"restriction {code}: AssembledBound.terms differ "
-                        f"between active cell {reference_cell} and {cell} — "
-                        "the structural expression must be cell-invariant"
-                    )
-
-            expression = build_electrical_expression(
-                reference_assembled,
+        with collect() as local:
+            kept = _emit_restriction(
+                code,
+                model.restrictions[code],
+                model,
                 id_map,
+                context_factory,
+                a_h,
+                calendar,
                 ncs_id_by_pee_code,
                 conjh_bus_by_code_group,
                 line_map,
+                big_m,
+                builder,
+                deferred,
             )
-        except UnrecognizedElectricalToken as err:
-            _emit_unrecognized_token(code, err.name)
-            deferred["unrecognized-token"].append(code)
-            continue
-
-        if isinstance(expression, Unresolved):
-            _emit_unresolved_term(code, expression)
-        if expression is None or isinstance(expression, Unresolved):
-            deferred["unresolved-bucket-a"].append(code)
-            continue
-
-        bounds = _synthesize_stage_bounds(assembled_by_cell, calendar)
-        stages = sorted(bounds)
-        record = ConstraintRecord(
-            family="LIBS_ELEC",
-            constraint_id=code,
-            stage_start=stages[0],
-            stage_end=stages[-1],
-            terms=(),
-            bounds=bounds,
-            per_block=True,
-        )
-        builder.add(
-            name=f"LIBS_ELEC_{code}",
-            description=f"LIBs electrical special constraint {code}",
-            expression=expression,
-            slack=soft_slack(
-                _resolve_violation_penalty(restriction, big_m), "per_hour"
-            ),
-            slots=slots_from_record(record, calendar),
-        )
-        converted.append(code)
+        if kept:
+            converted.append(code)
+        for diagnostic in local:
+            if kept or diagnostic.code != DISP_USIH_SUBSTITUTED:
+                emit(diagnostic)
 
     return LibsElectricalResult(
         generic=builder.result(),
         converted_codes=tuple(converted),
         deferred={reason: tuple(codes) for reason, codes in deferred.items()},
     )
+
+
+def _emit_restriction(
+    code: int,
+    restriction: ElectricalRestriction,
+    model: LibsElectricalModel,
+    id_map: DecompIdMap,
+    context_factory: Callable[[int, int], DataContext],
+    a_h: AvailablePower,
+    calendar: Sequence[OperativeStage],
+    ncs_id_by_pee_code: Mapping[int, int],
+    conjh_bus_by_code_group: Mapping[tuple[int, int], int],
+    line_map: Mapping[tuple[int, int], int],
+    big_m: float,
+    builder: GenericConstraintBuilder,
+    deferred: dict[str, list[int]],
+) -> bool:
+    """Add restriction *code* to *builder* and return ``True``, or record on
+    *deferred* why it is dropped and return ``False``."""
+    try:
+        cells = active_cells(restriction, model, context_factory, calendar)
+        if not cells:
+            deferred["inactive"].append(code)
+            return False
+
+        assembled_by_cell: dict[tuple[int, int], AssembledBound] = {}
+        for stage_index, block_index in sorted(cells):
+            assembled = assemble_bound(
+                restriction,
+                model,
+                stage_index,
+                block_index,
+                context_factory(stage_index, block_index),
+                a_h,
+            )
+            if assembled is None:
+                deferred["unresolved-bucket-bc"].append(code)
+                return False
+            assembled_by_cell[(stage_index, block_index)] = assembled
+
+        reference_cell, reference_assembled = next(iter(assembled_by_cell.items()))
+        for cell, assembled in assembled_by_cell.items():
+            if assembled.terms != reference_assembled.terms:
+                raise ValueError(
+                    f"restriction {code}: AssembledBound.terms differ "
+                    f"between active cell {reference_cell} and {cell} — "
+                    "the structural expression must be cell-invariant"
+                )
+
+        expression = build_electrical_expression(
+            reference_assembled,
+            id_map,
+            ncs_id_by_pee_code,
+            conjh_bus_by_code_group,
+            line_map,
+        )
+    except UnrecognizedElectricalToken as err:
+        _emit_unrecognized_token(code, err.name)
+        deferred["unrecognized-token"].append(code)
+        return False
+
+    if isinstance(expression, Unresolved):
+        _emit_unresolved_term(code, expression)
+    if expression is None or isinstance(expression, Unresolved):
+        deferred["unresolved-bucket-a"].append(code)
+        return False
+
+    bounds = _synthesize_stage_bounds(assembled_by_cell, calendar)
+    stages = sorted(bounds)
+    record = ConstraintRecord(
+        family="LIBS_ELEC",
+        constraint_id=code,
+        stage_start=stages[0],
+        stage_end=stages[-1],
+        terms=(),
+        bounds=bounds,
+        per_block=True,
+    )
+    builder.add(
+        name=f"LIBS_ELEC_{code}",
+        description=f"LIBs electrical special constraint {code}",
+        expression=expression,
+        slack=soft_slack(_resolve_violation_penalty(restriction, big_m), "per_hour"),
+        slots=slots_from_record(record, calendar),
+    )
+    return True

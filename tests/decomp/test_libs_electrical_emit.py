@@ -1127,6 +1127,23 @@ def test_emit_reserve_restriction_reports_each_stage_available_power_used() -> N
     assert finding.table.rows == [[407, 1, 0, 1000.0], [407, 1, 1, 900.0]]
 
 
+def test_emit_dropped_reserve_restriction_reports_no_available_power_used() -> None:
+    restriction = _reserve_restriction(407, plant_code=1, threshold=300.0)
+    model = LibsElectricalModel(
+        expressions={}, aliases={}, restrictions={407: restriction}, rules={}
+    )
+
+    result, sink = _emit_findings(
+        model,
+        calendar=_emit_calendar(2, n_blocks=2),
+        a_h=AvailablePower(overlay={(1, 0): 1000.0}),
+    )
+
+    assert result.converted_codes == ()
+    assert result.deferred["unresolved-bucket-bc"] == (407,)
+    assert [d.code for d in sink] == ["decomp-electrical-disp-usih-unresolved"]
+
+
 def test_emit_restriction_without_disp_usih_reports_nothing() -> None:
     model = LibsElectricalModel(
         expressions={},
