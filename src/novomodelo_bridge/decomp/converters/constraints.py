@@ -53,7 +53,6 @@ rather than a per-plant limit read off the register.
 from __future__ import annotations
 
 import dataclasses
-import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -101,8 +100,6 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
-
-_LOG = logging.getLogger(__name__)
 
 #: A term's weight in an expression: a literal coefficient, or the ``@name``
 #: of the per-stage parameter carrying a stage-varying one.
