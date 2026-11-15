@@ -11,6 +11,7 @@ CLI maps :class:`NovomodeloReadError` to exit code 2 (distinct from exit 1 =
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -33,6 +34,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_bus_aggregates,
     read_novomodelo_bus_means,
     read_novomodelo_bus_metadata,
+    read_novomodelo_buses,
     read_novomodelo_fpha_fit_config,
     read_novomodelo_hydro_bus_generation,
     read_novomodelo_hydro_bus_labels,
@@ -48,12 +50,14 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_load_bus_ids,
     read_novomodelo_lp_max_generation,
     read_novomodelo_network_lines,
+    read_novomodelo_non_controllable_sources,
     read_novomodelo_productivity_detail,
     read_novomodelo_scenario_weights,
     read_novomodelo_spillage_energy,
     read_novomodelo_stage_line_bounds,
     read_novomodelo_thermal_means,
     read_novomodelo_thermal_metadata,
+    read_novomodelo_thermals,
     read_novomodelo_training_metadata,
     split_plant_row,
 )
@@ -712,15 +716,77 @@ _HYDRO_MEANS = pl.DataFrame(
 )
 
 
-class TestReadNovomodeloHydros:
-    def test_absent_file_is_a_missing_note(self, tmp_path: Path) -> None:
+#: Each ``system/`` entity loader, its file, and whether the conversion always
+#: writes that file (so its absence is noted).
+_SYSTEM_ENTITY_LOADERS = [
+    (read_novomodelo_lines, "lines.json", False),
+    (read_novomodelo_hydros, "hydros.json", True),
+    (read_novomodelo_thermals, "thermals.json", False),
+    (read_novomodelo_non_controllable_sources, "non_controllable_sources.json", False),
+    (read_novomodelo_buses, "buses.json", True),
+]
+
+
+@pytest.mark.parametrize(("read", "filename", "always_written"), _SYSTEM_ENTITY_LOADERS)
+class TestSystemEntityLoaders:
+    def test_absent_file_is_noted_only_when_the_conversion_always_writes_it(
+        self,
+        tmp_path: Path,
+        read: Callable[[Path], list[dict]],
+        filename: str,
+        always_written: bool,
+    ) -> None:
         with dx.collect() as found:
-            assert read_novomodelo_hydros(tmp_path / "output") == []
+            assert read(tmp_path / "output") == []
+
+        expected = [
+            ("report-file-missing", Severity.INFO, f"system/{filename} not found")
+        ]
+        assert [(d.code, d.severity, d.title) for d in found] == (
+            expected if always_written else []
+        )
+
+    def test_unparseable_file_is_one_warning(
+        self,
+        tmp_path: Path,
+        read: Callable[[Path], list[dict]],
+        filename: str,
+        always_written: bool,
+    ) -> None:
+        (tmp_path / "system").mkdir()
+        (tmp_path / "system" / filename).write_text("{not json", encoding="utf-8")
+
+        with dx.collect() as found:
+            assert read(tmp_path / "output") == []
 
         assert [(d.code, d.severity, d.title) for d in found] == [
-            ("report-file-missing", Severity.INFO, "system/hydros.json not found")
+            (
+                "report-file-unreadable",
+                Severity.WARNING,
+                f"system/{filename} could not be read",
+            )
         ]
 
+    def test_present_file_yields_its_entries(
+        self,
+        tmp_path: Path,
+        read: Callable[[Path], list[dict]],
+        filename: str,
+        always_written: bool,
+    ) -> None:
+        entries = [{"id": 0, "name": "A"}, {"id": 1, "name": "B"}]
+        (tmp_path / "system").mkdir()
+        (tmp_path / "system" / filename).write_text(
+            json.dumps({filename.removesuffix(".json"): entries}), encoding="utf-8"
+        )
+
+        with dx.collect() as found:
+            assert read(tmp_path / "output") == entries
+
+        assert found == []
+
+
+class TestReadNovomodeloHydros:
     def test_file_without_the_plant_list_is_a_case_without_plants(
         self, tmp_path: Path
     ) -> None:

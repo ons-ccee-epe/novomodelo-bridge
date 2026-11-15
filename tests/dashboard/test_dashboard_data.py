@@ -158,7 +158,16 @@ def test_unparseable_config_json_without_a_stages_json_rate_warns(
     assert "0.0% discount rate" in config_findings[0].summary
 
 
-@pytest.mark.parametrize("filename", ["lines.json", "hydros.json"])
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "lines.json",
+        "hydros.json",
+        "thermals.json",
+        "non_controllable_sources.json",
+        "buses.json",
+    ],
+)
 def test_dashboard_builds_when_a_system_json_does_not_parse(
     tmp_path: Path, filename: str
 ) -> None:

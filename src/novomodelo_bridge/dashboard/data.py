@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -35,13 +36,16 @@ from novomodelo_bridge.novomodelo.readers import (
     SPLIT_PLANT_COLUMNS,
     SPLIT_PLANT_SUMMARY,
     hydro_home_bus,
+    read_novomodelo_buses,
     read_novomodelo_generic_constraint_echo,
     read_novomodelo_hydro_metadata,
     read_novomodelo_hydros,
     read_novomodelo_line_bounds,
     read_novomodelo_lines,
     read_novomodelo_load_bus_ids,
+    read_novomodelo_non_controllable_sources,
     read_novomodelo_scenario_weights,
+    read_novomodelo_thermals,
     read_novomodelo_training_metadata,
     split_plant_row,
 )
@@ -67,20 +71,21 @@ def scan_entity(case_dir: Path, entity: str) -> pl.LazyFrame:
     return pl.scan_parquet(str(sim_dir / "**" / "*.parquet"), hive_partitioning=True)
 
 
+_ENTITY_READERS: dict[str, Callable[[Path], list[dict]]] = {
+    "hydros": read_novomodelo_hydros,
+    "buses": read_novomodelo_buses,
+    "thermals": read_novomodelo_thermals,
+    "non_controllable_sources": read_novomodelo_non_controllable_sources,
+    "lines": read_novomodelo_lines,
+}
+
+
 def load_names(case_dir: Path) -> dict[tuple[str, int], str]:
     """Load entity name mappings from system JSON files."""
     names: dict[tuple[str, int], str] = {}
-    for item in read_novomodelo_hydros(case_dir / "output"):
-        names[("hydros", item["id"])] = item.get("name", str(item["id"]))
-    for entity in ("buses", "thermals", "non_controllable_sources"):
-        path = case_dir / "system" / f"{entity}.json"
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            for item in data.get(entity, []):
-                names[(entity, item["id"])] = item.get("name", str(item["id"]))
-    for item in read_novomodelo_lines(case_dir / "output"):
-        names[("lines", item["id"])] = item.get("name", str(item["id"]))
+    for entity, read in _ENTITY_READERS.items():
+        for item in read(case_dir / "output"):
+            names[(entity, item["id"])] = item.get("name", str(item["id"]))
     return names
 
 
@@ -246,13 +251,8 @@ def load_hydro_bus_map(
 
 def load_thermal_metadata(case_dir: Path) -> dict[int, dict]:
     """Return thermal_id -> {bus_id, max_mw, cost_per_mwh} metadata."""
-    path = case_dir / "system" / "thermals.json"
-    if not path.exists():
-        return {}
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
     result = {}
-    for t in d["thermals"]:
+    for t in read_novomodelo_thermals(case_dir / "output"):
         # v0.4.3+: scalar cost_per_mwh; legacy: cost_segments array.
         if "cost_per_mwh" in t:
             cost = float(t["cost_per_mwh"])
@@ -270,12 +270,10 @@ def load_thermal_metadata(case_dir: Path) -> dict[int, dict]:
 
 
 def load_ncs_bus_map(case_dir: Path) -> dict[int, int]:
-    path = case_dir / "system" / "non_controllable_sources.json"
-    if not path.exists():
-        return {}
-    with open(path, encoding="utf-8") as f:
-        d = json.load(f)
-    return {n["id"]: n["bus_id"] for n in d["non_controllable_sources"]}
+    return {
+        n["id"]: n["bus_id"]
+        for n in read_novomodelo_non_controllable_sources(case_dir / "output")
+    }
 
 
 def load_hydro_metadata(

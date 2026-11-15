@@ -479,3 +479,25 @@ class TestDashboardReadFailure:
             ("report-file-unreadable", "warning"),
             ("unexpected-error", "error"),
         ]
+
+    def test_a_hydro_plant_without_unit_groups_is_one_error_envelope(
+        self, tmp_path: Path
+    ) -> None:
+        case_dir = _make_case_dir(tmp_path)
+        (case_dir / "stages.json").write_text(
+            json.dumps({"stages": [{"id": 0, "blocks": [{"id": 0, "hours": 730.0}]}]}),
+            encoding="utf-8",
+        )
+        (case_dir / "system").mkdir()
+        (case_dir / "system" / "hydros.json").write_text(
+            json.dumps({"hydros": [{"id": 3, "name": "ORPHAN"}]}), encoding="utf-8"
+        )
+
+        result = _run_cli_subprocess("dashboard", str(case_dir), "--json")
+
+        assert result.returncode == 1
+        document = json.loads(result.stdout)
+        assert document["status"] == "error"
+        [error] = [d for d in document["diagnostics"] if d["severity"] == "error"]
+        assert error["code"] == "novomodelo-output-unreadable"
+        assert "hydro 3 (ORPHAN)" in error["summary"]

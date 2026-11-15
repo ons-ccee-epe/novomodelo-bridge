@@ -142,12 +142,15 @@ def test_load_names_without_a_readable_lines_json_keeps_the_other_names(
     _write_json(
         tmp_path / "system" / "hydros.json", {"hydros": [{"id": 0, "name": "H0"}]}
     )
+    _write_json(
+        tmp_path / "system" / "buses.json", {"buses": [{"id": 0, "name": "B0"}]}
+    )
     (tmp_path / "system" / "lines.json").write_text("{not json", encoding="utf-8")
 
     with dx.collect() as found:
         result = load_names(tmp_path)
 
-    assert result == {("hydros", 0): "H0"}
+    assert result == {("hydros", 0): "H0", ("buses", 0): "B0"}
     assert [(d.code, d.title) for d in found] == [
         ("report-file-unreadable", "system/lines.json could not be read")
     ]
@@ -330,20 +333,32 @@ def test_load_hydro_bus_map_empty_unit_groups_raises_named_error(
         load_hydro_bus_map(tmp_path)
 
 
-@pytest.mark.parametrize("load", [load_names, load_hydro_bus_map, load_hydro_metadata])
-def test_hydro_loaders_without_a_readable_hydros_json_degrade_with_one_warning(
-    tmp_path: Path, load: Callable[[Path], object]
+@pytest.mark.parametrize(
+    ("filename", "loads"),
+    [
+        ("hydros.json", [load_names, load_hydro_bus_map, load_hydro_metadata]),
+        ("thermals.json", [load_names, load_thermal_metadata]),
+        ("non_controllable_sources.json", [load_names, load_ncs_bus_map]),
+        ("buses.json", [load_names]),
+    ],
+)
+def test_loaders_of_an_unreadable_system_json_degrade_to_one_warning(
+    tmp_path: Path, filename: str, loads: list[Callable[[Path], object]]
 ) -> None:
     (tmp_path / "system").mkdir()
-    (tmp_path / "system" / "hydros.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "system" / filename).write_text("{not json", encoding="utf-8")
 
     with dx.collect() as found:
-        result = load(tmp_path)
+        for load in loads:
+            assert load(tmp_path) == {}
 
-    assert result == {}
-    assert [(d.code, d.title) for d in found] == [
-        ("report-file-unreadable", "system/hydros.json could not be read")
-    ]
+    unreadable = [d for d in found if d.code == "report-file-unreadable"]
+    assert len(unreadable) == len(loads)
+    assert [
+        d.title
+        for d in dx.finalize_diagnostics(found)
+        if d.code == "report-file-unreadable"
+    ] == [f"system/{filename} could not be read"]
 
 
 # ---------------------------------------------------------------------------

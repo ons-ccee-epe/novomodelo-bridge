@@ -19,14 +19,16 @@ treat as required — the source model's ``newave_readers`` instead
 degrades every present-but-unparseable input to a typed-empty frame, a
 genuine behaviour difference (see that module's docstring). Every
 partition and system JSON this module reads is an optional input. A
-present-but-unparseable system JSON that names or describes entities
-(lines, hydro plants, thermals, buses) or the run's training
-``metadata.json`` degrades to an empty result with a
+present-but-unparseable system JSON that lists entities (lines, hydro
+plants, thermal plants, non-controllable sources, buses) or the run's
+training ``metadata.json`` degrades to an empty result with a
 ``report-file-unreadable`` warning whose effect is the same from every reader
-of the file, since the report can go on without them; ``lines.json`` and
-``hydros.json`` are read only through :func:`read_novomodelo_lines` and
-:func:`read_novomodelo_hydros`. The thermal and non-controllable-source bus
-maps, and every other present-but-corrupt parquet or JSON, raise.
+of the file, since the report can go on without them; each of those system
+JSONs has one loader, :func:`_read_system_list` under a public
+``read_novomodelo_<file>`` name, that every degrading reader goes through.
+The thermal and non-controllable-source bus maps of
+:func:`read_novomodelo_bus_aggregates`, and every other present-but-corrupt
+parquet or JSON, raise.
 """
 
 from __future__ import annotations
@@ -73,6 +75,14 @@ _HYDROS_EFFECT = (
     "leaves out the results it matches, places or classifies by plant, and "
     "counts each plant's minimum storage as zero in the generic constraints' "
     "bounds."
+)
+_THERMALS_EFFECT = (
+    "the report shows the thermal plants without their names and leaves out "
+    "the results it matches or places by plant."
+)
+_NON_CONTROLLABLE_SOURCES_EFFECT = (
+    "the report shows the non-controllable sources without their names and "
+    "leaves their generation out of the generation by bus."
 )
 _BUSES_EFFECT = "the report shows the buses without their names."
 
@@ -2483,56 +2493,67 @@ def read_novomodelo_hydros(novomodelo_output_dir: Path) -> list[dict]:
     return _read_hydros_json(novomodelo_output_dir)[1]
 
 
+def read_novomodelo_thermals(novomodelo_output_dir: Path) -> list[dict]:
+    """``system/thermals.json``'s thermal plants, by :func:`_read_system_list`'s
+    contract; an absent file is a case without thermal plants."""
+    return _read_system_list(
+        novomodelo_output_dir,
+        "thermals.json",
+        _THERMALS_EFFECT,
+        entity=("thermal plant", "thermal plants"),
+        absence_is_finding=False,
+    )[1]
+
+
+def read_novomodelo_non_controllable_sources(
+    novomodelo_output_dir: Path,
+) -> list[dict]:
+    """``system/non_controllable_sources.json``'s sources, by
+    :func:`_read_system_list`'s contract; an absent file is a case without
+    them."""
+    return _read_system_list(
+        novomodelo_output_dir,
+        "non_controllable_sources.json",
+        _NON_CONTROLLABLE_SOURCES_EFFECT,
+        entity=("non-controllable source", "non-controllable sources"),
+        absence_is_finding=False,
+    )[1]
+
+
+def read_novomodelo_buses(novomodelo_output_dir: Path) -> list[dict]:
+    """``system/buses.json``'s buses, by :func:`_read_system_list`'s contract;
+    the conversion always writes the file, so its absence is noted."""
+    return _read_system_list(
+        novomodelo_output_dir,
+        "buses.json",
+        _BUSES_EFFECT,
+        entity=("bus", "buses"),
+        absence_is_finding=True,
+    )[1]
+
+
 def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
-    """Read thermal metadata from Novomodelo thermals.json.
-
-    Returns ``{entity_id: {"name": str}}``.
-    """
-    path = _find_system_json(novomodelo_output_dir, "thermals.json")
-    if path is None:
-        _LOG.debug("no system/thermals.json near %s", novomodelo_output_dir)
-        return {}
-
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as exc:
-        _emit_system_json_unreadable(
-            path, "the report shows the thermal plants without their names.", exc
-        )
-        return {}
-
+    """``{thermal id: {"name": str}}`` from :func:`read_novomodelo_thermals`."""
     return {
-        int(t["id"]): {"name": str(t.get("name", f"thermal_{t['id']}"))}
-        for t in data.get("thermals", [])
+        t["id"]: {"name": str(t.get("name", f"thermal_{t['id']}"))}
+        for t in read_novomodelo_thermals(novomodelo_output_dir)
     }
 
 
 def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
-    """Read bus metadata from Novomodelo buses.json.
-
-    Returns ``{entity_id: {"name": str, "has_load": bool}}``, with
-    ``has_load`` from :func:`read_novomodelo_load_bus_ids`.
-    """
-    path = _find_system_json(novomodelo_output_dir, "buses.json")
-    if path is None:
-        _emit_system_json_missing(novomodelo_output_dir, "buses.json", _BUSES_EFFECT)
+    """``{bus id: {"name": str, "has_load": bool}}`` from
+    :func:`read_novomodelo_buses`, with ``has_load`` from
+    :func:`read_novomodelo_load_bus_ids`."""
+    buses = read_novomodelo_buses(novomodelo_output_dir)
+    if not buses:
         return {}
-
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as exc:
-        _emit_system_json_unreadable(path, _BUSES_EFFECT, exc)
-        return {}
-
     load_bus_ids = read_novomodelo_load_bus_ids(novomodelo_output_dir)
     return {
-        int(b["id"]): {
+        b["id"]: {
             "name": str(b.get("name", f"bus_{b['id']}")),
-            "has_load": int(b["id"]) in load_bus_ids,
+            "has_load": b["id"] in load_bus_ids,
         }
-        for b in data.get("buses", [])
+        for b in buses
     }
 
 

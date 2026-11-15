@@ -135,11 +135,15 @@ links are cobre-bridge's.
   now reads a LIBS coefficient written before a space or a parenthesis, and
   stops on a function given the wrong number of arguments.
 - **`compare` and `dashboard` no longer stop on a `system/lines.json` or
-  `system/hydros.json` they cannot read**, where `compare newave` exited 2 on
-  such a `hydros.json` and `dashboard` stopped with a traceback. Without
-  `lines.json` they leave out the interchange and the Network tab's lines;
-  without `hydros.json`, the hydro plants' names and the results matched,
-  placed or classified by plant. A `report-file-unreadable` warning says so.
+  `system/hydros.json` they cannot read, nor `dashboard` on such a
+  `buses.json`, `thermals.json` or `non_controllable_sources.json`**, where
+  `compare newave` exited 2 on such a `hydros.json` and `dashboard` stopped
+  with a traceback. Without `lines.json` they leave out the interchange and
+  the Network tab's lines; without `hydros.json`, the hydro plants' names and
+  the results matched, placed or classified by plant. Without one of the other
+  three, `dashboard` shows its entities without their names and leaves out the
+  thermal plants' results or the non-controllable sources' generation by bus.
+  A `report-file-unreadable` warning says so.
 - **`export dessem` reports a missing DECOMP deck directory as
   `source-file-missing` and a missing case directory as
   `novomodelo-output-unreadable`**, as `convert` and `dashboard` do, instead

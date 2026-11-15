@@ -47,7 +47,9 @@ def _run_dashboard(args: DashboardArgs) -> None:
                 no_color=args.no_color,
             ):
                 build_dashboard(case_dir, output_path)
-        except NovomodeloReadError as exc:
+        # Disjoint hierarchies (a RuntimeError and a BridgeError): either one
+        # left out escapes as a bare traceback with no --json envelope.
+        except (NovomodeloReadError, NovomodeloOutputError) as exc:
             _fail("dashboard", args, exc, 1, found_before=dash_diags)
     dash_diags = dx.finalize_diagnostics(dash_diags)
     size_kb = output_path.stat().st_size / 1024
