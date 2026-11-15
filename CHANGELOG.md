@@ -190,6 +190,9 @@ links are cobre-bridge's.
   plant in `hidr.dat` with no `UH` record.** It now leaves the constraint out
   with a `decomp-rhv-varm-plant-uncadastred` warning, as for a plant missing
   from `hidr.dat`.
+- **`convert decomp` listed in `decomp-electrical-disp-usih-substituted` LIBS
+  restrictions it then left out.** The note now lists only the restrictions
+  the case keeps.
 - **`convert decomp` stopped on a deck whose only thermal plants are GNL.**
   Such a deck now converts.
 - **`dashboard` showed wrong costs**: the Costs tab listed `Hydro Violation`
