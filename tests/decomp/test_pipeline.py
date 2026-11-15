@@ -22,7 +22,11 @@ from typer.testing import CliRunner
 
 from novomodelo_bridge.cli import app
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
-from novomodelo_bridge.core.errors import EmissionCheckError, UnsupportedSourceError
+from novomodelo_bridge.core.errors import (
+    EmissionCheckError,
+    FieldParseError,
+    UnsupportedSourceError,
+)
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -339,7 +343,7 @@ class TestScenarioEmitters:
         fan = table[(table["stage_id"] == 4) & (table["scenario_id"] == 1)]
         assert fan[fan["hydro_id"] == 1]["value_m3s"].iloc[0] == pytest.approx(145.0)
 
-    def test_monthly_trunk_scenario_raises(self) -> None:
+    def test_monthly_trunk_scenario_against_its_probabilities_raises(self) -> None:
         hours = (
             [[24.0, 64.0, 80.0]] * 3 + [[216.0, 216.0, 216.0]] + [[248.0, 248.0, 248.0]]
         )
@@ -357,7 +361,7 @@ class TestScenarioEmitters:
             )
 
         with pytest.raises(
-            UnsupportedSourceError, match="monthly stage 4 .*inflow scenario 2"
+            FieldParseError, match="monthly stage 4 .*inflow scenario 2"
         ) as raised:
             convert_external_inflows(
                 make_decomp_case(Path("unused"), calendar=calendar),

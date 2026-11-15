@@ -44,9 +44,8 @@ _DADGER = "dadger.rvN"
 def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
     """Extract one deficit cost per subsystem code from the ``CD`` records.
 
-    Enforces the single-segment shape the Novomodelo bus model encodes: one
-    curve per subsystem, 100 % depth, one cost uniform across blocks and
-    across every declared stage.
+    Accepts only one curve per subsystem at 100 % depth, with one cost uniform
+    across blocks and across every declared stage.
 
     Raises
     ------
@@ -70,9 +69,9 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
             listed = ", ".join(str(curve) for curve in curves)
             raise UnsupportedSourceError(
                 f"dadger.rvN gives subsystem {code} "
-                f"{counted(len(curves), 'CD deficit curve')} ({listed}). The "
-                "conversion carries one deficit curve per subsystem, so give "
-                "the subsystem a single CD curve.",
+                f"{counted(len(curves), 'CD deficit curve')} ({listed}). More "
+                "than one deficit curve per subsystem is not converted yet, so "
+                "give the subsystem a single CD curve.",
                 path=_DADGER,
                 field="CD codigo_curva",
             )
@@ -87,10 +86,10 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
                 if not pd.isna(limit) and float(limit) != _FULL_DEPTH_PERCENT:
                     raise UnsupportedSourceError(
                         f"dadger.rvN limits the CD deficit curve of subsystem "
-                        f"{code} to {float(limit):g} % of the load. The "
-                        "conversion carries one deficit segment over the whole "
-                        "load, so give every block of the curve a limit of "
-                        f"{_FULL_DEPTH_PERCENT:g} %.",
+                        f"{code} to {float(limit):g} % of the load. A deficit "
+                        "curve that does not cover the whole load is not "
+                        "converted yet, so give every block of the curve a "
+                        f"limit of {_FULL_DEPTH_PERCENT:g} %.",
                         path=_DADGER,
                         field="CD limite_superior",
                     )
@@ -98,6 +97,9 @@ def bus_deficit_costs(dadger: Dadger) -> dict[int, float]:
             raise ValueError(f"subsystem {code}: the CD records give no deficit cost")
         if len(values) > 1:
             listed = ", ".join(f"{value:g}" for value in sorted(values))
+            # TRACKED NOVOMODELO-GAP (C38): the source model prices the deficit
+            # per stage and block, novomodelo takes one cost per bus deficit
+            # segment. Remove when novomodelo accepts stage-varying deficit costs.
             raise UnsupportedSourceError(
                 f"dadger.rvN gives subsystem {code} different CD deficit costs "
                 f"across blocks and stages ({listed}). The case carries "

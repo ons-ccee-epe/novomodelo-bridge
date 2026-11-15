@@ -27,7 +27,11 @@ from novomodelo_bridge.core.diagnostics import (
     collect,
     counted,
 )
-from novomodelo_bridge.core.errors import BridgeError, diagnostic_from_exception
+from novomodelo_bridge.core.errors import (
+    BridgeError,
+    FieldParseError,
+    diagnostic_from_exception,
+)
 from novomodelo_bridge.core.preflight import (
     CheckItem,
     PreflightResult,
@@ -107,7 +111,7 @@ def _calendar_check(
 
     try:
         calendar = operative_calendar_from_dadger(dadger)
-    except (BridgeError, ValueError, AttributeError, TypeError) as exc:
+    except (ValueError, AttributeError, TypeError) as exc:
         return (
             CheckItem(
                 label=_CALENDAR_LABEL,
@@ -136,7 +140,7 @@ def _deficit_check(dadger: Dadger) -> tuple[CheckItem, list[Diagnostic]]:
 
     try:
         costs = bus_deficit_costs(dadger)
-    except (BridgeError, ValueError, KeyError, AttributeError) as exc:
+    except (ValueError, KeyError, AttributeError) as exc:
         return (
             CheckItem(label=_DEFICIT_LABEL, passed=False, detail=str(exc)),
             _typed_failure_diagnostics(exc),
@@ -196,7 +200,7 @@ def _tree_shape_check(
 
     try:
         fan = terminal_fan_probabilities(vazoes, calendar)
-    except (BridgeError, ValueError, KeyError, AttributeError) as exc:
+    except (ValueError, KeyError, AttributeError) as exc:
         return (
             CheckItem(label=_TREE_SHAPE_LABEL, passed=False, detail=str(exc)),
             _typed_failure_diagnostics(exc),
@@ -550,7 +554,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
 
     try:
         id_map = DecompIdMap.from_dadger(dadger)
-    except (BridgeError, ValueError) as exc:
+    except (FieldParseError, ValueError) as exc:
         checks.append(CheckItem(label="Entity id map", passed=False, detail=str(exc)))
         diagnostics.append(diagnostic_from_exception(exc, context=_CONTEXT))
         return PreflightResult(

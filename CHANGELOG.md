@@ -164,18 +164,21 @@ links are cobre-bridge's.
   the far ones.** Its status is `ok` only when every variable is close, and
   `summary.parquet` has one row per entity type and variable; update scripts
   that read either.
-- **BREAKING: `convert decomp` reports a deck it cannot convert as
+- **`convert decomp` reports a deck it cannot convert as
   `source-unsupported`** instead of `unexpected-error`, naming the file and
-  the record field and saying what to change. This covers `CD` deficit curves
-  with more than one curve per subsystem, a limit under 100 % or a cost that
-  varies; an `SB` subsystem named `IV`; a `VI` travel time longer than the
-  post-study stage; an `NL` lag or `GL` dates the study cannot hold, or `GL`
-  dates past the horizon that differ between GNL plants; `GS` months split
-  into weeks in a study of monthly stages; a `vazoes` scenario tree that
-  branches before the last stage; a summer-time (`VR`) week in `DP`; and a
-  renewable park with more than one `PEE-CONFIG-PER` operating state.
+  the record field, saying what to change and, where the conversion rather
+  than Novomodelo is missing, that the value is not converted yet. This
+  covers `CD` deficit curves with more than one curve per subsystem, a limit
+  under 100 % or a cost that varies; an `SB` subsystem named `IV`; a `VI`
+  travel time longer than the post-study stage; an `NL` lag or `GL` dates the
+  study cannot hold, or `GL` dates past the horizon that differ between GNL
+  plants; `GS` months split into weeks in a study of monthly stages; a
+  `vazoes` scenario tree that branches before the last stage; a summer-time
+  (`VR`) week in `DP`; and a renewable park with more than one
+  `PEE-CONFIG-PER` operating state. A `vazoes` file whose generated scenarios
+  contradict its probabilities is reported as `source-field-parse`.
   `compare decomp` and `export dessem` report the ones they meet the same
-  way. Update scripts that match `unexpected-error` on these decks.
+  way.
 - **The `compare` report's Hydro and Thermal Details tabs lead with a per-plant
   gap table**, tinted by band, worst plant first, where a click opens the
   plant's charts; the Productivity tab lists only the plants that differ and

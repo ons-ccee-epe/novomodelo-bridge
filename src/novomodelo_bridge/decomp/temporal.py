@@ -159,6 +159,9 @@ def build_operative_calendar(
             and not seen_monthly
             and abs(total - _WEEK_HOURS) == _SUMMER_TIME_SHIFT_HOURS
         ):
+            # TRACKED NOVOMODELO-GAP (C37): novomodelo stages run in whole days
+            # and their block hours sum to that span, so a week shifted by an
+            # hour cannot be written. Remove when novomodelo accepts such a stage.
             raise UnsupportedSourceError(
                 f"dadger.rvN gives stage {index + 1} (counted from 1) {total:g} h "
                 "in DP, an operative week shifted by summer time (VR). The case's "

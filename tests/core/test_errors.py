@@ -19,6 +19,9 @@ class TestExceptionHierarchy:
     def test_source_file_error_is_filenotfounderror(self) -> None:
         assert isinstance(SourceFileError("x"), FileNotFoundError)
 
+    def test_unsupported_source_error_is_valueerror(self) -> None:
+        assert isinstance(UnsupportedSourceError("x"), ValueError)
+
     def test_source_file_error_stores_location_attrs(self) -> None:
         exc = SourceFileError("caso.dat not found", path="/case", field="caso.dat")
         assert exc.path == "/case"

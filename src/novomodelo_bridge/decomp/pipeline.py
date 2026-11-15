@@ -901,8 +901,8 @@ def _water_bucket_stages(
     Raises
     ------
     UnsupportedSourceError
-        If the largest travel time exceeds the stage's hours: Novomodelo
-        refuses a water calendar shorter than the deepest travel time.
+        If the largest travel time exceeds the stage's hours, which would need
+        a water calendar of more than one post-study stage.
     """
     if not travel_time_hours:
         return None
@@ -913,8 +913,8 @@ def _water_bucket_stages(
         raise UnsupportedSourceError(
             f"dadger.rvN gives plant {code} a VI travel time of "
             f"{travel_time_hours[code]:g} h, longer than the {stage_hours:g} h left "
-            f"in the month of the study horizon end {horizon_end.isoformat()}. The "
-            "case carries the water in transit on that one post-study stage, so "
+            f"in the month of the study horizon end {horizon_end.isoformat()}. "
+            "Water still in transit after that month is not converted yet, so "
             f"give the plant a VI travel time of at most {stage_hours:g} h.",
             path="dadger.rvN",
             field="VI duracao",

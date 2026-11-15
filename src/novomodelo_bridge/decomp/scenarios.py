@@ -42,7 +42,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
-from novomodelo_bridge.core.errors import UnsupportedSourceError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.incremental_inflow import (
     artificial_gauge_plants_diagnostic,
     is_artificial_gauge,
@@ -278,11 +278,11 @@ def _tree_values(
                 f"the monthly range ({n_weekly + 1}..{terminal + 1})"
             )
         if stage_index < terminal and scenario_index != 0:
-            raise UnsupportedSourceError(
+            raise FieldParseError(
                 f"vazoes.rvN gives monthly stage {int(row['estagio'])} (counted "
-                f"from 1) inflow scenario {int(row['cenario'])}, before the last "
-                "stage. The case fans only at the last stage, so generate "
-                "vazoes.rvN with a tree that branches only there.",
+                f"from 1) inflow scenario {int(row['cenario'])}, but its "
+                "probability table gives every stage before the last one a "
+                "single scenario.",
                 path=_VAZOES,
                 field="cenarios_gerados cenario",
             )
@@ -446,9 +446,9 @@ def _reject_branching_trunk(prob: pd.DataFrame, terminal: int) -> None:
         stages = ", ".join(str(stage) for stage in branching)
         raise UnsupportedSourceError(
             f"vazoes.rvN branches the inflow scenario tree at stages {stages} "
-            f"(counted from 1), before its last stage {terminal}. The case fans "
-            "only at the last stage, so generate vazoes.rvN with a tree that "
-            "branches only there.",
+            f"(counted from 1), before its last stage {terminal}. A tree that "
+            "branches before its last stage is not converted yet, so generate "
+            "vazoes.rvN with a tree that branches only there.",
             path=_VAZOES,
             field="probabilidades cenario",
         )

@@ -154,9 +154,9 @@ thermal calendar there (`thermal_stages` and `thermal_bounds`). A deck with
 `VI` travel times gets `water_bucket_stages`: one stage from the end of the
 last operative stage to the end of that month, so a horizon that ends on the
 first of a month gives the whole month. A `VI` travel time longer than that
-stage fails the conversion, naming the plant, because Novomodelo refuses a
-water calendar shorter than its deepest travel time. A deck with neither
-writes no `post_study_stages.json`.
+stage fails the conversion, naming the plant: a water calendar of more than
+one stage is not converted yet. A deck with neither writes no
+`post_study_stages.json`.
 
 Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
@@ -169,6 +169,12 @@ Examples at the time of writing are the `RHA` inflow constraints
 lists every register and field the converter leaves out. A warning carries a
 remediation line only when a change to the deck removes it; the conversion
 proceeds either way.
+
+A deck value the case cannot carry at all stops `convert decomp` with a
+`source-unsupported` error that names the file and the record field and says
+what to change. Its message says the value "is not converted yet" when the
+conversion, not Novomodelo, is what is missing. `check decomp` fails with the
+same error on the ones it can find without converting the deck.
 
 ## The boundary cost-to-go function
 

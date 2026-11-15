@@ -621,6 +621,9 @@ def _pee_curtailment_by_code(renovaveis: _PeeRegisters) -> dict[int, bool]:
     curtailable: dict[int, bool] = {}
     for code, declared in states.items():
         if len(declared) > 1:
+            # TRACKED NOVOMODELO-GAP (C39): novomodelo allows or forbids
+            # curtailment once per source for the whole study. Remove when it
+            # accepts a per-stage curtailment switch.
             raise UnsupportedSourceError(
                 f"renovaveis.csv gives renewable park {code} more than one "
                 f"PEE-CONFIG-PER operating state ({', '.join(sorted(declared))}). "

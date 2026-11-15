@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-from idecomp.decomp import Vazoes
 from idecomp.decomp.modelos.dadger import (
     ACALTEFE,
     ACCOTVAZ,
@@ -56,7 +55,7 @@ from novomodelo_bridge.decomp.preflight import (
     _special_constraint_coverage,
     run_decomp_preflight,
 )
-from tests.conftest import make_decomp_case
+from tests.conftest import branching_vazoes, make_decomp_case
 from tests.decomp.test_cadastro import _FakeDadger
 from tests.decomp.test_constraint_registers import (
     _cm,
@@ -179,42 +178,11 @@ class TestIdMapReconcile:
         assert id_map_check.passed is False
 
 
-class _BranchingVazoes:
-    """The deck's inflow file with a probability table that branches at stage 3.
-
-    idecomp derives the tree from the file's nodes, so the branch is laid over
-    the parsed file instead of written into it.
-    """
-
-    def __init__(self, vazoes: Vazoes) -> None:
-        self._vazoes = vazoes
-        prob = vazoes.probabilidades
-        assert prob is not None
-        third = prob["estagio"] == 3
-        self.probabilidades = pd.concat(
-            [
-                prob.assign(probabilidade=prob["probabilidade"].where(~third, 0.5)),
-                pd.DataFrame(
-                    [{"estagio": 3, "no": 6, "cenario": 2, "probabilidade": 0.5}]
-                ),
-            ],
-            ignore_index=True,
-        )
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._vazoes, name)
-
-
 class TestTreeShapeCheck:
     def test_a_trunk_that_branches_fails_as_convert_decomp_refuses_it(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
-        real_read = Vazoes.read
-
-        def branching_read(path: str) -> _BranchingVazoes:
-            return _BranchingVazoes(real_read(path))
-
-        with patch.object(Vazoes, "read", side_effect=branching_read):
+        with branching_vazoes():
             with pytest.raises(UnsupportedSourceError) as raised:
                 convert_decomp_case(decomp_mini_deck, tmp_path / "out")
             result = run_decomp_preflight(decomp_mini_deck)

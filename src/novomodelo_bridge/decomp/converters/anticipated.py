@@ -1095,9 +1095,9 @@ def _shared_class4_end(
         dates = ", ".join(end.isoformat() for end in sorted(ends))
         raise UnsupportedSourceError(
             "dadgnl.rvN commits the dispatch of the GNL plants past the study "
-            f"horizon up to different dates ({dates}). The case holds one "
-            "post-study calendar for every plant, so give each GNL plant GL "
-            "weeks past the horizon up to the same date.",
+            f"horizon up to different dates ({dates}). GNL plants committed past "
+            "the horizon up to different dates are not converted yet, so give "
+            "each GNL plant GL weeks past the horizon up to the same date.",
             path=_DADGNL,
             field="GL data_inicio",
         )
@@ -1205,9 +1205,9 @@ def _monthly_lead_stages(
     if not 1 <= lag <= n_stages:
         raise UnsupportedSourceError(
             f"dadgnl.rvN gives {label} an NL lag of {dx.counted(lag, 'month')}, "
-            f"but the study has {dx.counted(n_stages, 'monthly stage')}. The case "
-            "decides each GNL delivery at a stage of the study, so give the plant "
-            f"an NL lag from 1 to {n_stages}.",
+            f"but the study has {dx.counted(n_stages, 'monthly stage')}. In a "
+            "study of monthly stages only, a lag outside its stages is not "
+            f"converted yet, so give the plant an NL lag from 1 to {n_stages}.",
             path=_DADGNL,
             field="NL lag",
         )
@@ -1219,9 +1219,9 @@ def _monthly_lead_stages(
     if late:
         raise UnsupportedSourceError(
             f"dadgnl.rvN commits {label} to GL dispatch past the study horizon "
-            f"({', '.join(late)}). In a study of monthly stages only the case has "
-            "no stage to carry a dispatch decided before the study, so remove the "
-            "plant's GL records dated past the horizon.",
+            f"({', '.join(late)}). In a study of monthly stages only, GL dispatch "
+            "past the horizon is not converted yet, so remove the plant's GL "
+            "records dated past the horizon.",
             path=_DADGNL,
             field="GL data_inicio",
         )

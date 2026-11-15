@@ -52,6 +52,21 @@ never delete or reword one away in a cleanup pass. When the gap closes in
 novomodelo, the workaround and its comment leave together. Reference the registry
 by name, never by a machine-local path.
 
+Classify every refusal of source input before raising it:
+
+- **G**, a novomodelo limit: `UnsupportedSourceError` (`source-unsupported`)
+  plus a `TRACKED NOVOMODELO-GAP (Cn)` marker at the raise.
+- **M**, a bridge feature not built yet: `UnsupportedSourceError` whose
+  message says the input "is not converted yet", plus an entry in the
+  architecture-debt registry.
+- **F**, malformed input: `FieldParseError` (`source-field-parse`), naming
+  the file and the field.
+- **I**, an internal invariant: a bare `ValueError`.
+
+`UnsupportedSourceError` is also a `ValueError`. A handler that catches
+`ValueError` around a refusing call maps it through `diagnostic_from_exception`
+or re-raises it; it never re-wraps it as `FieldParseError` or only logs it.
+
 ## 3. Source-model prose
 
 Comments, docstrings, and test names say **"the source model"** — not
