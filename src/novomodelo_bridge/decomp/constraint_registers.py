@@ -1019,7 +1019,8 @@ def drop_unknown_entities(
     Checks the ``FT`` thermal, the ``QBOM``/``VBOM`` pumping station and the
     ``VARM`` plant of each term against *thermal_codes*, *pumping_codes* and
     *hydro_codes* (the operated plants). A constraint with any such term is
-    dropped from both lowering buckets, never lowered in part, and reported
+    dropped from both lowering buckets and from ``bound_conflicts``, never
+    lowered in part, and reported
     once per kind of term as a WARNING listing the constraint and the code.
     ``by_family`` keeps every record read.
     """
@@ -1052,6 +1053,13 @@ def drop_unknown_entities(
         ),
         to_generic=tuple(
             r for r in census.to_generic if (r.family, r.constraint_id) not in dropped
+        ),
+        bound_conflicts=tuple(
+            conflict
+            for conflict in census.bound_conflicts
+            if not any(
+                (conflict.family, cid) in dropped for cid in conflict.constraint_ids
+            )
         ),
     )
     diagnostics = [

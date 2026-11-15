@@ -715,9 +715,8 @@ def convert_newave_case(
 ) -> ConversionReport:
     """Convert a source-model case directory to a Novomodelo case directory.
 
-    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`: a
-    failure clears the written outputs and forwards the below-``ERROR``
-    findings collected before it.
+    Runs under :func:`~novomodelo_bridge.core.conversion.run_conversion`,
+    which refuses an occupied output and rolls back a failed run.
 
     Parameters
     ----------
