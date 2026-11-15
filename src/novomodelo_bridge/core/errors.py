@@ -61,6 +61,25 @@ class FieldParseError(BridgeError):
         self.row = row
 
 
+class UnsupportedSourceError(BridgeError):
+    """A valid source-model input the conversion cannot carry.
+
+    Unlike :class:`FieldParseError`, the value is well formed: the source model
+    accepts it, but the case has no way to represent it.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        path: str | None = None,
+        field: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.path = path
+        self.field = field
+
+
 class NovomodeloOutputError(BridgeError):
     """An existing Novomodelo output file was unreadable or malformed."""
 
@@ -111,6 +130,11 @@ _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
     FieldParseError: (
         "source-field-parse",
         "Check the named field in the source file for a malformed value.",
+    ),
+    UnsupportedSourceError: (
+        "source-unsupported",
+        "Change the named field as the message says: the source model accepts "
+        "this value, but the conversion cannot carry it.",
     ),
     NovomodeloOutputError: (
         "novomodelo-output-unreadable",
