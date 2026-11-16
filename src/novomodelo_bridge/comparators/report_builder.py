@@ -715,7 +715,12 @@ def _build_overview_tab(
                     cost_breakdown_chart(nw_costs, novomodelo_costs, reference_label)
                 ),
                 wrap_chart(
-                    cost_breakdown_table(nw_costs, novomodelo_costs, reference_label)
+                    cost_breakdown_table(
+                        nw_costs,
+                        novomodelo_costs,
+                        reference_label,
+                        dataset.render.gnl_delivered,
+                    )
                 ),
             ],
         ),

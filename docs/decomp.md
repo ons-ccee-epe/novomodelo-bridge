@@ -403,6 +403,20 @@ with an export minimum the two contract costs differ by twice the minimum's
 value; the comparison reports that amount as the
 `decomp-export-contract-cost-convention` warning.
 
+On a deck with GNL plants (`dadgnl.rvN`), Novomodelo books a GNL plant's fuel
+at the stage that commits the generation and charges nothing on delivery.
+DECOMP's cost report books it on delivery, but DECOMP states its own operating
+cost on the commitment basis: the stage total less the GNL delivered in the
+stage (`dec_oper_gnl`) plus the GNL the stage commits for later delivery
+(`relgnl.rvN`, without the weeks committed before the study). The comparison
+puts DECOMP's costs on that basis. The cost breakdown splits the thermal cost
+into Thermal excl. GNL and GNL committed in study, the per-stage immediate and
+thermal costs move GNL to the stage that commits it, and a row under the total
+shows each model's GNL delivered in the study at its price, which neither total
+counts. Without either GNL file, DECOMP's thermal cost stays one row on the
+delivery basis and the comparison notes the missing file. `compare newave`
+compares NEWAVE's thermal cost as NEWAVE reports it.
+
 DECOMP's `Zsup` is the lowest upper bound reached so far, and the relato
 prints no upper bound per iteration, so the convergence chart sets it against
 Novomodelo's running minimum.

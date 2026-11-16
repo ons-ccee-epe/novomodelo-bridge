@@ -168,6 +168,10 @@ COST_BREAKDOWN_TABLE_CSS: str = """
 .cost-breakdown-table tbody tr.cb-total:hover td {
     background: #F9FAFB;
 }
+.cost-breakdown-table tbody tr.cb-info td {
+    color: #6B7280;
+    font-style: italic;
+}
 .cost-breakdown-table .cb-swatch {
     display: inline-block;
     width: 10px;

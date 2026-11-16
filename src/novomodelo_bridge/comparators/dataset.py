@@ -135,6 +135,7 @@ class RenderInputs:
     gc_constraints: list[dict] = field(default_factory=list)
     gc_lhs_novomodelo: pl.DataFrame = field(default_factory=pl.DataFrame)
     gc_lhs_newave: pl.DataFrame = field(default_factory=pl.DataFrame)
+    gnl_delivered: dict[str, float] = field(default_factory=dict)
     hydro: pl.DataFrame = field(default_factory=pl.DataFrame)
     hydro_masked: pl.DataFrame = field(default_factory=pl.DataFrame)
     line: pl.DataFrame = field(default_factory=pl.DataFrame)

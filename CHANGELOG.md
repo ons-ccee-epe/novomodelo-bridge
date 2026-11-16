@@ -360,6 +360,14 @@ links are cobre-bridge's.
   Novomodelo's storage P10–P90 bands on total volume beside useful-volume
   means.** Outflow is now turbined plus spilled flow on both sides, and the
   bands are on useful volume. Run `compare decomp` again to update a report.
+- **`compare decomp` set DECOMP's thermal cost, with its GNL fuel counted on
+  delivery, against Novomodelo's, which counts GNL when it is committed.** On a
+  deck with GNL plants, DECOMP's costs are now on that basis too, as DECOMP
+  states its own operating cost: the cost breakdown splits the thermal cost
+  into Thermal excl. GNL and GNL committed in study, the per-stage costs move
+  GNL to the stage that commits it, and a row under the total shows each
+  model's GNL delivered in the study. Run `compare decomp` again to update a
+  report.
 - **`compare decomp` put Novomodelo's REE stored and inflow energies far from
   DECOMP's on every deck.** It added up each plant's own energies, which value
   the water down the whole river at a fixed head. They are now valued as

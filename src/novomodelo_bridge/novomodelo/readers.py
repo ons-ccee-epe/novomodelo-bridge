@@ -2102,6 +2102,92 @@ def read_novomodelo_cost_breakdown(
     return result
 
 
+def _anticipated_thermal_prices(
+    novomodelo_output_dir: Path, thermal_ids: Iterable[int]
+) -> pl.DataFrame:
+    """``thermal_id``/``stage_id``/``price`` (R$/MWh, null for the plant's
+    base cost) for the anticipated thermals: their stage rows of
+    ``constraints/thermal_bounds.parquet``, the only rows novomodelo accepts
+    for them."""
+    schema = pl.Schema(
+        {"thermal_id": pl.Int32, "stage_id": pl.Int32, "price": pl.Float64}
+    )
+    path = (
+        case_dir_for(novomodelo_output_dir) / "constraints" / "thermal_bounds.parquet"
+    )
+    if not path.is_file():
+        return pl.DataFrame(schema=schema)
+    try:
+        bounds = pl.read_parquet(path)
+    except Exception as exc:
+        raise NovomodeloReadError(f"Failed to read {path}") from exc
+    if "cost_per_mwh" not in bounds.columns:
+        return pl.DataFrame(schema=schema)
+    return (
+        bounds.filter(
+            pl.col("block_id").is_null() & pl.col("thermal_id").is_in(list(thermal_ids))
+        )
+        .select("thermal_id", "stage_id", pl.col("cost_per_mwh").alias("price"))
+        .cast(schema)
+    )
+
+
+def read_novomodelo_gnl_delivered_cost(novomodelo_output_dir: Path) -> float | None:
+    """Expected present value, R$, of the anticipated (GNL) generation
+    delivered over the horizon, priced at each plant's cost.
+
+    novomodelo books an anticipated plant's fuel when the generation is
+    committed and charges nothing on delivery, so its costs hold none of
+    this; it is the counterpart of the source model's GNL fuel at delivery.
+    The price of a stage is its ``thermal_bounds`` stage row, else the
+    plant's ``cost_per_mwh``; the discount is the stage's
+    ``discount_factor``. ``None`` when the run has no anticipated plant.
+    """
+    lf = scan_simulation_entity(novomodelo_output_dir, "thermals")
+    if lf is None or "is_anticipated" not in lf.collect_schema().names():
+        return None
+    base = {
+        int(t["id"]): float(t["cost_per_mwh"])
+        for t in read_novomodelo_thermals(novomodelo_output_dir)
+        if t.get("anticipated_config") is not None
+    }
+    if not base:
+        return None
+    prices = _anticipated_thermal_prices(novomodelo_output_dir, base)
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
+    costs = scan_simulation_entity(novomodelo_output_dir, "costs")
+    try:
+        valued = (
+            lf.filter(pl.col("is_anticipated"))
+            .group_by("scenario_id", "stage_id", "thermal_id")
+            .agg(pl.col("generation_mwh").sum())
+            .join(prices.lazy(), on=["thermal_id", "stage_id"], how="left")
+            .with_columns(
+                pl.coalesce(
+                    "price",
+                    pl.col("thermal_id").replace_strict(base, return_dtype=pl.Float64),
+                )
+            )
+        )
+        discount = pl.lit(1.0)
+        if costs is not None and "discount_factor" in costs.collect_schema().names():
+            factors = costs.group_by("scenario_id", "stage_id").agg(
+                pl.col("discount_factor").first()
+            )
+            valued = valued.join(factors, on=["scenario_id", "stage_id"], how="left")
+            discount = pl.col("discount_factor").fill_null(1.0)
+        per_scenario = valued.group_by("scenario_id").agg(
+            (pl.col("generation_mwh") * pl.col("price") * discount).sum().alias("gnl")
+        )
+        mean = weights.attach(per_scenario).select(weights.mean("gnl")).collect()
+    except Exception as exc:
+        raise NovomodeloReadError(
+            "Failed to read Novomodelo anticipated thermal generation: "
+            f"{novomodelo_output_dir / 'simulation' / 'thermals'}"
+        ) from exc
+    return float(mean["gnl"][0] or 0.0)
+
+
 def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Read Novomodelo per-stage immediate/future/thermal cost (expected across scenarios).
 
@@ -2116,9 +2202,9 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
     ``anticipated_thermal_cost`` is the GNL forward-committed thermal fuel that Novomodelo
     books on the decision-stage commitment column (part of ``immediate_cost`` but
     excluded from ``thermal_cost``); it was added to Novomodelo's costs schema after 0.8.0.
-    ``thermal_cost_total`` is the the source-model-comparable thermal generation cost
-    (CTERM books GNL at delivery). Pre-anticipation runs lack the column → it reads as 0
-    and ``thermal_cost_total == thermal_cost``.
+    ``thermal_cost_total`` is the whole thermal generation cost, GNL at commitment.
+    Pre-anticipation runs lack the column → it reads as 0 and
+    ``thermal_cost_total == thermal_cost``.
 
     Novomodelo's costs table is one row per ``(scenario_id, stage_id, block_id)``;
     we sum block-level immediate_cost / thermal_cost / anticipated_thermal_cost
@@ -2133,7 +2219,6 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
         "thermal_cost",
         "anticipated_thermal_cost",
     )
-    # Output adds the derived the source-model-comparable thermal total.
     _OUT_COLS = (*_ALL_COLS, "thermal_cost_total")
     empty = pl.DataFrame(
         schema={"stage_id": pl.Int64, **{c: pl.Float64 for c in _OUT_COLS}}
@@ -2173,8 +2258,7 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
     for c in _ALL_COLS:
         if c not in df.columns:
             df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias(c))
-    # Derived the source-model-comparable thermal total: live generation + anticipated
-    # (GNL forward-committed) fuel. Null anticipated (old runs) counts as 0.
+    # Null anticipated (old runs) counts as 0.
     df = df.with_columns(
         (
             pl.col("thermal_cost").fill_null(0.0)

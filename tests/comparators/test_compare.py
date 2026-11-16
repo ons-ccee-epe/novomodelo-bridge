@@ -1014,6 +1014,105 @@ class TestOverviewCostCharts:
         assert cats == {"FPHA Planes": pytest.approx((3.0e6, 2.0e6))}
 
 
+class TestDecisionBasisThermalRows:
+    """A source reporting its thermal cost on the decision basis (DECOMP with
+    GNL plants) gets the thermal row split; one reporting it as delivered
+    (NEWAVE, DECOMP without GNL) keeps one row against both columns."""
+
+    _NOVOMODELO = {"thermal_cost": 9.0e9, "anticipated_thermal_cost": 1.0e9}
+
+    @staticmethod
+    def _rows(nw_costs: dict[str, float], novomodelo: dict[str, float]) -> dict:
+        from novomodelo_bridge.comparators.charts import _resolve_cost_categories
+
+        return {
+            label: (nw, cb)
+            for label, nw, cb, _ in _resolve_cost_categories(nw_costs, novomodelo)
+        }
+
+    def test_the_decision_basis_splits_the_thermal_row(self) -> None:
+        rows = self._rows(
+            {"TERMICA SEM GNL": 8.0e9, "GNL COMANDADO": 2.0e9}, self._NOVOMODELO
+        )
+
+        assert rows == {
+            "Thermal excl. GNL": pytest.approx((8.0e9, 9.0e9)),
+            "GNL committed in study": pytest.approx((2.0e9, 1.0e9)),
+        }
+
+    def test_the_delivery_basis_keeps_one_row(self) -> None:
+        rows = self._rows({"GERACAO TERMICA": 11.0e9}, self._NOVOMODELO)
+
+        assert rows == {"Thermal": pytest.approx((11.0e9, 10.0e9))}
+
+    def test_both_bases_at_once_is_an_error(self) -> None:
+        with pytest.raises(ValueError, match="both"):
+            self._rows(
+                {"GERACAO TERMICA": 11.0e9, "GNL COMANDADO": 2.0e9}, self._NOVOMODELO
+            )
+
+    @pytest.mark.parametrize(
+        "nw_costs",
+        [
+            {"TERMICA SEM GNL": 8.0e9, "GNL COMANDADO": 2.0e9, "DEFICIT": 1.0e9},
+            {"GERACAO TERMICA": 10.0e9, "DEFICIT": 1.0e9},
+        ],
+    )
+    def test_the_thermal_cost_sums_the_thermal_rows(
+        self, nw_costs: dict[str, float]
+    ) -> None:
+        from novomodelo_bridge.comparators.charts.costs import thermal_cost
+
+        thermal = thermal_cost(nw_costs, {**self._NOVOMODELO, "deficit_cost": 5.0e9})
+
+        assert (thermal.reference, thermal.novomodelo) == pytest.approx(
+            (10.0e9, 10.0e9)
+        )
+
+    def test_the_split_rows_are_not_unclassified_in_the_net_bound(self) -> None:
+        from novomodelo_bridge.comparators.charts import net_of_penalties_table
+
+        conv = pl.DataFrame({"iteration": [1], "lower_bound": [20.0e9]})
+        html = net_of_penalties_table(
+            conv,
+            conv,
+            {"TERMICA SEM GNL": 8.0e9, "GNL COMANDADO": 2.0e9},
+            self._NOVOMODELO,
+        )
+
+        assert "not classified" not in html
+
+    def test_the_table_shows_gnl_delivered_under_the_total(self) -> None:
+        from novomodelo_bridge.comparators.charts.costs import cost_breakdown_table
+
+        html = cost_breakdown_table(
+            {"TERMICA SEM GNL": 8.0e9, "GNL COMANDADO": 2.0e9},
+            self._NOVOMODELO,
+            "DECOMP",
+            {"reference": 3.0e9, "novomodelo": 3.3e9},
+        )
+
+        total, info = html.split('<tr class="cb-total">')[1].split(
+            '<tr class="cb-info">'
+        )
+        assert ">10.000<" in total  # 8 + 2 on the reference side, without the 3
+        assert re.findall(r'<td class="cb-num">(.*?)</td>', info) == [
+            "3.000",
+            "3.300",
+            "0.300",
+            "+10.0%",
+        ]
+        assert "not in the total" in html
+
+    def test_the_table_has_no_gnl_row_without_delivered_gnl(self) -> None:
+        from novomodelo_bridge.comparators.charts.costs import cost_breakdown_table
+
+        html = cost_breakdown_table({"GERACAO TERMICA": 10.0e9}, self._NOVOMODELO)
+
+        assert "cb-info" not in html
+        assert "GNL delivered" not in html
+
+
 class TestNetOfPenaltiesTable:
     """Overview table of each model's lower bound net of its expected
     constraint-violation penalties."""

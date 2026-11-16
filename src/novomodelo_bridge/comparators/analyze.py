@@ -381,6 +381,7 @@ def build_results_dataset(
         results=list(results),
         nw_costs=pct.nw_costs,
         novomodelo_costs=pct.novomodelo_costs,
+        gnl_delivered=pct.gnl_delivered,
         nw_bus_names=pct.nw_bus_names,
         # --- Overview/System/Energy-Balance/Network tab inputs ---
         nw_sin=pct.nw_sin,

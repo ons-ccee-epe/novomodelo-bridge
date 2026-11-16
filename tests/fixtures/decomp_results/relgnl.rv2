@@ -1,0 +1,155 @@
+
+   CEPEL: DECOMP - Coordenacao da Operacao a Curto Prazo - v32.0.1 - Dez/2024(L)             
+    16/11/2026  00:17   PAG.   3
+
+
+   PROGRAMA LICENCIADO PARA OPERADOR NACIONAL DO SISTEMA ELETRICO ONS                                                                                                             
+
+   PMO - ABRIL/26 - MAIO/26 - REV 2 - FCF COM CVAR - 12 REE - VALOR ESPERADO       - PLANEJAMENTO:11/04/2026
+
+   Relatorio  dos  Dados  de  Usinas  Termicas GNL
+   X---X----------X------X-------X-------X-------X-------X-------X-------X-------X-------X-------X-------X                                                                             
+    Num   Usina    Subsis Estagio GTmin_1 GTmax_1 Custo_1 GTmin_2 GTmax_2 Custo_2 GTmin_3 GTmax_3 Custo_3                                                                              
+                                  (MWmed) (MWmed) ($/MWh) (MWmed) (MWmed) ($/MWh) (MWmed) (MWmed) ($/MWh)                                                                              
+   X---X----------X------X-------X-------X-------X-------X-------X-------X-------X-------X-------X-------X                                                                             
+     86 SANTA CRUZ    SE     1       0.00  500.00  208.15    0.00  500.00  208.15    0.00  500.00  208.15
+                             2       0.00  500.00  208.15    0.00  500.00  208.15    0.00  500.00  208.15
+                             3       0.00  500.00  208.15    0.00  500.00  208.15    0.00  500.00  208.15
+                             4       0.00  500.00  208.15    0.00  500.00  208.15    0.00  500.00  208.15
+                             5       0.00  500.00  208.15    0.00  500.00  208.15    0.00  500.00  208.15
+                             6       0.00  500.00  208.15    0.00  500.00  208.15    0.00  500.00  208.15
+    224 PSERGIPE I    NE     1       0.00 1593.00  449.56    0.00 1593.00  449.56    0.00 1593.00  449.56
+                             2       0.00 1593.00  449.56    0.00 1593.00  449.56    0.00 1593.00  449.56
+                             3       0.00 1593.00  449.56    0.00 1593.00  449.56    0.00 1593.00  449.56
+                             4       0.00 1593.00  449.56    0.00 1593.00  449.56    0.00 1593.00  449.56
+                             5       0.00 1593.00  449.56    0.00 1593.00  449.56    0.00 1593.00  449.56
+                             6       0.00 1593.00  449.56    0.00 1593.00  449.56    0.00 1593.00  449.56
+   X---X----------X------X-------X-------X-------X-------X-------X-------X-------X-------X-------X-------X                                                                             
+ 
+   Numero de intervalos de tempo definidos em cada mes (registros GS):
+   X-----X------------X
+     Mes   intervalos
+   X-----X------------X
+      1       3
+      2       4
+      3       5
+   X-----X------------X
+ 
+   Lags de antecipacao de despacho para cada usina GNL (registros NL):
+   X---X-----------X-----X
+    Num   Usina      Lag  
+   X---X-----------X-----X
+    86   SANTA CRUZ   2
+   224   PSERGIPE I   2
+   X---X-----------X-----X
+ 
+   Relatorio dos comandos das usinas GNL com possiveis ajustes devido a registros TG
+   X---X-----------X---X------X-----------X----------X----------X----------X
+                                             pat 1      pat 2      pat 3
+    Num   Usina     Lag Subsis   Semana    (MWmed)    (MWmed)    (MWmed)   
+   X---X-----------X---X------X-----------X----------X----------X----------X
+    86  SANTA CRUZ   2    SE    11/04/2026        0.00       0.00       0.00
+    86  SANTA CRUZ   2    SE    18/04/2026        0.00       0.00       0.00
+    86  SANTA CRUZ   2    SE    25/04/2026        0.00       0.00       0.00
+    86  SANTA CRUZ   2    SE    02/05/2026        0.00       0.00       0.00
+    86  SANTA CRUZ   2    SE    09/05/2026      500.00     500.00     500.00
+    86  SANTA CRUZ   2    SE    16/05/2026      500.00     500.00     500.00
+    86  SANTA CRUZ   2    SE    23/05/2026      500.00     500.00     500.00
+    86  SANTA CRUZ   2    SE    30/05/2026      500.00     500.00     500.00
+    86  SANTA CRUZ   2    SE    06/06/2026      500.00     500.00     500.00
+   224  PSERGIPE I   2    NE    11/04/2026        0.00       0.00       0.00
+   224  PSERGIPE I   2    NE    18/04/2026        0.00       0.00       0.00
+   224  PSERGIPE I   2    NE    25/04/2026        0.00       0.00       0.00
+   224  PSERGIPE I   2    NE    02/05/2026        0.00       0.00       0.00
+   224  PSERGIPE I   2    NE    09/05/2026        0.00       0.00       0.00
+   224  PSERGIPE I   2    NE    16/05/2026        0.00       0.00       0.00
+   224  PSERGIPE I   2    NE    23/05/2026        0.00       0.00       0.00
+   224  PSERGIPE I   2    NE    30/05/2026        0.00       0.00       0.00
+   224  PSERGIPE I   2    NE    06/06/2026        0.00       0.00       0.00
+ 
+   Relatorio dos comandos das usinas GNL com possiveis ajustes devido a Restricoes Eletricas Especiais
+   X---X-----------X---X------X---------X----------X----------X----------X
+                                             pat 1      pat 2      pat 3
+    Num   Usina     Lag Subsis  Periodo   (MWmed)    (MWmed)    (MWmed)   
+   X---X-----------X---X------X---------X----------X----------X----------X
+    86  SANTA CRUZ   2    SE        1         0.00       0.00       0.00
+    86  SANTA CRUZ   2    SE        2         0.00       0.00       0.00
+    86  SANTA CRUZ   2    SE        3         0.00       0.00       0.00
+    86  SANTA CRUZ   2    SE        4       375.00     381.48     385.90
+   224  PSERGIPE I   2    NE        1         0.00       0.00       0.00
+   224  PSERGIPE I   2    NE        2         0.00       0.00       0.00
+   224  PSERGIPE I   2    NE        3         0.00       0.00       0.00
+   224  PSERGIPE I   2    NE        4         0.00       0.00       0.00
+
+   RELATORIO  DA  OPERACAO  TERMICA E CONTRATOS
+
+   ABRIL     / SEMANA 1 - ESTAGIO  1 /  CENARIO   1 - PROB ACUMUL: 1.000000 PROB SUBPROB: 1.000000
+
+              Sinalizacao de Despacho antecipado em k meses    
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X------------X
+    Sis    Usina     Lag(k)               pat_1            pat_2            pat_3        Custo    Inic semana
+                     meses  Semana   (MWmed)  Dur(h)  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (1000 $)  (dd/mm/aaaa)
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X------------X
+    SE  SANTA CRUZ     2    Sem  8*  500.00  12.78    500.00  55.40    500.00  77.92     14966.6  30/05/2026
+    SE  SANTA CRUZ     2    Sem  9*  500.00  12.78    500.00  55.40    500.00  77.92     14966.6  06/06/2026
+    SE  SANTA CRUZ     2    Sem 10   500.00  12.78    500.00  55.40    500.00  77.92     14966.6  13/06/2026
+    SE  SANTA CRUZ     2    Sem 11   500.00  12.78    500.00  55.40    500.00  77.92     14966.6  20/06/2026
+    SE  SANTA CRUZ     2    Sem 12   500.00  12.78    500.00  55.40    500.00  77.92     14966.6  27/06/2026
+    SE  SANTA CRUZ     2    MENSAL   500.00  63.92    500.00 277.01    500.00 389.58     74833.2
+  
+* Geracao definida em revisoes anteriores
+              Sinalizacao de Despacho antecipado em k meses    
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X------------X
+    Sis    Usina     Lag(k)               pat_1            pat_2            pat_3        Custo    Inic semana
+                     meses  Semana   (MWmed)  Dur(h)  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (1000 $)  (dd/mm/aaaa)
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X------------X
+    NE  PSERGIPE I     2    Sem  8*    0.00  12.78      0.00  55.40      0.00  77.92         0.0  30/05/2026
+    NE  PSERGIPE I     2    Sem  9*    0.00  12.78      0.00  55.40      0.00  77.92         0.0  06/06/2026
+    NE  PSERGIPE I     2    Sem 10     0.00  12.78      0.00  55.40      0.00  77.92         0.0  13/06/2026
+    NE  PSERGIPE I     2    Sem 11     0.00  12.78      0.00  55.40      0.00  77.92         0.0  20/06/2026
+    NE  PSERGIPE I     2    Sem 12     0.00  12.78      0.00  55.40      0.00  77.92         0.0  27/06/2026
+    NE  PSERGIPE I     2    MENSAL     0.00  63.92      0.00 277.01      0.00 389.58         0.0
+  
+* Geracao definida em revisoes anteriores
+
+   RELATORIO  DA  OPERACAO  TERMICA E CONTRATOS
+
+   MAIO                 - ESTAGIO  4 /  CENARIO   1 - PROB ACUMUL: 0.479705 PROB SUBPROB: 0.479705
+
+              Sinalizacao de Despacho antecipado em k meses    
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X
+    Sis    Usina     Lag(k)               pat_1            pat_2            pat_3        Custo    
+                     meses  Periodo  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (1000 $)
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X
+    SE  SANTA CRUZ     2    Mes  4   500.00  67.72    500.00 280.80    500.00 381.98     75322.4
+  
+* Geracao definida em revisoes anteriores
+              Sinalizacao de Despacho antecipado em k meses    
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X
+    Sis    Usina     Lag(k)               pat_1            pat_2            pat_3        Custo    
+                     meses  Periodo  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (1000 $)
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X
+    NE  PSERGIPE I     2    Mes  4     0.00  67.72      0.00 280.80      0.00 381.98         0.0
+  
+* Geracao definida em revisoes anteriores
+
+   RELATORIO  DA  OPERACAO  TERMICA E CONTRATOS
+
+   MAIO                 - ESTAGIO  4 /  CENARIO   2 - PROB ACUMUL: 0.520295 PROB SUBPROB: 0.520295
+
+              Sinalizacao de Despacho antecipado em k meses    
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X
+    Sis    Usina     Lag(k)               pat_1            pat_2            pat_3        Custo    
+                     meses  Periodo  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (1000 $)
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X
+    SE  SANTA CRUZ     2    Mes  4   500.00  67.72    500.00 280.80    500.00 381.98     75322.4
+  
+* Geracao definida em revisoes anteriores
+              Sinalizacao de Despacho antecipado em k meses    
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X
+    Sis    Usina     Lag(k)               pat_1            pat_2            pat_3        Custo    
+                     meses  Periodo  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (MWmed)  Dur(h)  (1000 $)
+   X---X-----------X-------X-------X--------X-------X--------X-------X--------X-------X----------X
+    NE  PSERGIPE I     2    Mes  4     0.00  67.72      0.00 280.80      0.00 381.98         0.0
+  
+* Geracao definida em revisoes anteriores

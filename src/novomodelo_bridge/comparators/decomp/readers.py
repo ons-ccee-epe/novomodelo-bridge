@@ -34,6 +34,7 @@ from idecomp.decomp import (
     DecEstatFpha,
     Decomptim,
     DecOperEvap,
+    DecOperGnl,
     DecOperInterc,
     DecOperRee,
     DecOperRheSoft,
@@ -42,6 +43,7 @@ from idecomp.decomp import (
     DecOperUsit,
     EcoFpha,
     Relato,
+    Relgnl,
 )
 
 from novomodelo_bridge.core.diagnostics import (
@@ -261,6 +263,13 @@ def read_dec_oper_rhesoft(case_dir: Path) -> pl.DataFrame:
     return _read_dec_oper(case_dir, "dec_oper_rhesoft.csv", DecOperRheSoft)
 
 
+def read_dec_oper_gnl(case_dir: Path) -> pl.DataFrame:
+    """Per-anticipated-thermal (GNL) operation: dispatch bounds, incremental
+    cost, and the fuel cost (``custo_geracao``, native k$). Resolved via the
+    same root-only lookup shared with every other ``dec_oper_*`` table."""
+    return _read_dec_oper(case_dir, "dec_oper_gnl.csv", DecOperGnl)
+
+
 def read_dec_oper_evap(case_dir: Path) -> pl.DataFrame:
     """Per-hydro/stage/node/scenario reservoir evaporation.
 
@@ -406,6 +415,28 @@ def read_relato2_costs(case_dir: Path) -> pl.DataFrame:
     table = Relato.read(str(path)).relatorio_operacao_custos
     if table is None or table.empty:
         raise ValueError(f"{path} has no relatorio_operacao_custos table")
+    return pl.from_pandas(table)
+
+
+def read_relgnl_operation(case_dir: Path) -> pl.DataFrame:
+    """Read the per-(stage, scenario) GNL operation table of the GNL report
+    (``relgnl.rvN``).
+
+    One row per GNL plant and delivery period it signals: ``semana`` names the
+    week or month, with a trailing ``*`` on a period committed before the
+    study and ``MENSAL`` on the monthly summary line, and ``custo`` is the
+    cost of the generation signalled for it. Durations of 100 h or more are
+    not parsed (idecomp reads them into a 7-character field); ``custo`` is.
+
+    Costs are **native k$**, unconverted -- converted once in the analysis
+    layer, see `results.reconcile_kdollars_to_reais`.
+    """
+    path = _resolve_revisioned_file(case_dir, "relgnl")
+    if path is None:
+        raise FileNotFoundError(f"no relgnl.rvN found in {case_dir}")
+    table = Relgnl.read(str(path)).relatorio_operacao_termica
+    if table is None or table.empty:
+        raise ValueError(f"{path} has no relatorio_operacao_termica table")
     return pl.from_pandas(table)
 
 

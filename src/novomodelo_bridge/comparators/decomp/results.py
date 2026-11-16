@@ -50,7 +50,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 import polars as pl
 
@@ -63,6 +63,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     DEC_OPER_USIT_EFFECT,
     read_dec_estatfpha,
     read_dec_oper_evap,
+    read_dec_oper_gnl,
     read_dec_oper_interc,
     read_dec_oper_ree,
     read_dec_oper_rhesoft,
@@ -75,6 +76,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_relato_convergence,
     read_relato_costs,
     read_relato_membership,
+    read_relgnl_operation,
 )
 from novomodelo_bridge.comparators.decomp.ree_energy import (
     ReeEnergyRule,
@@ -137,6 +139,13 @@ _RELATO2_EFFECT = (
 )
 _DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
 _DEC_OPER_RHESOFT_EFFECT = "the report leaves out DECOMP's side of the RHE constraints."
+#: What the cost comparison loses on a deck with GNL plants without
+#: ``dec_oper_gnl.csv`` or ``relgnl.rvN``, the two that move DECOMP's GNL cost
+#: from delivery to commitment.
+_GNL_COST_EFFECT = (
+    "DECOMP's thermal cost stays one row, with its GNL generation priced when "
+    "it is delivered, while Novomodelo prices GNL when it is committed."
+)
 
 
 def _emit_missing(file_name: str, decomp_dir: Path, effect: str) -> None:
@@ -1379,7 +1388,6 @@ _DERIVED_PARCELS: tuple[str, ...] = ("deficit", "folga")
 #: ``(display_label, source_columns...)`` for the ``nw_costs`` NPV dict, keyed
 #: by the ``charts._COST_MAP`` source-model labels.
 _NW_COST_LABELS: tuple[tuple[str, ...], ...] = (
-    ("GERACAO TERMICA", "geracao_termica"),
     ("DEFICIT", "deficit"),
     ("CONTRATOS", "contratos"),
     ("INTERCAMBIO", "penalidade_intercambio"),
@@ -1397,14 +1405,31 @@ _NW_COST_LABELS: tuple[tuple[str, ...], ...] = (
     ("FOLGA RESTRICOES", "folga"),
 )
 
+#: The thermal entry of ``nw_costs`` as the report prints it, GNL at delivery.
+_DELIVERY_THERMAL_LABELS: tuple[tuple[str, ...], ...] = (
+    ("GERACAO TERMICA", "geracao_termica"),
+)
+
+#: The thermal entries on DECOMP's decision basis: the thermal cost without
+#: GNL, and the GNL generation committed within the study, at its decision
+#: stage.
+_DECISION_THERMAL_LABELS: tuple[tuple[str, ...], ...] = (
+    ("TERMICA SEM GNL", "termica_sem_gnl"),
+    ("GNL COMANDADO", "gnl_comandado"),
+)
+
+#: Per-(stage, scenario) GNL costs, nominal k$: delivered within the study
+#: (``dec_oper_gnl``) and committed within it (``relgnl``).
+_GNL_PARCELS: tuple[str, ...] = ("gnl_entregue", "gnl_comandado")
+
 #: ``nw_sin`` variable token -> source column, for the per-stage cost rows
 #: ``charts._extract_stage_cost_series`` reads. Matches MEDIAS-SIN's tokens on
 #: the newave side of ``compare newave``; nominal, like Novomodelo's per-stage
-#: costs.
+#: costs, and with GNL at commitment, as Novomodelo books it.
 _NW_SIN_COST_TOKENS: tuple[tuple[str, str], ...] = (
-    ("COPER", "custo_presente_nominal"),
+    ("COPER", "custo_presente_decisao"),
     ("CUSTO_FUTURO", "custo_futuro"),
-    ("CTERM", "geracao_termica"),
+    ("CTERM", "termica_decisao"),
 )
 
 
@@ -1503,8 +1528,47 @@ def _deficit_cost(
     )
 
 
+def _gnl_costs(decomp_dir: Path) -> pl.DataFrame | None:
+    """Per-(stage, scenario) GNL costs, nominal k$, or ``None`` after the
+    finding for a missing or unreadable report.
+
+    ``gnl_entregue`` is the cost of the GNL generation delivered in the stage,
+    which the report's thermal parcel holds (``dec_oper_gnl``'s stage rows).
+    ``gnl_comandado`` is the cost of the generation the stage commits for
+    later delivery (``relgnl``'s periods, less those committed before the
+    study, marked ``*``, and the monthly summary line).
+    """
+    delivered = read_or_note(
+        read_dec_oper_gnl, "dec_oper_gnl.csv", decomp_dir, _GNL_COST_EFFECT
+    )
+    signalled = read_or_note(
+        read_relgnl_operation, "relgnl.rvN", decomp_dir, _GNL_COST_EFFECT
+    )
+    if delivered is None or signalled is None:
+        return None
+    keys = ["estagio", "cenario"]
+    period = pl.col("semana").str.strip_chars()
+    return (
+        delivered.filter(pl.col("patamar").is_null())
+        .group_by(keys)
+        .agg(pl.col("custo_geracao").sum().alias("gnl_entregue"))
+        .join(
+            signalled.filter((period != "MENSAL") & ~period.str.ends_with("*"))
+            .group_by(keys)
+            .agg(pl.col("custo").sum().alias("gnl_comandado")),
+            on=keys,
+            how="full",
+            coalesce=True,
+        )
+        .with_columns(pl.col(*_GNL_PARCELS).fill_null(0.0))
+    )
+
+
 def _stage_cost_rows(
-    relato: pl.DataFrame, decomp_dir: Path, deficit_costs: dict[int, float]
+    relato: pl.DataFrame,
+    decomp_dir: Path,
+    deficit_costs: dict[int, float],
+    gnl: pl.DataFrame | None,
 ) -> pl.DataFrame:
     """*relato*'s cost rows unioned with ``relato2``'s, with the contract
     balance, the priced deficit, the unitemized slack and the present-value
@@ -1523,6 +1587,14 @@ def _stage_cost_rows(
     deficit: the constraint-slack penalties (RHQ, RHE, RHV, evaporation,
     irrigation) the report does not itemize. It is a sum of non-negative
     penalties, so a negative value is print rounding and reads as zero.
+
+    The report prices GNL generation when it is delivered. *gnl* (from
+    :func:`_gnl_costs`, ``None`` for none) moves it to the stage that commits
+    it, the basis of DECOMP's own operating cost (``*COP``) and of
+    Novomodelo's: ``custo_presente_decisao`` and ``termica_decisao`` are the
+    stage total and the thermal cost less the GNL delivered plus the GNL
+    committed, and ``termica_sem_gnl`` is the thermal cost without GNL.
+    ``folga`` is the same on either basis.
     """
     combined = _union_relato_reports(relato, _relato2_costs(decomp_dir))
     rows = combined.with_columns(
@@ -1539,7 +1611,14 @@ def _stage_cost_rows(
         rows = rows.join(deficit, on=["estagio", "cenario"], how="left").with_columns(
             pl.col("deficit").fill_null(0.0)
         )
+    if gnl is None:
+        rows = rows.with_columns(pl.lit(0.0).alias(c) for c in _GNL_PARCELS)
+    else:
+        rows = rows.join(gnl, on=["estagio", "cenario"], how="left").with_columns(
+            pl.col(*_GNL_PARCELS).fill_null(0.0)
+        )
     nominal = pl.col("custo_presente_nominal")
+    to_decision = pl.col("gnl_comandado") - pl.col("gnl_entregue")
     return rows.with_columns(
         (nominal - pl.sum_horizontal(_ITEMIZED_PARCELS) - pl.col("deficit"))
         .clip(lower_bound=0.0)
@@ -1548,12 +1627,25 @@ def _stage_cost_rows(
         .then(pl.col("custo_presente") / nominal)
         .otherwise(1.0)
         .alias("pv"),
+        (pl.col("geracao_termica") - pl.col("gnl_entregue")).alias("termica_sem_gnl"),
+        (nominal + to_decision).alias("custo_presente_decisao"),
+        (pl.col("geracao_termica") + to_decision).alias("termica_decisao"),
     )
 
 
+class _DecompCostFrames(NamedTuple):
+    """DECOMP's side of the Overview costs (:func:`_cost_frames`)."""
+
+    nw_costs: dict[str, float]
+    nw_sin_rows: pl.DataFrame
+    #: Present value, R$, of the GNL generation delivered in the study, which
+    #: the decision basis leaves out; ``None`` without the GNL reports.
+    gnl_delivered: float | None
+
+
 def _cost_frames(
-    decomp_dir: Path, deficit_costs: dict[int, float]
-) -> tuple[dict[str, float], pl.DataFrame]:
+    decomp_dir: Path, deficit_costs: dict[int, float], *, gnl: bool = False
+) -> _DecompCostFrames:
     """DECOMP-side Overview cost metadata: the NPV dict + ``nw_sin`` rows.
 
     Reads ``relatorio_operacao_custos`` from **both** reports and unions them
@@ -1582,6 +1674,12 @@ def _cost_frames(
       unpivoted to ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows with the 1-based
       ``stage`` column kept as-is (the consuming charts subtract ``nw_offset``).
 
+    On a deck with GNL plants (*gnl*) both are on DECOMP's decision basis
+    (:func:`_stage_cost_rows`): ``nw_costs`` splits the thermal cost into
+    ``TERMICA SEM GNL`` and ``GNL COMANDADO``, and ``COPER``/``CTERM`` move GNL
+    to its commitment stage. Without GNL plants, or without either GNL
+    report, the thermal cost is the report's ``GERACAO TERMICA``.
+
     A ``relato`` that is missing or has no cost table leaves both frames empty
     after its note, so a ``relato2`` alone never yields partial costs; a missing
     or unreadable ``relato2`` only drops the fan stage(s).
@@ -1590,20 +1688,30 @@ def _cost_frames(
         relato = read_relato_costs(decomp_dir)
     except FileNotFoundError:
         _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
-        return {}, pl.DataFrame()
+        return _DecompCostFrames({}, pl.DataFrame(), None)
     except ValueError as exc:
         _emit_unreadable("relato.rvN", decomp_dir, _RELATO_COSTS_UNREADABLE_EFFECT, exc)
-        return {}, pl.DataFrame()
-    rows = _stage_cost_rows(relato, decomp_dir, deficit_costs)
-    parcels = [*_ITEMIZED_PARCELS, *_DERIVED_PARCELS, "contrato_exportacao_minimo"]
+        return _DecompCostFrames({}, pl.DataFrame(), None)
+    gnl_costs = _gnl_costs(decomp_dir) if gnl else None
+    rows = _stage_cost_rows(relato, decomp_dir, deficit_costs, gnl_costs)
+    parcels = [
+        *_ITEMIZED_PARCELS,
+        *_DERIVED_PARCELS,
+        *_GNL_PARCELS,
+        "termica_sem_gnl",
+        "contrato_exportacao_minimo",
+    ]
     discounted = rows.with_columns(pl.col(c) * pl.col("pv") for c in parcels)
     per_stage_pv = _probability_weighted_stage_cost(discounted, parcels)
     totals: dict[str, float] = per_stage_pv.select(
         [pl.col(c).sum().alias(c) for c in parcels]
     ).row(0, named=True)
 
+    thermal_labels = (
+        _DELIVERY_THERMAL_LABELS if gnl_costs is None else _DECISION_THERMAL_LABELS
+    )
     nw_costs: dict[str, float] = {}
-    for label, *columns in _NW_COST_LABELS:
+    for label, *columns in (*thermal_labels, *_NW_COST_LABELS):
         value = reconcile_kdollars_to_reais(sum(totals[c] for c in columns))
         if abs(value) > 0.01:
             nw_costs[label] = value
@@ -1656,7 +1764,12 @@ def _cost_frames(
         .sort("stage", "variable")
     )
 
-    return nw_costs, nw_sin_rows
+    gnl_delivered = (
+        None
+        if gnl_costs is None
+        else reconcile_kdollars_to_reais(totals["gnl_entregue"])
+    )
+    return _DecompCostFrames(nw_costs, nw_sin_rows, gnl_delivered)
 
 
 def _union_cost_rows(nw_sin: pl.DataFrame, cost_rows: pl.DataFrame) -> pl.DataFrame:
@@ -2998,21 +3111,40 @@ class _OverviewCostFields(TypedDict):
     novomodelo_costs: dict[str, float]
     novomodelo_stage_costs: pl.DataFrame
     nw_sin: pl.DataFrame
+    gnl_delivered: dict[str, float]
 
 
 def _overview_cost_fields(
+    case: DecompCase,
     decomp_dir: Path,
     novomodelo_output_dir: Path,
-    deficit_costs: dict[int, float],
     nw_sin: pl.DataFrame,
 ) -> _OverviewCostFields:
     """Both models' cost breakdowns and Novomodelo's per-stage costs.
 
     The DECOMP per-stage ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows are unioned
-    onto *nw_sin*'s EARM/ENA rows via :func:`_union_cost_rows`.
+    onto *nw_sin*'s EARM/ENA rows via :func:`_union_cost_rows`. On a deck with
+    GNL plants, ``gnl_delivered`` holds each model's GNL delivered in the
+    study, under ``reference`` and ``novomodelo``.
     """
-    nw_costs, nw_cost_rows = _cost_frames(decomp_dir, deficit_costs)
+    from novomodelo_bridge.decomp.converters.anticipated import is_gnl_enabled
+    from novomodelo_bridge.decomp.converters.network import bus_deficit_costs
+
+    gnl = is_gnl_enabled(case.dadgnl)
+    nw_costs, nw_cost_rows, reference_gnl = _cost_frames(
+        decomp_dir, bus_deficit_costs(case.dadger), gnl=gnl
+    )
+    gnl_delivered: dict[str, float] = {}
+    if reference_gnl is not None:
+        gnl_delivered["reference"] = reference_gnl
+    if gnl:
+        novomodelo_gnl = novomodelo_readers.read_novomodelo_gnl_delivered_cost(
+            novomodelo_output_dir
+        )
+        if novomodelo_gnl is not None:
+            gnl_delivered["novomodelo"] = novomodelo_gnl
     return {
+        "gnl_delivered": gnl_delivered,
         "nw_costs": nw_costs,
         "novomodelo_costs": novomodelo_readers.read_novomodelo_cost_breakdown(
             novomodelo_output_dir
@@ -3189,7 +3321,8 @@ def build_decomp_dataset(
       ``bus_aggregates``/``novomodelo_bus_meta``/``novomodelo_hydro_means``.
     - The Network tab's ``line_bounds``/``line_meta`` (`read_novomodelo_network_lines`).
     - The Overview tab's ``nw_costs`` (`_cost_frames`), ``novomodelo_costs``/
-      ``novomodelo_stage_costs``, and the Convergence overlay ``nw_convergence``/
+      ``novomodelo_stage_costs``, ``gnl_delivered`` on a deck with GNL plants,
+      and the Convergence overlay ``nw_convergence``/
       ``novomodelo_convergence`` (`_decomp_convergence_frame`). The per-stage
       ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows are unioned onto ``nw_sin``'s
       EARM/ENA rows via `_union_cost_rows`, never overwriting them.
@@ -3260,7 +3393,6 @@ def build_decomp_dataset(
     """
     from novomodelo_bridge.comparators.analyze import build_results_dataset
     from novomodelo_bridge.decomp.case import DecompCase
-    from novomodelo_bridge.decomp.converters.network import bus_deficit_costs
 
     case = DecompCase.from_directory(decomp_dir)
     probabilities = _scenario_probabilities(decomp_dir)
@@ -3284,9 +3416,8 @@ def build_decomp_dataset(
     )
     results.extend(line_results)
 
-    deficit_costs = bus_deficit_costs(case.dadger)
     cost_fields = _overview_cost_fields(
-        decomp_dir, novomodelo_output_dir, deficit_costs, aligned.nw_sin
+        case, decomp_dir, novomodelo_output_dir, aligned.nw_sin
     )
     performance_fields = _performance_fields(decomp_dir, novomodelo_output_dir, aligned)
     novomodelo_hydro_meta = _merge_hydro_bus_ids(

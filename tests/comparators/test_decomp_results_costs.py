@@ -19,7 +19,10 @@ import pytest
 from idecomp.decomp import Relato
 
 from novomodelo_bridge.comparators.charts import _COST_MAP
+from novomodelo_bridge.comparators.charts.costs import _DECISION_THERMAL_ROWS
 from novomodelo_bridge.comparators.decomp.results import (
+    _DECISION_THERMAL_LABELS,
+    _DELIVERY_THERMAL_LABELS,
     _NW_COST_LABELS,
     _bus_side,
     _cost_frames,
@@ -165,7 +168,7 @@ class TestCostFrames:
         must read that stage's mean k$ /1e3."""
         self._patch(monkeypatch)
 
-        nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert nw_costs["GERACAO TERMICA"] == pytest.approx(220_000.0)
         cterm = {
@@ -188,7 +191,7 @@ class TestCostFrames:
             lambda *_args, **_kwargs: _relato2_costs_frame(),  # fan stage 3
         )
 
-        nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         cterm = {
             row["stage"]: row["value"]
@@ -213,7 +216,7 @@ class TestCostFrames:
         the cost frames cover exactly relato's weeks."""
         self._patch(monkeypatch)
 
-        _nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        _nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         stages = set(nw_sin.filter(pl.col("variable") == "CTERM")["stage"].to_list())
         assert stages == {1, 2}
@@ -223,7 +226,7 @@ class TestCostFrames:
     ) -> None:
         self._patch(monkeypatch)
 
-        nw_costs, _nw_sin = _cost_frames(tmp_path, {})
+        nw_costs, _nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert nw_costs["INTERCAMBIO"] == pytest.approx(8_000.0)
         assert nw_costs["VERTIMENTO"] == pytest.approx(12_000.0)
@@ -247,7 +250,7 @@ class TestCostFrames:
         )
         self._patch(monkeypatch, relato=relato)
 
-        nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         # (120 + 0.5 * 100) k$ x1e3.
         assert nw_costs["GERACAO TERMICA"] == pytest.approx(170_000.0)
@@ -276,7 +279,7 @@ class TestCostFrames:
         )
         self._patch(monkeypatch, sist=sist)
 
-        nw_costs, _nw_sin = _cost_frames(tmp_path, {1: 1000.0, 2: 2000.0})
+        nw_costs, _nw_sin, _gnl = _cost_frames(tmp_path, {1: 1000.0, 2: 2000.0})
 
         # (10 * 5 + 2 * 10) MWh x 1000 $/MWh = 70 k$ in scenario 1 of stage 1,
         # 35 k$ as the stage expectation.
@@ -290,7 +293,7 @@ class TestCostFrames:
         self._patch(monkeypatch, sist=sist)
 
         with dx.collect() as collected:
-            nw_costs, _nw_sin = _cost_frames(tmp_path, {1: 1000.0})
+            nw_costs, _nw_sin, _gnl = _cost_frames(tmp_path, {1: 1000.0})
 
         assert "DEFICIT" not in nw_costs
         assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
@@ -343,7 +346,7 @@ class TestCostFrames:
         self._patch(monkeypatch, relato=relato)
 
         with dx.collect() as collected:
-            nw_costs, _nw_sin = _cost_frames(tmp_path, {})
+            nw_costs, _nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert nw_costs["CONTRATOS"] == pytest.approx(term * 1e3)
         assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
@@ -367,7 +370,7 @@ class TestCostFrames:
         )
         self._patch(monkeypatch, relato=relato)
 
-        nw_costs, _nw_sin = _cost_frames(tmp_path, {})
+        nw_costs, _nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert "FOLGA RESTRICOES" not in nw_costs
 
@@ -376,7 +379,7 @@ class TestCostFrames:
     ) -> None:
         self._patch(monkeypatch)
 
-        _nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        _nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         coper = {
             row["stage"]: row["value"]
@@ -397,13 +400,25 @@ class TestCostFrames:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """No dead rows: every label ``_cost_frames`` can emit is a
-        ``charts._COST_MAP`` source-model label."""
+        source-model label of ``charts._COST_MAP`` or of its decision-basis
+        thermal rows."""
         self._patch(monkeypatch)
 
-        nw_costs, _nw_sin = _cost_frames(tmp_path, {})
+        nw_costs, _nw_sin, _gnl = _cost_frames(tmp_path, {})
 
-        known_labels = {label for label, *_ in _NW_COST_LABELS}
-        mapped_cost_map_keys = {k for _, nw_keys, _, _ in _COST_MAP for k in nw_keys}
+        known_labels = {
+            label
+            for label, *_ in (
+                *_DELIVERY_THERMAL_LABELS,
+                *_DECISION_THERMAL_LABELS,
+                *_NW_COST_LABELS,
+            )
+        }
+        mapped_cost_map_keys = {
+            k
+            for _, nw_keys, _, _ in (*_COST_MAP, *_DECISION_THERMAL_ROWS)
+            for k in nw_keys
+        }
         assert nw_costs  # the fixture must exercise real categories
         assert set(nw_costs) <= known_labels
         assert known_labels <= mapped_cost_map_keys
@@ -413,7 +428,7 @@ class TestCostFrames:
     ) -> None:
         self._patch(monkeypatch)
 
-        _nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        _nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert set(nw_sin["variable"].unique().to_list()) <= {
             "COPER",
@@ -426,7 +441,7 @@ class TestCostFrames:
     ) -> None:
         self._patch(monkeypatch)
 
-        _nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        _nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert set(nw_sin["stage"].unique().to_list()) == {1, 2}
 
@@ -448,7 +463,7 @@ class TestCostFrames:
         )
 
         with dx.collect() as collected:
-            nw_costs, nw_sin = _cost_frames(tmp_path, {})
+            nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert nw_costs == {}
         assert nw_sin.is_empty()
@@ -473,7 +488,7 @@ class TestCostFrames:
         )
 
         with dx.collect() as collected:
-            nw_costs, nw_sin = _cost_frames(tmp_path, {})
+            nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert nw_costs == {}
         assert nw_sin.is_empty()
@@ -509,7 +524,7 @@ class TestCostFrames:
         )
 
         with dx.collect() as collected:
-            nw_costs, _nw_sin = _cost_frames(tmp_path, {1: 1000.0})
+            nw_costs, _nw_sin, _gnl = _cost_frames(tmp_path, {1: 1000.0})
 
         assert "DEFICIT" not in nw_costs
         assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
@@ -545,6 +560,142 @@ def _relato_costs_with_overlapping_fan_stage() -> pl.DataFrame:
         }
     )
     return pl.concat([_relato_costs_frame(), overlapping], how="vertical")
+
+
+def _dec_oper_gnl_frame() -> pl.DataFrame:
+    """GNL delivered per (stage, scenario), k$: 30 in stage 1 and 20 in
+    stage 2, on the stage rows; a block row that must not count."""
+    return pl.DataFrame(
+        {
+            "estagio": [1, 1, 1, 2, 2],
+            "cenario": [1, 2, 1, 1, 2],
+            "patamar": [None, None, 1.0, None, None],
+            "custo_geracao": [30.0, 30.0, 999.0, 20.0, 20.0],
+        }
+    )
+
+
+def _relgnl_frame() -> pl.DataFrame:
+    """GNL committed per (stage, scenario), k$: stage 1 commits weeks 10 and
+    11 (10 + 15) beside a pre-study week and the monthly summary that must not
+    count; stage 2 commits its month, 50 and 30 by scenario."""
+    weeks = ["Sem  9*", "Sem 10", "Sem 11", "MENSAL"]
+    return pl.DataFrame(
+        {
+            "estagio": [1] * 8 + [2, 2],
+            "cenario": [1] * 4 + [2] * 4 + [1, 2],
+            "semana": [*weeks, *weeks, "Mes  4", "Mes  4"],
+            "custo": [40.0, 10.0, 15.0, 65.0] * 2 + [50.0, 30.0],
+        }
+    )
+
+
+class TestCostFramesDecisionBasis:
+    """``_cost_frames`` on a deck with GNL plants: the thermal cost split, and
+    GNL moved from delivery to commitment as DECOMP's ``*COP`` books it."""
+
+    @staticmethod
+    def _patch(
+        monkeypatch: pytest.MonkeyPatch,
+        relato: pl.DataFrame | None = None,
+        relgnl: pl.DataFrame | None = None,
+    ) -> None:
+        relato = _relato_costs_frame() if relato is None else relato
+        results = "novomodelo_bridge.comparators.decomp.results"
+        monkeypatch.setattr(f"{results}.read_relato_costs", lambda *_: relato)
+        monkeypatch.setattr(
+            f"{results}.read_dec_oper_sist", lambda *_: _no_deficit_frame()
+        )
+        monkeypatch.setattr(
+            f"{results}.read_dec_oper_gnl", lambda *_: _dec_oper_gnl_frame()
+        )
+
+        def _relgnl(case_dir: Path) -> pl.DataFrame:
+            if relgnl is None:
+                raise FileNotFoundError(f"no relgnl.rvN found in {case_dir}")
+            return relgnl
+
+        monkeypatch.setattr(f"{results}.read_relgnl_operation", _relgnl)
+
+    @staticmethod
+    def _stage_values(nw_sin: pl.DataFrame, variable: str) -> dict[int, float]:
+        rows = nw_sin.filter(pl.col("variable") == variable)
+        return dict(zip(rows["stage"].to_list(), rows["value"].to_list(), strict=True))
+
+    def test_splits_the_thermal_cost_and_discounts_each_part(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Stage 2 is discounted by half: without GNL 90 + 0.5 x 80, committed
+        25 + 0.5 x 40, delivered 30 + 0.5 x 20 k$."""
+        relato = _relato_costs_frame().with_columns(
+            pl.when(pl.col("estagio") == 2)
+            .then(pl.col("custo_presente") * 0.5)
+            .otherwise(pl.col("custo_presente"))
+            .alias("custo_presente")
+        )
+        self._patch(monkeypatch, relato=relato, relgnl=_relgnl_frame())
+
+        nw_costs, _nw_sin, gnl_delivered = _cost_frames(tmp_path, {}, gnl=True)
+
+        assert "GERACAO TERMICA" not in nw_costs
+        assert nw_costs["TERMICA SEM GNL"] == pytest.approx(130_000.0)
+        assert nw_costs["GNL COMANDADO"] == pytest.approx(45_000.0)
+        assert gnl_delivered == pytest.approx(40_000.0)
+
+    def test_stage_costs_book_gnl_at_commitment(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """COPER is DECOMP's ``*COP``: stage 1 600 - 30 + 25, stage 2
+        400 - 20 + 40; CTERM moves the same, so COPER - CTERM does not."""
+        self._patch(monkeypatch, relgnl=_relgnl_frame())
+
+        nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {}, gnl=True)
+
+        assert self._stage_values(nw_sin, "COPER") == {
+            1: pytest.approx(0.595),
+            2: pytest.approx(0.42),
+        }
+        assert self._stage_values(nw_sin, "CTERM") == {
+            1: pytest.approx(0.115),
+            2: pytest.approx(0.12),
+        }
+        assert nw_costs["FOLGA RESTRICOES"] == pytest.approx(738_000.0)
+
+    def test_a_deck_without_gnl_plants_keeps_the_report_thermal_cost(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._patch(monkeypatch, relgnl=_relgnl_frame())
+
+        with dx.collect() as collected:
+            nw_costs, nw_sin, gnl_delivered = _cost_frames(tmp_path, {})
+
+        assert nw_costs["GERACAO TERMICA"] == pytest.approx(220_000.0)
+        assert {"TERMICA SEM GNL", "GNL COMANDADO"}.isdisjoint(nw_costs)
+        assert gnl_delivered is None
+        assert self._stage_values(nw_sin, "COPER") == {
+            1: pytest.approx(0.6),
+            2: pytest.approx(0.4),
+        }
+        assert collected == []
+
+    def test_a_missing_gnl_report_keeps_the_report_thermal_cost(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._patch(monkeypatch)
+
+        with dx.collect() as collected:
+            nw_costs, nw_sin, gnl_delivered = _cost_frames(tmp_path, {}, gnl=True)
+
+        assert nw_costs["GERACAO TERMICA"] == pytest.approx(220_000.0)
+        assert gnl_delivered is None
+        assert self._stage_values(nw_sin, "CTERM") == {
+            1: pytest.approx(0.12),
+            2: pytest.approx(0.1),
+        }
+        [note] = collected
+        assert note.code == "report-file-missing"
+        assert note.title == "relgnl.rvN not found"
+        assert "priced when it is delivered" in note.summary
 
 
 class TestScenarioProbabilities:
@@ -694,7 +845,7 @@ class TestScenarioProbabilities:
 
         with dx.collect() as collected:
             probabilities = _scenario_probabilities(tmp_path)
-            _nw_costs, nw_sin = _cost_frames(tmp_path, {})
+            _nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
 
         assert set(probabilities["estagio"].to_list()) == {1, 2}
         assert set(nw_sin["stage"].to_list()) == {1, 2}
@@ -770,7 +921,7 @@ def test_a_partial_relato_costs_only_the_sections_of_its_missing_tables(
     monkeypatch.setattr(Relato, "read", staticmethod(lambda _path: report))
 
     with dx.collect() as collected:
-        nw_costs, nw_sin = _cost_frames(tmp_path, {})
+        nw_costs, nw_sin, _gnl = _cost_frames(tmp_path, {})
         probabilities = _scenario_probabilities(tmp_path)
         convergence = _decomp_convergence_frame(tmp_path)
         ree, _ = _ree_result_comparisons(
@@ -1049,6 +1200,47 @@ class TestBuildDecompDatasetCosts:
         assert isinstance(stage_costs, pl.DataFrame)
         assert not stage_costs.is_empty()
         assert dataset.render.nw_offset == 1
+
+    def test_a_gnl_deck_carries_both_models_delivered_gnl(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._patch(monkeypatch)
+        results = "novomodelo_bridge.comparators.decomp.results"
+        monkeypatch.setattr(
+            "novomodelo_bridge.decomp.converters.anticipated.is_gnl_enabled",
+            lambda _dadgnl: True,
+        )
+        monkeypatch.setattr(
+            f"{results}.read_dec_oper_gnl", lambda *_: _dec_oper_gnl_frame()
+        )
+        monkeypatch.setattr(
+            f"{results}.read_relgnl_operation", lambda *_: _relgnl_frame()
+        )
+        monkeypatch.setattr(
+            f"{results}.novomodelo_readers.read_novomodelo_gnl_delivered_cost",
+            lambda *_: 48_000.0,
+        )
+
+        dataset = build_decomp_dataset(tmp_path, tmp_path)
+
+        assert dataset.render.gnl_delivered == {
+            "reference": pytest.approx(50_000.0),
+            "novomodelo": pytest.approx(48_000.0),
+        }
+        assert dataset.render.nw_costs["TERMICA SEM GNL"] == pytest.approx(170_000.0)
+        html = build_comparison_report(dataset)
+        assert "GNL delivered in the study" in html
+        assert "GNL committed in study" in html
+
+    def test_a_deck_without_gnl_has_no_delivered_gnl(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._patch(monkeypatch)
+
+        dataset = build_decomp_dataset(tmp_path, tmp_path)
+
+        assert dataset.render.gnl_delivered == {}
+        assert "GNL delivered in the study" not in build_comparison_report(dataset)
 
     def test_overview_cost_sections_render_non_empty(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

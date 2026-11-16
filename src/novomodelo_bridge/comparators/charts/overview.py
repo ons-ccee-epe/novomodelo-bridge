@@ -18,19 +18,16 @@ def overview_metrics(
     Total Comparisons / Entity Types / Variables triple was meta about
     the report itself and offered no operational insight.
     """
+    from novomodelo_bridge.comparators.charts.costs import thermal_cost
     from novomodelo_bridge.comparators.html_report import (
         metric_card,
         metrics_grid,
     )
     from novomodelo_bridge.ui.theme import COMPARISON_COLORS
 
-    # Pull thermal-generation cost only (single-category NPV). The source model parcela
-    # "GERACAO TERMICA" vs Novomodelo ``thermal_cost`` + the GNL ``anticipated_thermal_cost``
-    # (matching the "Thermal" ``_COST_MAP`` row; anticipated is 0 /
-    # absent on non-GNL runs).
-    nw_thermal = (nw_costs or {}).get("GERACAO TERMICA", 0.0)
-    _cb = novomodelo_costs or {}
-    cb_thermal = _cb.get("thermal_cost", 0.0) + _cb.get("anticipated_thermal_cost", 0.0)
+    thermal = thermal_cost(nw_costs, novomodelo_costs)
+    nw_thermal = thermal.reference or 0.0
+    cb_thermal = thermal.novomodelo or 0.0
     diff = cb_thermal - nw_thermal
     pct = (diff / nw_thermal * 100.0) if abs(nw_thermal) > 1e-6 else float("nan")
 

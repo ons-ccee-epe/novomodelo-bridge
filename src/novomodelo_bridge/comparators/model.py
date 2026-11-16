@@ -34,6 +34,9 @@ class PercentileData:
     novomodelo_convergence: pl.DataFrame = field(default_factory=pl.DataFrame)
     nw_costs: dict[str, float] = field(default_factory=dict)
     novomodelo_costs: dict[str, float] = field(default_factory=dict)
+    # GNL delivered in the study, R$ present value, under ``reference`` and
+    # ``novomodelo``: outside both cost totals, which book GNL when committed.
+    gnl_delivered: dict[str, float] = field(default_factory=dict)
     # Per-stage immediate/future cost on the Novomodelo side — mean across
     # scenarios, in R$.  Joined with MEDIAS-SIN's COPER/CUSTO_FUTURO
     # (after the 10⁶ R$ unit conversion) by the overview-tab chart.

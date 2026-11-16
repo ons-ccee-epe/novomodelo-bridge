@@ -39,6 +39,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_buses,
     read_novomodelo_default_exchange_cost,
     read_novomodelo_fpha_fit_config,
+    read_novomodelo_gnl_delivered_cost,
     read_novomodelo_hydro_bus_generation,
     read_novomodelo_hydro_bus_labels,
     read_novomodelo_hydro_means,
@@ -2562,3 +2563,79 @@ class TestReadNovomodeloDefaultExchangeCost:
         assert [(d.code, d.severity) for d in found] == [
             ("report-file-unreadable", Severity.WARNING)
         ]
+
+
+class TestReadNovomodeloGnlDeliveredCost:
+    """The anticipated generation delivered over the horizon, at each plant's
+    price, discounted and weighted by the scenario probabilities."""
+
+    @staticmethod
+    def _case(tmp_path: Path, *, anticipated: bool = True) -> Path:
+        case_dir = tmp_path / "case"
+        output_dir = case_dir / "output"
+        (case_dir / "system").mkdir(parents=True)
+        plant: dict[str, object] = {"id": 7, "name": "GNL", "cost_per_mwh": 100.0}
+        if anticipated:
+            plant["anticipated_config"] = {"lead_time_hours": 1440.0}
+        (case_dir / "system" / "thermals.json").write_text(
+            json.dumps({"thermals": [plant, {"id": 8, "cost_per_mwh": 50.0}]}),
+            encoding="utf-8",
+        )
+        (case_dir / "constraints").mkdir()
+        pl.DataFrame(
+            {
+                "thermal_id": [7],
+                "stage_id": [1],
+                "block_id": [None],
+                "min_generation_mw": [0.0],
+                "max_generation_mw": [500.0],
+                "cost_per_mwh": [200.0],
+            },
+            schema_overrides={"block_id": pl.Int32},
+        ).write_parquet(case_dir / "constraints" / "thermal_bounds.parquet")
+        for scenario, mwh in ((0, 10.0), (1, 30.0)):
+            rows: list[dict[str, object]] = [
+                {
+                    "stage_id": stage,
+                    "block_id": block,
+                    "thermal_id": thermal,
+                    "generation_mwh": mwh if thermal == 7 else 99.0,
+                    "is_anticipated": thermal == 7 and anticipated,
+                }
+                for stage in (0, 1)
+                for block in (0, 1)
+                for thermal in (7, 8)
+            ]
+            _write_sim_entity_partition(output_dir, "thermals", scenario, rows)
+            _write_sim_entity_partition(
+                output_dir,
+                "costs",
+                scenario,
+                [
+                    {"stage_id": stage, "block_id": block, "discount_factor": factor}
+                    for stage, factor in ((0, 1.0), (1, 0.5))
+                    for block in (0, 1)
+                ],
+            )
+        pl.DataFrame(
+            {"scenario_id": [0, 1], "probability": [0.75, 0.25]}
+        ).write_parquet(output_dir / "simulation" / "scenario_summary.parquet")
+        return output_dir
+
+    def test_prices_each_stage_and_weighs_the_scenarios(self, tmp_path: Path) -> None:
+        output_dir = self._case(tmp_path)
+
+        # Per scenario: stage 0 at the base 100 $/MWh, stage 1 at its 200 $/MWh
+        # stage row discounted by 0.5, two blocks each: 2 x mwh x (100 + 100).
+        assert read_novomodelo_gnl_delivered_cost(output_dir) == pytest.approx(
+            0.75 * 4_000.0 + 0.25 * 12_000.0
+        )
+
+    def test_none_without_an_anticipated_plant(self, tmp_path: Path) -> None:
+        assert (
+            read_novomodelo_gnl_delivered_cost(self._case(tmp_path, anticipated=False))
+            is None
+        )
+
+    def test_none_without_thermal_output(self, tmp_path: Path) -> None:
+        assert read_novomodelo_gnl_delivered_cost(tmp_path / "output") is None
