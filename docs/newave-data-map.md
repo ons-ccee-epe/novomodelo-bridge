@@ -622,6 +622,8 @@ Limites de vazão bombeada por estágio e patamar.
 | `block_id` | `estacao-bombeamento.csv` › `patamar` *(derivado)* | `patamar` menos 1. |
 | `min_m3s` | `estacao-bombeamento.csv` › `limite_inferior` | Vazão mínima bombeável no patamar. |
 | `max_m3s` | `estacao-bombeamento.csv` › `limite_superior` | Vazão máxima bombeável no patamar. |
+| `min_hm3` | — *(sempre nulo)* | Sempre nulo: o NEWAVE não limita o volume bombeado no estágio. |
+| `max_hm3` | — *(sempre nulo)* | Sempre nulo: o NEWAVE não limita o volume bombeado no estágio. |
 
 ### `constraints/penalty_overrides_bus.parquet`
 
@@ -1953,3 +1955,5 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `system/hydros.json` › `hydros[].exit_stage_id` — Sempre nulo: usinas hidrelétricas do NEWAVE não saem de operação dentro do horizonte.
 - `system/hydro_energy_productivity.parquet` › `reference_outflow_m3s` — Sempre nulo: o volume de referência é declarado em `system/hydro_production_models.json`, não por vazão de referência.
 - `system/hydro_energy_productivity.parquet` › `specific_productivity_mw_per_m3s_per_m` — Sempre nulo aqui: a produtibilidade específica é declarada em `hydros[].specific_productivity_mw_per_m3s_per_m`.
+- `constraints/pumping_bounds.parquet` › `min_hm3` — Sempre nulo: o NEWAVE não limita o volume bombeado no estágio.
+- `constraints/pumping_bounds.parquet` › `max_hm3` — Sempre nulo: o NEWAVE não limita o volume bombeado no estágio.

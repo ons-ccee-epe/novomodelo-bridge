@@ -344,10 +344,9 @@ class TestSpecialConstraintCoverage:
 
     @staticmethod
     def _synthetic_dadger(**extra: pd.DataFrame) -> _ConstraintFakeDadger:
-        """One record per family: RE (FU) and HQ (QDES, a diversion bound)
-        lower to bounds; HV (VARM) and HE (always generic) emit as generic
-        constraints — mirrors the register fixtures in
-        ``test_decomp_constraint_registers.py``."""
+        """One record per family: RE (FU), HQ (QDES, a diversion bound) and
+        HV (VARM, a storage bound) lower to bounds; HE (always generic) emits
+        as a generic constraint."""
         return _ConstraintFakeDadger(
             re=_decl((10, 1, 2)),
             fu=_coeff((10, 21, 1.0, 1, float("nan")), freq=True),
@@ -399,7 +398,7 @@ class TestSpecialConstraintCoverage:
             f"{len(present_families)} family(ies) present in the deck"
         )
 
-    def test_converted_counts_match_the_census_probe_with_hv_varm_generic(
+    def test_converted_counts_match_the_census_probe_with_hv_varm_bound(
         self,
     ) -> None:
         dadger = self._synthetic_dadger()
@@ -414,8 +413,8 @@ class TestSpecialConstraintCoverage:
         # a hard-coded oracle.
         assert str(len(census.to_bounds)) in converted.summary
         assert str(len(census.to_generic)) in converted.summary
-        assert len(census.to_bounds) == 2  # RE FU + HQ QDES
-        assert len(census.to_generic) == 2  # HV VARM + HE (always generic)
+        assert len(census.to_bounds) == 3  # RE FU + HQ QDES + HV VARM
+        assert len(census.to_generic) == 1  # HE (always generic)
 
     def test_deferred_rha_diagnostic_is_sourced_from_the_helper_verbatim(
         self,

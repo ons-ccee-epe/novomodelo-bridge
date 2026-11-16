@@ -11,7 +11,9 @@ parquet, call ``resolve``/``build_bound_tables``, or touch the pipeline.
 ``single_term_bound_contributions`` is the stable public seam: it dispatches
 each record on its ``family`` (``"RE"`` and ``"HQ"``) and raises
 on anything else, so an unhandled family fails loud instead of silently
-dropping a bound.
+dropping a bound. An ``"HV"`` record is skipped there and lowered by
+:func:`single_term_hv_contributions`: ``VARM`` to absolute storage, the volume
+tipos (``VDEF``/``VDES``/``VBOM``) to absolute hm3 contributions, unshifted.
 """
 
 from __future__ import annotations
@@ -20,18 +22,25 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import sided_bounds
+from novomodelo_bridge.decomp.converters.cadastro import effective_storage_range
+from novomodelo_bridge.decomp.converters.constraints import (
+    hv_terms_convertible,
+    offset_if_bounded,
+)
 from novomodelo_bridge.decomp.converters.hydro import split_plant_group_id
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.constraint_registers import (
         ConstraintCensus,
         ConstraintRecord,
     )
+    from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -49,6 +58,21 @@ _HQ_AXIS_BY_VARIABLE: dict[str, str] = {
     "QDES": "diversion",
     "QVER": "spillage",
 }
+
+#: RHV ``CV.tipo`` -> the ``(family, axis)`` its single-term bound lands on;
+#: the ``*_volume`` axes are hm3 over the stage.
+_HV_AXIS_BY_VARIABLE: dict[str, tuple[str, str]] = {
+    "VARM": ("hydro", "storage"),
+    "VDEF": ("hydro", "outflow_volume"),
+    "VDES": ("hydro", "diversion_volume"),
+    "VBOM": ("pumping", "volume"),
+}
+
+#: Contributor label of the physical-range clamp, so a conflict names it.
+_STORAGE_RANGE = "storage-range"
+
+#: Contributor label of the ``>= 0`` clamp a negative volume upper trips on.
+_NON_NEGATIVE_VOLUME = "non-negative volume"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -469,9 +493,10 @@ def single_term_bound_contributions(
     is a pumping-station code, not a hydro one); everything else
     (``QDEF``/``QTUR``/``QDES``/``QVER``) lowers to a hydro
     ``outflow``/``turbined``/``diversion``/``spillage`` bound via
-    :func:`_hq_flow_contributions`. Any other family raises ``ValueError``
-    naming it. *pumping_station_ids* feeds only the ``HQ`` ``QBOM`` path —
-    required, not defaulted, so a forgotten wiring fails loud instead of
+    :func:`_hq_flow_contributions`. An ``"HV"`` record is skipped, lowered by
+    :func:`single_term_hv_contributions`; any other family raises
+    ``ValueError`` naming it. *pumping_station_ids* feeds only the ``HQ``
+    ``QBOM`` path — required, not defaulted, so a forgotten wiring fails loud instead of
     silently dropping every QBOM bound; *hydro_capacities* feeds the ``FU``/
     ``generation`` RE path's ``max_generation_mw`` clamp (see
     :func:`_re_generation_contributions`) and the ``HQ``/``QTUR``/
@@ -492,13 +517,13 @@ def single_term_bound_contributions(
         between the two maps' sources).
     ValueError
         When a ``to_bounds`` record carries a family other than ``"RE"``/
-        ``"HQ"``, or an ``"RE"`` record whose single term's variable
+        ``"HQ"``/``"HV"``, or an ``"RE"`` record whose single term's variable
         is neither ``"generation"`` nor ``"thermal_generation"``.
     """
     calendar = case.calendar
     contributions: list[BoundContribution] = []
     for record in census.to_bounds:
-        if _is_frequency_tagged_generation(record):
+        if _is_frequency_tagged_generation(record) or record.family == "HV":
             continue
         if record.family == "RE":
             variable = record.terms[0].variable
@@ -530,4 +555,116 @@ def single_term_bound_contributions(
             raise ValueError(
                 f"single_term_bound_contributions: unhandled family {record.family!r}"
             )
+    return contributions
+
+
+def _stage_sides(
+    record: ConstraintRecord,
+) -> Iterator[tuple[int, float | None, float | None]]:
+    """Each stage of a single-term, one-slot *record* with a bounded side, as
+    ``(stage, lower, upper)`` on the entity after the coefficient-sign map."""
+    term = record.terms[0]
+    for stage, bounds in record.bounds.items():
+        lower, upper = sided_bounds(
+            bounds.lower[0], bounds.upper[0], term.coefficient_at(stage)
+        )
+        if is_bounded(lower) or is_bounded(upper):
+            yield stage, lower, upper
+
+
+def single_term_hv_contributions(
+    case: DecompCase,
+    id_map: DecompIdMap,
+    *,
+    census: ConstraintCensus,
+    effective: EffectiveCadastro,
+    pumping_station_ids: Mapping[int, int],
+    diversion_hydro_ids: frozenset[int],
+) -> list[BoundContribution]:
+    """Lower every ``"HV"`` record of ``census.to_bounds`` to stage-level contributions.
+
+    A ``VARM`` ``LV`` limit is relative to the plant's useful volume above the
+    stage floor, so each bounded side becomes absolute hm³ by adding the
+    stage's effective floor (:func:`offset_if_bounded`: a ``None`` or
+    ``±1e21`` side is never shifted). A second ``storage-range`` contribution
+    ``[floor, ceiling]`` on the same stage lets the accumulator clamp a looser
+    side to the physical range and write both storage sides.
+
+    A volume tipo (``VDEF``/``VDES``/``VBOM``) is already absolute hm³ over
+    the stage and is never shifted. Its volume is non-negative: a negative
+    lower is dropped, a ``±0.0`` side is written as ``0.0``, and a negative
+    upper adds a ``non-negative volume`` contribution ``[0.0, None]`` that the
+    accumulator raises on at resolve. ``VBOM`` resolves its entity through
+    *pumping_station_ids*, the other tipos through ``id_map.hydro_id``.
+
+    A stage whose two sides are unbounded emits nothing; a record
+    :func:`hv_terms_convertible` refuses is skipped whole, the guard having
+    emitted the diagnostic. An HV side no stage range meets is left to the
+    accumulator, which raises on resolve. *case* keeps the signature of the
+    sibling lowerings; a stage-level bound reads no calendar.
+
+    Raises
+    ------
+    ValueError
+        When a convertible record's variable has no entry in
+        ``_HV_AXIS_BY_VARIABLE`` (a wiring bug, not a data gap).
+    """
+    contributions: list[BoundContribution] = []
+    for record in census.to_bounds:
+        if record.family != "HV" or not hv_terms_convertible(
+            record, id_map, effective, pumping_station_ids, diversion_hydro_ids
+        ):
+            continue
+        term = record.terms[0]
+        if term.variable not in _HV_AXIS_BY_VARIABLE:
+            raise ValueError(
+                f"single_term_hv_contributions: unhandled HV variable {term.variable!r}"
+            )
+        family, axis = _HV_AXIS_BY_VARIABLE[term.variable]
+        entity_id = (
+            pumping_station_ids[term.code]
+            if family == "pumping"
+            else id_map.hydro_id(term.code)
+        )
+        for stage, lower, upper in _stage_sides(record):
+            if term.variable == "VARM":
+                floor, ceiling = effective_storage_range(effective, term.code, stage)
+                lower, upper = (
+                    offset_if_bounded(lower, floor),
+                    offset_if_bounded(upper, floor),
+                )
+            else:
+                if is_bounded(lower) and lower < 0.0:
+                    lower = None
+                # `+ 0.0` rewrites a `-0.0` side (a -1 coefficient negates 0.0) as 0.0.
+                lower, upper = (
+                    offset_if_bounded(lower, 0.0),
+                    offset_if_bounded(upper, 0.0),
+                )
+            limit = BoundContribution(
+                family=family,
+                entity_id=entity_id,
+                stage_id=stage,
+                block_id=None,
+                axis=axis,
+                lower=lower,
+                upper=upper,
+                contributor=f"HV_{record.constraint_id}",
+            )
+            contributions.append(limit)
+            if term.variable == "VARM":
+                contributions.append(
+                    dataclasses.replace(
+                        limit, lower=floor, upper=ceiling, contributor=_STORAGE_RANGE
+                    )
+                )
+            elif is_bounded(upper) and upper < 0.0:
+                contributions.append(
+                    dataclasses.replace(
+                        limit,
+                        lower=0.0,
+                        upper=None,
+                        contributor=_NON_NEGATIVE_VOLUME,
+                    )
+                )
     return contributions

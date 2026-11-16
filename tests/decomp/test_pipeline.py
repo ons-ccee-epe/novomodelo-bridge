@@ -451,6 +451,7 @@ class TestDecompCaseArtifacts:
             "initial_conditions",
             "deficit_cost",
             "fpha_codes",
+            "diversion_hydro_ids",
         } <= field_names
 
         # _discover's own fields are required (no default); every later-phase
@@ -2208,6 +2209,50 @@ class TestMiniDeckDiversionChannels:
         ]
         assert unlimited.table is not None
         assert unlimited.table.rows == [[314, "PIMENTAL", 288, "BELO MONTE", "9999999"]]
+
+    def test_converted_diversion_ids_match_the_coupled_channels(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.core import diagnostics as dx
+        from novomodelo_bridge.decomp.pipeline import (
+            _convert_core_entities,
+            _convert_scenarios,
+            _discover,
+            _resolve_bounds,
+        )
+        from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+
+        with dx.collect():
+            artifacts = _discover(decomp_mini_deck)
+            writer = CaseWriter(tmp_path, dry_run=True)
+            _convert_core_entities(artifacts, writer)
+            _convert_scenarios(artifacts, writer)
+            _resolve_bounds(artifacts, writer)
+
+        assert artifacts.hydros_dict is not None
+        coupled = {
+            hydro["id"]
+            for hydro in artifacts.hydros_dict["hydros"]
+            if hydro.get("diversion") is not None
+        }
+        assert coupled
+        assert artifacts.diversion_hydro_ids == coupled
+
+
+class TestCoupleDiversionChannels:
+    def test_couple_diversion_channels_takes_the_precomputed_channels(self) -> None:
+        import inspect
+
+        from novomodelo_bridge.decomp import pipeline
+
+        parameters = inspect.signature(
+            pipeline._couple_diversion_channels, eval_str=True
+        ).parameters
+        assert parameters["diversion"].annotation is DiversionChannels
+
+        call = re.compile(r"(^|[^a-z])_diversion_channels\(", re.MULTILINE)
+        assert not call.search(inspect.getsource(pipeline._couple_diversion_channels))
+        assert len(call.findall(inspect.getsource(pipeline))) == 2
 
 
 class TestMiniDeckItaipuFrequencyBounds:

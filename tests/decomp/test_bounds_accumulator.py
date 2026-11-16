@@ -3,9 +3,10 @@
 No deck (synthetic contributions only). Covers the axis registry (contents,
 two-sided/stage-level flags — including the diversion/spillage axes
 widened/added, and the ``line``/``hydro_unit_group``/
-``contract``/``water_withdrawal`` axes registered — unknown-pair
-raise), the per-axis ``intersect`` (tightest pair, unbounded sentinel,
-empty-intersection and both upper-only/lower-only raises), ``resolve`` (base
+``contract``/``water_withdrawal`` axes registered and the stage-volume
+hm³ axes — unknown-pair raise), the per-axis ``intersect`` (tightest pair,
+unbounded sentinel, empty-intersection and both upper-only/lower-only
+raises), ``resolve`` (base
 vs per-block materialization + the stage-level guard), and
 ``build_bound_tables`` (the pyarrow fan-out into the hydro/thermal/pumping
 schemas, one row per cell — including a two-sided diversion/spillage group
@@ -115,6 +116,23 @@ def test_hydro_water_withdrawal_axis_is_lower_only_stage_level() -> None:
     assert spec.lower_column == "water_withdrawal_m3s"
     assert spec.upper_column is None
     assert spec.block_eligible is False
+
+
+def test_stage_volume_axes_are_stage_level() -> None:
+    """The hm³ stage-volume axes are named apart from their m³/s siblings
+    (``outflow``, ``diversion``, ``flow``) so channel code filtering on those
+    names never reads an hm³ contribution, and reject a ``block_id``."""
+    expected = {
+        ("hydro", "outflow_volume"): ("min_outflow_hm3", "max_outflow_hm3"),
+        ("hydro", "diversion_volume"): ("min_diversion_hm3", "max_diversion_hm3"),
+        ("pumping", "volume"): ("min_hm3", "max_hm3"),
+    }
+    for (family, axis), (lower, upper) in expected.items():
+        spec = axis_spec(family, axis)
+        assert spec.family == family
+        assert spec.lower_column == lower
+        assert spec.upper_column == upper
+        assert spec.block_eligible is False
 
 
 def test_pre_existing_eight_axes_unchanged() -> None:
@@ -359,6 +377,23 @@ def test_block_id_on_stage_level_raises() -> None:
         resolve(contribs, {0: 3})
 
 
+def test_block_id_on_stage_volume_axis_raises() -> None:
+    contribs = [
+        BoundContribution(
+            family="hydro",
+            entity_id=4,
+            stage_id=0,
+            block_id=1,
+            axis="outflow_volume",
+            lower=None,
+            upper=400.0,
+            contributor="HV_7",
+        ),
+    ]
+    with pytest.raises(ValueError, match="outflow_volume.*entity_id=4"):
+        resolve(contribs, {0: 3})
+
+
 def test_out_of_range_block_id_raises() -> None:
     # block_id 5 is outside the stage's 3-block range; without a guard it would
     # match no materialization iteration and the bound would be silently lost.
@@ -585,3 +620,83 @@ def test_spillage_upper_only_row_leaves_min_null() -> None:
     record = tables.hydro.to_pylist()[0]
     assert record["max_spillage_m3s"] == 25.0
     assert record["min_spillage_m3s"] is None
+
+
+def test_stage_volume_row_coexists_with_block_rows() -> None:
+    """A stage-only hm³ row shares ``(hydro, stage)`` with per-block m³/s rows
+    but stays its own ``block_id is None`` row, as novomodelo requires."""
+    contribs = [
+        BoundContribution(
+            family="hydro",
+            entity_id=3,
+            stage_id=0,
+            block_id=block_id,
+            axis="outflow",
+            lower=10.0,
+            upper=100.0,
+            contributor=f"LQ_{block_id}",
+        )
+        for block_id in (0, 1)
+    ]
+    contribs.append(
+        BoundContribution(
+            family="hydro",
+            entity_id=3,
+            stage_id=0,
+            block_id=None,
+            axis="outflow_volume",
+            lower=50.0,
+            upper=400.0,
+            contributor="HV_7",
+        )
+    )
+
+    tables = build_bound_tables(resolve(contribs, {0: 2}))
+
+    by_block = {record["block_id"]: record for record in tables.hydro.to_pylist()}
+    assert set(by_block) == {0, 1, None}
+    for block_id in (0, 1):
+        assert by_block[block_id]["min_outflow_m3s"] == 10.0
+        assert by_block[block_id]["max_outflow_m3s"] == 100.0
+        assert by_block[block_id]["min_outflow_hm3"] is None
+        assert by_block[block_id]["max_outflow_hm3"] is None
+    assert by_block[None]["min_outflow_hm3"] == 50.0
+    assert by_block[None]["max_outflow_hm3"] == 400.0
+    assert by_block[None]["min_outflow_m3s"] is None
+    assert by_block[None]["max_outflow_m3s"] is None
+
+
+def test_stage_volume_axes_fan_into_their_columns() -> None:
+    contribs = [
+        BoundContribution(
+            family="pumping",
+            entity_id=2,
+            stage_id=0,
+            block_id=None,
+            axis="volume",
+            lower=None,
+            upper=20.0,
+            contributor="HV_3",
+        ),
+        BoundContribution(
+            family="hydro",
+            entity_id=5,
+            stage_id=0,
+            block_id=None,
+            axis="diversion_volume",
+            lower=0.0,
+            upper=50.0,
+            contributor="HV_4",
+        ),
+    ]
+
+    tables = build_bound_tables(resolve(contribs, {0: 1}))
+
+    pumping = tables.pumping.to_pylist()
+    assert len(pumping) == 1
+    assert pumping[0]["min_hm3"] is None
+    assert pumping[0]["max_hm3"] == 20.0
+    hydro = tables.hydro.to_pylist()
+    assert len(hydro) == 1
+    assert hydro[0]["min_diversion_hm3"] == 0.0
+    assert hydro[0]["max_diversion_hm3"] == 50.0

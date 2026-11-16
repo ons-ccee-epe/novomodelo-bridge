@@ -6,13 +6,16 @@ side map, the per-block emission loop's block-count clamp, the "both sides
 absent" skip, the RHQ ``QDEF``/``QTUR``/``QDES``/``QVER`` axis lowering
 (including their coexistence on one plant and, for ``QDES``/``QVER``, the
 ``lowers_to_bound`` single-unit-term vs multi-term/non-unit-coefficient
-classification), and the fail-loud dispatcher on an unhandled family
-(including an ``HV`` record, which never lowers to a bound).
+classification), the fail-loud dispatcher on an unhandled family (an ``HV``
+record is left to its own lowering), and the single-term ``VARM`` ``HV``
+lowering to absolute storage contributions and the volume-tipo ``HV`` lowering
+(``VDEF``/``VDES``/``VBOM``) to unshifted hm3 contributions.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import math
 from datetime import date
 from pathlib import Path
 
@@ -20,6 +23,11 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.decomp.bounds_accumulator import (
+    BoundContribution,
+    build_bound_tables,
+    resolve,
+)
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintCensus,
@@ -28,14 +36,19 @@ from novomodelo_bridge.decomp.constraint_registers import (
     StageBounds,
     lowers_to_bound,
 )
+from novomodelo_bridge.decomp.converters.cadastro import (
+    EffectiveCadastro,
+    storage_envelope,
+)
 from novomodelo_bridge.decomp.converters.single_term_bounds import (
     HydroCapacities,
     single_term_bound_contributions,
+    single_term_hv_contributions,
     split_plant_group_contributions,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
-from tests.conftest import make_decomp_case
+from tests.conftest import hv_floor_frame, make_decomp_case
 
 
 def _stage(index: int, n_blocks: int) -> OperativeStage:
@@ -101,6 +114,66 @@ def _re_record(
         bounds=bounds,
         per_block=True,
     )
+
+
+def _hv_record(
+    *,
+    coefficient: float,
+    bounds: dict[int, StageBounds],
+    constraint_id: int = 7,
+    code: int = 5,
+    variable: str = "VARM",
+) -> ConstraintRecord:
+    return ConstraintRecord(
+        family="HV",
+        constraint_id=constraint_id,
+        stage_start=min(bounds),
+        stage_end=max(bounds),
+        terms=(ConstraintTerm(code=code, coefficient=coefficient, variable=variable),),
+        bounds=bounds,
+        per_block=False,
+    )
+
+
+def _hv_effective(
+    n_stages: int,
+    stage_varying: dict[tuple[int, str], tuple[float, ...]] | None = None,
+) -> EffectiveCadastro:
+    """Plant 5 with a 100 hm3 floor and a 1100 hm3 ceiling unless *stage_varying* moves them."""
+    return EffectiveCadastro(
+        base=hv_floor_frame({5: 100.0}),
+        n_stages=n_stages,
+        stage_varying=stage_varying or {},
+    )
+
+
+_HV_PUMPING_STATION_IDS = {4: 2}
+_HV_DIVERSION_HYDRO_IDS = frozenset({0})
+
+
+def _hv_contributions(
+    record: ConstraintRecord,
+    id_map: DecompIdMap,
+    effective: EffectiveCadastro,
+) -> list[BoundContribution]:
+    return single_term_hv_contributions(
+        _case([_stage(index, 1) for index in range(effective.n_stages)]),
+        id_map,
+        census=_census(record),
+        effective=effective,
+        pumping_station_ids=_HV_PUMPING_STATION_IDS,
+        diversion_hydro_ids=_HV_DIVERSION_HYDRO_IDS,
+    )
+
+
+def _resolved_storage_rows(
+    contributions: list[BoundContribution], n_stages: int
+) -> dict[int, dict[str, float | None]]:
+    rows = build_bound_tables(
+        resolve(contributions, dict.fromkeys(range(n_stages), 1))
+    ).hydro.to_pylist()
+    assert all(row["block_id"] is None for row in rows)
+    return {row["stage_id"]: row for row in rows}
 
 
 def test_re_single_block_generation_bound(id_map: DecompIdMap) -> None:
@@ -353,25 +426,22 @@ def test_unhandled_family_raises(id_map: DecompIdMap) -> None:
         )
 
 
-def test_hv_record_in_to_bounds_raises_unhandled_family(id_map: DecompIdMap) -> None:
-    record = ConstraintRecord(
-        family="HV",
-        constraint_id=7,
-        stage_start=0,
-        stage_end=0,
-        terms=(ConstraintTerm(code=5, coefficient=1.0, variable="VARM"),),
-        bounds={0: StageBounds(lower=(5.0,), upper=(30.0,))},
-        per_block=False,
+def test_hv_record_in_to_bounds_is_left_to_the_hv_lowering(
+    id_map: DecompIdMap,
+) -> None:
+    record = _hv_record(
+        coefficient=1.0, bounds={0: StageBounds(lower=(10.0,), upper=(400.0,))}
     )
 
-    with pytest.raises(ValueError, match="unhandled family 'HV'"):
-        single_term_bound_contributions(
-            _case([_stage(0, 1)]),
-            id_map,
-            census=_census(record),
-            pumping_station_ids={},
-            hydro_capacities={},
-        )
+    contributions = single_term_bound_contributions(
+        _case([_stage(0, 1)]),
+        id_map,
+        census=_census(record),
+        pumping_station_ids={},
+        hydro_capacities={},
+    )
+
+    assert contributions == []
 
 
 def test_re_unexpected_bounded_variable_raises(id_map: DecompIdMap) -> None:
@@ -1175,3 +1245,322 @@ def test_hq_qbom_no_station_warns_and_skips(qbom_id_map: DecompIdMap) -> None:
     warnings = [d for d in collected if d.severity is Severity.WARNING]
     assert len(warnings) == 1
     assert warnings[0].code == "decomp-rhq-qbom-no-station"
+
+
+@pytest.mark.parametrize(
+    ("coefficient", "lv"),
+    [(1.0, (10.0, 400.0)), (-1.0, (-400.0, -10.0))],
+    ids=["positive", "negative"],
+)
+def test_varm_hv_lowers_a_relative_limit_to_absolute_storage(
+    id_map: DecompIdMap, coefficient: float, lv: tuple[float, float]
+) -> None:
+    effective = _hv_effective(2, {(5, "volume_minimo"): (100.0, 150.0)})
+    record = _hv_record(
+        coefficient=coefficient,
+        bounds={stage: StageBounds(lower=(lv[0],), upper=(lv[1],)) for stage in (0, 1)},
+    )
+
+    rows = _resolved_storage_rows(_hv_contributions(record, id_map, effective), 2)
+
+    static_floor = storage_envelope(effective, 5)[0]
+    for stage, floor in ((0, 100.0), (1, 150.0)):
+        generic = sorted(
+            (side + coefficient * (floor - static_floor)) / coefficient + static_floor
+            for side in lv
+        )
+        assert (rows[stage]["min_storage_hm3"], rows[stage]["max_storage_hm3"]) == (
+            pytest.approx(generic[0], rel=1e-12),
+            pytest.approx(generic[1], rel=1e-12),
+        )
+    assert rows[0]["min_storage_hm3"] == pytest.approx(110.0, rel=1e-12)
+    assert rows[1]["max_storage_hm3"] == pytest.approx(550.0, rel=1e-12)
+
+
+def test_varm_hv_emits_the_limit_and_the_storage_range_per_stage(
+    id_map: DecompIdMap,
+) -> None:
+    effective = _hv_effective(1)
+    record = _hv_record(
+        coefficient=1.0, bounds={0: StageBounds(lower=(10.0,), upper=(400.0,))}
+    )
+
+    contributions = _hv_contributions(record, id_map, effective)
+
+    assert [
+        (c.family, c.entity_id, c.stage_id, c.block_id, c.axis, c.contributor)
+        for c in contributions
+    ] == [
+        ("hydro", 0, 0, None, "storage", "HV_7"),
+        ("hydro", 0, 0, None, "storage", "storage-range"),
+    ]
+    assert [(c.lower, c.upper) for c in contributions] == [
+        (110.0, 500.0),
+        (100.0, 1100.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    "stage_1_lv", [(None, None), (-1e21, 1e21)], ids=["none", "sentinel"]
+)
+def test_varm_hv_skips_a_stage_with_no_effective_side_and_never_shifts_a_sentinel(
+    id_map: DecompIdMap, stage_1_lv: tuple[float | None, float | None]
+) -> None:
+    record = _hv_record(
+        coefficient=1.0,
+        bounds={
+            0: StageBounds(lower=(10.0,), upper=(1e21,)),
+            1: StageBounds(lower=(stage_1_lv[0],), upper=(stage_1_lv[1],)),
+        },
+    )
+
+    contributions = _hv_contributions(record, id_map, _hv_effective(2))
+
+    assert [c for c in contributions if c.stage_id == 1] == []
+    rows = _resolved_storage_rows(contributions, 2)
+    assert set(rows) == {0}
+    assert rows[0]["min_storage_hm3"] == 110.0
+    assert rows[0]["max_storage_hm3"] == 1100.0
+
+
+def test_varm_hv_clamps_a_looser_side_to_the_storage_range_without_a_conflict(
+    id_map: DecompIdMap,
+) -> None:
+    record = _hv_record(
+        coefficient=1.0, bounds={0: StageBounds(lower=(-50.0,), upper=(2000.0,))}
+    )
+
+    with dx.collect() as collected:
+        rows = _resolved_storage_rows(
+            _hv_contributions(record, id_map, _hv_effective(1)), 1
+        )
+
+    assert (rows[0]["min_storage_hm3"], rows[0]["max_storage_hm3"]) == (100.0, 1100.0)
+    assert list(collected) == []
+
+
+def test_varm_hv_side_above_the_storage_ceiling_raises_on_resolve(
+    id_map: DecompIdMap,
+) -> None:
+    record = _hv_record(
+        coefficient=1.0, bounds={0: StageBounds(lower=(1500.0,), upper=(None,))}
+    )
+    contributions = _hv_contributions(record, id_map, _hv_effective(1))
+
+    with pytest.raises(ValueError, match="empty intersection on hydro axis"):
+        resolve(contributions, {0: 1})
+
+
+def test_varm_hv_on_an_uncadastred_plant_warns_and_is_skipped(
+    id_map: DecompIdMap,
+) -> None:
+    record = _hv_record(
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(10.0,), upper=(400.0,))},
+        code=9,
+    )
+
+    with dx.collect() as collected:
+        contributions = _hv_contributions(record, id_map, _hv_effective(1))
+
+    assert contributions == []
+    assert [(d.severity, d.code) for d in collected] == [
+        (Severity.WARNING, "decomp-rhv-varm-plant-uncadastred")
+    ]
+
+
+@pytest.mark.parametrize(
+    (
+        "variable",
+        "code",
+        "lv",
+        "table",
+        "id_column",
+        "entity_id",
+        "columns",
+        "expected",
+    ),
+    [
+        (
+            "VDEF",
+            5,
+            (50.0, 400.0),
+            "hydro",
+            "hydro_id",
+            0,
+            ("min_outflow_hm3", "max_outflow_hm3"),
+            (50.0, 400.0),
+        ),
+        (
+            "VDES",
+            5,
+            (0.0, 50.0),
+            "hydro",
+            "hydro_id",
+            0,
+            ("min_diversion_hm3", "max_diversion_hm3"),
+            (0.0, 50.0),
+        ),
+        (
+            "VBOM",
+            4,
+            (None, 20.0),
+            "pumping",
+            "pumping_station_id",
+            2,
+            ("min_hm3", "max_hm3"),
+            (None, 20.0),
+        ),
+    ],
+)
+def test_volume_tipo_hv_lands_in_its_column(
+    id_map: DecompIdMap,
+    variable: str,
+    code: int,
+    lv: tuple[float | None, float | None],
+    table: str,
+    id_column: str,
+    entity_id: int,
+    columns: tuple[str, str],
+    expected: tuple[float | None, float | None],
+) -> None:
+    record = _hv_record(
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(lv[0],), upper=(lv[1],))},
+        code=code,
+        variable=variable,
+    )
+
+    contributions = _hv_contributions(record, id_map, _hv_effective(1))
+    (row,) = getattr(
+        build_bound_tables(resolve(contributions, {0: 1})), table
+    ).to_pylist()
+
+    assert row[id_column] == entity_id
+    assert row["block_id"] is None
+    assert (row[columns[0]], row[columns[1]]) == expected
+    untouched = set(row) - {id_column, "stage_id", "block_id", *columns}
+    assert {name: row[name] for name in untouched} == dict.fromkeys(untouched)
+
+
+def test_vdef_hv_is_unshifted_and_a_negative_coefficient_flips_the_sides(
+    id_map: DecompIdMap,
+) -> None:
+    effective = _hv_effective(1, {(5, "volume_minimo"): (150.0,)})
+    record = _hv_record(
+        coefficient=-1.0,
+        bounds={0: StageBounds(lower=(-400.0,), upper=(-50.0,))},
+        variable="VDEF",
+    )
+
+    (contribution,) = _hv_contributions(record, id_map, effective)
+
+    assert (contribution.axis, contribution.lower, contribution.upper) == (
+        "outflow_volume",
+        50.0,
+        400.0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("lower", "expected"),
+    [(-5.0, None), (-0.0, 0.0), (0.0, 0.0)],
+    ids=["negative-dropped", "negative-zero-normalized", "zero-literal"],
+)
+def test_volume_tipo_hv_lower_follows_the_non_negative_rule(
+    id_map: DecompIdMap, lower: float, expected: float | None
+) -> None:
+    record = _hv_record(
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(lower,), upper=(100.0,))},
+        variable="VDEF",
+    )
+
+    (contribution,) = _hv_contributions(record, id_map, _hv_effective(1))
+
+    assert contribution.lower == expected
+    if contribution.lower is not None:
+        assert math.copysign(1.0, contribution.lower) == 1.0
+    assert contribution.upper == 100.0
+
+
+def test_volume_tipo_hv_negative_coefficient_zero_upper_is_written_as_zero(
+    id_map: DecompIdMap,
+) -> None:
+    record = _hv_record(
+        coefficient=-1.0,
+        bounds={0: StageBounds(lower=(0.0,), upper=(400.0,))},
+        variable="VDEF",
+    )
+
+    (contribution,) = _hv_contributions(record, id_map, _hv_effective(1))
+
+    assert contribution.contributor == "HV_7"
+    assert contribution.lower is None
+    assert contribution.upper == 0.0
+    assert contribution.upper is not None
+    assert math.copysign(1.0, contribution.upper) == 1.0
+
+
+@pytest.mark.parametrize(
+    ("lv", "resolved"),
+    [((-1e21, 100.0), (None, 100.0)), ((50.0, -1e21), (50.0, None))],
+    ids=["lower-sentinel", "upper-sentinel"],
+)
+def test_volume_tipo_hv_sentinel_side_is_no_bound_not_a_negative_one(
+    id_map: DecompIdMap,
+    lv: tuple[float, float],
+    resolved: tuple[float | None, float | None],
+) -> None:
+    record = _hv_record(
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(lv[0],), upper=(lv[1],))},
+        variable="VDEF",
+    )
+
+    contributions = _hv_contributions(record, id_map, _hv_effective(1))
+
+    assert [c.contributor for c in contributions] == ["HV_7"]
+    (row,) = build_bound_tables(resolve(contributions, {0: 1})).hydro.to_pylist()
+    assert (row["min_outflow_hm3"], row["max_outflow_hm3"]) == resolved
+
+
+def test_volume_tipo_hv_negative_upper_adds_the_non_negative_contribution_and_conflicts(
+    id_map: DecompIdMap,
+) -> None:
+    record = _hv_record(
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(None,), upper=(-3.0,))},
+        code=4,
+        variable="VBOM",
+    )
+
+    contributions = _hv_contributions(record, id_map, _hv_effective(1))
+
+    assert [(c.contributor, c.lower, c.upper) for c in contributions] == [
+        ("HV_7", None, -3.0),
+        ("non-negative volume", 0.0, None),
+    ]
+    with pytest.raises(ValueError, match="empty intersection on pumping axis"):
+        resolve(contributions, {0: 1})
+
+
+def test_hv_with_an_unmapped_variable_raises_naming_it(id_map: DecompIdMap) -> None:
+    record = _hv_record(
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(10.0,), upper=(400.0,))},
+        variable="VTIPO",
+    )
+
+    with pytest.raises(ValueError, match="unhandled HV variable 'VTIPO'"):
+        _hv_contributions(record, id_map, _hv_effective(1))
+
+
+def test_hv_lowering_ignores_other_families(id_map: DecompIdMap) -> None:
+    record = _re_record(
+        constraint_id=12,
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(50.0,), upper=(212.0,))},
+    )
+
+    assert _hv_contributions(record, id_map, _hv_effective(1)) == []

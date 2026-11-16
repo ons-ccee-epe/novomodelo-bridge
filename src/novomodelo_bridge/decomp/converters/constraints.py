@@ -772,7 +772,7 @@ def _emit_rhv_vdes_no_diversion(record: ConstraintRecord, code: int) -> None:
     )
 
 
-def _offset_if_bounded(value: float | None, offset: float) -> float | None:
+def offset_if_bounded(value: float | None, offset: float) -> float | None:
     """Add *offset* to *value* iff it is a real bound; otherwise pass it through.
 
     Mirrors :func:`~novomodelo_bridge.core.generic_constraint_builder.is_bounded`'s
@@ -784,37 +784,26 @@ def _offset_if_bounded(value: float | None, offset: float) -> float | None:
     return value + offset
 
 
-def _resolve_hv_terms(
+def hv_terms_convertible(
     record: ConstraintRecord,
     id_map: DecompIdMap,
     effective: EffectiveCadastro,
     pumping_station_ids: Mapping[int, int],
     diversion_hydro_ids: frozenset[int],
-) -> tuple[list[str], Mapping[int, StageBounds]] | None:
-    """Resolve one generic ``RHV`` record's expression and shifted bounds.
+) -> bool:
+    """Whether every term of one ``RHV`` record converts; emit the first refusal if not.
 
-    A ``VBOM`` term's ``code`` is a pumping-station code, never a hydro code:
-    one absent from *pumping_station_ids* emits
-    :func:`_emit_pumping_term_no_station`. Any other term whose ``code`` is
-    absent from ``effective.base.index`` or from ``id_map.hydro_codes`` emits
-    :func:`_emit_rhv_varm_uncadastred`. A ``VDES`` term whose hydro id is
-    absent from *diversion_hydro_ids* emits :func:`_emit_rhv_vdes_no_diversion`;
-    ``effective.has_diversion`` is no substitute, since it stays true for a
-    channel the conversion closed. Each drops the whole record
-    (skip-not-partial) before :func:`_variable_token` can raise ``KeyError``.
-
-    A ``VARM`` ``LV`` limit is relative to the plant's useful volume, and the
-    novomodelo useful-volume token shifts by the static ``hydros.json`` floor
-    (:func:`storage_envelope`), so each bounded side gains ``sum(cᵢ * (stage
-    floor - static floor))`` over the ``VARM`` terms where they differ. The
-    volume tipos are absolute hm³ and add no shift. The sign follows the
-    coefficient; no bound side flips. A ``±1e21``/``None`` side stays
-    unbounded (:func:`_offset_if_bounded`).
-
-    Returns the tokens in term order and the shifted
-    ``{stage_index: StageBounds}`` map when every term resolves.
+    Terms are checked in record order, and per term in this order. A ``VBOM``
+    term's ``code`` is a pumping-station code, never a hydro code: one absent
+    from *pumping_station_ids* emits :func:`_emit_pumping_term_no_station`. Any
+    other term whose ``code`` is absent from ``effective.base.index`` or from
+    ``id_map.hydro_codes`` emits :func:`_emit_rhv_varm_uncadastred`. A ``VDES``
+    term whose hydro id is absent from *diversion_hydro_ids* emits
+    :func:`_emit_rhv_vdes_no_diversion`; ``effective.has_diversion`` is no
+    substitute, since it stays true for a channel the conversion closed. Each
+    returns ``False`` (skip-not-partial) before :func:`_variable_token` can
+    raise ``KeyError``.
     """
-    resolved: list[str] = []
     for term in record.terms:
         if term.variable == "VBOM":
             if term.code not in pumping_station_ids:
@@ -824,19 +813,50 @@ def _resolve_hv_terms(
                     diagnostic_code="decomp-rhv-vbom-no-station",
                     tipo="VBOM",
                 )
-                return None
+                return False
         elif (
             term.code not in effective.base.index or term.code not in id_map.hydro_codes
         ):
             _emit_rhv_varm_uncadastred(record, term.code)
-            return None
+            return False
         elif (
             term.variable == "VDES"
             and id_map.hydro_id(term.code) not in diversion_hydro_ids
         ):
             _emit_rhv_vdes_no_diversion(record, term.code)
-            return None
-        resolved.append(_variable_token(term, id_map, pumping_station_ids))
+            return False
+    return True
+
+
+def _resolve_hv_terms(
+    record: ConstraintRecord,
+    id_map: DecompIdMap,
+    effective: EffectiveCadastro,
+    pumping_station_ids: Mapping[int, int],
+    diversion_hydro_ids: frozenset[int],
+) -> tuple[list[str], Mapping[int, StageBounds]] | None:
+    """Resolve one generic ``RHV`` record's expression and shifted bounds.
+
+    A record :func:`hv_terms_convertible` refuses is dropped whole.
+
+    A ``VARM`` ``LV`` limit is relative to the plant's useful volume, and the
+    novomodelo useful-volume token shifts by the static ``hydros.json`` floor
+    (:func:`storage_envelope`), so each bounded side gains ``sum(cᵢ * (stage
+    floor - static floor))`` over the ``VARM`` terms where they differ. The
+    volume tipos are absolute hm³ and add no shift. The sign follows the
+    coefficient; no bound side flips. A ``±1e21``/``None`` side stays
+    unbounded (:func:`offset_if_bounded`).
+
+    Returns the tokens in term order and the shifted
+    ``{stage_index: StageBounds}`` map when every term resolves.
+    """
+    if not hv_terms_convertible(
+        record, id_map, effective, pumping_station_ids, diversion_hydro_ids
+    ):
+        return None
+    resolved = [
+        _variable_token(term, id_map, pumping_station_ids) for term in record.terms
+    ]
 
     adjusted: dict[int, StageBounds] = {}
     for stage_index, stage_bounds in record.bounds.items():
@@ -850,8 +870,8 @@ def _resolve_hv_terms(
             if term.variable == "VARM"
         )
         adjusted[stage_index] = StageBounds(
-            lower=(_offset_if_bounded(stage_bounds.lower[0], offset),),
-            upper=(_offset_if_bounded(stage_bounds.upper[0], offset),),
+            lower=(offset_if_bounded(stage_bounds.lower[0], offset),),
+            upper=(offset_if_bounded(stage_bounds.upper[0], offset),),
         )
     return resolved, adjusted
 
@@ -910,7 +930,7 @@ def emit_rhq_rhv_generics(
 
     - ``"HQ"`` (per-block flow terms) resolves via :func:`_resolve_rhq_terms`
       and feeds a two-sided ``HQ_<id>`` constraint.
-    - Every ``"HV"`` (stage-level), single-term included, resolves via
+    - Each ``"HV"`` (stage-level) in ``census.to_generic`` resolves via
       :func:`_resolve_hv_terms` to ``VARM`` and stage-volume tokens and feeds
       a two-sided ``HV_<id>`` constraint on
       ``dataclasses.replace(record, bounds=adjusted)`` — the bounds shifted

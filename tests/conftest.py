@@ -371,6 +371,18 @@ def make_decomp_case(files_or_tmp: DecompFiles | Path, **parsed: Any) -> DecompC
     return case
 
 
+def hv_floor_frame(floors: dict[int, float]) -> pd.DataFrame:
+    """A synthetic ``hidr``-shaped frame whose ``volume_minimo`` is each floor."""
+    df = pd.DataFrame(
+        {
+            code: {"volume_minimo": floor, "volume_maximo": floor + 1000.0}
+            for code, floor in floors.items()
+        }
+    ).T
+    df.index.name = "codigo_usina"
+    return df
+
+
 def hydro_with_group(
     hydro_id: int,
     bus_id: int,

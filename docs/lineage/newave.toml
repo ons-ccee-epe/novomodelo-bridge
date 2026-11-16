@@ -3095,6 +3095,18 @@ summary = "Limites de vazão bombeada por estágio e patamar."
   from = [ { file = "estacao_bombeamento", item = "limite_superior" } ]
   how = "Vazão máxima bombeável no patamar."
 
+  [[output.field]]
+  path = "min_hm3"
+  from = []
+  status = "null"
+  how = "Sempre nulo: o NEWAVE não limita o volume bombeado no estágio."
+
+  [[output.field]]
+  path = "max_hm3"
+  from = []
+  status = "null"
+  how = "Sempre nulo: o NEWAVE não limita o volume bombeado no estágio."
+
 # ===== frag_G_nw_inventory =====
 # Fragmento G — inventário de fontes NEWAVE: arquivos e registros/colunas que o
 # bridge NÃO converte. Itens convertidos são derivados dos fragmentos de campos e

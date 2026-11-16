@@ -27,12 +27,14 @@ Each *term* carries its own variable: an ``HQ`` constraint may mix flow variable
 per-term property, not a per-constraint one. A constraint therefore lowers to an
 entity **bound** only when it is a *single term*, its coefficient is ``±1`` at
 every stage, and its variable has a novomodelo bounds axis — this covers hydro
-generation (``FU``), thermal generation (``FT``), pumping flow (``QBOM``), and
-the ``HQ`` flow family (``QDEF``/``QTUR``/``QDES``/``QVER``); every other shape
+generation (``FU``), thermal generation (``FT``), pumping flow (``QBOM``), the
+``HQ`` flow family (``QDEF``/``QTUR``/``QDES``/``QVER``), and the ``HV``
+variables (``VARM``/``VDEF``/``VDES``/``VBOM``); every other shape
 (multiple terms, a non-unit coefficient, or the ``HE`` energy sum) becomes a
 **generic constraint**. So does a single-term ``HQ`` whose limits leave no
 common value with another's on the same plant variable: a plant bound cannot
-hold both, and each restriction keeps its own slack.
+hold both, and each restriction keeps its own slack. This reroute applies to
+``HQ`` only; an ``HV`` is never rerouted.
 
 This module only reads, joins, and classifies. The lowering itself lives in the
 bounds emitters and the generic-constraints emitter.
@@ -80,6 +82,10 @@ _BOUNDS_AXIS: dict[str, str] = {
     "QDES": "diversion",  # HQ desvio       -> min/max_diversion_m3s
     "QVER": "spillage",  # HQ vertimento   -> min/max_spillage_m3s
     "QBOM": "flow",  # HQ pumped flow  -> pumping_bounds min/max_m3s
+    "VARM": "storage",  # HV armazenamento -> min/max_storage_hm3
+    "VDEF": "outflow_volume",  # HV defluencia   -> min/max_outflow_hm3
+    "VDES": "diversion_volume",  # HV desvio       -> min/max_diversion_hm3
+    "VBOM": "volume",  # HV bombeamento  -> pumping_bounds min/max_hm3
 }
 
 
@@ -93,7 +99,8 @@ class ConstraintTerm:
     (RE hydro, ``FU``), ``thermal_generation`` (RE thermal, ``FT``),
     ``interchange`` (RE submarket pair, ``FI``), ``contract`` (RE ``CI``/``CE``
     contract, ``FE``), the ``CQ.tipo`` flow
-    (``QDEF``/``QTUR``/``QDES``/``QBOM``) for HQ, ``VARM`` for HV, or ``energy``
+    (``QDEF``/``QTUR``/``QDES``/``QBOM``) for HQ,
+    ``VARM``/``VDEF``/``VDES``/``VBOM`` for HV, or ``energy``
     for HE. ``frequency`` is the 50/60 Hz tag carried only by RE ``FU`` terms
     (``None`` elsewhere); a plant split across both frequencies contributes two
     distinct terms. ``submarket`` is the ``FT`` thermal's or the ``FE``
@@ -237,7 +244,8 @@ def lowers_to_bound(record: ConstraintRecord) -> bool:
     must reach the generic emitter, which honours the coefficient. The ``HE``
     energy sum has no bound column, so it always stays generic. Pumping
     (``QBOM``), diversion (``QDES``), and spillage (``QVER``) each have one
-    and lower to their respective entity axis as a single unit term.
+    and lower to their respective entity axis as a single unit term, as do the
+    ``HV`` stage volumes (``VARM``/``VDEF``/``VDES``/``VBOM``).
     """
     if not record.is_single_term:
         return False

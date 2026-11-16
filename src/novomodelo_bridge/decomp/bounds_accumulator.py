@@ -120,6 +120,12 @@ AXES: Mapping[tuple[str, str], AxisSpec] = {
         upper_column="max_generation_mw",
         block_eligible=True,
     ),
+    ("hydro", "outflow_volume"): AxisSpec(
+        family="hydro",
+        lower_column="min_outflow_hm3",
+        upper_column="max_outflow_hm3",
+        block_eligible=False,
+    ),
     ("hydro", "storage"): AxisSpec(
         family="hydro",
         lower_column="min_storage_hm3",
@@ -131,6 +137,12 @@ AXES: Mapping[tuple[str, str], AxisSpec] = {
         lower_column="min_diversion_m3s",
         upper_column="max_diversion_m3s",
         block_eligible=True,
+    ),
+    ("hydro", "diversion_volume"): AxisSpec(
+        family="hydro",
+        lower_column="min_diversion_hm3",
+        upper_column="max_diversion_hm3",
+        block_eligible=False,
     ),
     ("hydro", "spillage"): AxisSpec(
         family="hydro",
@@ -162,6 +174,12 @@ AXES: Mapping[tuple[str, str], AxisSpec] = {
         lower_column="min_m3s",
         upper_column="max_m3s",
         block_eligible=True,
+    ),
+    ("pumping", "volume"): AxisSpec(
+        family="pumping",
+        lower_column="min_hm3",
+        upper_column="max_hm3",
+        block_eligible=False,
     ),
     # `convert_lines`/`decomp.converters.network.convert_lines` emit one capacity per
     # flow direction, not a min/max pair on one column — each direction is
@@ -450,6 +468,10 @@ HYDRO_BOUNDS_SCHEMA = pa.schema(
         pa.field("max_diversion_m3s", pa.float64(), nullable=True),
         pa.field("min_spillage_m3s", pa.float64(), nullable=True),
         pa.field("max_spillage_m3s", pa.float64(), nullable=True),
+        pa.field("min_outflow_hm3", pa.float64(), nullable=True),
+        pa.field("max_outflow_hm3", pa.float64(), nullable=True),
+        pa.field("min_diversion_hm3", pa.float64(), nullable=True),
+        pa.field("max_diversion_hm3", pa.float64(), nullable=True),
     ]
 )
 

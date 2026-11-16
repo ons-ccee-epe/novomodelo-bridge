@@ -151,6 +151,7 @@ class DecompCaseArtifacts:
     census: constraint_registers.ConstraintCensus | None = None
     pumping_ids: dict[int, int] | None = None
     block_counts: dict[int, int] | None = None
+    diversion_hydro_ids: frozenset[int] | None = None
     availability_values: (
         dict[tuple[int, int, int], group_bounds_conv.GroupBoundEntry] | None
     ) = None
@@ -1438,6 +1439,7 @@ def _released_runofriver_codes(
 def _couple_diversion_channels(
     hydro_bounds: pa.Table,
     hydros_dict: dict,
+    diversion: DiversionChannels,
     base_diversion_channels: dict[int, dict],
     id_map: DecompIdMap,
     effective: cadastro_conv.EffectiveCadastro,
@@ -1448,7 +1450,6 @@ def _couple_diversion_channels(
     Returns *hydro_bounds* with the diversion ceiling of every hydro whose
     channel does not resolve closed to 0.
     """
-    diversion = _diversion_channels(hydro_bounds, id_map, effective)
     if diversion.dropped:
         dx.emit(
             _diversion_channel_dropped_diagnostic(
@@ -1540,8 +1541,9 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     diversion channels, and write the diversion-coupled ``system/hydros.json``
     (deferred from ``_convert_core_entities``'s system-file block for exactly
     that coupling). Stores the resolved bound tables, the per-group
-    ``availability_values``, and the ``census``/``pumping_ids``/
-    ``block_counts`` maps the later phases need back onto *artifacts*.
+    ``availability_values``, the ``census``/``pumping_ids``/``block_counts``
+    maps and the ``diversion_hydro_ids`` set the later phases need back onto
+    *artifacts*.
     """
     case = artifacts.case
     dadger = artifacts.dadger
@@ -1579,9 +1581,8 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     )
     # Every per-entity bound — the legacy RQ/UH minimum-outflow, the per-stage
     # storage envelope, a split plant's turbined-flow limit and available
-    # power, the CT thermal
-    # generation bounds, and the RE/RHQ single-term special-constraint
-    # bounds — is collected as
+    # power, the CT thermal generation bounds, and the RE/RHQ/RHV single-term
+    # special-constraint bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
     # exactly ONE resolve() + build_bound_tables() pass, so a new special
     # constraint colliding with a legacy bound on the same (entity, stage,
@@ -1605,16 +1606,35 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             hydro_capacities=hydro_capacities,
         ),
     ]
-    base_diversion_channels = _base_diversion_channels(
-        effective,
-        id_map,
-        {
-            contrib.entity_id
-            for contrib in contribs
-            if contrib.family == "hydro" and contrib.axis == "diversion"
-        },
-    )
     block_counts = {stage.index: len(stage.block_hours) for stage in calendar}
+    diversion_contribs = [
+        contrib
+        for contrib in contribs
+        if contrib.family == "hydro" and contrib.axis == "diversion"
+    ]
+    base_diversion_channels = _base_diversion_channels(
+        effective, id_map, {contrib.entity_id for contrib in diversion_contribs}
+    )
+    diversion = _diversion_channels(
+        bounds_accumulator.build_bound_tables(
+            bounds_accumulator.resolve(diversion_contribs, block_counts)
+        ).hydro,
+        id_map,
+        effective,
+    )
+    diversion_hydro_ids = frozenset(diversion.channels) | frozenset(
+        base_diversion_channels
+    )
+    contribs.extend(
+        single_term_bounds.single_term_hv_contributions(
+            case,
+            id_map,
+            census=census,
+            effective=effective,
+            pumping_station_ids=pumping_ids,
+            diversion_hydro_ids=diversion_hydro_ids,
+        )
+    )
     bound_tables = bounds_accumulator.build_bound_tables(
         bounds_accumulator.resolve(contribs, block_counts)
     )
@@ -1631,7 +1651,12 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         block_counts,
     )
     hydro_bounds = _couple_diversion_channels(
-        hydro_bounds, hydros_dict, base_diversion_channels, id_map, effective
+        hydro_bounds,
+        hydros_dict,
+        diversion,
+        base_diversion_channels,
+        id_map,
+        effective,
     )
     writer.write_json("system/hydros.json", hydros_dict)
     thermal_bounds_table = _rejoin_thermal_cost(
@@ -1645,6 +1670,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     artifacts.census = census
     artifacts.pumping_ids = pumping_ids
     artifacts.block_counts = block_counts
+    artifacts.diversion_hydro_ids = diversion_hydro_ids
     artifacts.availability_values = availability_values
     artifacts.hydro_bounds = hydro_bounds
     artifacts.thermal_bounds_table = thermal_bounds_table
@@ -1919,8 +1945,8 @@ def _emit_special_constraint_generics(
     assert contracts is not None
     hv_penalty = artifacts.hv_slack_penalty
     assert hv_penalty is not None
-    hydros_dict = artifacts.hydros_dict
-    assert hydros_dict is not None
+    diversion_hydro_ids = artifacts.diversion_hydro_ids
+    assert diversion_hydro_ids is not None
     re_generics = constraints_conv.emit_re_generics(
         case,
         id_map,
@@ -1938,11 +1964,7 @@ def _emit_special_constraint_generics(
         effective=artifacts.effective,
         big_m=shared.big_m,
         hv_penalty=hv_penalty,
-        diversion_hydro_ids=frozenset(
-            hydro["id"]
-            for hydro in hydros_dict["hydros"]
-            if hydro.get("diversion") is not None
-        ),
+        diversion_hydro_ids=diversion_hydro_ids,
         allocator=shared.allocator,
     )
     rhe_generics = constraints_conv.emit_rhe_generics(

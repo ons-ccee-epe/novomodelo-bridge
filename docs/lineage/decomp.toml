@@ -1028,6 +1028,18 @@ summary = "Limites de vazão bombeada por estação, estágio e patamar, oriundo
   from = [ { file = "dadger", register = "LQ", item = "limite_superior" }, { file = "dadger", register = "CQ", item = "coeficiente" } ]
   how = "`limite_superior_k` da `LQ`; nulo quando em branco ou no sentinela ilimitado. Com mais de uma restrição sobre a mesma estação, o menor dos limites superiores."
 
+  [[output.field]]
+  path = "min_hm3"
+  from = []
+  status = "null"
+  how = "Sempre nulo."
+
+  [[output.field]]
+  path = "max_hm3"
+  from = []
+  status = "null"
+  how = "Sempre nulo."
+
 # ---------------------------------------------------------------------------
 # post_study_stages.json (conditional)
 # ---------------------------------------------------------------------------
@@ -2186,6 +2198,30 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "UH", item = "limite_superior_vertimento" },
   ]
   how = "Teto de vertimento de uma RHQ de termo único sobre `QVER` (`limite_superior` do `LQ` por patamar, herdado entre estágios) e/ou o teto estático do `UH` (campo 9, `limite_superior_vertimento`, em m³/s), um teto por estágio constante no horizonte. O default 1.0e+21 é tratado como ilimitado. O menor teto prevalece."
+
+  [[output.field]]
+  path = "min_outflow_hm3"
+  from = []
+  status = "null"
+  how = "Sempre nulo."
+
+  [[output.field]]
+  path = "max_outflow_hm3"
+  from = []
+  status = "null"
+  how = "Sempre nulo."
+
+  [[output.field]]
+  path = "min_diversion_hm3"
+  from = []
+  status = "null"
+  how = "Sempre nulo."
+
+  [[output.field]]
+  path = "max_diversion_hm3"
+  from = []
+  status = "null"
+  how = "Sempre nulo."
 
   [[output.field]]
   path = "water_withdrawal_m3s"

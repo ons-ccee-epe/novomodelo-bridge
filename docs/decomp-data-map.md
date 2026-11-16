@@ -659,6 +659,10 @@ Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hy
 | `max_diversion_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente`, `hidr.dat` › `desvio`, `dadger.rvN` › `AC` › `DESVIO` | Teto de vazão desviada de uma RHQ de termo único sobre `QDES`: `limite_superior` do `LQ` por patamar. Para um `desvio` de base (`hidr.dat` ou `AC DESVIO`) sem limite RHQ, o teto é o `limite_vazao` do `AC DESVIO` ou, na falta dele, o `generation.max_turbined_m3s` da usina receptora, em todos os estágios, para que a água desviada não fique presa em [0, 0]. Fechado em 0 quando a usina receptora do desvio está fora do caso (diagnóstico `decomp-diversion-channel-dropped`). |
 | `min_spillage_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente` | Piso de vertimento de uma RHQ de termo único sobre `QVER`: `limite_inferior` do `LQ` por patamar, herdado entre estágios. |
 | `max_spillage_m3s` | `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo`, `dadger.rvN` › `CQ` › `coeficiente`, `dadger.rvN` › `UH` › `limite_superior_vertimento` | Teto de vertimento de uma RHQ de termo único sobre `QVER` (`limite_superior` do `LQ` por patamar, herdado entre estágios) e/ou o teto estático do `UH` (campo 9, `limite_superior_vertimento`, em m³/s), um teto por estágio constante no horizonte. O default 1.0e+21 é tratado como ilimitado. O menor teto prevalece. |
+| `min_outflow_hm3` | — *(sempre nulo)* | Sempre nulo. |
+| `max_outflow_hm3` | — *(sempre nulo)* | Sempre nulo. |
+| `min_diversion_hm3` | — *(sempre nulo)* | Sempre nulo. |
+| `max_diversion_hm3` | — *(sempre nulo)* | Sempre nulo. |
 | `water_withdrawal_m3s` | `dadger.rvN` › `TI` › `codigo_usina`, `dadger.rvN` › `TI` › `taxa` | Retirada consuntiva de irrigação (m³/s, positiva = água removida) do registro `TI`, `taxa_k` → estágio k−1, sempre de estágio (sem patamar); estágios além das colunas declaradas repetem a última taxa e uma taxa nula não gera valor. Resolvida em tabela própria e anexada à linha da célula, pois não é um eixo de faixa (só piso). |
 
 ### `constraints/hydro_unit_group_bounds.parquet`
@@ -728,6 +732,8 @@ Limites de vazão bombeada por estação, estágio e patamar, oriundos exclusiva
 | `block_id` | `dadger.rvN` › `DP` › `numero_patamares` *(derivado)* | Sempre `0..n-1`: os limites `LQ` são por patamar, logo cada estágio se materializa em uma linha por patamar do calendário. |
 | `min_m3s` | `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `CQ` › `coeficiente` | `limite_inferior_k` da `LQ` (coeficiente −1 troca e inverte os lados); nulo quando em branco ou no sentinela ilimitado. Com mais de uma restrição sobre a mesma estação, o maior dos limites inferiores. |
 | `max_m3s` | `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `coeficiente` | `limite_superior_k` da `LQ`; nulo quando em branco ou no sentinela ilimitado. Com mais de uma restrição sobre a mesma estação, o menor dos limites superiores. |
+| `min_hm3` | — *(sempre nulo)* | Sempre nulo. |
+| `max_hm3` | — *(sempre nulo)* | Sempre nulo. |
 
 ### `constraints/contract_bounds.parquet`
 
@@ -2315,4 +2321,10 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `system/hydros.json` › `hydros[].outflow.max_outflow_m3s` — Sempre nulo: o DECOMP não declara defluência máxima cadastral. Um teto de `QDEF` (RHQ de termo único) vai para `constraints/hydro_bounds.parquet`.
 - `system/hydro_energy_productivity.parquet` › `reference_outflow_m3s` — Sempre nulo: o ρ_eq é uma constante, sem vazão de referência.
 - `system/hydro_energy_productivity.parquet` › `specific_productivity_mw_per_m3s_per_m` — Sempre nulo: a produtibilidade específica das usinas FPHA é emitida em `system/hydros.json`.
+- `constraints/hydro_bounds.parquet` › `min_outflow_hm3` — Sempre nulo.
+- `constraints/hydro_bounds.parquet` › `max_outflow_hm3` — Sempre nulo.
+- `constraints/hydro_bounds.parquet` › `min_diversion_hm3` — Sempre nulo.
+- `constraints/hydro_bounds.parquet` › `max_diversion_hm3` — Sempre nulo.
 - `constraints/hydro_unit_group_bounds.parquet` › `min_turbined_m3s` — Sempre nulo: nenhum registro do DECOMP declara turbinamento mínimo por grupo.
+- `constraints/pumping_bounds.parquet` › `min_hm3` — Sempre nulo.
+- `constraints/pumping_bounds.parquet` › `max_hm3` — Sempre nulo.

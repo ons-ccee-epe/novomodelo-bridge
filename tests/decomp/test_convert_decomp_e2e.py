@@ -10,15 +10,16 @@ instead of passing silently.
 from __future__ import annotations
 
 import json
-import re
 import shutil
 from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
 
+from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import read_constraints
+from novomodelo_bridge.decomp.converters.network import pumping_station_id_map
 from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 from tests.conftest import (
     FloatDigitsKwargs,
@@ -162,19 +163,27 @@ def test_rhv_vdes_is_refused_without_a_converted_diversion_channel(
     constraints = json.loads(
         (dst / "constraints" / "generic_constraints.json").read_text()
     )["constraints"]
-    expressions = {c["name"]: c["expression"] for c in constraints}
-    assert "HV_911" not in expressions
-    assert expressions["HV_912"] == (
-        f"hydro_diversion_volume({decomp_mini_case.id_map.hydro_id(118)})"
-    )
+    names = {c["name"] for c in constraints}
+    assert not names & {"HV_911", "HV_912"}
+    hydro_id = decomp_mini_case.id_map.hydro_id(118)
+    plant_118_stage_rows = [
+        row
+        for row in pq.read_table(
+            dst / "constraints" / "hydro_bounds.parquet"
+        ).to_pylist()
+        if row["hydro_id"] == hydro_id and row["block_id"] is None
+    ]
+    assert len(plant_118_stage_rows) == 4
+    assert {row["min_diversion_hm3"] for row in plant_118_stage_rows} == {0.0}
     (refusal,) = [
         d for d in report.diagnostics if d.code == "decomp-rhv-vdes-no-diversion"
     ]
+    assert refusal.severity is Severity.WARNING
     assert "HV constraint 911" in refusal.summary
     assert "plant code 43" in refusal.summary
 
 
-def test_hv_rows_meet_the_stage_volume_wire_contract(
+def test_single_term_hvs_land_in_their_entity_bound_columns(
     decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
 ) -> None:
     deck = _deck_with_lines(
@@ -209,12 +218,17 @@ def test_hv_rows_meet_the_stage_volume_wire_contract(
     hydro_bounds = pq.read_table(
         dst / "constraints" / "hydro_bounds.parquet"
     ).to_pylist()
+    pumping_bounds = pq.read_table(
+        dst / "constraints" / "pumping_bounds.parquet"
+    ).to_pylist()
+    reservoirs = {
+        hydro["id"]: hydro["reservoir"]
+        for hydro in json.loads((dst / "system" / "hydros.json").read_text())["hydros"]
+    }
     hydro_id = decomp_mini_case.id_map.hydro_id
     hv = {c["name"]: c for c in constraints if c["name"].startswith("HV_")}
 
-    assert hv["HV_901"]["expression"] == f"hydro_outflow_volume({hydro_id(118)})"
-    assert hv["HV_902"]["expression"] == f"hydro_diversion_volume({hydro_id(118)})"
-    assert re.fullmatch(r"pumping_volume\(\d+\)", hv["HV_903"]["expression"])
+    assert set(hv) == {"HV_117", "HV_904"}
     assert hv["HV_904"]["expression"] == (
         f"hydro_useful_volume_final({hydro_id(34)})"
         f" + 0.5 * hydro_outflow_volume({hydro_id(118)})"
@@ -239,13 +253,40 @@ def test_hv_rows_meet_the_stage_volume_wire_contract(
             c["slack"]["penalty"] == penalties["hydro"]["storage_violation_below_cost"]
         )
 
-    # Plants whose only storage limit is one VARM HV: no AC VOLMIN/VOLMAX, no VE.
+    plant_118 = [
+        row
+        for row in hydro_bounds
+        if row["hydro_id"] == hydro_id(118) and row["block_id"] is None
+    ]
+    assert sorted(row["stage_id"] for row in plant_118) == [0, 1, 2, 3]
+    for row in plant_118:
+        assert row["min_outflow_hm3"] == 100.0
+        assert row["min_diversion_hm3"] == 0.0
+        assert row["max_diversion_hm3"] == 50.0
+
+    station_id = pumping_station_id_map(decomp_mini_case.dadger)[4]
+    station = [row for row in pumping_bounds if row["pumping_station_id"] == station_id]
+    assert sorted(row["stage_id"] for row in station) == [0, 1, 2, 3]
+    for row in station:
+        assert row["block_id"] is None
+        assert row["max_hm3"] == 20.0
+
+    # hydros.json is written at 15 significant digits, the bounds at full precision.
+    tolerance = 1e-9
     for code in (121, 120, 124, 117, 73, 115, 275, 227):
-        stored = [row for row in hydro_bounds if row["hydro_id"] == hydro_id(code)]
-        assert all(
-            row["min_storage_hm3"] is None and row["max_storage_hm3"] is None
-            for row in stored
-        )
+        reservoir = reservoirs[hydro_id(code)]
+        for stage in range(4):
+            (row,) = [
+                row
+                for row in hydro_bounds
+                if row["hydro_id"] == hydro_id(code)
+                and row["stage_id"] == stage
+                and row["min_storage_hm3"] is not None
+            ]
+            assert row["max_storage_hm3"] is not None
+            assert row["min_storage_hm3"] <= row["max_storage_hm3"]
+            assert row["min_storage_hm3"] >= reservoir["min_storage_hm3"] - tolerance
+            assert row["max_storage_hm3"] <= reservoir["max_storage_hm3"] + tolerance
 
 
 @requires_novomodelo_python

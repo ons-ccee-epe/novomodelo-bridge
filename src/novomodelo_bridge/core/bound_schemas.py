@@ -13,5 +13,7 @@ PUMPING_BOUNDS_SCHEMA = pa.schema(
         pa.field("block_id", pa.int32(), nullable=True),
         pa.field("min_m3s", pa.float64(), nullable=True),
         pa.field("max_m3s", pa.float64(), nullable=True),
+        pa.field("min_hm3", pa.float64(), nullable=True),
+        pa.field("max_hm3", pa.float64(), nullable=True),
     ]
 )

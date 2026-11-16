@@ -45,6 +45,10 @@ def test_hydro_bounds_index_columns_precede_values() -> None:
         "max_diversion_m3s",
         "min_spillage_m3s",
         "max_spillage_m3s",
+        "min_outflow_hm3",
+        "max_outflow_hm3",
+        "min_diversion_hm3",
+        "max_diversion_hm3",
     ]
 
 
@@ -77,6 +81,8 @@ def test_pumping_bounds_index_columns_precede_values() -> None:
         "block_id",
         "min_m3s",
         "max_m3s",
+        "min_hm3",
+        "max_hm3",
     ]
 
 

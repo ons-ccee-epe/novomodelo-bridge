@@ -49,6 +49,7 @@ from novomodelo_bridge.decomp.converters.constraints import (
     build_fi_line_map,
     emit_re_generics,
     emit_rhq_rhv_generics,
+    hv_terms_convertible,
     resolve_fe_term,
     resolve_fi_term,
     slots_from_record,
@@ -56,7 +57,7 @@ from novomodelo_bridge.decomp.converters.constraints import (
 from novomodelo_bridge.decomp.converters.contracts import Contract
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
-from tests.conftest import _FakeDadger, make_decomp_case
+from tests.conftest import _FakeDadger, hv_floor_frame, make_decomp_case
 
 
 def _stage(index: int, n_blocks: int) -> OperativeStage:
@@ -768,18 +769,6 @@ def unused_effective() -> EffectiveCadastro:
     return EffectiveCadastro(base=df, n_stages=1, stage_varying={})
 
 
-def _hv_floor_frame(floors: dict[int, float]) -> pd.DataFrame:
-    """A synthetic ``hidr``-shaped frame whose ``volume_minimo`` is each floor."""
-    df = pd.DataFrame(
-        {
-            code: {"volume_minimo": floor, "volume_maximo": floor + 1000.0}
-            for code, floor in floors.items()
-        }
-    ).T
-    df.index.name = "codigo_usina"
-    return df
-
-
 def test_emit_rhq_rhv_generics_rhq_multi_term_round_trip(
     unused_effective: EffectiveCadastro,
 ) -> None:
@@ -900,7 +889,7 @@ def test_emit_rhq_rhv_generics_rhq_qbom_no_station_skips_and_warns(
 def test_emit_rhq_rhv_generics_rhv_multi_varm_bound_is_lv_at_the_static_floor() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
+        base=hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
     )
     record = ConstraintRecord(
         family="HV",
@@ -947,7 +936,7 @@ def test_emit_rhq_rhv_generics_rhv_multi_varm_bound_is_lv_at_the_static_floor() 
 def test_emit_rhq_rhv_generics_hv_slack_is_per_unit_at_hv_penalty() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6, 182))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
+        base=hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
     )
     hv_record = ConstraintRecord(
         family="HV",
@@ -1018,7 +1007,7 @@ def _two_varm_hv_scenario(
 ) -> tuple[ConstraintRecord, DecompIdMap, EffectiveCadastro]:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=operated)
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({code: 100.0 for code in cadastred}),
+        base=hv_floor_frame({code: 100.0 for code in cadastred}),
         n_stages=1,
         stage_varying={},
     )
@@ -1041,7 +1030,7 @@ def _vbom_hv_scenario() -> tuple[ConstraintRecord, DecompIdMap, EffectiveCadastr
     """A lone ``VBOM`` HV whose UE code 4 is no pumping station (the map is empty)."""
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
+        base=hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
     )
     record = ConstraintRecord(
         family="HV",
@@ -1061,7 +1050,7 @@ def _vdes_hv_scenario(
     """A lone ``VDES`` HV on operated plant 5 (hydro id 1, so code and id differ)."""
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(3, 5))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({3: 50.0, 5: 100.0}),
+        base=hv_floor_frame({3: 50.0, 5: 100.0}),
         n_stages=1,
         stage_varying={},
         diversions=diversions or {},
@@ -1093,7 +1082,7 @@ def _zero_coefficient_hq_scenario() -> tuple[
     """A lone ``QDEF`` term on operated plant 182 with coefficient ``0.0``."""
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(182,))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({182: 100.0}), n_stages=1, stage_varying={}
+        base=hv_floor_frame({182: 100.0}), n_stages=1, stage_varying={}
     )
     record = ConstraintRecord(
         family="HQ",
@@ -1304,7 +1293,7 @@ def test_rhv_explicit_zero_first_stage_coefficient_is_not_skipped() -> None:
             census=census,
             pumping_station_ids={},
             effective=EffectiveCadastro(
-                base=_hv_floor_frame({40: 100.0}), n_stages=2, stage_varying={}
+                base=hv_floor_frame({40: 100.0}), n_stages=2, stage_varying={}
             ),
             big_m=45000.0,
             hv_penalty=123.0,
@@ -1329,7 +1318,7 @@ def test_emit_rhq_rhv_generics_rhv_volume_tipo_is_an_unshifted_stage_row(
 ) -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(3, 5))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({3: 50.0, 5: 100.0}),
+        base=hv_floor_frame({3: 50.0, 5: 100.0}),
         n_stages=2,
         stage_varying={(5, "volume_minimo"): (100.0, 160.0)},
     )
@@ -1369,7 +1358,7 @@ def test_emit_rhq_rhv_generics_rhv_mixed_varm_and_volume_tipo_shifts_only_varm()
 ):
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0, 6: 200.0}),
+        base=hv_floor_frame({5: 100.0, 6: 200.0}),
         n_stages=2,
         stage_varying={
             (5, "volume_minimo"): (100.0, 140.0),
@@ -1440,7 +1429,7 @@ def test_emit_rhq_rhv_generics_rhv_hydro_volume_tipo_on_non_operated_plant_skips
 ) -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
+        base=hv_floor_frame({5: 100.0, 6: 200.0}), n_stages=1, stage_varying={}
     )
     record = ConstraintRecord(
         family="HV",
@@ -1532,6 +1521,74 @@ def test_emit_rhq_rhv_generics_rhv_vdes_with_a_converted_channel_converts() -> N
     assert not [d for d in collected if d.severity is Severity.WARNING]
 
 
+def _hv_record(*terms: tuple[str, int]) -> ConstraintRecord:
+    return ConstraintRecord(
+        family="HV",
+        constraint_id=7,
+        stage_start=0,
+        stage_end=0,
+        terms=tuple(
+            ConstraintTerm(code=code, coefficient=1.0, variable=variable)
+            for variable, code in terms
+        ),
+        bounds={0: StageBounds(lower=(10.0,), upper=(None,))},
+        per_block=False,
+    )
+
+
+def test_hv_terms_convertible_checks_uncadastred_before_the_diversion_channel() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
+    effective = EffectiveCadastro(
+        base=hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
+    )
+
+    with dx.collect() as collected:
+        convertible = hv_terms_convertible(
+            _hv_record(("VDES", 9)), id_map, effective, {}, frozenset()
+        )
+
+    assert convertible is False
+    assert [(d.severity, d.code) for d in collected] == [
+        (Severity.WARNING, "decomp-rhv-varm-plant-uncadastred")
+    ]
+
+
+def test_hv_terms_convertible_first_failing_term_wins() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
+    effective = EffectiveCadastro(
+        base=hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
+    )
+
+    with dx.collect() as collected:
+        convertible = hv_terms_convertible(
+            _hv_record(("VBOM", 4), ("VARM", 9)), id_map, effective, {}, frozenset()
+        )
+
+    assert convertible is False
+    assert [(d.severity, d.code) for d in collected] == [
+        (Severity.WARNING, "decomp-rhv-vbom-no-station")
+    ]
+
+
+def test_hv_terms_convertible_accepts_a_cadastred_plant_with_a_channel() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5,))
+    effective = EffectiveCadastro(
+        base=hv_floor_frame({5: 100.0}), n_stages=1, stage_varying={}
+    )
+
+    with dx.collect() as collected:
+        convertible = hv_terms_convertible(
+            _hv_record(("VARM", 5), ("VDES", 5)),
+            id_map,
+            effective,
+            {},
+            frozenset({id_map.hydro_id(5)}),
+        )
+
+    assert convertible is True
+    assert not collected
+
+
 def test_format_expression_parameter_weight() -> None:
     assert (
         _format_expression([(-1.0, "hydro_outflow(0)"), ("coef_x", "hydro_outflow(1)")])
@@ -1583,7 +1640,7 @@ def test_emit_rhq_rhv_generics_late_term_reads_a_per_stage_parameter(
 def test_emit_rhq_rhv_generics_rhv_varm_floor_uses_the_stage_coefficient() -> None:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0, 6: 200.0}),
+        base=hv_floor_frame({5: 100.0, 6: 200.0}),
         n_stages=2,
         stage_varying={(6, "volume_minimo"): (200.0, 250.0)},
     )
@@ -1628,7 +1685,7 @@ def _emit_two_stage_varm_bounds(
 ) -> dict[int, tuple[float | None, float | None]]:
     id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(5, 6))
     effective = EffectiveCadastro(
-        base=_hv_floor_frame({5: 100.0, 6: 200.0}),
+        base=hv_floor_frame({5: 100.0, 6: 200.0}),
         n_stages=2,
         stage_varying={(6, "volume_minimo"): (200.0, 250.0)},
     )

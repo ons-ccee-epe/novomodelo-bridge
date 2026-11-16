@@ -449,30 +449,61 @@ def test_non_unit_single_term_qver_is_generic() -> None:
     assert not lowers_to_bound(record)
 
 
-def test_hv_varm_single_unit_term_stays_generic() -> None:
+@pytest.mark.parametrize(
+    ("tipo", "coefficient", "lowers"),
+    [
+        ("VARM", 1.0, True),
+        ("VDEF", 1.0, True),
+        ("VDES", 1.0, True),
+        ("VBOM", 1.0, True),
+        ("VARM", 0.5, False),
+    ],
+)
+def test_hv_single_unit_term_lowers_to_bounds(
+    tipo: str, coefficient: float, lowers: bool
+) -> None:
     dadger = _FakeDadger(
         hv=_decl((7, 1, 2)),
-        cv=_coeff((7, 40, 1.0, 1, "VARM"), tipo=True),
+        cv=_coeff((7, 40, coefficient, 1, tipo), tipo=True),
         lv=_lv((7, 1, 100.0, 900.0)),
     )
     census = read_constraints(dadger)
     rec = _only(census.by_family["HV"], 7)
     assert not rec.per_block
-    assert rec.terms[0].variable == "VARM"
-    assert not lowers_to_bound(rec)
-    assert rec in census.to_generic
-    assert rec not in census.to_bounds
+    assert rec.terms[0].variable == tipo
+    assert lowers_to_bound(rec) is lowers
+    assert (rec in census.to_bounds) is lowers
+    assert (rec in census.to_generic) is not lowers
     # Stage-level bounds carry a single slot.
     assert rec.bounds[0].lower == (100.0,)
     assert rec.bounds[0].upper == (900.0,)
 
 
-def test_mini_deck_every_hv_is_generic(decomp_mini_case: DecompCase) -> None:
+def test_mini_deck_single_term_hvs_lower_to_bounds(
+    decomp_mini_case: DecompCase,
+) -> None:
     census = read_constraints(decomp_mini_case.dadger)
-    hv = census.by_family["HV"]
-    assert 13 in {rec.constraint_id for rec in hv}
-    assert all(rec in census.to_generic for rec in hv)
-    assert not any(rec.family == "HV" for rec in census.to_bounds)
+    assert 13 in {rec.constraint_id for rec in census.by_family["HV"]}
+    bounded = [rec for rec in census.to_bounds if rec.family == "HV"]
+    generic = [rec for rec in census.to_generic if rec.family == "HV"]
+    assert len(bounded) == 22
+    assert all(rec.is_single_term for rec in bounded)
+    assert [rec.constraint_id for rec in generic] == [117]
+    assert len(generic[0].terms) == 2
+
+
+def test_conflicting_single_term_hvs_are_not_rerouted() -> None:
+    """Unlike HQ, two disjoint HV limits on one plant both stay bounds: the
+    resolve step rejects them, no soft generic carries either."""
+    dadger = _FakeDadger(
+        hv=_decl((7, 1, 2), (8, 1, 2)),
+        cv=_coeff((7, 40, 1.0, 1, "VARM"), (8, 40, 1.0, 1, "VARM"), tipo=True),
+        lv=_lv((7, 1, 100.0, 200.0), (8, 1, 500.0, 900.0)),
+    )
+    census = read_constraints(dadger)
+    assert {rec.constraint_id for rec in census.to_bounds} == {7, 8}
+    assert not census.to_generic
+    assert census.bound_conflicts == ()
 
 
 @pytest.mark.parametrize(

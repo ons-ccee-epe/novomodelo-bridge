@@ -348,6 +348,39 @@ class TestConvertPumpingBounds:
         assert result.num_rows == 2
         assert result.column("stage_id").to_pylist() == [0, 1]
 
+    def test_hm3_stage_volume_columns_are_null(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stage_dates = [date(2025, 1, 1), date(2025, 2, 1), date(2025, 3, 1)]
+        monkeypatch.setattr(
+            "novomodelo_bridge.newave.converters.pumping.stage_dates_for",
+            lambda _: stage_dates,
+        )
+
+        case = MagicMock()
+        case.patamar.numero_patamares = 3
+
+        limits_df = pd.DataFrame(
+            [
+                {
+                    "codigo_estacao": 1,
+                    "patamar": 1,
+                    "data_inicio": date(2025, 1, 1),
+                    "data_fim": date(2025, 2, 1),
+                    "limite_inferior": 10.0,
+                    "limite_superior": 100.0,
+                }
+            ]
+        )
+        inputs = PumpingInputs(stations=pd.DataFrame(), limits=limits_df)
+
+        result = convert_pumping_bounds(case, inputs, {1: 0})
+        assert result is not None
+        assert result.column("min_hm3").null_count == result.num_rows
+        assert result.column("max_hm3").null_count == result.num_rows
+        assert result.column("min_m3s").to_pylist() == [10.0, 10.0]
+        assert result.column("max_m3s").to_pylist() == [100.0, 100.0]
+
     def test_handles_open_ended_period(self, monkeypatch: pytest.MonkeyPatch) -> None:
         stage_dates = [date(2025, 1, 1), date(2025, 2, 1), date(2025, 3, 1)]
         monkeypatch.setattr(
