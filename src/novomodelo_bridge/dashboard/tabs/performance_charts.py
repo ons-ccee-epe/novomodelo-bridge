@@ -68,12 +68,6 @@ FORWARD_SUBCOMPONENT_COLUMNS: tuple[str, ...] = (
     "fwd_scheduling_overhead_ms",
 )
 
-# Aggregate per-worker CPU time — NOT stackable with wall-time columns.
-AGGREGATE_CPU_COLUMNS: tuple[str, ...] = (
-    "fwd_setup_ms",
-    "bwd_setup_ms",
-)
-
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------

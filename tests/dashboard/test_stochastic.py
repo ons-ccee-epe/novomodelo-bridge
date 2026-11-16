@@ -5,9 +5,7 @@ Covers:
 - _aggregate_by_bus: mean sum and root-sum-square std
 - _aggregate_system: total system aggregation
 - _extract_fitted_correlation: navigation of correlation dict
-- _compute_empirical_correlation: averaged monthly correlation
 - _chart_ar_order_distribution: bar chart trace count and y-sum
-- _chart_noise_histogram: trace count (histogram + N(0,1))
 - _chart_noise_boxplot_by_stage: 12-stage limit
 - can_render: returns data.stochastic_available
 - render: section titles present, fallbacks on empty data
@@ -30,8 +28,6 @@ from novomodelo_bridge.dashboard.tabs.stochastic import (
     _aggregate_system,
     _chart_ar_order_distribution,
     _chart_noise_boxplot_by_stage,
-    _chart_noise_histogram,
-    _compute_empirical_correlation,
     _compute_historical_stats,
     _extract_fitted_correlation,
     _render_per_hydro_inflow_explorer,
@@ -846,80 +842,6 @@ class TestExtractFittedCorrelation:
 
 
 # ---------------------------------------------------------------------------
-# _compute_empirical_correlation
-# ---------------------------------------------------------------------------
-
-
-class TestComputeEmpiricalCorrelation:
-    """Unit tests for _compute_empirical_correlation."""
-
-    def _make_history(self, n_hydros: int = 3, n_years: int = 15) -> pd.DataFrame:
-        """Synthetic windowed inflow history: one calendar-month window per
-        hydro over *n_years* years, enough observations per month for the
-        ``min_periods=10`` requirement in ``_compute_empirical_correlation``.
-        """
-        rng = np.random.default_rng(99)
-        rows: list[dict] = []
-        for year in range(2000, 2000 + n_years):
-            for month in range(1, 13):
-                start = pd.Timestamp(year=year, month=month, day=1)
-                for hid in range(n_hydros):
-                    rows.append(
-                        {
-                            "hydro_id": hid,
-                            "start_date": start.date(),
-                            "end_date": (start + pd.offsets.MonthBegin(1)).date(),
-                            "value_m3s": float(rng.uniform(10, 1000)),
-                        }
-                    )
-        return pd.DataFrame(rows)
-
-    def test_returns_symmetric_matrix(self) -> None:
-        """Result matrix is symmetric."""
-        history = self._make_history(3)
-        hydro_ids = [0, 1, 2]
-
-        result = _compute_empirical_correlation(history, hydro_ids)
-
-        assert result is not None
-        assert result.shape == (3, 3)
-        np.testing.assert_allclose(result, result.T, atol=1e-10)
-
-    def test_diagonal_elements_are_one(self) -> None:
-        """Diagonal elements of the result are all 1.0."""
-        history = self._make_history(3)
-        hydro_ids = [0, 1, 2]
-
-        result = _compute_empirical_correlation(history, hydro_ids)
-
-        assert result is not None
-        np.testing.assert_allclose(np.diag(result), np.ones(3), atol=1e-10)
-
-    def test_empty_history_returns_none(self) -> None:
-        """Empty inflow_history returns None."""
-        empty = pd.DataFrame(
-            columns=["hydro_id", "start_date", "end_date", "value_m3s"]
-        )
-        assert _compute_empirical_correlation(empty, [0, 1, 2]) is None
-
-    def test_single_hydro_returns_none(self) -> None:
-        """Single hydro in hydro_ids returns None (need >= 2)."""
-        history = self._make_history(1)
-        assert _compute_empirical_correlation(history, [0]) is None
-
-    def test_values_in_range(self) -> None:
-        """All values in the result are in [-1, 1]."""
-        history = self._make_history(3)
-        hydro_ids = [0, 1, 2]
-
-        result = _compute_empirical_correlation(history, hydro_ids)
-
-        assert result is not None
-        assert np.all(result >= -1.0 - 1e-10)
-        assert np.all(result <= 1.0 + 1e-10)
-
-
-# ---------------------------------------------------------------------------
 # _chart_ar_order_distribution
 # ---------------------------------------------------------------------------
 
@@ -1043,52 +965,6 @@ class TestChartArOrderDistribution:
 
         # x=[1,2,3] -> counts [2,2,1]
         assert list(fig.data[0].y) == [2, 2, 1]
-
-
-# ---------------------------------------------------------------------------
-# _chart_noise_histogram
-# ---------------------------------------------------------------------------
-
-
-class TestChartNoiseHistogram:
-    """Unit tests for _chart_noise_histogram."""
-
-    def _make_noise_df(self, n: int = 100) -> pd.DataFrame:
-        rng = np.random.default_rng(7)
-        return pd.DataFrame(
-            {
-                "stage_id": [0] * n,
-                "opening_index": list(range(n)),
-                "entity_index": [0] * n,
-                "value": rng.standard_normal(n).tolist(),
-            }
-        )
-
-    def test_figure_has_two_traces(self) -> None:
-        """Figure contains exactly 2 traces: histogram + N(0,1) reference."""
-        df = self._make_noise_df(100)
-
-        fig = _chart_noise_histogram(df)
-
-        assert len(fig.data) == 2
-
-    def test_first_trace_is_histogram(self) -> None:
-        """First trace is a Histogram."""
-        import plotly.graph_objects as go
-
-        df = self._make_noise_df(100)
-        fig = _chart_noise_histogram(df)
-
-        assert isinstance(fig.data[0], go.Histogram)
-
-    def test_second_trace_is_scatter(self) -> None:
-        """Second trace is a Scatter (N(0,1) reference curve)."""
-        import plotly.graph_objects as go
-
-        df = self._make_noise_df(100)
-        fig = _chart_noise_histogram(df)
-
-        assert isinstance(fig.data[1], go.Scatter)
 
 
 # ---------------------------------------------------------------------------

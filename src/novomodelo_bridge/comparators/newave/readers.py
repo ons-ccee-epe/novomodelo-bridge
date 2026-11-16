@@ -210,24 +210,6 @@ def read_medias_sin(case_dir: Path) -> pl.DataFrame:
     )
 
 
-def read_medias_ree(case_dir: Path) -> pl.DataFrame:
-    """Read MEDIAS-REE.CSV, keyed by REE code.
-
-    The key variable for VminOP validation is ``EARMF``, the REE's final
-    stored energy in MWmes measured *relative to the minimum operative volume*
-    (useful energy): the quantity the VminOP generic constraints bound.
-    """
-    from inewave.nwlistop import Mediasree
-
-    return _read_medias(
-        case_dir,
-        "MEDIAS-REE.CSV",
-        Mediasree.read,
-        "codigo_ree",
-        "the report leaves out NEWAVE's mean results of each REE.",
-    )
-
-
 # -------------------------------------------------------------------
 # PMO readers
 # -------------------------------------------------------------------

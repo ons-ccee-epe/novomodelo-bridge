@@ -32,14 +32,9 @@ from novomodelo_bridge.ui.html.document import (
 )
 from novomodelo_bridge.ui.html.plotly import (
     LEGEND_DEFAULTS,
-    apply_stage_date_axis,
-    fig_to_html,
     stage_date_xaxis,
     stage_x_dates,
     stage_x_labels,
-)
-from novomodelo_bridge.ui.html.plotly import (
-    MARGIN_DEFAULTS as _MARGIN,
 )
 from novomodelo_bridge.ui.theme import BAND_FILL
 
@@ -261,146 +256,6 @@ document.addEventListener('DOMContentLoaded',
 # ---------------------------------------------------------------------------
 # Section B: Capacity Utilisation Heatmap
 # ---------------------------------------------------------------------------
-
-
-def build_heatmap(
-    exchanges_lf: pl.LazyFrame,
-    line_bounds: pd.DataFrame,
-    line_meta: list[dict],
-    names: dict[tuple[str, int], str],
-    stage_labels: dict[int, str],
-    stage_dates: dict[int, str],
-    bh_df: pl.DataFrame,
-) -> str:
-    """Build a single net capacity utilisation heatmap.
-
-    Computes block-hours weighted average net flow per (scenario, stage, line),
-    then averages across scenarios.  Capacity is taken from ``line_bounds``
-    per stage when available, falling back to the static capacities in
-    ``line_meta``.  Heatmap value = ``|mean_net_flow| / max(d_cap, r_cap) * 100``,
-    clamped to [0, 100].
-
-    Args:
-        exchanges_lf: Line flow LazyFrame.
-        line_bounds: pandas DataFrame with columns ``line_id``, ``stage_id``,
-            ``direct_mw``, ``reverse_mw``.  May be empty.
-        line_meta: List of line metadata dicts, each with keys ``id``,
-            ``direct_capacity_mw``, ``reverse_capacity_mw``.
-        names: Entity name mapping.
-        stage_labels: Stage id to label mapping.
-        bh_df: Block-hours DataFrame.
-
-    Returns:
-        HTML string containing the Plotly heatmap figure.
-    """
-    schema = exchanges_lf.collect_schema()
-    schema_names = list(schema.names())
-    net_col_present = "net_flow_mw" in schema_names
-    direct_col_present = "direct_flow_mw" in schema_names
-    reverse_col_present = "reverse_flow_mw" in schema_names
-
-    if not net_col_present and not (direct_col_present or reverse_col_present):
-        return "<p>No capacity data available.</p>"
-
-    # Build net flow agg expression: prefer net_flow_mw; else compute direct - reverse
-    if net_col_present:
-        net_agg = (
-            (pl.col("net_flow_mw") * pl.col("_bh")).sum() / pl.col("_bh").sum()
-        ).alias("net")
-    elif direct_col_present and reverse_col_present:
-        net_agg = (
-            (
-                (pl.col("direct_flow_mw") - pl.col("reverse_flow_mw")) * pl.col("_bh")
-            ).sum()
-            / pl.col("_bh").sum()
-        ).alias("net")
-    elif direct_col_present:
-        net_agg = (
-            (pl.col("direct_flow_mw") * pl.col("_bh")).sum() / pl.col("_bh").sum()
-        ).alias("net")
-    else:
-        net_agg = (
-            (pl.col("reverse_flow_mw") * pl.col("_bh")).sum() / pl.col("_bh").sum()
-        ).alias("net")
-
-    flow_data = (
-        exchanges_lf.join(bh_df.lazy(), on=["stage_id", "block_id"])
-        .group_by(["scenario_id", "stage_id", "line_id"])
-        .agg(net_agg)
-        .group_by(["stage_id", "line_id"])
-        .agg(pl.col("net").mean())
-        .sort("stage_id")
-        .collect(engine="streaming")
-    )
-
-    if flow_data.height == 0:
-        return "<p>No capacity utilisation data available.</p>"
-
-    # Build static capacity lookup from line_meta
-    static_direct: dict[int, float] = {}
-    static_reverse: dict[int, float] = {}
-    for lm in line_meta:
-        lid = lm["id"]
-        static_direct[lid] = float(lm.get("direct_capacity_mw", 1.0))
-        static_reverse[lid] = float(lm.get("reverse_capacity_mw", 1.0))
-
-    # Build per-(line_id, stage_id) capacity lookup from line_bounds
-    bounds_lookup: dict[tuple[int, int], tuple[float, float]] = {}
-    if not line_bounds.empty:
-        for _, row in line_bounds.iterrows():
-            bounds_lookup[(int(row["line_id"]), int(row["stage_id"]))] = (
-                float(row.get("direct_mw", 1.0)),
-                float(row.get("reverse_mw", 1.0)),
-            )
-
-    line_ids = sorted(flow_data["line_id"].unique().to_list())
-    stages = sorted(flow_data["stage_id"].unique().to_list())
-    xlabels = stage_x_labels(stages, stage_labels)
-    xdates = stage_x_dates(stages, stage_dates)
-    ynames = [entity_name(names, "lines", lid) for lid in line_ids]
-
-    z_net: list[list[float]] = []
-    for lid in line_ids:
-        sub = flow_data.filter(pl.col("line_id") == lid)
-        net_map: dict[int, float] = dict(
-            zip(sub["stage_id"].to_list(), sub["net"].to_list())
-        )
-        row_net: list[float] = []
-        for s in stages:
-            if bounds_lookup:
-                d_cap, r_cap = bounds_lookup.get(
-                    (lid, s),
-                    (static_direct.get(lid, 1.0), static_reverse.get(lid, 1.0)),
-                )
-            else:
-                d_cap = static_direct.get(lid, 1.0)
-                r_cap = static_reverse.get(lid, 1.0)
-            cap = max(d_cap, r_cap, 0.1)
-            net_flow = net_map.get(s, 0.0)
-            row_net.append(min(abs(net_flow) / cap * 100.0, 100.0))
-        z_net.append(row_net)
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Heatmap(
-            z=z_net,
-            x=xdates,
-            y=ynames,
-            colorscale="RdYlGn_r",
-            zmin=0,
-            zmax=100,
-            colorbar={"title": "%", "len": 0.9},
-            showscale=True,
-            name="Net Utilisation",
-        )
-    )
-    fig.update_layout(
-        title="Net Capacity Utilisation Heatmap (%)",
-        height=max(300, len(line_ids) * 60 + 120),
-        margin=_MARGIN,
-    )
-    apply_stage_date_axis(fig, xdates, xlabels)
-    return wrap_chart(fig_to_html(fig, unified_hover=False))
 
 
 # ---------------------------------------------------------------------------

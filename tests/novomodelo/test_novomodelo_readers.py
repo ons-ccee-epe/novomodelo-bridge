@@ -1533,7 +1533,7 @@ class TestLoadEntityBusMapNoBareExcept:
         )
 
         with pytest.raises(NovomodeloReadError):
-            _load_entity_bus_map(tmp_path / "output", "thermals", "thermal_id")
+            _load_entity_bus_map(tmp_path / "output", "thermals")
 
     def test_missing_bus_id_field_raises_instead_of_being_filtered(
         self, tmp_path: Path
@@ -1544,11 +1544,11 @@ class TestLoadEntityBusMapNoBareExcept:
         _write_entity_bus_json(tmp_path, "thermals", [{"id": 1}])
 
         with pytest.raises(NovomodeloReadError):
-            _load_entity_bus_map(tmp_path / "output", "thermals", "thermal_id")
+            _load_entity_bus_map(tmp_path / "output", "thermals")
 
     def test_missing_file_still_returns_empty_dict(self, tmp_path: Path) -> None:
         # The deliberate "optional file" branch (path is None) is untouched.
-        result = _load_entity_bus_map(tmp_path / "output", "thermals", "thermal_id")
+        result = _load_entity_bus_map(tmp_path / "output", "thermals")
         assert result == {}
 
     def test_valid_json_still_returns_map(self, tmp_path: Path) -> None:
@@ -1556,7 +1556,7 @@ class TestLoadEntityBusMapNoBareExcept:
             tmp_path, "thermals", [{"id": 1, "bus_id": 5}, {"id": 2, "bus_id": 6}]
         )
 
-        result = _load_entity_bus_map(tmp_path / "output", "thermals", "thermal_id")
+        result = _load_entity_bus_map(tmp_path / "output", "thermals")
         assert result == {1: 5, 2: 6}
 
 

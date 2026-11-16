@@ -16,8 +16,6 @@ import polars as pl
 import novomodelo_bridge.dashboard.tabs.energy_balance as energy_balance_mod
 from novomodelo_bridge.dashboard.tabs.energy_balance import (
     _block_weighted_avg_rate,
-    _build_hero_data,
-    _build_hero_section,
     _build_metrics_row,
     _bus_generation_series,
     _bus_stage_map,
@@ -998,84 +996,3 @@ def test_render_contains_ncs_curtailment_section() -> None:
     data = _make_mock_data_full()
     html = _render_lightweight(data)
     assert "NCS stub" in html
-
-
-# ---------------------------------------------------------------------------
-# test__build_hero_data
-# ---------------------------------------------------------------------------
-
-
-def test_build_hero_data_keys() -> None:
-    """_build_hero_data must return a dict with all required top-level keys.
-
-    Given 2 scenarios, 3 stages, 1 hydro and 1 thermal, the returned dict
-    must contain stages, load, p10, p50, p90, all.  Each percentile entry
-    must map hydro/thermal/ncs keys to arrays of the same length as stages.
-    """
-    data = _make_mock_data()
-    hero_data, xlabels = _build_hero_data(data)
-
-    assert set(hero_data.keys()) == {"stages", "load", "p10", "p50", "p90", "all"}
-    n_stages = len(hero_data["stages"])
-    assert n_stages == 3
-    assert len(hero_data["load"]) == n_stages
-    for view in ("p10", "p50", "p90"):
-        assert set(hero_data[view].keys()) == {"hydro", "thermal", "ncs"}
-        for src in ("hydro", "thermal", "ncs"):
-            assert len(hero_data[view][src]) == n_stages
-    assert len(xlabels) == n_stages
-
-
-def test_build_hero_data_all_scenarios() -> None:
-    """_build_hero_data 'all' list must have one entry per scenario.
-
-    Each entry is a list of per-stage total MW values (hydro + thermal + NCS
-    combined), with length equal to the number of stages.
-    """
-    data = _make_mock_data()
-    hero_data, _ = _build_hero_data(data)
-
-    assert len(hero_data["all"]) == 2  # 2 scenarios
-    for entry in hero_data["all"]:
-        # Each entry is a list[float] of length n_stages, not a dict.
-        assert isinstance(entry, list)
-        assert len(entry) == 3  # 3 stages
-
-
-def test_build_hero_data_empty() -> None:
-    """_build_hero_data with empty LazyFrames must return zero arrays without error."""
-    data = _make_mock_data()
-    data.hydros_lf = pl.LazyFrame(
-        {"scenario_id": [], "stage_id": [], "generation_mwh": []}
-    )
-    data.thermals_lf = pl.LazyFrame(
-        {"scenario_id": [], "stage_id": [], "generation_mwh": []}
-    )
-    data.ncs_lf = pl.LazyFrame(
-        {"scenario_id": [], "stage_id": [], "generation_mwh": []}
-    )
-
-    hero_data, _ = _build_hero_data(data)
-
-    assert set(hero_data.keys()) == {"stages", "load", "p10", "p50", "p90", "all"}
-    # stages come from stage_hours fallback; percentile arrays should be zero-filled
-    for view in ("p10", "p50", "p90"):
-        for src in ("hydro", "thermal", "ncs"):
-            assert all(v == 0.0 for v in hero_data[view][src])
-    # all list is empty — no scenario IDs in empty frames
-    assert hero_data["all"] == []
-
-
-def test_build_hero_section_html() -> None:
-    """_build_hero_section must emit the selector, chart div, and EB_DATA."""
-    data = _make_mock_data()
-    html = _build_hero_section(data)
-
-    assert "eb-scenario-sel" in html
-    assert "eb-hero" in html
-    assert "EB_DATA" in html
-    # Must include all four option values
-    assert 'value="p10"' in html
-    assert 'value="p50"' in html
-    assert 'value="p90"' in html
-    assert 'value="all"' in html

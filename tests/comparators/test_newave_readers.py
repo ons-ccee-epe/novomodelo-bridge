@@ -24,7 +24,6 @@ from novomodelo_bridge.comparators.newave.readers import (
     read_fpha_planes,
     read_medias_hydro,
     read_medias_market,
-    read_medias_ree,
     read_medias_sin,
     read_medias_thermal,
     read_newave_net_load,
@@ -157,17 +156,6 @@ class TestMediasSin:
 
     def test_degrades_to_empty_frame_on_missing_file(self, tmp_path: Path) -> None:
         assert read_medias_sin(tmp_path).is_empty()
-
-
-class TestMediasRee:
-    def test_parses_earmf_per_ree_stage(self) -> None:
-        df = read_medias_ree(_FIXTURE_DIR)
-        assert not df.is_empty()
-        assert df["newave_code"].unique().to_list() == [1]
-        assert df["variable"].unique().to_list() == ["EARMF"]
-
-    def test_degrades_to_empty_frame_on_missing_file(self, tmp_path: Path) -> None:
-        assert read_medias_ree(tmp_path).is_empty()
 
 
 # ---------------------------------------------------------------------------

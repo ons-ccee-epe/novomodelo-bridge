@@ -36,8 +36,8 @@ _PCDESV = 0.000300  # volume desviado → hydro.diversion_cost
 # expensive per MWh-equivalent than the deficit cost, putting these physical-law
 # constraints (water-cycle physics, water-supply requirements) at the top of the merit
 # order so the LP violates them only as a last resort. We apply that 10× faithfully (it
-# doubles as the PENALID fallback below, and `_ELETRI_HIGH_MULT` reuses the same
-# magnitude).
+# doubles as the PENALID fallback below, and the NEWAVE ELETRI fallback,
+# `_resolve_eletri_penalty`, reuses the same magnitude).
 _EVAPORATION_MULT = 10.0
 #: Margin of ``hydro.fpha_violation_cost`` over the deficit plus the GHMIN floor.
 _FPHA_ABOVE_FLOOR_MULT = 1.01

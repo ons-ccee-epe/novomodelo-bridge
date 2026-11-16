@@ -270,37 +270,6 @@ def _chart_lb_delta(conv: pd.DataFrame) -> go.Figure | None:
     return fig
 
 
-def _chart_gap_evolution(conv: pd.DataFrame) -> go.Figure | None:
-    """Line chart of gap_percent by iteration with a zero reference line."""
-    if conv.empty:
-        return None
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=conv["iteration"].tolist(),
-            y=conv["gap_percent"].tolist(),
-            name="Gap %",
-            line={"color": "#DC4C4C", "width": 2},
-            mode="lines+markers",
-            marker={"size": 5},
-        )
-    )
-    fig.add_hline(
-        y=0,
-        line_dash="dash",
-        line_color="#8B9298",
-        annotation_text="0%",
-        annotation_position="right",
-    )
-    apply_standard_layout(
-        fig,
-        xaxis_title="Iteration",
-        yaxis_title="Gap (%)",
-    )
-    return fig
-
-
 def _chart_cut_pool(conv: pd.DataFrame) -> go.Figure:
     """Dual-axis chart: cuts_active area + cuts_added bars."""
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -335,22 +304,6 @@ def _chart_cut_pool(conv: pd.DataFrame) -> go.Figure:
     fig.update_yaxes(title_text="Cuts Active", secondary_y=False)
     fig.update_yaxes(title_text="Cuts Added (per iter)", secondary_y=True)
     return fig
-
-
-def _cut_pool_summary(conv: pd.DataFrame) -> str:
-    """Build a simple HTML summary of final cuts_active and total cuts_added."""
-    final_active = int(conv.iloc[-1]["cuts_active"])
-    total_added = int(conv["cuts_added"].sum())
-    return (
-        f'<div class="metric-card" style="border-top: 4px solid {COLORS["hydro"]};">'
-        f'<div class="metric-value">{final_active:,}</div>'
-        f'<div class="metric-label">Final Cuts Active</div>'
-        f"</div>"
-        f'<div class="metric-card" style="border-top: 4px solid {COPPER_ACCENT};">'
-        f'<div class="metric-value">{total_added:,}</div>'
-        f'<div class="metric-label">Total Cuts Added</div>'
-        f"</div>"
-    )
 
 
 def _sample_pivot_columns(pivot: pd.DataFrame, step: int) -> pd.DataFrame:

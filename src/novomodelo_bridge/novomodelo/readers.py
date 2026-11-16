@@ -233,15 +233,6 @@ def read_novomodelo_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame:
     return block_hours
 
 
-def read_novomodelo_stage_hours(novomodelo_output_dir: Path) -> dict[int, float]:
-    """Return ``{stage_id: total hours}`` from ``stages.json`` (empty when absent)."""
-    block_hours = _load_block_hours(novomodelo_output_dir)
-    if block_hours is None:
-        return {}
-    totals = block_hours.group_by("stage_id").agg(pl.col("hours").sum())
-    return {int(r["stage_id"]): float(r["hours"]) for r in totals.iter_rows(named=True)}
-
-
 #: novomodelo's resolved generic-constraint echo, relative to the ``output/`` directory.
 _GENERIC_CONSTRAINT_ECHO = Path("generic_constraints") / "resolved_echo.parquet"
 
@@ -1651,7 +1642,6 @@ def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame
 def _load_entity_bus_map(
     novomodelo_output_dir: Path,
     entity: str,
-    id_field: str,
 ) -> dict[int, int]:
     """Load entity_id → bus_id mapping from system JSON.
 
@@ -1885,13 +1875,11 @@ def read_novomodelo_bus_aggregates(
 
     bus_lf = scan_simulation_entity(novomodelo_output_dir, "buses")
 
-    thermal_bus_map = _load_entity_bus_map(
-        novomodelo_output_dir, "thermals", "thermal_id"
-    )
+    thermal_bus_map = _load_entity_bus_map(novomodelo_output_dir, "thermals")
     thermal_lf = scan_simulation_entity(novomodelo_output_dir, "thermals")
 
     ncs_bus_map = _load_entity_bus_map(
-        novomodelo_output_dir, "non_controllable_sources", "non_controllable_id"
+        novomodelo_output_dir, "non_controllable_sources"
     )
     ncs_lf = scan_simulation_entity(novomodelo_output_dir, "non_controllables")
 

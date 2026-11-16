@@ -22,7 +22,6 @@ from novomodelo_bridge.decomp.converters.fpha import (
     convert_tailrace_curves,
     fpha_config,
     fpha_eligible_codes,
-    is_fpha_eligible,
     mlt_absent_diagnostic,
     spill_outside_tailrace,
     spillage_fit_max,
@@ -465,29 +464,29 @@ def test_spill_outside_tailrace_none_when_every_spill_reaches_the_tailrace() -> 
 # ---------------------------------------------------------------------------
 
 
-def test_is_fpha_eligible_true_for_valid_reservoir() -> None:
+def test_fpha_eligible_true_for_valid_reservoir() -> None:
     eff = _effective({1: _plant_row()})
-    assert is_fpha_eligible(eff, 1) is True
+    assert fpha_eligible_codes(eff, _id_map((1,))) == {1}
 
 
-def test_is_fpha_eligible_false_for_degenerate_cota() -> None:
+def test_fpha_eligible_false_for_degenerate_cota() -> None:
     eff = _effective({1: _plant_row(volume_cota=(0.0, 0.0, 0.0, 0.0, 0.0))})
-    assert is_fpha_eligible(eff, 1) is False
+    assert fpha_eligible_codes(eff, _id_map((1,))) == set()
 
 
-def test_is_fpha_eligible_false_for_nonpositive_rho_esp() -> None:
+def test_fpha_eligible_false_for_nonpositive_rho_esp() -> None:
     eff = _effective({1: _plant_row(rho_esp=0.0)})
-    assert is_fpha_eligible(eff, 1) is False
+    assert fpha_eligible_codes(eff, _id_map((1,))) == set()
 
 
-def test_is_fpha_eligible_false_for_zero_generation_capacity() -> None:
+def test_fpha_eligible_false_for_zero_generation_capacity() -> None:
     eff = _effective({1: _plant_row(potencia=0.0)})
-    assert is_fpha_eligible(eff, 1) is False
+    assert fpha_eligible_codes(eff, _id_map((1,))) == set()
 
 
-def test_is_fpha_eligible_false_for_zero_turbined_capacity() -> None:
+def test_fpha_eligible_false_for_zero_turbined_capacity() -> None:
     eff = _effective({1: _plant_row(vazao=0.0)})
-    assert is_fpha_eligible(eff, 1) is False
+    assert fpha_eligible_codes(eff, _id_map((1,))) == set()
 
 
 def _effective_with_machine_set(
@@ -503,22 +502,22 @@ def _effective_with_machine_set(
     )
 
 
-def test_is_fpha_eligible_false_for_ac_potefe_zero() -> None:
+def test_fpha_eligible_false_for_ac_potefe_zero() -> None:
     eff = _effective_with_machine_set((MachineSet(2, 0.0, 100.0, 80.0),))
-    assert is_fpha_eligible(eff, 1) is False
+    assert fpha_eligible_codes(eff, _id_map((1,))) == set()
 
 
-def test_is_fpha_eligible_false_for_ac_vazefe_zero() -> None:
+def test_fpha_eligible_false_for_ac_vazefe_zero() -> None:
     eff = _effective_with_machine_set((MachineSet(2, 50.0, 0.0, 80.0),))
-    assert is_fpha_eligible(eff, 1) is False
+    assert fpha_eligible_codes(eff, _id_map((1,))) == set()
 
 
-def test_is_fpha_eligible_true_when_capacity_positive_at_any_stage() -> None:
+def test_fpha_eligible_true_when_capacity_positive_at_any_stage() -> None:
     # novomodelo fits against the max-over-stages envelope hydros.json declares.
     eff = _effective_with_machine_set(
         (MachineSet(0, 50.0, 100.0, 80.0), MachineSet(2, 50.0, 100.0, 80.0))
     )
-    assert is_fpha_eligible(eff, 1) is True
+    assert fpha_eligible_codes(eff, _id_map((1,))) == {1}
 
 
 def test_fpha_eligible_codes_reports_zero_capacity_plants() -> None:
