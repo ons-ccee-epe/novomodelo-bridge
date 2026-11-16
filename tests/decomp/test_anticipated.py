@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TypedDict
@@ -1582,9 +1582,9 @@ def test_convert_gnl_tiles_every_study_stage_when_gl_outruns_the_study_gs_weeks(
         "2026-10-31",
         "2026-11-07",
     ]
-    # Weeks 5-7 at 100 MW (504 h) plus week 8's 72 h head (2026-11-28 to the
-    # horizon end) at 0 MW.
-    assert class2[-1]["value_mw"] == pytest.approx(50400.0 / 576.0)
+    # Weeks 5-7 at 100 MW, week 7 held to the horizon end; week 8
+    # (2026-11-28), which gs books to December, counts in no study stage.
+    assert class2[-1]["value_mw"] == pytest.approx(100.0)
 
 
 def test_convert_gnl_books_the_week_straddling_the_horizon_to_the_month_after_by_gs() -> (
@@ -1602,8 +1602,8 @@ def test_convert_gnl_books_the_week_straddling_the_horizon_to_the_month_after_by
         for p in e.past_anticipated_commitments
     ]
     # Week 8 (2026-11-28) is the first December week, held from the horizon
-    # end; its 72 h head joins November's weeks 5-7 (504 h at 100 MW).
-    assert ("2026-11-07", "2026-12-01", 125.0) in windows
+    # end; November holds its own weeks 5-7, week 7 to the horizon end.
+    assert ("2026-11-07", "2026-12-01", 100.0) in windows
     assert windows[-2:] == [
         ("2026-12-01", "2026-12-05", 300.0),
         ("2026-12-05", "2026-12-12", 0.0),
@@ -1635,14 +1635,113 @@ def test_classify_gnl_windows_rejects_a_study_week_starting_past_the_horizon() -
         classify_gnl_windows(model, _REVISION_CALENDAR)
 
 
-def test_gnl_block_commitments_weighs_the_straddling_week_by_its_head_hours() -> None:
+def test_gnl_block_commitments_leaves_the_straddling_week_out_of_the_last_stage() -> (
+    None
+):
     model = fill_undeclared_block_hours(
         _revision_model(week8_mw=300.0), _REVISION_CALENDAR, {(2026, 12): (1.0,)}
     )
 
     got = gnl_block_commitments(model, _REVISION_CALENDAR)
 
-    assert got[86][4] == pytest.approx((125.0,))
+    assert got[86][4] == pytest.approx((100.0,))
+
+
+_STRETCH_WEEK_HOURS = (15.0, 64.0, 89.0)
+
+
+def _stretch_model(
+    november_mw: Sequence[float], week8_mw: tuple[float, float, float]
+) -> GnlCommitmentModel:
+    """The revision model on three patamares: weeks 1-4 at 0 MW, November
+    weeks 5-7 at *november_mw* and week 8 straddling the horizon end."""
+    model = _revision_model()
+    stages = list(model.commitments[86].stages)
+    for i, mw in enumerate((0.0, 0.0, 0.0, 0.0, *november_mw)):
+        stages[i] = GnlStageCommitment(
+            1 + i,
+            date(2026, 10, 10) + timedelta(weeks=i),
+            mw,
+            sum(_STRETCH_WEEK_HOURS),
+            block_mw=(mw, mw, mw),
+            block_hours=_STRETCH_WEEK_HOURS,
+        )
+    stages[7] = GnlStageCommitment(
+        8, date(2026, 11, 28), week8_mw[0], 0.0, block_mw=week8_mw
+    )
+    stages[8] = GnlStageCommitment(
+        9, date(2026, 12, 5), 0.0, 0.0, block_mw=(0.0, 0.0, 0.0)
+    )
+    return dataclasses.replace(
+        model, commitments={86: GnlCommitment(86, tuple(stages))}
+    )
+
+
+def _stretch_calendar() -> list[OperativeStage]:
+    """The revision calendar on three patamares; November's hours are weeks
+    5-7's plus the 72 h to the horizon end (3 h, 24 h and 45 h)."""
+    return [
+        *(
+            dataclasses.replace(stage, block_hours=_STRETCH_WEEK_HOURS)
+            for stage in _REVISION_CALENDAR[:-1]
+        ),
+        dataclasses.replace(_REVISION_CALENDAR[-1], block_hours=(48.0, 216.0, 312.0)),
+    ]
+
+
+def test_gnl_block_commitments_holds_the_last_week_over_the_stage_remaining_hours() -> (
+    None
+):
+    model = _stretch_model((0.0, 500.0, 500.0), (350.0, 0.0, 0.0))
+
+    got = gnl_block_commitments(model, _stretch_calendar())
+
+    # Week 7 takes November's patamar hours less weeks 5-6': 18 h, 88 h and
+    # 134 h at 500 MW; week 8's own MW never enters November.
+    assert got[86][4] == pytest.approx(
+        (
+            (15.0 * 500.0 + 18.0 * 500.0) / 48.0,
+            (64.0 * 500.0 + 88.0 * 500.0) / 216.0,
+            (89.0 * 500.0 + 134.0 * 500.0) / 312.0,
+        )
+    )
+
+
+def test_convert_gnl_holds_the_last_study_week_to_the_horizon_end() -> None:
+    e = convert_gnl(
+        _stretch_model((0.0, 500.0, 500.0), (0.0, 0.0, 0.0)),
+        first_thermal_id=94,
+        bus_id_of=_BUS_OF,
+        calendar=_stretch_calendar(),
+    )
+
+    november = next(
+        p for p in e.past_anticipated_commitments if p["start_date"] == "2026-11-07"
+    )
+    # Weeks 5-6 over 168 h each, week 7 over the remaining 240 h.
+    assert november["value_mw"] == pytest.approx(
+        (168.0 * 500.0 + 240.0 * 500.0) / 576.0
+    )
+
+
+def test_convert_gnl_stretches_a_week_of_another_patamar_count_by_its_hours() -> None:
+    model = _revision_model()
+    stages = list(model.commitments[86].stages)
+    stages[6] = _revision_week(7, date(2026, 11, 21), 200.0)
+    model = dataclasses.replace(
+        model, commitments={86: GnlCommitment(86, tuple(stages))}
+    )
+
+    e = convert_gnl(
+        model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_stretch_calendar()
+    )
+
+    november = next(
+        p for p in e.past_anticipated_commitments if p["start_date"] == "2026-11-07"
+    )
+    assert november["value_mw"] == pytest.approx(
+        (336.0 * 100.0 + 240.0 * 200.0) / 576.0
+    )
 
 
 def _three_block_revision_model(week8_mw: tuple[float, ...]) -> GnlCommitmentModel:

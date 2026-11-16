@@ -378,6 +378,12 @@ links are cobre-bridge's.
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms
   are held the same way. Results change for such decks, so reconvert them.
+- **`convert decomp` committed a different GNL dispatch from DECOMP's in the
+  last study stage of a month's later revisions**: the first committed week of
+  the month after the study, which starts a few days before the study ends,
+  counted in that stage for those days. As in DECOMP, the study's last
+  committed week now covers them; results change where the two weeks commit
+  different MW, so reconvert those decks.
 - **`convert decomp` stopped with `unexpected-error` on deck limits that put
   a floor above the ceiling.** On turbined flow, generation, outflow, storage
   and unit groups it now writes both limits as the deck has them, with one

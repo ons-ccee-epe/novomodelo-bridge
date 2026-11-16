@@ -383,7 +383,6 @@ def gnl_block_commitments(
         the stage itself.
     """
     study_week_count = _study_gl_week_count(model.weeks_per_month, calendar)
-    horizon_end = calendar[-1].end_date
     capabilities = dense_stage_records(
         model.tg, calendar, register="TG", name_column="nome"
     )
@@ -393,7 +392,7 @@ def gnl_block_commitments(
             thermal.code,
             model.commitments[thermal.code].stages,
             study_week_count,
-            horizon_end,
+            calendar[-1],
         )
         capability = capabilities[thermal.code]["stages"]
         per_stage: list[tuple[float, ...] | None] = []
@@ -753,7 +752,7 @@ def _split_at_study_end(
     code: int,
     stages: Sequence[GnlStageCommitment],
     study_week_count: int | None,
-    horizon_end: date,
+    last_stage: OperativeStage,
 ) -> tuple[tuple[GnlStageCommitment, ...], tuple[GnlStageCommitment, ...]]:
     """A plant's ``gl`` weeks split into the study's and those after it.
 
@@ -762,12 +761,8 @@ def _split_at_study_end(
     fall before the horizon end (the study's monthly stage ends on the 1st), yet
     the source model books it — and leaves its ``duracao`` blank — as a week
     past its horizon. Without ``gs`` the split falls back to ``start_date <
-    horizon_end``.
-
-    Such a week also lands in the study as its head ``[start_date,
-    horizon_end)``: same ``geracao``, ``hours`` and ``block_hours`` cut to the
-    head's share of the operative week, so the study's last stage weighs it by
-    the hours it actually covers.
+    horizon_end``. Such a week's days before the horizon end count in no study
+    stage; the last study week covers them instead (:func:`_stretch_last_week`).
 
     Raises
     ------
@@ -775,6 +770,7 @@ def _split_at_study_end(
         If ``gs`` books to the study a week starting at or after the horizon
         end, or past the study a week ending at or before it.
     """
+    horizon_end = last_stage.end_date
     study: list[GnlStageCommitment] = []
     after: list[GnlStageCommitment] = []
     for week in stages:
@@ -796,20 +792,46 @@ def _split_at_study_end(
                 f"or before the study horizon end {horizon_end.isoformat()}"
             )
         (study if in_study else after).append(week)
-        if not in_study and week.start_date < horizon_end:
-            study.append(_head_before(week, horizon_end))
-    return tuple(study), tuple(after)
+    return _stretch_last_week(study, last_stage), tuple(after)
 
 
-def _head_before(week: GnlStageCommitment, horizon_end: date) -> GnlStageCommitment:
-    """The part of *week* before *horizon_end*, its hours cut pro rata."""
-    head_hours = (horizon_end - week.start_date) / timedelta(hours=1)
-    share = head_hours / _HOURS_PER_OPERATIVE_WEEK
-    return dataclasses.replace(
-        week,
-        hours=head_hours,
-        block_hours=tuple(h * share for h in week.block_hours),
+def _stretch_last_week(
+    study: Sequence[GnlStageCommitment], last_stage: OperativeStage
+) -> tuple[GnlStageCommitment, ...]:
+    """*study* with its last week held to the end of *last_stage*.
+
+    When the weeks ``gs`` books to the last stage end less than one operative
+    week before the horizon end, the source model holds the last of them over
+    the stage's remaining days at its own MW per patamar: its patamar hours
+    become the stage's less the other weeks' in the stage. A week whose
+    patamar count differs from the stage's keeps its patamar proportions over
+    the stage's remaining hours.
+    """
+    in_stage = [
+        w for w in study if last_stage.start_date <= w.start_date < last_stage.end_date
+    ]
+    if not in_stage:
+        return tuple(study)
+    last = max(in_stage, key=lambda w: w.start_date)
+    shortfall = last_stage.end_date - (last.start_date + timedelta(hours=last.hours))
+    if last.hours <= 0 or not timedelta(0) < shortfall < _ONE_OPERATIVE_WEEK:
+        return tuple(study)
+    others = [w for w in in_stage if w is not last]
+    stage_hours = last_stage.block_hours
+    if all(len(w.block_hours) == len(stage_hours) for w in in_stage):
+        block_hours = tuple(
+            h - sum(w.block_hours[b] for w in others) for b, h in enumerate(stage_hours)
+        )
+    else:
+        remaining = sum(stage_hours) - sum(w.hours for w in others)
+        block_hours = tuple(h * remaining / last.hours for h in last.block_hours)
+    stretched = dataclasses.replace(
+        last,
+        committed_mw=_block_weighted_mean(last.block_mw, block_hours),
+        hours=sum(block_hours),
+        block_hours=block_hours,
     )
+    return tuple(stretched if w is last else w for w in study)
 
 
 class GnlClass4Window(NamedTuple):
@@ -865,8 +887,8 @@ def classify_gnl_windows(
 
     Já-comandada (class-4) is every ``gl`` week ``gs`` books past the study
     (:func:`_split_at_study_end`), ordered ascending. A week starting before the
-    horizon end is clipped to start at it: its leading days are folded into the
-    study's last stage instead (:func:`_split_at_study_end`). A
+    horizon end is clipped to start at it; the study's last week covers its
+    leading days instead (:func:`_split_at_study_end`). A
     non-terminal window ends at the next já-comandada week's start; the
     terminal window is one operative week (``start + _HOURS_PER_OPERATIVE_WEEK``)
     — never ``c.hours``, which the source model leaves at ``0`` past the
@@ -887,7 +909,7 @@ def classify_gnl_windows(
             code: _classify_plant(
                 code,
                 *_split_at_study_end(
-                    code, commitment.stages, study_week_count, horizon_end
+                    code, commitment.stages, study_week_count, calendar[-1]
                 ),
                 horizon_end,
                 grid_aligned=study_week_count is not None,
@@ -1528,7 +1550,7 @@ def _convert_monthly_gnl(
             thermal.code,
             model.commitments[thermal.code].stages,
             _study_gl_week_count(model.weeks_per_month, calendar),
-            horizon_end,
+            calendar[-1],
         )
         folded = _fold_onto_stages(study_weeks, stage_spans)
         past.extend(_study_tiles(tid, thermal, folded, study_capability, calendar, lag))
