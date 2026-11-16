@@ -1699,7 +1699,8 @@ class TestFailureManifest:
 
         assert result == 1
         [failed] = _with_code(diagnostics, "dessem-fcf-export-failed")
-        assert str(output_dir) in failed.summary
+        # OSError quotes the path with repr, which doubles Windows backslashes.
+        assert repr(str(output_dir)) in failed.summary
         assert failed.notes == ["Failed step: create the output directory"]
         [unwritten] = _with_code(diagnostics, "dessem-fcf-failure-manifest-unwritten")
         assert unwritten.severity is dx.Severity.WARNING
