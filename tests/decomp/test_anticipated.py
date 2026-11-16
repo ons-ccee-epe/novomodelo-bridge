@@ -1672,6 +1672,82 @@ def test_gnl_block_commitments_leaves_the_straddling_week_out_of_the_last_stage(
     assert got[86][4] == pytest.approx((100.0,))
 
 
+def _revision_model_with_tg(*rows: dict) -> GnlCommitmentModel:
+    return dataclasses.replace(_revision_model(), tg=_tg_with_post_study_months(*rows))
+
+
+# The revision study's post-study stages reach December and January, TG
+# stages 6 and 7; this is the official 10/RV4's shape.
+_JANUARY_TG = {**_tg_row(86, "SANTA CRUZ", cvu=0.0, disp=0.0), "estagio": 7}
+
+
+def test_gnl_block_commitments_reads_tg_of_the_post_study_months() -> None:
+    got = gnl_block_commitments(
+        _revision_model_with_tg(_JANUARY_TG), _REVISION_CALENDAR
+    )
+
+    assert got == gnl_block_commitments(_revision_model_with_tg(), _REVISION_CALENDAR)
+
+
+def test_gnl_block_commitments_refuses_tg_past_the_post_study_months_as_convert_does() -> (
+    None
+):
+    model = _revision_model_with_tg({**_JANUARY_TG, "estagio": 8})
+    message = r"TG stage 8 outside the calendar \(1..7\)"
+
+    with pytest.raises(ValueError, match=message):
+        gnl_block_commitments(model, _REVISION_CALENDAR)
+    with pytest.raises(ValueError, match=message):
+        convert_gnl(
+            model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_REVISION_CALENDAR
+        )
+
+
+def _monthly_model_with_blocks(tg: pd.DataFrame) -> GnlCommitmentModel:
+    """:func:`_monthly_model` with *tg* and each ``gl`` month's MW in every
+    patamar of its stage."""
+    model = _monthly_model()
+    return dataclasses.replace(
+        model,
+        tg=tg,
+        commitments={
+            code: GnlCommitment(
+                code,
+                tuple(
+                    dataclasses.replace(
+                        week,
+                        block_mw=(week.committed_mw,) * 3,
+                        block_hours=stage.block_hours,
+                    )
+                    for week, stage in zip(
+                        commitment.stages, _MONTHLY_CALENDAR, strict=True
+                    )
+                ),
+            )
+            for code, commitment in model.commitments.items()
+        },
+    )
+
+
+def test_gnl_block_commitments_monthly_reads_tg_of_the_post_study_months() -> None:
+    tg = _monthly_model().tg
+
+    got = gnl_block_commitments(_monthly_model_with_blocks(tg), _MONTHLY_CALENDAR)
+
+    assert got == gnl_block_commitments(
+        _monthly_model_with_blocks(tg[tg["estagio"] <= 2]), _MONTHLY_CALENDAR
+    )
+
+
+def test_gnl_block_commitments_monthly_refuses_tg_past_the_post_study_months() -> None:
+    tg = _monthly_model().tg
+    beyond = pd.DataFrame([{**_tg_row(86, "SANTA CRUZ"), "estagio": 5}])
+    model = _monthly_model_with_blocks(pd.concat([tg, beyond], ignore_index=True))
+
+    with pytest.raises(ValueError, match=r"TG stage 5 outside the calendar \(1..4\)"):
+        gnl_block_commitments(model, _MONTHLY_CALENDAR)
+
+
 _STRETCH_WEEK_HOURS = (15.0, 64.0, 89.0)
 
 
