@@ -34,7 +34,10 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_bus_aggregates,
     read_novomodelo_bus_means,
     read_novomodelo_bus_metadata,
+    read_novomodelo_bus_net_import,
+    read_novomodelo_bus_percentiles,
     read_novomodelo_buses,
+    read_novomodelo_default_exchange_cost,
     read_novomodelo_fpha_fit_config,
     read_novomodelo_hydro_bus_generation,
     read_novomodelo_hydro_bus_labels,
@@ -2385,3 +2388,177 @@ class TestMeansReadersUseTheScenarioProbabilities:
         means = read_novomodelo_thermal_means(out)
 
         assert means["generation_mw"].to_list() == pytest.approx([150.0])
+
+
+# ---------------------------------------------------------------------------
+# The load buses' net import over their lines, and the default exchange cost.
+# ---------------------------------------------------------------------------
+
+
+def _write_exchange_case(
+    case_dir: Path, flows: dict[int, list[tuple[int, int, float]]]
+) -> Path:
+    """SE (bus 0) -> NE (bus 1) on line 0 and NE -> FC (bus 2) on line 1, FC
+    without load; *flows* maps a scenario to its ``(line, block, MW)`` rows at
+    stage 0, whose blocks last 10 h and 30 h."""
+    _write_stages_json(case_dir, {0: [(0, 10.0), (1, 30.0)]})
+    _write_load_stats(
+        case_dir,
+        {"bus_id": [0, 1, 2], "stage_id": [0, 0, 0], "mean_mw": [9.0, 9.0, 0.0]},
+    )
+    system = case_dir / "system"
+    system.mkdir(parents=True, exist_ok=True)
+    (system / "lines.json").write_text(
+        json.dumps(
+            {
+                "lines": [
+                    {"id": 0, "source_bus_id": 0, "target_bus_id": 1},
+                    {"id": 1, "source_bus_id": 1, "target_bus_id": 2},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = case_dir / "output"
+    for scenario_id, rows in flows.items():
+        _write_sim_entity_partition(
+            out,
+            "exchanges",
+            scenario_id,
+            [
+                {"stage_id": 0, "block_id": block, "line_id": line, "net_flow_mw": mw}
+                for line, block, mw in rows
+            ],
+        )
+    return out
+
+
+class TestReadNovomodeloBusNetImport:
+    def test_a_bus_imports_what_flows_in_less_what_flows_out(
+        self, tmp_path: Path
+    ) -> None:
+        out = _write_exchange_case(
+            tmp_path, {0: [(0, 0, 100.0), (0, 1, 200.0), (1, 0, -40.0), (1, 1, -40.0)]}
+        )
+
+        net_import = read_novomodelo_bus_net_import(out)
+
+        # Line 0 carries (100 * 10 + 200 * 30) / 40 = 175 MW from SE to NE,
+        # and line 1 40 MW from FC to NE; FC has no load and no row.
+        assert net_import.to_dicts() == [
+            {"entity_id": 0, "stage_id": 0, "net_import_mw": pytest.approx(-175.0)},
+            {"entity_id": 1, "stage_id": 0, "net_import_mw": pytest.approx(215.0)},
+        ]
+
+    def test_scenarios_weigh_by_their_probability(self, tmp_path: Path) -> None:
+        out = _write_exchange_case(
+            tmp_path,
+            {
+                0: [(0, 0, 100.0), (0, 1, 100.0), (1, 0, 0.0), (1, 1, 0.0)],
+                1: [(0, 0, 200.0), (0, 1, 200.0), (1, 0, 0.0), (1, 1, 0.0)],
+            },
+        )
+        _write_scenario_summary(out, [0.25, 0.75])
+
+        net_import = read_novomodelo_bus_net_import(out)
+
+        assert net_import["net_import_mw"].to_list() == pytest.approx([-175.0, 175.0])
+
+    def test_a_case_without_lines_has_no_net_import(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        _write_sim_entity_partition(
+            out,
+            "exchanges",
+            0,
+            [{"stage_id": 0, "block_id": 0, "line_id": 0, "net_flow_mw": 1.0}],
+        )
+
+        net_import = read_novomodelo_bus_net_import(out)
+
+        assert net_import.is_empty()
+        assert net_import.columns == ["entity_id", "stage_id", "net_import_mw"]
+
+    def _with_bus_prices(self, out: Path) -> None:
+        for scenario_id in (0, 1):
+            _write_sim_entity_partition(
+                out,
+                "buses",
+                scenario_id,
+                [
+                    {"stage_id": 0, "block_id": block, "bus_id": bus, "spot_price": 1.0}
+                    for bus in (0, 1, 2)
+                    for block in (0, 1)
+                ],
+            )
+
+    def test_bus_means_carry_it_and_leave_a_bus_without_load_null(
+        self, tmp_path: Path
+    ) -> None:
+        out = _write_exchange_case(
+            tmp_path, {s: [(0, b, 100.0) for b in (0, 1)] for s in (0, 1)}
+        )
+        self._with_bus_prices(out)
+
+        means = read_novomodelo_bus_means(out)
+
+        assert means.sort("entity_id")["net_import_mw"].to_list() == [
+            pytest.approx(-100.0),
+            pytest.approx(100.0),
+            None,
+        ]
+
+    def test_bus_percentiles_carry_its_bands(self, tmp_path: Path) -> None:
+        out = _write_exchange_case(
+            tmp_path,
+            {
+                0: [(0, b, 100.0) for b in (0, 1)],
+                1: [(0, b, 300.0) for b in (0, 1)],
+            },
+        )
+        self._with_bus_prices(out)
+
+        bands = read_novomodelo_bus_percentiles(out).sort("entity_id")
+
+        assert bands.select(
+            "net_import_mw_p10", "net_import_mw_p50", "net_import_mw_p90"
+        ).rows() == [
+            (-280.0, -200.0, -120.0),
+            (120.0, 200.0, 280.0),
+            (None, None, None),
+        ]
+
+
+class TestReadNovomodeloDefaultExchangeCost:
+    def test_reads_the_line_exchange_cost(self, tmp_path: Path) -> None:
+        (tmp_path / "penalties.json").write_text(
+            json.dumps({"line": {"exchange_cost": 0.0002}}), encoding="utf-8"
+        )
+
+        with dx.collect() as found:
+            cost = read_novomodelo_default_exchange_cost(tmp_path / "output")
+
+        assert cost == 0.0002
+        assert found == []
+
+    def test_a_missing_file_is_noted(self, tmp_path: Path) -> None:
+        with dx.collect() as found:
+            cost = read_novomodelo_default_exchange_cost(tmp_path / "output")
+
+        assert cost is None
+        assert [d.code for d in found] == ["report-file-missing"]
+
+    @pytest.mark.parametrize(
+        "text", ["{not json", json.dumps({"line": {}}), json.dumps([1])]
+    )
+    def test_a_file_without_a_usable_cost_is_reported(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        (tmp_path / "penalties.json").write_text(text, encoding="utf-8")
+
+        with dx.collect() as found:
+            cost = read_novomodelo_default_exchange_cost(tmp_path / "output")
+
+        assert cost is None
+        assert [(d.code, d.severity) for d in found] == [
+            ("report-file-unreadable", Severity.WARNING)
+        ]

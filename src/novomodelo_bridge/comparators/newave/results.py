@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, TypedDict
 import pandas as pd
 import polars as pl
 
+from novomodelo_bridge.comparators.line_ties import mark_tied_lines
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
@@ -555,13 +556,43 @@ def _compare_thermals(
     return results
 
 
+def _nwlistop_net_import(nw_intercambio: pl.DataFrame) -> pl.DataFrame:
+    """Each subsystem's net import per stage (``newave_code``, ``stage``,
+    ``value``), from :func:`read_nwlistop_intercambio`'s pairs: the flow in
+    from every pair less the flow out.
+
+    NWLISTOP writes one file per pair of subsystems, its flow signed from the
+    first to the second.
+    """
+    inflow = nw_intercambio.select(
+        pl.col("to_submarket_code").alias("newave_code"), "stage", "value"
+    )
+    outflow = nw_intercambio.select(
+        pl.col("from_submarket_code").alias("newave_code"),
+        "stage",
+        -pl.col("value"),
+    )
+    return (
+        pl.concat([inflow, outflow])
+        .group_by("newave_code", "stage")
+        .agg(pl.col("value").sum())
+        .sort("newave_code", "stage")
+    )
+
+
 def _compare_buses(
     nw_system: pl.DataFrame,
     novomodelo_bus: pl.DataFrame,
     nw_names: dict[int, str],
     novomodelo_meta: dict[int, dict],
+    nw_net_import: pl.DataFrame,
 ) -> list[ResultComparison]:
-    """Compare bus/subsystem results by matching names."""
+    """Compare bus/subsystem results by matching names.
+
+    *nw_net_import* is :func:`_nwlistop_net_import`'s frame, on MEDIAS's
+    stage numbering; *novomodelo_bus* carries ``net_import_mw`` for the load
+    buses only, so a fictitious subsystem gets no net import row.
+    """
     results: list[ResultComparison] = []
 
     offset = _nw_stage_offset(nw_system)
@@ -588,12 +619,17 @@ def _compare_buses(
         var = str(row["variable"]).strip().upper()
         mapped = _SYSTEM_VAR_MAP.get(var, var.lower())
         nw_lookup[(code, stage, mapped)] = float(row["value"])
+    for row in nw_net_import.iter_rows(named=True):
+        code = int(row["newave_code"])
+        if code in matched:
+            stage = int(row["stage"]) - offset
+            nw_lookup[(code, stage, "net_import_mw")] = float(row["value"])
 
     novomodelo_lookup: dict[tuple[int, int, str], float] = {}
     for row in novomodelo_bus.iter_rows(named=True):
         eid = int(row["entity_id"])
         sid = int(row["stage_id"])
-        for col in ("spot_price", "deficit_mw"):
+        for col in ("spot_price", "deficit_mw", "net_import_mw"):
             val = row.get(col)
             if val is not None and not (isinstance(val, float) and math.isnan(val)):
                 novomodelo_lookup[(eid, sid, col)] = round(float(val), 2)
@@ -1046,6 +1082,7 @@ def _compare_medias(
             )
         )
 
+    nw_intercambio = read_nwlistop_intercambio(source_dir)
     nw_system = read_medias_market(source_dir)
     novomodelo_bus = read_novomodelo_bus_means(novomodelo_output_dir)
     if not nw_system.is_empty() and not novomodelo_bus.is_empty():
@@ -1056,6 +1093,7 @@ def _compare_medias(
                 novomodelo_bus,
                 entities.nw_bus_names,
                 entities.novomodelo_bus_meta,
+                _nwlistop_net_import(nw_intercambio),
             )
         )
 
@@ -1064,12 +1102,14 @@ def _compare_medias(
     # including pre-study calendar months with all-zero values, so we reuse this
     # offset to filter them out and align the remainder with Novomodelo's 0-based
     # stage_id.
-    nw_intercambio = read_nwlistop_intercambio(source_dir)
     novomodelo_line = read_novomodelo_line_means(novomodelo_output_dir)
     if not nw_intercambio.is_empty() and not novomodelo_line.is_empty():
         _LOG.info("Comparing line interchange...")
         results.extend(
-            _compare_lines(nw_intercambio, novomodelo_line, alignment, nw_offset)
+            mark_tied_lines(
+                _compare_lines(nw_intercambio, novomodelo_line, alignment, nw_offset),
+                novomodelo_output_dir,
+            )
         )
 
     return _MediasComparison(

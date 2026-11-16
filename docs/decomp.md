@@ -357,6 +357,12 @@ turbined plus spilled flow on both sides. DECOMP's defluent flow in
 `dec_oper_usih` also counts the diverted flow, which leaves the river above the
 plant and which Novomodelo reports apart.
 
+Each submarket's net import compares with the net interchange of
+`dec_oper_sist`; the fictitious subsystem has no row. The lines on a loop whose
+exchange costs tie, such as a direct line and its route through the
+fictitious subsystem, are left out of the headline as on the NEWAVE report
+(see [the NEWAVE guide](newave.md#comparing-results)).
+
 The REE stored and inflow energies (EARM, ENA) compare with DECOMP's
 `dec_oper_ree`. Novomodelo has no REE, so each plant's simulated storage and
 incremental inflow are valued with DECOMP's own definition. A plant's water

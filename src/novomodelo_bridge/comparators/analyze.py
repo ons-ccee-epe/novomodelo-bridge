@@ -151,7 +151,8 @@ def tidy_results_dataset(
 
     Vertically concatenates :func:`tidy_from_results` and
     :func:`tidy_percentiles_from_percentile_data` into a single frame conforming
-    exactly to :data:`TIDY_SCHEMA`.
+    exactly to :data:`TIDY_SCHEMA`. The percentile rows of a line whose net
+    flow *results* carry under the tied-route variable take that variable too.
 
     Args:
         results: The result comparisons (``newave``/``novomodelo`` rows).
@@ -162,6 +163,24 @@ def tidy_results_dataset(
     """
     result_rows = tidy_from_results(results)
     pct_rows = tidy_percentiles_from_percentile_data(pct)
+    tied = sorted(
+        {
+            r.novomodelo_id
+            for r in results
+            if r.entity_type == "line" and r.variable == agreement.TIED_NET_FLOW
+        }
+    )
+    if tied:
+        pct_rows = pct_rows.with_columns(
+            pl.when(
+                (pl.col("entity_type") == "line")
+                & (pl.col("variable") == "net_flow_mw")
+                & pl.col("entity_id").is_in(tied)
+            )
+            .then(pl.lit(agreement.TIED_NET_FLOW))
+            .otherwise(pl.col("variable"))
+            .alias("variable")
+        )
     return _conform(pl.concat([result_rows, pct_rows], how="vertical"))
 
 

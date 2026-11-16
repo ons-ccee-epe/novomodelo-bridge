@@ -6,8 +6,10 @@ import pytest
 
 from novomodelo_bridge.core.agreement import (
     FAR_FACTOR,
+    TIED_NET_FLOW,
     Band,
     band,
+    counts_in_headline,
     format_gap,
     gap,
     is_policy_row,
@@ -108,6 +110,28 @@ class TestPolicyRows:
     )
     def test_operation_rows_are_not(self, entity_type: str, variable: str) -> None:
         assert not is_policy_row(entity_type, variable)
+
+
+class TestCountsInHeadline:
+    @pytest.mark.parametrize(
+        ("entity_type", "variable"),
+        [
+            ("convergence", "lower_bound"),
+            ("hydro", "water_value_per_hm3"),
+            ("line", TIED_NET_FLOW),
+        ],
+    )
+    def test_policy_rows_and_tied_routes_are_left_out(
+        self, entity_type: str, variable: str
+    ) -> None:
+        assert not counts_in_headline(entity_type, variable)
+
+    @pytest.mark.parametrize(
+        ("entity_type", "variable"),
+        [("line", "net_flow_mw"), ("bus", "net_import_mw"), ("bus", "spot_price")],
+    )
+    def test_operation_rows_count(self, entity_type: str, variable: str) -> None:
+        assert counts_in_headline(entity_type, variable)
 
 
 class TestVariableLabel:

@@ -45,6 +45,7 @@ from novomodelo_bridge.comparators.verdict import (
     CompareVerdict,
     build_compare_verdict,
 )
+from novomodelo_bridge.core import agreement
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.pandas_utils import as_float
 
@@ -230,6 +231,46 @@ def test_tidy_results_dataset_validates() -> None:
 
     dataset.validate()
     assert tidy.height == 2 * len(_make_results()) + 6
+
+
+def test_tidy_results_dataset_moves_a_tied_line_band_with_its_rows() -> None:
+    def line_row(line_id: int, variable: str) -> ResultComparison:
+        return ResultComparison(
+            entity_type="line",
+            entity_name=f"L{line_id}",
+            newave_code=line_id,
+            novomodelo_id=line_id,
+            stage=0,
+            variable=variable,
+            newave_value=100.0,
+            novomodelo_value=90.0,
+            abs_diff=10.0,
+            rel_diff=0.1,
+        )
+
+    pct = PercentileData(
+        line=pl.DataFrame(
+            {
+                "entity_id": [0, 1],
+                "stage_id": [0, 0],
+                "net_flow_mw_p10": [80.0, 80.0],
+                "net_flow_mw_p50": [90.0, 90.0],
+                "net_flow_mw_p90": [100.0, 100.0],
+            }
+        )
+    )
+
+    tidy = tidy_results_dataset(
+        [line_row(0, "net_flow_mw"), line_row(1, agreement.TIED_NET_FLOW)], pct
+    )
+
+    variables = (
+        tidy.filter(pl.col("source") == "p50")
+        .sort("entity_id")
+        .select("entity_id", "variable")
+        .rows()
+    )
+    assert variables == [(0, "net_flow_mw"), (1, agreement.TIED_NET_FLOW)]
 
 
 def test_tidy_results_dataset_empty_inputs_validate() -> None:
@@ -1349,6 +1390,20 @@ class TestCompareVerdict:
         verdict = build_compare_verdict(dataset)
 
         assert verdict.total == 1
+        assert verdict.all_close
+
+    def test_tied_routes_are_left_out(self) -> None:
+        dataset = _summary_dataset(
+            [
+                _summary_row("bus", "net_import_mw", 0.01, "close"),
+                _summary_row("line", "net_flow_mw", 0.03, "close"),
+                _summary_row("line", agreement.TIED_NET_FLOW, 0.5, "far"),
+            ]
+        )
+
+        verdict = build_compare_verdict(dataset)
+
+        assert verdict.total == 2
         assert verdict.all_close
 
     def test_far_variables_come_largest_gap_first_undefined_leading(self) -> None:

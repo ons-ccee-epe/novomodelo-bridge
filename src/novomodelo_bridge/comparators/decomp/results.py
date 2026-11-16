@@ -80,6 +80,7 @@ from novomodelo_bridge.comparators.decomp.ree_energy import (
     ReeEnergyRule,
     build_ree_energy_rule,
 )
+from novomodelo_bridge.comparators.line_ties import mark_tied_lines
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
@@ -194,6 +195,7 @@ _THERMAL_VARIABLES: tuple[_Variable, ...] = (
 _BUS_VARIABLES: tuple[_Variable, ...] = (
     _Variable("bus", "deficit", "deficit_MW", "deficit_mw", "MW"),
     _Variable("bus", "spot_price", "cmo", "spot_price", "$/MWh"),
+    _Variable("bus", "net_import", "intercambio_liquido_MW", "net_import_mw", "MW"),
 )
 
 #: (level, ``_Variable.name``) -> the canonical variable name the shared
@@ -210,6 +212,7 @@ _CANONICAL_VARIABLE: dict[tuple[str, str], str] = {
     ("thermal", "generation"): "generation_mw",
     ("bus", "deficit"): "deficit_mw",
     ("bus", "spot_price"): "spot_price",
+    ("bus", "net_import"): "net_import_mw",
 }
 
 
@@ -1069,7 +1072,9 @@ def _line_result_comparisons(
     ``None``) or the source-model interchange table is unavailable, and
     ``([], unresolved)`` when corridors resolve but the join with Novomodelo's own
     per-line means produces no row -- matching :func:`_interc_side`'s own
-    never-silently-drop convention for unresolved corridors.
+    never-silently-drop convention for unresolved corridors. The rows of a
+    line on a tied loop come back under the tied-route variable
+    (:func:`~novomodelo_bridge.comparators.line_ties.mark_tied_lines`).
     """
     if id_map is None:
         return [], []
@@ -1119,7 +1124,7 @@ def _line_result_comparisons(
                 rel_diff=rel_diff,
             )
         )
-    return results, unresolved_lists
+    return mark_tied_lines(results, novomodelo_output_dir), unresolved_lists
 
 
 #: ``dec_oper_sist`` columns the Energy Balance tab's reference-model overlay

@@ -1016,6 +1016,93 @@ def read_novomodelo_line_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     return result
 
 
+def _bus_net_import_per_scenario(novomodelo_output_dir: Path) -> pl.LazyFrame | None:
+    """Each load bus's net import per scenario and stage: the flow of its lines
+    into it less the flow out, or ``None`` without lines or flows.
+
+    A line's ``net_flow_mw`` runs from ``source_bus_id`` to ``target_bus_id``
+    in ``system/lines.json``. A bus without load
+    (:func:`read_novomodelo_load_bus_ids`), a fictitious or transshipment bus,
+    has no row: the source models report no market there.
+    """
+    lines = read_novomodelo_lines(novomodelo_output_dir)
+    lf = scan_simulation_entity(novomodelo_output_dir, "exchanges")
+    if not lines or lf is None:
+        return None
+    available = set(lf.collect_schema().names())
+    if "net_flow_mw" not in available:
+        return None
+    id_col = "line_id" if "line_id" in available else "entity_id"
+    ends = pl.LazyFrame(
+        {
+            "entity_id": [int(line["id"]) for line in lines],
+            "source_bus_id": [int(line["source_bus_id"]) for line in lines],
+            "target_bus_id": [int(line["target_bus_id"]) for line in lines],
+        },
+        schema={
+            "entity_id": pl.Int64,
+            "source_bus_id": pl.Int64,
+            "target_bus_id": pl.Int64,
+        },
+    )
+    flows = _weighted_scenario_values(
+        lf, id_col, ["net_flow_mw"], [], _load_block_hours(novomodelo_output_dir)
+    ).join(ends, on="entity_id", how="inner")
+    inflow = flows.select(
+        "scenario_id",
+        pl.col("target_bus_id").alias("entity_id"),
+        "stage_id",
+        pl.col("net_flow_mw").alias("net_import_mw"),
+    )
+    outflow = flows.select(
+        "scenario_id",
+        pl.col("source_bus_id").alias("entity_id"),
+        "stage_id",
+        (-pl.col("net_flow_mw")).alias("net_import_mw"),
+    )
+    load_bus_ids = sorted(read_novomodelo_load_bus_ids(novomodelo_output_dir))
+    return (
+        pl.concat([inflow, outflow])
+        .filter(pl.col("entity_id").is_in(load_bus_ids))
+        .group_by("scenario_id", "entity_id", "stage_id")
+        .agg(pl.col("net_import_mw").sum())
+    )
+
+
+def read_novomodelo_bus_net_import(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Each load bus's net import per (entity_id, stage_id), weighted like
+    :func:`read_novomodelo_line_means`; see
+    :func:`_bus_net_import_per_scenario`.
+
+    Returns columns ``entity_id``, ``stage_id``, ``net_import_mw``.
+    """
+    empty = pl.DataFrame(
+        schema={
+            "entity_id": pl.Int64,
+            "stage_id": pl.Int64,
+            "net_import_mw": pl.Float64,
+        }
+    )
+    per_scenario = _bus_net_import_per_scenario(novomodelo_output_dir)
+    if per_scenario is None:
+        return empty
+    weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
+    try:
+        return (
+            weights.attach(per_scenario)
+            .group_by("entity_id", "stage_id")
+            .agg(weights.mean("net_import_mw"))
+            .sort("entity_id", "stage_id")
+            .collect(engine="streaming")
+            .cast(empty.schema)
+        )
+    except Exception as exc:
+        raise NovomodeloReadError(
+            "Failed to aggregate the buses' net import: "
+            f"{novomodelo_output_dir / 'simulation' / 'exchanges'}"
+        ) from exc
+
+
 def read_novomodelo_line_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Read Novomodelo line p10/p50/p90 per (entity_id, stage_id).
 
@@ -1414,10 +1501,11 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Read Novomodelo bus simulation means per (entity_id, stage_id).
 
     Computes block-hours-weighted scenario means for spot_price and
-    deficit_mw.
+    deficit_mw, and joins :func:`read_novomodelo_bus_net_import`'s
+    ``net_import_mw``, null on a bus without load.
 
     Returns DataFrame with columns: ``entity_id``, ``stage_id``,
-    ``spot_price``, ``deficit_mw``.
+    ``spot_price``, ``deficit_mw``, ``net_import_mw``.
     """
     empty = pl.DataFrame(
         schema={
@@ -1425,6 +1513,7 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
             "stage_id": pl.Int64,
             "spot_price": pl.Float64,
             "deficit_mw": pl.Float64,
+            "net_import_mw": pl.Float64,
         }
     )
 
@@ -1467,7 +1556,11 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
         if col not in result.columns:
             result = result.with_columns(pl.lit(None).cast(pl.Float64).alias(col))
 
-    return result
+    return result.join(
+        read_novomodelo_bus_net_import(novomodelo_output_dir),
+        on=["entity_id", "stage_id"],
+        how="left",
+    )
 
 
 def _weighted_scenario_values(
@@ -1616,7 +1709,8 @@ def read_novomodelo_thermal_percentiles(novomodelo_output_dir: Path) -> pl.DataF
 
 
 def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
-    """Read Novomodelo bus p10/p50/p90 per (entity_id, stage_id)."""
+    """Read Novomodelo bus p10/p50/p90 per (entity_id, stage_id), the load
+    buses' net import (:func:`_bus_net_import_per_scenario`) included."""
     lf = scan_simulation_entity(novomodelo_output_dir, "buses")
     if lf is None:
         return pl.DataFrame()
@@ -1631,7 +1725,15 @@ def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame
     weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(lf, id_col, flow_cols, [], block_hours)
-        return _compute_percentiles(per_sc, flow_cols, weights)
+        percentiles = _compute_percentiles(per_sc, flow_cols, weights)
+        net_import = _bus_net_import_per_scenario(novomodelo_output_dir)
+        if net_import is None:
+            return percentiles
+        return percentiles.join(
+            _compute_percentiles(net_import, ["net_import_mw"], weights),
+            on=["entity_id", "stage_id"],
+            how="left",
+        )
     except Exception as exc:
         raise NovomodeloReadError(
             "Failed to compute bus percentiles: "
@@ -2308,8 +2410,8 @@ def read_novomodelo_load_bus_ids(novomodelo_output_dir: Path) -> frozenset[int]:
                 "scenarios/load_seasonal_stats.parquet",
                 path,
                 "the report cannot tell the market buses from the "
-                "transshipment buses when it places a hydro plant that spans "
-                "several buses.",
+                "transshipment buses: it places no hydro plant that spans "
+                "several buses and compares no bus's net import.",
             ),
             logger=_LOG,
         )
@@ -2562,6 +2664,51 @@ def read_novomodelo_non_controllable_sources(
         entity=("non-controllable source", "non-controllable sources"),
         absence_is_finding=False,
     )[1]
+
+
+#: What a report loses when ``penalties.json`` cannot give the default line
+#: exchange cost, the same from every reader so the finding is one.
+_EXCHANGE_COST_EFFECT = (
+    "the report cannot tell which loops of lines tie on exchange cost, so it "
+    "judges the flow of every line."
+)
+
+
+def read_novomodelo_default_exchange_cost(novomodelo_output_dir: Path) -> float | None:
+    """``penalties.json``'s ``line.exchange_cost`` (R$/MWh): the exchange cost
+    of every line without its own.
+
+    ``None``, with a ``report-file-missing`` note when the file is absent or a
+    ``report-file-unreadable`` warning when it does not parse or holds no
+    such cost.
+    """
+    path = case_dir_for(novomodelo_output_dir) / "penalties.json"
+    if not path.is_file():
+        emit(
+            report_file_missing_diagnostic(
+                "penalties.json", path, _EXCHANGE_COST_EFFECT
+            ),
+            logger=_LOG,
+        )
+        return None
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        reason: Exception | str = exc
+    else:
+        line = data.get("line") if isinstance(data, dict) else None
+        cost = line.get("exchange_cost") if isinstance(line, dict) else None
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            return float(cost)
+        reason = "no line exchange cost"
+    emit(
+        report_file_unreadable_diagnostic(
+            "penalties.json", path, _EXCHANGE_COST_EFFECT, reason
+        ),
+        logger=_LOG,
+    )
+    return None
 
 
 def read_novomodelo_buses(novomodelo_output_dir: Path) -> list[dict]:

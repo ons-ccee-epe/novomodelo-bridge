@@ -94,7 +94,9 @@ ENTITY_GROUPS: dict[str, str] = {
 VARIABLE_LABELS: dict[str, str] = {
     "spot_price": "Spot price (R$/MWh)",
     "deficit_mw": "Deficit (MW)",
+    "net_import_mw": "Net import (MW)",
     "net_flow_mw": "Net flow (MW)",
+    "tied_net_flow_mw": "Net flow on tied routes (MW)",
     "earm_final_mwmes": "Stored energy, end of stage (MWmês)",
     "ena_mwmes": "Natural inflow energy (MWmês)",
     "spill_energy_reservoir_mw": "Spilled energy, reservoirs (MW)",
@@ -121,6 +123,12 @@ def variable_label(variable: str) -> str:
     return VARIABLE_LABELS.get(variable, variable)
 
 
+#: The line variable of a line on a loop whose exchange costs tie: the two
+#: models can route the same bus exchanges through it differently at the
+#: same cost, so its flow is shown but not judged.
+TIED_NET_FLOW: str = "tied_net_flow_mw"
+
+
 def is_policy_row(entity_type: str, variable: str) -> bool:
     """Whether a summary row describes the trained policy rather than the
     simulated operation: the convergence bounds and the water values.
@@ -129,3 +137,11 @@ def is_policy_row(entity_type: str, variable: str) -> bool:
     the console table, its headline and the ``--json`` status.
     """
     return entity_type == "convergence" or variable == "water_value_per_hm3"
+
+
+def counts_in_headline(entity_type: str, variable: str) -> bool:
+    """Whether a summary row counts in the console headline and the
+    ``--json`` status: neither a policy row nor the net flow on tied routes,
+    which the console table still shows.
+    """
+    return not is_policy_row(entity_type, variable) and variable != TIED_NET_FLOW

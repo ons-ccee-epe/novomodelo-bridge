@@ -7,6 +7,7 @@ alignment, computation, comparison, and report generation.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -317,6 +318,30 @@ class TestAgreementTable:
         assert "water_value_per_hm3" in dataset.summary["variable"].to_list()
         labels = [str(row[0]).strip() for row in spy.records[0]["rows"]]
         assert labels == ["Hydro plants", "Generation (MW)"]
+
+    def test_tied_routes_show_dimmed_and_out_of_the_headline(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.core.agreement import TIED_NET_FLOW
+
+        def line(variable: str, novomodelo: float) -> ResultComparison:
+            return dataclasses.replace(
+                _hydro_result("SE-NE", variable, 100.0, novomodelo),
+                entity_type="line",
+            )
+
+        _, spy = self._print([line("net_flow_mw", 100.0), line(TIED_NET_FLOW, 10.0)])
+
+        rows = spy.records[0]["rows"]
+        cells = [(str(row[0]).strip(), str(row[4])) for row in rows[1:]]
+        assert cells == [
+            ("Net flow (MW)", "close"),
+            ("Net flow on tied routes (MW)", "far, not in headline"),
+        ]
+        assert spy.records[0]["row_styles"] == ["bold", None, "dim"]
+        out = " ".join(capsys.readouterr().out.split())
+        assert "1 of 1 variables close" in out
+        assert "Net flow on tied routes is not in the headline" in out
 
     def test_training_costs_follow_the_table(
         self, capsys: pytest.CaptureFixture[str]

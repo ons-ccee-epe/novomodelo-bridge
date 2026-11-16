@@ -5,8 +5,9 @@ This module turns a canonical :class:`ComparisonDataset` into a
 band of :mod:`novomodelo_bridge.core.agreement`, and which ones are far. Every
 number is read straight from ``dataset.summary`` rows, whose gaps and bands
 were computed with the compare tolerance upstream; nothing is recomputed
-here. Policy rows (:func:`~novomodelo_bridge.core.agreement.is_policy_row`)
-are left out, so the headline judges the simulated operation only.
+here. Rows :func:`~novomodelo_bridge.core.agreement.counts_in_headline`
+rejects (the policy rows and the net flow on tied routes) are left out, so
+the headline judges the simulated operation only.
 
 It is a leaf: it imports nothing from the other comparators at runtime (the
 :class:`ComparisonDataset` type is referenced under ``TYPE_CHECKING`` only),
@@ -19,7 +20,7 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from novomodelo_bridge.core.agreement import Band, is_policy_row
+from novomodelo_bridge.core.agreement import Band, counts_in_headline
 from novomodelo_bridge.core.summary_counts import summary_tolerance
 
 if TYPE_CHECKING:
@@ -66,7 +67,8 @@ class CompareVerdict:
 
 
 def build_compare_verdict(dataset: ComparisonDataset) -> CompareVerdict:
-    """Count the dataset's summary rows by band, leaving out policy rows.
+    """Count the dataset's summary rows by band, leaving out the rows
+    :func:`~novomodelo_bridge.core.agreement.counts_in_headline` rejects.
 
     Far variables are ordered by descending gap, an undefined gap first, and
     then by ``(entity_type, variable)`` so the order is deterministic.
@@ -75,7 +77,7 @@ def build_compare_verdict(dataset: ComparisonDataset) -> CompareVerdict:
     far: list[FarVariable] = []
     for row in dataset.summary.to_dicts():
         entity_type, variable = str(row["entity_type"]), str(row["variable"])
-        if is_policy_row(entity_type, variable):
+        if not counts_in_headline(entity_type, variable):
             continue
         row_band = Band(row["band"])
         counts[row_band] += 1

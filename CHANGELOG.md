@@ -227,6 +227,13 @@ links are cobre-bridge's.
   variable close, moderate or far (beyond four times the tolerance), leaves
   out the water values and convergence bounds, and ends with each model's
   final lower bound and simulated mean cost.
+- **`compare newave` and `compare decomp` judge the exchanges by each
+  subsystem's net import**, in a new Net import row and System-tab chart. The
+  flows of lines on a loop whose exchange costs split into two equal halves,
+  such as a direct line and its route through a fictitious subsystem, move to
+  a Net flow on tied routes row left out of the headline and the `--json`
+  status, with a `line-routes-tied` warning naming the loops. Run the
+  comparison again to update a report.
 - **BREAKING: every command's `--json` envelope has `schema_version` 2, and
   `compare`'s summary counts the variables in each agreement band and lists
   the far ones.** Its status is `ok` only when every variable is close, and

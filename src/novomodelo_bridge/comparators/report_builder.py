@@ -782,6 +782,16 @@ def _build_system_tab(dataset: ComparisonDataset, reference_label: str) -> str:
                     results, "deficit_mw", "Deficit", bus_pct, reference_label
                 )
             ),
+            section_title("Net Import by Bus"),
+            _full_width_chart(
+                system_per_bus_chart(
+                    results,
+                    "net_import_mw",
+                    "Net Import by Bus (MW)",
+                    bus_pct,
+                    reference_label,
+                )
+            ),
         ]
     )
 

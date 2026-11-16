@@ -10,8 +10,10 @@ from rich.text import Text
 from novomodelo_bridge.core.agreement import (
     ENTITY_GROUPS,
     FAR_FACTOR,
+    TIED_NET_FLOW,
     VARIABLE_LABELS,
     Band,
+    counts_in_headline,
     format_gap,
     is_policy_row,
     variable_label,
@@ -67,16 +69,19 @@ def _agreement_rows(
             row_band = Band(stats["band"])
             gap = stats["gap"]
             correlation = stats["correlation"]
+            judged = counts_in_headline(entity_type, str(stats["variable"]))
             rows.append(
                 [
                     f"  {variable_label(str(stats['variable']))}",
                     f"{int(stats['count']):,}",
                     format_gap(None if gap is None else float(gap)),
                     "—" if correlation is None else f"{float(correlation):.3f}",
-                    Text(row_band.value, style=BAND_STYLE[row_band]),
+                    Text(row_band.value, style=BAND_STYLE[row_band])
+                    if judged
+                    else Text(f"{row_band.value}, not in headline"),
                 ]
             )
-            styles.append(None)
+            styles.append(None if judged else "dim")
     return rows, styles
 
 
@@ -160,6 +165,16 @@ def print_results_summary_from_dataset(
             soft_wrap=True,
             markup=False,
         )
+        if (dataset.summary["variable"] == TIED_NET_FLOW).any():
+            target.print(
+                "Net flow on tied routes is not in the headline: the two "
+                "models can split the same exchanges between those lines "
+                "differently at the same cost. Net import judges the buses "
+                "instead.",
+                style="dim",
+                soft_wrap=True,
+                markup=False,
+            )
 
     if training:
         target.print()

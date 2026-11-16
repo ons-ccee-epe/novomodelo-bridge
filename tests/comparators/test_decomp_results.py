@@ -377,12 +377,35 @@ class TestResultComparisons:
         )
         assert _result_comparisons(source, novomodelo, _HYDRO_VARIABLES, names={}) == []
 
-    def test_canonical_variable_covers_all_eight_today_variables(self) -> None:
-        """D-SOURCE-TOKEN-adjacent guard: every ``_Variable`` spec this module
-        ships must resolve to a canonical chart name -- a spec with no entry
-        would raise a ``KeyError`` deep inside ``_result_comparisons``."""
+    def test_a_bus_without_load_gets_no_net_import_row(self) -> None:
+        # Novomodelo has no net import on the fictitious subsystem FC, which
+        # carries no load; DECOMP reports one there all the same.
+        source = pl.DataFrame(
+            {
+                "entity_id": [0, 3],
+                "newave_code": [1, 11],
+                "stage_id": [0, 0],
+                "intercambio_liquido_MW": [-1500.0, 0.0],
+            }
+        )
+        novomodelo = pl.DataFrame(
+            {"entity_id": [0, 3], "stage_id": [0, 0], "net_import_mw": [-1400.0, None]}
+        )
+
+        results = _result_comparisons(
+            source, novomodelo, _BUS_VARIABLES, names={0: "SE", 3: "FC"}
+        )
+
+        assert [(r.entity_name, r.variable, r.newave_value) for r in results] == [
+            ("SE", "net_import_mw", -1500.0)
+        ]
+
+    def test_canonical_variable_covers_every_variable_spec(self) -> None:
+        """Every ``_Variable`` spec this module ships must resolve to a
+        canonical chart name -- a spec with no entry would raise a
+        ``KeyError`` deep inside ``_result_comparisons``."""
         all_vars = _HYDRO_VARIABLES + _THERMAL_VARIABLES + _BUS_VARIABLES
-        assert len(all_vars) == 8
+        assert len(all_vars) == 9
         canonical_names = {_CANONICAL_VARIABLE[(v.level, v.name)] for v in all_vars}
         assert canonical_names == {
             "generation_mw",
@@ -392,12 +415,13 @@ class TestResultComparisons:
             "storage_final_hm3",
             "deficit_mw",
             "spot_price",
+            "net_import_mw",
         }
 
 
 class TestBuildDecompDataset:
     """``build_decomp_dataset`` assembles the canonical dataset for the
-    current 8 DECOMP variables via the shared ``_read_aligned_frames`` seam."""
+    DECOMP variables via the shared ``_read_aligned_frames`` seam."""
 
     def test_dataset_validates_with_the_canonical_variables(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
