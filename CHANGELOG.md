@@ -49,9 +49,6 @@ links are cobre-bridge's.
   because the case's CMO leaves out its multiplier wherever it binds. Write
   the term as `val_demanda` or `val_demanda_sin` where the multiplier should
   not count.
-- **`convert decomp` warns with `decomp-nw-inflow-split-fallback`** when an
-  `NW` plant's inflow cannot be split from its downstream plant's within
-  1 m³/s; that group keeps the deck's operation inflows.
 
 ### Changed
 
@@ -298,11 +295,19 @@ links are cobre-bridge's.
   novomodelo revision.
 - **BREAKING: `convert decomp` converts `UH` plants marked `NW` as hydros that
   enter after the horizon**, each taking its own coupling inflow from the
-  downstream plant's, so boundary cuts price them; hydro ids above each
-  shift, so reconvert such decks. `export dessem` leaves them out of the cuts.
-- **`compare decomp` refuses a case converted from another deck** (exit 2),
-  as `export dessem` does: the case's hydro ids and names must match the
-  deck's.
+  downstream plant's so boundary cuts price them
+  (`decomp-nw-inflow-split-fallback` warns where the split fails and the
+  deck's inflows stay); hydro ids above each shift, so reconvert such decks.
+  The conversion stops, naming the plant, with `source-unsupported` on an
+  `NW` reservoir whose `UH` record gives a volume above its minimum or a `VI`
+  record on an `NW` plant or ending at one (clear the volume, the `VI` record
+  or the `NW` mark), and with `source-field-parse` on an `NW` plant `hidr.dat`
+  lacks. `export dessem` leaves `NW` plants out of the cuts and refuses an
+  operated plant that drains into one (`dessem-fcf-export-failed`).
+- **`compare decomp` and `export dessem` stop with `case-deck-mismatch` on a
+  case converted from another deck** (exit 2 and 1): the case's hydro ids and
+  names must match the deck's, so run them against the deck the case came
+  from. `export dessem` reported this as `dessem-fcf-export-failed`.
 
 ### Removed
 

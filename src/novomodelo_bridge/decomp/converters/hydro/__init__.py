@@ -53,7 +53,7 @@ from novomodelo_bridge.decomp.converters.hydro.entity import (
     _converted_initial_volumes as _converted_initial_volumes,
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
-    _downstream_operated as _downstream_operated,
+    _downstream_in as _downstream_in,
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
     _evaporation_coefficients_mm as _evaporation_coefficients_mm,

@@ -204,10 +204,10 @@ class TestExportDessemCli:
         assert result.exit_code == 1
         verdict = json.loads(result.stdout)
         assert verdict["status"] == "error"
-        assert (
-            "export from the deck the case was converted from"
-            in (verdict["diagnostics"][-1]["summary"])
-        )
+        mismatch = verdict["diagnostics"][-1]
+        assert mismatch["code"] == "case-deck-mismatch"
+        assert "hydro plants but the case holds" in mismatch["summary"]
+        assert "the deck the case was converted from" in mismatch["remediation"]
 
     def test_successful_export(
         self,

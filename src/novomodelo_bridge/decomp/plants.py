@@ -53,11 +53,5 @@ def coupling_only_codes(uh: pd.DataFrame) -> tuple[int, ...]:
 
 
 def dormant_codes(uh: pd.DataFrame) -> tuple[int, ...]:
-    """The ascending codes of the rows marked ``NW``.
-
-    A null or blank marker is not ``NW``, and a frame without that column has no
-    dormant rows. The volume is not read: a dormant row may carry one.
-    """
-    if "configuracao_newave" not in uh.columns:
-        return ()
+    """The ascending codes of the rows marked ``NW``; a frame without the marker column has none."""
     return tuple(sorted(int(c) for c in uh[_is_dormant(uh)]["codigo_usina"]))

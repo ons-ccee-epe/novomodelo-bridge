@@ -36,7 +36,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
 )
 from novomodelo_bridge.core.pandas_utils import as_frame
-from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
+from novomodelo_bridge.decomp.converters.hydro import _downstream_in
 
 if TYPE_CHECKING:
     from datetime import date
@@ -160,7 +160,7 @@ def convert_travel_time(
         if code not in converted:
             unused.append([code, _plant_name(effective, code), "not in the case"])
             continue
-        if _downstream_operated(effective, code, converted) is None:
+        if _downstream_in(effective, code, converted) is None:
             unused.append([code, _plant_name(effective, code), "no plant downstream"])
             continue
         hours_by_code[code] = travel_time.travel_time_hours

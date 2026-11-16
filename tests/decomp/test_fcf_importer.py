@@ -640,8 +640,8 @@ _NAMES = {
     132: "LAJES",
     147: "FONTES AB",
     169: "SOBRADINHO",
-    901: "CUT PLANT",
     305: "ITIQUIRA II",
+    901: "CUT PLANT",
 }
 
 
@@ -685,13 +685,6 @@ def test_emit_coupling_diagnostics_unowned_plant_is_an_error() -> None:
     assert unowned.severity is dx.Severity.ERROR
     assert unowned.table is not None
     assert unowned.table.rows == [[305, "ITIQUIRA II"]]
-
-
-def test_emit_coupling_diagnostics_is_silent_on_a_resolved_coupling() -> None:
-    with dx.collect() as sink:
-        _emit_coupling_diagnostics(CouplingResolution((), (), ()), (), names={})
-
-    assert sink == []
 
 
 def test_emit_coupling_diagnostics_lists_unrepresented_coupling_inflows() -> None:

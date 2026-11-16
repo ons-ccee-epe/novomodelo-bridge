@@ -73,7 +73,7 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
     _conjunto_count,
     _conjunto_machines,
 )
-from novomodelo_bridge.decomp.converters.hydro.entity import _downstream_operated
+from novomodelo_bridge.decomp.converters.hydro.entity import _downstream_in
 from novomodelo_bridge.decomp.converters.hydro.productivity import (
     _equivalent_productivity_mw_per_m3s,
 )
@@ -181,8 +181,7 @@ def compute_turbine_limits(
     """
     operated = set(id_map.operated_hydro_codes)
     downstream = {
-        code: _downstream_operated(effective, code, operated)
-        for code in id_map.hydro_codes
+        code: _downstream_in(effective, code, operated) for code in id_map.hydro_codes
     }
     upstream: dict[int, list[int]] = {code: [] for code in id_map.hydro_codes}
     for code, below in downstream.items():

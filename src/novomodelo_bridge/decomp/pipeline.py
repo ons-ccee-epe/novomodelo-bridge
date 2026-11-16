@@ -57,6 +57,7 @@ from novomodelo_bridge.decomp import load as load_conv
 from novomodelo_bridge.decomp import scenarios as scenarios_conv
 from novomodelo_bridge.decomp import temporal as temporal_conv
 from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.case_identity import require_registered_hydros
 from novomodelo_bridge.decomp.converters import anticipated as anticipated_conv
 from novomodelo_bridge.decomp.converters import bounds as bounds_conv
 from novomodelo_bridge.decomp.converters import cadastro as cadastro_conv
@@ -946,6 +947,7 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     dadger = case.dadger
     calendar = case.calendar
     _LOG.info("converting %s (revision %s)", src, case.files.revision)
+    require_registered_hydros(case)
 
     vazoes = Vazoes.read(str(case.files.vazoes))
 

@@ -13,6 +13,7 @@ import pytest
 from idecomp.decomp import Vazoes
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
@@ -287,8 +288,11 @@ class TestNwInflowSplit:
             vazoes = _split_vazoes()
             setattr(vazoes, missing, None)
 
-            with pytest.raises(ValueError, match=rf"plants? 1\b.*{missing}"):
+            with pytest.raises(
+                FieldParseError, match=rf"plants? 1\b.*{missing}"
+            ) as raised:
                 _convert(vazoes, id_map)
+            assert (raised.value.path, raised.value.field) == ("vazoes.rvN", missing)
 
     def test_an_operation_row_without_its_coupling_pair_raises(self) -> None:
         id_map = _split_id_map(1, 2, 3, dormant=(1,))
@@ -301,10 +305,14 @@ class TestNwInflowSplit:
             monthly.cenarios_calculados_com_postos_artificiais.iloc[:1]
         )
 
-        with pytest.raises(ValueError, match=r"estagio 2\b"):
+        with pytest.raises(FieldParseError, match=r"estagio 2\b") as weekly_error:
             _convert(weekly, id_map)
-        with pytest.raises(ValueError, match=r"estagio 3, cenario 2\b"):
+        with pytest.raises(
+            FieldParseError, match=r"estagio 3, cenario 2\b"
+        ) as monthly_error:
             _convert(monthly, id_map)
+        assert weekly_error.value.field == "previsoes"
+        assert monthly_error.value.field == "cenarios_gerados"
 
     def test_two_nw_plants_above_one_absorber_split_as_one_group(self) -> None:
         nw = {"11": _NW_COUPLING, "14": (3.0, 4.0, 5.0, 6.0)}

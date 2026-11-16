@@ -54,7 +54,7 @@ from novomodelo_bridge.core.inflow_windows import (
     month_window,
     previous_months,
 )
-from novomodelo_bridge.decomp.converters.hydro import _downstream_operated
+from novomodelo_bridge.decomp.converters.hydro import _downstream_in
 from novomodelo_bridge.decomp.temporal import weekly_stage_count
 
 if TYPE_CHECKING:
@@ -97,7 +97,9 @@ class ObservationTables(Protocol):
     def observacoes_semanais(self) -> pd.DataFrame | None: ...
 
 
-class _TreeTables(Protocol):
+class TreeTables(Protocol):
+    """The operation and coupling trunk tables of a ``vazoes`` file."""
+
     @property
     def previsoes(self) -> pd.DataFrame | None: ...
 
@@ -124,25 +126,25 @@ def _incremental_context(
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
 ) -> tuple[dict[int, str], dict[int, list[int]]]:
-    """Per-plant station column and direct operated-upstream stations, off
-    the *effective* (post-``AC NUMJUS``/``NUMPOS``) topology.
+    """Per-plant station column and direct upstream stations of the converted
+    plants, off the *effective* (post-``AC NUMJUS``/``NUMPOS``) topology.
 
     Stage-agnostic by design (one cascade for the whole horizon): both the
     station column and the downstream link are read at stage 0
     (:meth:`~novomodelo_bridge.decomp.converters.cadastro.effective.
     EffectiveCadastro.inflow_gauge`/
     :func:`~novomodelo_bridge.decomp.converters.hydro.entity.
-    _downstream_operated`'s own default).
+    _downstream_in`'s own default).
     A gauge or link that changes on later stages is reported
     (:func:`novomodelo_bridge.decomp.converters.cadastro.topology_varies_diagnostic`).
     """
-    operated = set(id_map.hydro_codes)
+    converted = set(id_map.hydro_codes)
     station_by_code: dict[int, str] = {}
     for code in id_map.hydro_codes:
         station_by_code[code] = str(effective.inflow_gauge(code, 0))
     parents: dict[int, list[int]] = {code: [] for code in id_map.hydro_codes}
     for code in id_map.hydro_codes:
-        downstream = _downstream_operated(effective, code, operated)
+        downstream = _downstream_in(effective, code, converted)
         if downstream is not None:
             parents[downstream].append(code)
     return station_by_code, parents
@@ -163,10 +165,9 @@ def _incremental_values(
     plant to 0 m³/s, except that a negative value is reported there as zero
     (:func:`_report_negative_incrementals`), and the reported natural flow
     reconstructs exactly as the running sum of these incrementals down each
-    cascade. (DECOMP operates every plant — no fictitious/non-operated
-    intermediates — so there is no upstream drainage to re-attribute
-    downstream; ``station_by_code`` already resolves any ``AC NUMPOS`` gauge
-    relink.)
+    cascade. ``station_by_code`` already resolves any ``AC NUMPOS`` gauge
+    relink. A dormant plant is read the same way, and the plants of a passed NW
+    group are then replaced by :meth:`NwInflowSplit.carried`.
     """
     return [float(row[station_by_code[code]]) for code in id_map.hydro_codes]
 
@@ -263,7 +264,7 @@ def _coupling_rows(
     return {_row_key(row, keys): row for _, row in table.iterrows()}
 
 
-def _paired_rows(vazoes: _TreeTables) -> list[tuple[pd.Series, pd.Series]]:
+def _paired_rows(vazoes: TreeTables) -> list[tuple[pd.Series, pd.Series]]:
     """Every operation row with its coupling row: ``previsoes`` on ``estagio``,
     ``cenarios_gerados`` on ``estagio`` and ``cenario``."""
     pairs: list[tuple[pd.Series, pd.Series]] = []
@@ -276,16 +277,18 @@ def _paired_rows(vazoes: _TreeTables) -> list[tuple[pd.Series, pd.Series]]:
             key = _row_key(row, keys)
             if key not in coupling_rows:
                 at = ", ".join(f"{k} {v}" for k, v in zip(keys, key, strict=True))
-                raise ValueError(
+                raise FieldParseError(
                     f"the inflow file's {operation_name} row at {at} has no "
-                    f"row in {coupling_name}"
+                    f"row in {coupling_name}",
+                    path=_VAZOES,
+                    field=operation_name,
                 )
             pairs.append((row, coupling_rows[key]))
     return pairs
 
 
 def split_nw_inflows(
-    vazoes: _TreeTables,
+    vazoes: TreeTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
 ) -> NwInflowSplit:
@@ -300,7 +303,7 @@ def split_nw_inflows(
 
     Raises
     ------
-    ValueError
+    FieldParseError
         If an NW plant's coupling table is missing, or an operation row has no
         coupling row to pair with.
     """
@@ -310,17 +313,19 @@ def split_nw_inflows(
     for _, coupling_name, _ in _PAIRED_TABLES:
         if getattr(vazoes, coupling_name) is None:
             plural = "s" if len(dormant) > 1 else ""
-            raise ValueError(
+            raise FieldParseError(
                 f"cannot split the inflow of NW plant{plural} "
                 f"{', '.join(map(str, dormant))}: the inflow file has no "
-                f"{coupling_name} table"
+                f"{coupling_name} table",
+                path=_VAZOES,
+                field=coupling_name,
             )
 
     operated = set(id_map.operated_hydro_codes)
     groups: dict[int, list[int]] = defaultdict(list)
     unabsorbed: list[int] = []
     for code in dormant:
-        absorber = _downstream_operated(effective, code, operated)
+        absorber = _downstream_in(effective, code, operated)
         if absorber is None:
             unabsorbed.append(code)
         else:
@@ -440,7 +445,7 @@ def convert_recent_observation_windows(
 
 
 def _tree_values(
-    vazoes: _TreeTables,
+    vazoes: TreeTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
@@ -670,7 +675,7 @@ def convert_external_inflows(
     case: DecompCase,
     id_map: DecompIdMap,
     *,
-    vazoes: _TreeTables,
+    vazoes: TreeTables,
     effective: EffectiveCadastro,
 ) -> pa.Table:
     """``external_inflow_scenarios.parquet``: the tree of per-plant incremental
@@ -705,7 +710,7 @@ def convert_external_inflows(
 
 
 def expected_incremental_inflows(
-    vazoes: _TreeTables,
+    vazoes: TreeTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],

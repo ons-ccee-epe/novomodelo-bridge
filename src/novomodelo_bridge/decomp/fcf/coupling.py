@@ -30,6 +30,7 @@ from novomodelo_bridge.decomp.converters.cadastro import is_reservoir
 from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
 from novomodelo_bridge.decomp.scenarios import (
     ObservationTables,
+    TreeTables,
     posto_value,
     recent_observation_rows,
     split_nw_inflows,
@@ -67,15 +68,7 @@ class _OperationTrunkTables(Protocol):
     def cenarios_gerados(self) -> pd.DataFrame | None: ...
 
 
-class _LagOffsetTables(_CouplingTrunkTables, _OperationTrunkTables, Protocol):
-    pass
-
-
 class _SourceOnlyTables(_CouplingTrunkTables, ObservationTables, Protocol):
-    pass
-
-
-class _TerminalFanTables(_CouplingTrunkTables, _OperationTrunkTables, Protocol):
     pass
 
 
@@ -265,7 +258,7 @@ def _terminal_fan(table: pd.DataFrame, terminal_estagio: int) -> list[pd.Series]
 
 
 def coupling_lag_offsets(
-    vazoes: _LagOffsetTables,
+    vazoes: TreeTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
@@ -338,7 +331,7 @@ def source_only_lag_inflows(
 
 
 def terminal_shares(
-    vazoes: _TerminalFanTables,
+    vazoes: TreeTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
     couplings: Iterable[HydroCoupling],

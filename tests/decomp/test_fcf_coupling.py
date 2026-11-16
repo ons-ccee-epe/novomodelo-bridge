@@ -143,7 +143,7 @@ def test_resolve_couplings_ignores_a_complex_absent_from_the_cut() -> None:
 
 
 def test_an_nw_plant_binds_to_its_own_cut_row(decomp_mini_case: DecompCase) -> None:
-    id_map = DecompIdMap.from_dadger(decomp_mini_case.dadger)
+    id_map = decomp_mini_case.id_map
     effective, _ = build_effective_cadastro(
         decomp_mini_case.dadger, decomp_mini_case.hidr, decomp_mini_case.calendar
     )
@@ -368,7 +368,7 @@ def test_a_fallback_group_keeps_its_terminal_share() -> None:
 def test_decomp_mini_couples_estrela_and_salto_without_offset_or_share(
     decomp_mini_case: DecompCase,
 ) -> None:
-    id_map = DecompIdMap.from_dadger(decomp_mini_case.dadger)
+    id_map = decomp_mini_case.id_map
     effective, _ = build_effective_cadastro(
         decomp_mini_case.dadger, decomp_mini_case.hidr, decomp_mini_case.calendar
     )
