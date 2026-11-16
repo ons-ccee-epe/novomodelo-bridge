@@ -372,6 +372,15 @@ line and its route through the fictitious subsystem, are left out of the
 headline as on the NEWAVE report
 (see [the NEWAVE guide](newave.md#comparing-results)).
 
+Itaipu has units on its submarket's bus and on the `IV` node, and each model
+can place its output on either one. The submarket's own net import and the
+flow on the line between the two buses follow that placement, so the
+comparison judges the two as one group, named after both buses (`SE+IV`).
+The group's net import is the flow on the lines that leave it. The
+submarket's own net import and the flow between the two buses show outside
+the headline and the `--json` status, and the `buses-share-plant` warning
+names the group.
+
 The REE stored and inflow energies (EARM, ENA) compare with DECOMP's
 `dec_oper_ree`. Novomodelo has no REE, so each plant's simulated storage and
 incremental inflow are valued with DECOMP's own definition. A plant's water

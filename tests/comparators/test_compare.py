@@ -343,6 +343,34 @@ class TestAgreementTable:
         assert "1 of 1 variables close" in out
         assert "Net flow on tied routes is not in the headline" in out
 
+    def test_buses_sharing_a_plant_show_dimmed_and_out_of_the_headline(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.core.agreement import SHARED_PLANT_NET_IMPORT
+
+        def bus(name: str, variable: str, novomodelo: float) -> ResultComparison:
+            return dataclasses.replace(
+                _hydro_result(name, variable, 100.0, novomodelo),
+                entity_type="bus",
+            )
+
+        _, spy = self._print(
+            [
+                bus("SE+IV", "net_import_mw", 100.0),
+                bus("SE", SHARED_PLANT_NET_IMPORT, 10.0),
+            ]
+        )
+
+        rows = spy.records[0]["rows"]
+        cells = [(str(row[0]).strip(), str(row[4])) for row in rows[1:]]
+        assert cells == [
+            ("Net import (MW)", "close"),
+            ("Net import of a bus sharing a plant (MW)", "far, not in headline"),
+        ]
+        out = " ".join(capsys.readouterr().out.split())
+        assert "1 of 1 variables close" in out
+        assert "Net import judges those buses as one group instead" in out
+
     def test_training_costs_follow_the_table(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:

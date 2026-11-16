@@ -10,6 +10,8 @@ from rich.text import Text
 from novomodelo_bridge.core.agreement import (
     ENTITY_GROUPS,
     FAR_FACTOR,
+    SHARED_PLANT_NET_FLOW,
+    SHARED_PLANT_NET_IMPORT,
     TIED_NET_FLOW,
     VARIABLE_LABELS,
     Band,
@@ -171,6 +173,20 @@ def print_results_summary_from_dataset(
                 "models can split the same exchanges between those lines "
                 "differently at the same cost. Net import judges the buses "
                 "instead.",
+                style="dim",
+                soft_wrap=True,
+                markup=False,
+            )
+        if (
+            dataset.summary["variable"].is_in(
+                [SHARED_PLANT_NET_IMPORT, SHARED_PLANT_NET_FLOW]
+            )
+        ).any():
+            target.print(
+                "Net import of a bus sharing a plant and net flow between "
+                "such buses are not in the headline: the two models can place "
+                "the plant's output on either bus. Net import judges those "
+                "buses as one group instead.",
                 style="dim",
                 soft_wrap=True,
                 markup=False,

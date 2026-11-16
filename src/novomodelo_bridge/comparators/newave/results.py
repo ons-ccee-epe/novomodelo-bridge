@@ -18,8 +18,13 @@ import pandas as pd
 import polars as pl
 
 from novomodelo_bridge.comparators.line_ties import mark_tied_lines
-from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators.model import (
+    PercentileData,
+    ResultComparison,
+    result_diff,
+)
 from novomodelo_bridge.comparators.newave.alignment import EntityAlignment
+from novomodelo_bridge.comparators.plant_buses import merge_shared_plant_buses
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
@@ -39,17 +44,6 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 
-def _compute_diff(
-    nw_value: float, novomodelo_value: float
-) -> tuple[float, float | None]:
-    """Compute absolute and relative diff."""
-    abs_diff = abs(nw_value - novomodelo_value)
-    rel_diff: float | None = None
-    if abs(nw_value) > 1e-10:
-        rel_diff = abs_diff / abs(nw_value)
-    return abs_diff, rel_diff
-
-
 def _make_result(
     entity_type: str,
     entity_name: str,
@@ -61,7 +55,7 @@ def _make_result(
     novomodelo_value: float,
 ) -> ResultComparison:
     """Build a ResultComparison with computed diffs."""
-    abs_diff, rel_diff = _compute_diff(nw_value, novomodelo_value)
+    abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
     return ResultComparison(
         entity_type=entity_type,
         entity_name=entity_name,
@@ -1113,7 +1107,7 @@ def _compare_medias(
         )
 
     return _MediasComparison(
-        results=results,
+        results=merge_shared_plant_buses(results, novomodelo_output_dir),
         nw_hydro=nw_hydro,
         novomodelo_hydro=novomodelo_hydro,
         nw_hydro_slacks=nw_hydro_slacks,

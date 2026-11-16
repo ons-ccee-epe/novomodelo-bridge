@@ -6,6 +6,8 @@ import pytest
 
 from novomodelo_bridge.core.agreement import (
     FAR_FACTOR,
+    SHARED_PLANT_NET_FLOW,
+    SHARED_PLANT_NET_IMPORT,
     TIED_NET_FLOW,
     Band,
     band,
@@ -119,9 +121,11 @@ class TestCountsInHeadline:
             ("convergence", "lower_bound"),
             ("hydro", "water_value_per_hm3"),
             ("line", TIED_NET_FLOW),
+            ("bus", SHARED_PLANT_NET_IMPORT),
+            ("line", SHARED_PLANT_NET_FLOW),
         ],
     )
-    def test_policy_rows_and_tied_routes_are_left_out(
+    def test_policy_rows_and_unjudged_variants_are_left_out(
         self, entity_type: str, variable: str
     ) -> None:
         assert not counts_in_headline(entity_type, variable)

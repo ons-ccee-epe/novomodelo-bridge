@@ -97,6 +97,8 @@ VARIABLE_LABELS: dict[str, str] = {
     "net_import_mw": "Net import (MW)",
     "net_flow_mw": "Net flow (MW)",
     "tied_net_flow_mw": "Net flow on tied routes (MW)",
+    "shared_plant_net_import_mw": "Net import of a bus sharing a plant (MW)",
+    "shared_plant_net_flow_mw": "Net flow between shared-plant buses (MW)",
     "earm_final_mwmes": "Stored energy, end of stage (MWmês)",
     "ena_mwmes": "Natural inflow energy (MWmês)",
     "spill_energy_reservoir_mw": "Spilled energy, reservoirs (MW)",
@@ -128,6 +130,24 @@ def variable_label(variable: str) -> str:
 #: same cost, so its flow is shown but not judged.
 TIED_NET_FLOW: str = "tied_net_flow_mw"
 
+#: The bus variable of a bus that shares a hydro plant with another bus, and
+#: the line variable of a line between two such buses: the two models can
+#: place the plant's output on either bus, so these are shown but not judged,
+#: and the net import of the buses taken together is judged instead.
+SHARED_PLANT_NET_IMPORT: str = "shared_plant_net_import_mw"
+SHARED_PLANT_NET_FLOW: str = "shared_plant_net_flow_mw"
+
+#: The variables shown but not judged, by the judged variable whose rows
+#: they take over.
+UNJUDGED_VARIANTS: dict[str, tuple[str, ...]] = {
+    "net_flow_mw": (TIED_NET_FLOW, SHARED_PLANT_NET_FLOW),
+    "net_import_mw": (SHARED_PLANT_NET_IMPORT,),
+}
+
+_UNJUDGED: frozenset[str] = frozenset(
+    variant for variants in UNJUDGED_VARIANTS.values() for variant in variants
+)
+
 
 def is_policy_row(entity_type: str, variable: str) -> bool:
     """Whether a summary row describes the trained policy rather than the
@@ -141,7 +161,7 @@ def is_policy_row(entity_type: str, variable: str) -> bool:
 
 def counts_in_headline(entity_type: str, variable: str) -> bool:
     """Whether a summary row counts in the console headline and the
-    ``--json`` status: neither a policy row nor the net flow on tied routes,
-    which the console table still shows.
+    ``--json`` status: neither a policy row nor one of
+    :data:`UNJUDGED_VARIANTS`, which the console table still shows.
     """
-    return not is_policy_row(entity_type, variable) and variable != TIED_NET_FLOW
+    return not is_policy_row(entity_type, variable) and variable not in _UNJUDGED

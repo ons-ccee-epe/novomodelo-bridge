@@ -6,8 +6,8 @@ band of :mod:`novomodelo_bridge.core.agreement`, and which ones are far. Every
 number is read straight from ``dataset.summary`` rows, whose gaps and bands
 were computed with the compare tolerance upstream; nothing is recomputed
 here. Rows :func:`~novomodelo_bridge.core.agreement.counts_in_headline`
-rejects (the policy rows and the net flow on tied routes) are left out, so
-the headline judges the simulated operation only.
+rejects (the policy rows and the rows shown but not judged) are left out,
+so the headline judges the simulated operation only.
 
 It is a leaf: it imports nothing from the other comparators at runtime (the
 :class:`ComparisonDataset` type is referenced under ``TYPE_CHECKING`` only),

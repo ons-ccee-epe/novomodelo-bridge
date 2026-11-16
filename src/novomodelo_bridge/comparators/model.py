@@ -175,6 +175,14 @@ class ResultsSummary:
     )
 
 
+def result_diff(nw_value: float, novomodelo_value: float) -> tuple[float, float | None]:
+    """The absolute and relative difference of one :class:`ResultComparison`
+    pair; the relative one is ``None`` when the reference is zero."""
+    abs_diff = abs(nw_value - novomodelo_value)
+    rel_diff = abs_diff / abs(nw_value) if abs(nw_value) > 1e-10 else None
+    return abs_diff, rel_diff
+
+
 def smape(nw_value: float, novomodelo_value: float) -> float:
     """Symmetric mean absolute percentage error for one pair, in [0, 2].
 

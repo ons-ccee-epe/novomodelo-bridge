@@ -16,6 +16,7 @@ from novomodelo_bridge.comparators.html_report import (
     COLOR_NOVOMODELO,
 )
 from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.core.agreement import SHARED_PLANT_NET_IMPORT
 from novomodelo_bridge.core.pandas_utils import as_float
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
@@ -140,12 +141,12 @@ def system_per_bus_chart(
 
     Restricted to the real submarket buses (:data:`_REAL_SUBMARKET_ORDER`) so
     the grid is a clean 2x2 — fictitious/transhipment nodes are never faceted.
+    A bus sharing a hydro plant with another bus is drawn from its own row,
+    labelled as such; the group's row is not faceted.
     """
-    bus_data = [r for r in results if r.entity_type == "bus" and r.variable == variable]
-    if not bus_data:
-        return f"<p>No {variable} data available.</p>"
-
     buses, pct_by_eid = analyze.bus_groups_and_pct(results, variable, pct_df)
+    if not buses:
+        return f"<p>No {variable} data available.</p>"
     p10_col = f"{variable}_p10"
     p90_col = f"{variable}_p90"
 
@@ -188,7 +189,11 @@ def system_per_bus_chart(
         }
         layout[ya_key] = {
             "domain": [round(y0, 3), round(y1, 3)],
-            "title": bus_name,
+            "title": (
+                f"{bus_name} (shares a plant)"
+                if rows_list and rows_list[0].variable == SHARED_PLANT_NET_IMPORT
+                else bus_name
+            ),
             "anchor": xa,
         }
 

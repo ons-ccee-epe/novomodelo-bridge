@@ -151,8 +151,10 @@ def tidy_results_dataset(
 
     Vertically concatenates :func:`tidy_from_results` and
     :func:`tidy_percentiles_from_percentile_data` into a single frame conforming
-    exactly to :data:`TIDY_SCHEMA`. The percentile rows of a line whose net
-    flow *results* carry under the tied-route variable take that variable too.
+    exactly to :data:`TIDY_SCHEMA`. The percentile rows of an entity whose
+    variable *results* carry under one of
+    :data:`~novomodelo_bridge.core.agreement.UNJUDGED_VARIANTS` take that
+    variant too.
 
     Args:
         results: The result comparisons (``newave``/``novomodelo`` rows).
@@ -163,24 +165,28 @@ def tidy_results_dataset(
     """
     result_rows = tidy_from_results(results)
     pct_rows = tidy_percentiles_from_percentile_data(pct)
-    tied = sorted(
-        {
-            r.novomodelo_id
-            for r in results
-            if r.entity_type == "line" and r.variable == agreement.TIED_NET_FLOW
-        }
-    )
-    if tied:
-        pct_rows = pct_rows.with_columns(
-            pl.when(
-                (pl.col("entity_type") == "line")
-                & (pl.col("variable") == "net_flow_mw")
-                & pl.col("entity_id").is_in(tied)
+    for judged, variants in agreement.UNJUDGED_VARIANTS.items():
+        for variant in variants:
+            moved = sorted(
+                {
+                    (r.entity_type, r.novomodelo_id)
+                    for r in results
+                    if r.variable == variant
+                }
             )
-            .then(pl.lit(agreement.TIED_NET_FLOW))
-            .otherwise(pl.col("variable"))
-            .alias("variable")
-        )
+            if not moved:
+                continue
+            pct_rows = pct_rows.with_columns(
+                pl.when(
+                    (pl.col("variable") == judged)
+                    & pl.struct("entity_type", "entity_id").is_in(
+                        [{"entity_type": t, "entity_id": i} for t, i in moved]
+                    )
+                )
+                .then(pl.lit(variant))
+                .otherwise(pl.col("variable"))
+                .alias("variable")
+            )
     return _conform(pl.concat([result_rows, pct_rows], how="vertical"))
 
 
@@ -1052,7 +1058,8 @@ def bus_groups_and_pct(
     """Group ``bus`` rows by name and build the per-entity percentile lookup.
 
     Pure numeric core of ``charts.system_per_bus_chart``.
-    Rows are filtered to ``entity_type == "bus"`` and ``variable`` and bucketed by
+    Rows are filtered to ``entity_type == "bus"`` and ``variable`` or one of its
+    :data:`~novomodelo_bridge.core.agreement.UNJUDGED_VARIANTS`, and bucketed by
     upper-cased ``entity_name`` (insertion order preserved). The percentile lookup
     maps ``entity_id -> {stage_id -> row}`` over ``pct_df`` when both the
     ``{var}_p10`` and ``{var}_p90`` columns are present; otherwise it is empty.
@@ -1071,7 +1078,8 @@ def bus_groups_and_pct(
         ``bus`` row matches; ``pct_by_eid`` is empty when ``pct_df`` is
         ``None``/empty or the percentile columns are absent.
     """
-    bus_data = [r for r in results if r.entity_type == "bus" and r.variable == variable]
+    shown = {variable, *agreement.UNJUDGED_VARIANTS.get(variable, ())}
+    bus_data = [r for r in results if r.entity_type == "bus" and r.variable in shown]
 
     buses: dict[str, list[ResultComparison]] = {}
     for r in bus_data:

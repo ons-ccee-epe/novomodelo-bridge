@@ -232,8 +232,12 @@ links are cobre-bridge's.
   flows of lines on a loop whose exchange costs split into two equal halves,
   such as a direct line and its route through a fictitious subsystem, move to
   a Net flow on tied routes row left out of the headline and the `--json`
-  status, with a `line-routes-tied` warning naming the loops. Run the
-  comparison again to update a report.
+  status, with a `line-routes-tied` warning naming the loops. Buses that
+  share a hydro plant, such as Itaipu's submarket and the `IV` node in a
+  DECOMP case, are judged as one group (`SE+IV`); each bus's own net import
+  and the flow between them move to rows left out of the headline, with a
+  `buses-share-plant` warning naming the groups. Run the comparison again to
+  update a report.
 - **BREAKING: every command's `--json` envelope has `schema_version` 2, and
   `compare`'s summary counts the variables in each agreement band and lists
   the far ones.** Its status is `ok` only when every variable is close, and

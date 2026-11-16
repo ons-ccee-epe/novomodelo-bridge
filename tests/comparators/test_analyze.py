@@ -273,6 +273,57 @@ def test_tidy_results_dataset_moves_a_tied_line_band_with_its_rows() -> None:
     assert variables == [(0, "net_flow_mw"), (1, agreement.TIED_NET_FLOW)]
 
 
+def test_tidy_results_dataset_moves_a_shared_plant_bus_band_with_its_rows() -> None:
+    def bus_row(name: str, bus_id: int, variable: str) -> ResultComparison:
+        return ResultComparison(
+            entity_type="bus",
+            entity_name=name,
+            newave_code=bus_id + 1,
+            novomodelo_id=bus_id,
+            stage=0,
+            variable=variable,
+            newave_value=100.0,
+            novomodelo_value=90.0,
+            abs_diff=10.0,
+            rel_diff=0.1,
+        )
+
+    pct = PercentileData(
+        bus=pl.DataFrame(
+            {
+                "entity_id": [0, 1],
+                "stage_id": [0, 0],
+                "net_import_mw_p10": [80.0, 80.0],
+                "net_import_mw_p50": [90.0, 90.0],
+                "net_import_mw_p90": [100.0, 100.0],
+                "spot_price_p50": [1.0, 1.0],
+            }
+        )
+    )
+
+    tidy = tidy_results_dataset(
+        [
+            bus_row("SE", 0, agreement.SHARED_PLANT_NET_IMPORT),
+            bus_row("SE+IV", 0, "net_import_mw"),
+            bus_row("S", 1, "net_import_mw"),
+        ],
+        pct,
+    )
+
+    variables = (
+        tidy.filter(pl.col("source") == "p50")
+        .sort("entity_id", "variable")
+        .select("entity_id", "variable")
+        .rows()
+    )
+    assert variables == [
+        (0, agreement.SHARED_PLANT_NET_IMPORT),
+        (0, "spot_price"),
+        (1, "net_import_mw"),
+        (1, "spot_price"),
+    ]
+
+
 def test_tidy_results_dataset_empty_inputs_validate() -> None:
     tidy = tidy_results_dataset([], PercentileData())
     dataset = ComparisonDataset(tidy=tidy, summary=_empty_summary(), metadata={})
@@ -1262,6 +1313,22 @@ def test_bus_groups_and_pct_missing_column_empty_lookup() -> None:
     # None frame also yields empty lookup.
     _, pct_none = bus_groups_and_pct(results, "deficit_mw", None)
     assert pct_none == {}
+
+
+def test_bus_groups_and_pct_keeps_a_bus_sharing_a_plant() -> None:
+    results = [
+        _bus_rc("SE", 0, 1, agreement.SHARED_PLANT_NET_IMPORT),
+        _bus_rc("SE+IV", 0, 1, "net_import_mw"),
+        _bus_rc("S", 1, 1, "net_import_mw"),
+    ]
+
+    buses, _ = bus_groups_and_pct(results, "net_import_mw", None)
+
+    assert {name: [r.variable for r in rows] for name, rows in buses.items()} == {
+        "SE": [agreement.SHARED_PLANT_NET_IMPORT],
+        "SE+IV": ["net_import_mw"],
+        "S": ["net_import_mw"],
+    }
 
 
 def test_spillage_lookups_builds_nw_and_cb() -> None:

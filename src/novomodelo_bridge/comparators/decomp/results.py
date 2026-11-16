@@ -83,8 +83,13 @@ from novomodelo_bridge.comparators.decomp.ree_energy import (
     build_ree_energy_rule,
 )
 from novomodelo_bridge.comparators.line_ties import mark_tied_lines
-from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators.model import (
+    PercentileData,
+    ResultComparison,
+    result_diff,
+)
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
+from novomodelo_bridge.comparators.plant_buses import merge_shared_plant_buses
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
@@ -434,21 +439,6 @@ def _scenario_probabilities(decomp_dir: Path) -> pl.DataFrame:
     )
 
 
-def _result_diff(
-    nw_value: float, novomodelo_value: float
-) -> tuple[float, float | None]:
-    """Absolute and relative difference for one ``ResultComparison`` row.
-
-    Mirrors :func:`novomodelo_bridge.comparators.newave.results._compute_diff` exactly, so
-    the two per-variable stat kernels in play here (this module's own tidy
-    rows and the shared ``ResultComparison`` one) agree on what "the
-    difference" means.
-    """
-    abs_diff = abs(nw_value - novomodelo_value)
-    rel_diff = abs_diff / abs(nw_value) if abs(nw_value) > 1e-10 else None
-    return abs_diff, rel_diff
-
-
 def _result_comparisons(
     source: pl.DataFrame,
     novomodelo: pl.DataFrame,
@@ -492,7 +482,7 @@ def _result_comparisons(
                 continue
             nw_value = float(nw_val)
             novomodelo_value = float(novomodelo_val)
-            abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+            abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
             results.append(
                 ResultComparison(
                     entity_type=var.level,
@@ -566,7 +556,7 @@ def _hydro_productivity_results(
         nw_code, stage = key
         nw_value = nw_gen / nw_turb
         novomodelo_value = cb_gen / cb_turb
-        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+        abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
         productivity.append(
             ResultComparison(
                 entity_type="hydro",
@@ -1053,7 +1043,7 @@ def _line_result_comparisons(
         line_id = int(row["entity_id"])
         nw_value = float(row["source_net_flow_mw"])
         novomodelo_value = float(row["net_flow_mw"])
-        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+        abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
         results.append(
             ResultComparison(
                 entity_type="line",
@@ -2307,7 +2297,7 @@ def _ree_result_comparisons(
                 continue
             nw_value = float(nw_raw)
             novomodelo_value = float(novomodelo_raw)
-            abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+            abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
             results.append(
                 ResultComparison(
                     entity_type="ree",
@@ -2524,7 +2514,7 @@ def _evaporation_result_comparisons(
             continue
         nw_value = _hm3_to_m3s(float(row["evaporacao_calculada_hm3"]), hours)
         novomodelo_value = float(row["evaporation_m3s"])
-        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+        abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
         results.append(
             ResultComparison(
                 entity_type="hydro",
@@ -3350,6 +3340,7 @@ def build_decomp_dataset(
         probabilities=probabilities,
     )
     results.extend(line_results)
+    results = merge_shared_plant_buses(results, novomodelo_output_dir)
 
     cost_fields = _overview_cost_fields(
         case, decomp_dir, novomodelo_output_dir, aligned.nw_sin
