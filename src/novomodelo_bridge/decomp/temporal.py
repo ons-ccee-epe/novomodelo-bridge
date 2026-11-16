@@ -189,8 +189,9 @@ def build_operative_calendar(
         # overlapping days — only later monthly stages begin on day 1. Keying
         # on the end admits both and still rejects a stage spanning two civil
         # months. A weekly stage is a full 168 h and only valid in the prefix,
-        # before any monthly stage.
-        is_month = end == _first_of_next_month(cursor)
+        # before any monthly stage. No month is 168 h long, so a week that
+        # ends on the 1st (25/07 to 01/08) is still a week.
+        is_month = end == _first_of_next_month(cursor) and total > _WEEK_HOURS
         is_week = total == _WEEK_HOURS and not seen_monthly and not is_month
         if index == 0:
             _check_study_start(start_date, is_week=is_week, is_month=is_month)

@@ -87,7 +87,9 @@ def test_post_pass_halves_only_fictitious_lines() -> None:
 
 def test_post_pass_covers_the_synthesized_iv_se_line() -> None:
     id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
-    calendar = build_operative_calendar(date(2026, 7, 18), [[15.0, 64.0, 89.0]] * 2)
+    calendar = build_operative_calendar(
+        date(2026, 7, 18), [[15.0, 64.0, 89.0]] * 2 + [[63.0, 280.0, 401.0]]
+    )
     case = make_decomp_case(Path("unused"), dadger=_LinelessDadger(), calendar=calendar)
     lines_doc, line_bounds = convert_lines(case, id_map)
 

@@ -353,6 +353,10 @@ links are cobre-bridge's.
   months one month early, and a later revision counted the first observed
   week's previous-month days into that month. The case's prices moved away
   from DECOMP's. Results change for those decks, so reconvert them.
+- **`convert decomp` stopped with `unexpected-error`, and `check decomp`
+  failed its operative calendar check, on a deck with an operative week that
+  ends on the first of a month**, reading the study as having no operative
+  weeks. Such a deck now converts.
 - **`convert decomp` evaporated reservoirs differently from DECOMP**: it
   ignored `AC COFEVA` and the reference volume of the `EV` record. Both are
   now applied; a deck without the `EV` linear model warns with
