@@ -379,6 +379,9 @@ links are cobre-bridge's.
   730.5-hour mean month both models use; `compare decomp`'s Energy Balance tab
   read DECOMP's inflow energy the same way. Run the comparison again to update
   a report.
+- **`compare decomp` left out the flow on the lines to the `IV` node**: the
+  Network tab had no panel for them and the line rows missed them. Run
+  `compare decomp` again to update a report.
 - **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms

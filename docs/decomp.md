@@ -365,9 +365,11 @@ blocks differently from DECOMP, and the spillage, turbined flow and generation
 gaps include that difference.
 
 Each submarket's net import compares with the net interchange of
-`dec_oper_sist`; the fictitious subsystem has no row. The lines on a loop whose
-exchange costs tie, such as a direct line and its route through the
-fictitious subsystem, are left out of the headline as on the NEWAVE report
+`dec_oper_sist`; the fictitious subsystem has no row. Each line compares with
+the `dec_oper_interc` interchange of its `IA` pair, the pairs with the `IV`
+node included. The lines on a loop whose exchange costs tie, such as a direct
+line and its route through the fictitious subsystem, are left out of the
+headline as on the NEWAVE report
 (see [the NEWAVE guide](newave.md#comparing-results)).
 
 The REE stored and inflow energies (EARM, ENA) compare with DECOMP's
