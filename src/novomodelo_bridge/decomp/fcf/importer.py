@@ -33,6 +33,7 @@ from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.policy_dates import hours_between, yyyymmdd_from_date
 from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.converters.anticipated import (
+    booked_month,
     classify_gnl_windows,
     operative_week_months,
     read_gnl_model,
@@ -161,9 +162,7 @@ def _commanded_deliveries(
             week = window.week
             if week is None or not any(week.block_mw):
                 continue
-            year, month = week_months.get(
-                week.start_date, (week.start_date.year, week.start_date.month)
-            )
+            year, month = booked_month(week_months, week.start_date)
             deliveries.append(
                 GnlCommandedDelivery(
                     submercado=submercado_of[code],

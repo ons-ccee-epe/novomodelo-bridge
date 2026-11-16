@@ -1078,7 +1078,7 @@ summary = "Calendários pós-estudo. Térmico (`thermal_stages` e `thermal_bound
   from = [ { file = "dadger", register = "DP", item = "duracao" } ]
   status = "derived"
   when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
-  how = "Horas até o próximo sábado no stub; `168` nas semanas, exceto a primeira semana espelhada quando o corte já comandado não é um sábado, que vai só até o sábado seguinte; no espelho do estágio mensal do estudo, as horas até o fim do mês civil do próprio estágio espelhado (o primeiro dia do mês seguinte, exclusivo). Num estudo só de estágios mensais, as horas do mês civil inteiro."
+  how = "Horas até o próximo sábado no stub; `168` nas semanas, exceto a primeira semana espelhada quando o corte já comandado não é um sábado, que vai só até o sábado seguinte; no espelho do estágio mensal do estudo, as horas até o fim do mês civil do próprio estágio espelhado (o primeiro dia do mês seguinte, exclusivo). Num estudo só de estágios mensais, as horas do mês civil inteiro. O DECOMP dá a cada intervalo do `GS` 730,5 h divididas pelo número de intervalos do mês; o caso mantém as horas do calendário, e o aviso `decomp-gnl-post-study-interval-hours` lista os estágios com preço em que as duas diferem."
 
   [[output.field]]
   path = "thermal_bounds[].thermal_id"
@@ -1096,9 +1096,9 @@ summary = "Calendários pós-estudo. Térmico (`thermal_stages` e `thermal_bound
 
   [[output.field]]
   path = "thermal_bounds[].cost_per_mwh"
-  from = [ { file = "dadgnl", register = "TG", item = "cvu" }, { file = "dadger", register = "DP", item = "duracao" } ]
+  from = [ { file = "dadgnl", register = "TG", item = "cvu" }, { file = "dadgnl", register = "GS", item = "mes, semanas" }, { file = "dadger", register = "DP", item = "duracao" } ]
   when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
-  how = "`cvu_1..3` dos `TG` dos meses civis que o estágio cobre, ponderados pelas horas do estágio em cada mês (o eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado), e cada `TG` pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além desses meses interrompe a conversão."
+  how = "`cvu_1..3` do `TG` do mês a que o `GS` atribui o intervalo em que o estágio começa, como o DECOMP, mesmo quando o estágio termina no mês civil seguinte ou começa no mês seguinte ao atribuído; um estágio em cujo início não começa intervalo do `GS` usa o mês civil do início. O eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado, e cada `TG` é ponderado pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além dos meses que os estágios pós-estudo cobrem interrompe a conversão, assim como um estágio que o `GS` atribui a um mês fora deles."
 
   [[output.field]]
   path = "thermal_bounds[].min_mw"

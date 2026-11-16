@@ -1150,7 +1150,9 @@ def _tg_with_post_study_months(*rows: dict) -> pd.DataFrame:
 
 
 def _santa_model(
-    tg: pd.DataFrame, *post_horizon: GnlStageCommitment
+    tg: pd.DataFrame,
+    *post_horizon: GnlStageCommitment,
+    weeks_per_month: Mapping[int, int] = _EMIT_WEEKS_PER_MONTH,
 ) -> GnlCommitmentModel:
     return GnlCommitmentModel(
         tg=tg,
@@ -1161,21 +1163,38 @@ def _santa_model(
                 (GnlStageCommitment(1, date(2026, 3, 14), 0.0, 168.0), *post_horizon),
             )
         },
-        weeks_per_month=_EMIT_WEEKS_PER_MONTH,
+        weeks_per_month=dict(weeks_per_month),
         nl_lag_months={86: 2},
     )
 
 
-def test_convert_gnl_prices_post_study_stages_by_their_hours_in_each_month() -> None:
-    # Já-comandada weeks to 2026-05-16, then the mirror: the weeks of 16 and
-    # 23 May take May's tg (stage 5), the week of 30 May blends May's 2 days
-    # with June's 5, and the month starting 6 June takes June's (stage 6).
-    tg = _tg_with_post_study_months(
-        {**_tg_row(86, "SANTA CRUZ", cvu=210.0, disp=350.0), "estagio": 5},
-        {**_tg_row(86, "SANTA CRUZ", cvu=0.0, disp=0.0), "estagio": 6},
-    )
+def _priced_post_study(e: GnlEmission) -> list[tuple[str, float, float]]:
+    """Each ``thermal_bounds`` row as its stage's start, cost and maximum."""
+    assert e.post_study_stages is not None
+    stages = e.post_study_stages["thermal_stages"]
+    return [
+        (
+            stages[b["post_study_stage_index"]]["start_date"],
+            b["cost_per_mwh"],
+            b["max_mw"],
+        )
+        for b in e.post_study_stages["thermal_bounds"]
+    ]
+
+
+_MAY_JUNE_TG = _tg_with_post_study_months(
+    {**_tg_row(86, "SANTA CRUZ", cvu=210.0, disp=350.0), "estagio": 5},
+    {**_tg_row(86, "SANTA CRUZ", cvu=0.0, disp=0.0), "estagio": 6},
+)
+
+
+def test_convert_gnl_prices_a_post_study_week_by_the_gs_month_it_belongs_to() -> None:
+    # Já-comandada weeks to 2026-05-16, then the mirror. GS books the week of
+    # 30 May to May though it ends in June, so it takes May's tg (stage 5)
+    # whole, as the weeks of 16 and 23 May do. GS lists no interval at
+    # 6 June, so that stage takes the tg of the month it starts in (stage 6).
     model = _santa_model(
-        tg,
+        _MAY_JUNE_TG,
         GnlStageCommitment(8, date(2026, 5, 2), 0.0, 0.0),
         GnlStageCommitment(9, date(2026, 5, 9), 0.0, 0.0),
     )
@@ -1183,18 +1202,78 @@ def test_convert_gnl_prices_post_study_stages_by_their_hours_in_each_month() -> 
         model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
     )
 
-    assert e.post_study_stages is not None
-    assert [
-        (s["start_date"], b["cost_per_mwh"], b["max_mw"])
-        for b in e.post_study_stages["thermal_bounds"]
-        for s in [e.post_study_stages["thermal_stages"][b["post_study_stage_index"]]]
-    ] == [
+    assert _priced_post_study(e) == [
         ("2026-05-16", 210.0, 350.0),
         ("2026-05-23", 210.0, 350.0),
-        ("2026-05-30", 60.0, 100.0),
+        ("2026-05-30", 210.0, 350.0),
         ("2026-06-06", 0.0, 0.0),
     ]
     assert e.thermals[0]["generation"] == {"min_mw": 0.0, "max_mw": 500.0}
+
+
+def test_convert_gnl_prices_a_week_gs_books_to_the_month_before_its_start() -> None:
+    # GS gives May six intervals, so the week starting 6 June is a May week,
+    # as 10/RV4 books its 2 January week to December. Já-comandada weeks run
+    # to 2026-05-23; the month stage from 13 June is no GS interval.
+    model = _santa_model(
+        _MAY_JUNE_TG,
+        GnlStageCommitment(8, date(2026, 5, 2), 0.0, 0.0),
+        GnlStageCommitment(9, date(2026, 5, 9), 0.0, 0.0),
+        GnlStageCommitment(10, date(2026, 5, 16), 0.0, 0.0),
+        weeks_per_month={1: 3, 2: 4, 3: 6},
+    )
+    e = convert_gnl(
+        model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
+    )
+
+    assert _priced_post_study(e) == [
+        ("2026-05-23", 210.0, 350.0),
+        ("2026-05-30", 210.0, 350.0),
+        ("2026-06-06", 210.0, 350.0),
+        ("2026-06-13", 0.0, 0.0),
+    ]
+
+
+def test_convert_gnl_refuses_a_post_study_week_gs_books_to_a_study_month() -> None:
+    # April's five GS intervals reach the week of 2 May, which starts after
+    # the 2026-05-01 horizon end, so its tg month would be a study stage's.
+    tg = _tg_with_post_study_months(
+        {**_tg_row(86, "SANTA CRUZ", cvu=210.0, disp=350.0), "estagio": 5}
+    )
+    model = _santa_model(tg, weeks_per_month={1: 3, 2: 5, 3: 5})
+
+    with pytest.raises(
+        UnsupportedSourceError,
+        match=r"starting 2026-05-02 to 2026-04, outside the months the "
+        r"post-study stages span \(2026-05\)",
+    ) as raised:
+        convert_gnl(
+            model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
+        )
+    assert (raised.value.path, raised.value.field) == ("dadgnl.rvN", "GS semanas")
+
+
+def test_convert_gnl_reports_the_hours_of_post_study_gs_intervals() -> None:
+    model = _santa_model(
+        _MAY_JUNE_TG,
+        GnlStageCommitment(8, date(2026, 5, 2), 0.0, 0.0),
+        GnlStageCommitment(9, date(2026, 5, 9), 0.0, 0.0),
+    )
+    with collect() as found:
+        convert_gnl(
+            model, first_thermal_id=94, bus_id_of=_BUS_OF, calendar=_EMIT_CALENDAR
+        )
+
+    [hours] = [d for d in found if d.code == "decomp-gnl-post-study-interval-hours"]
+    assert hours.severity is Severity.WARNING
+    assert hours.table is not None
+    # May's five GS intervals take 730.5 / 5 h each in the source model. The
+    # month stage from 6 June overlaps no GS interval, so it has no row.
+    assert hours.table.rows == [
+        [3, "2026-05-16", "2026-05", 5, 146.1, 168.0],
+        [4, "2026-05-23", "2026-05", 5, 146.1, 168.0],
+        [5, "2026-05-30", "2026-05", 5, 146.1, 168.0],
+    ]
 
 
 def test_convert_gnl_post_study_month_inherits_the_last_declared_tg() -> None:
@@ -1237,7 +1316,7 @@ def test_convert_gnl_class4_window_takes_the_last_study_stage_tg() -> None:
     ] == [
         (3, 600.0),
         (4, 600.0),
-        (5, pytest.approx(2 / 7 * 600.0 + 5 / 7 * 300.0)),
+        (5, 600.0),
         (6, 300.0),
     ]
 
@@ -1454,6 +1533,18 @@ def test_convert_gnl_monthly_post_study_is_whole_months_priced_from_tg() -> None
         (b["thermal_id"], b["post_study_stage_index"], b["cost_per_mwh"])
         for b in e.post_study_stages["thermal_bounds"]
     ] == [(94, 0, 298.0), (94, 1, 299.0), (95, 0, 312.0), (95, 1, 313.0)]
+
+
+def test_convert_gnl_monthly_reports_the_hours_of_post_study_gs_months() -> None:
+    with collect() as found:
+        _convert_monthly(_monthly_model(weeks_per_month={1: 1, 2: 1, 3: 1, 4: 1}))
+
+    [hours] = [d for d in found if d.code == "decomp-gnl-post-study-interval-hours"]
+    assert hours.table is not None
+    assert hours.table.rows == [
+        [0, "2026-03-01", "2026-03", 1, 730.5, 744.0],
+        [1, "2026-04-01", "2026-04", 1, 730.5, 720.0],
+    ]
 
 
 def test_convert_gnl_monthly_emits_thermal_stages_not_stages() -> None:

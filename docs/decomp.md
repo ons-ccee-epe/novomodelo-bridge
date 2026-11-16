@@ -199,7 +199,13 @@ inputs follow DECOMP:
 
 The calendars Novomodelo keeps past the study horizon go to
 `post_study_stages.json`. A deck with `GS` deliveries in `dadgnl` gets the
-thermal calendar there (`thermal_stages` and `thermal_bounds`). A deck with
+thermal calendar there (`thermal_stages` and `thermal_bounds`). A GNL plant's
+capacity, minimum and cost in a post-study week come from the `TG` record of
+the month `GS` books the week to, as in DECOMP, even when the week ends in the
+next month or starts after the month it is booked to. DECOMP gives each `GS`
+interval of a month an equal share of a 730.5-hour month, while the case holds
+each post-study stage over its calendar hours; `convert decomp` warns with
+`decomp-gnl-post-study-interval-hours`, listing both per stage. A deck with
 `VI` travel times gets `water_bucket_stages`: one stage from the end of the
 last operative stage to the end of that month, so a horizon that ends on the
 first of a month gives the whole month. A `VI` travel time longer than that

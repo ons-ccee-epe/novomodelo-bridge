@@ -407,6 +407,14 @@ links are cobre-bridge's.
   an RV0, the boundary cuts priced the commitments after the study a month
   early and left the last ones unpriced. Results change for those decks with
   GNL plants, so reconvert them.
+- **`convert decomp` priced some post-study GNL weeks in
+  `post_study_stages.json` at the wrong month's `TG` record**: a week that
+  ends in the next month, or one `GS` books to the month before its start.
+  Each now takes the month `GS` books it to, as in DECOMP, and a week `GS`
+  books outside the post-study months stops with `source-unsupported`; results
+  change for decks whose `TG` differs between those months, so reconvert them.
+  The new `decomp-gnl-post-study-interval-hours` warning lists the post-study
+  stages DECOMP weighs over other hours than their calendar ones.
 - **`convert decomp` stopped with `unexpected-error` on deck limits that put
   a floor above the ceiling.** On turbined flow, generation, outflow, storage
   and unit groups it now writes both limits as the deck has them, with one
