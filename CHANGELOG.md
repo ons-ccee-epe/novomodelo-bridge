@@ -328,10 +328,11 @@ links are cobre-bridge's.
 
 ### Fixed
 
-- **`convert decomp` dated the observed inflows of an RV0 whose first week
-  starts in the previous month one month early**, so the boundary cuts read
-  the wrong past inflows and the case's prices moved away from DECOMP's.
-  Results change for those decks, so reconvert them.
+- **`convert decomp` gave the boundary cuts the wrong past inflows on decks
+  whose first week starts in the previous month**: an RV0 dated its observed
+  months one month early, and a later revision counted the first observed
+  week's previous-month days into that month. The case's prices moved away
+  from DECOMP's. Results change for those decks, so reconvert them.
 - **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms

@@ -274,8 +274,8 @@ def test_source_only_lag_inflows_join_history_and_trunk_on_the_coupling_posto() 
     assert march == pytest.approx(
         (6 * 300.0 + 7 * 400.0 + 7 * 10.0 + 7 * 20.0 + 4 * 30.0) / 31
     )
-    # February: 2026-02-01..28 from the monthly row, clipped where the weeks start.
-    assert february == pytest.approx((27 * 200.0 + 1 * 300.0) / 28)
+    # February is the observed month alone: the first week's 28/02 is dropped.
+    assert february == pytest.approx(200.0)
     assert january == pytest.approx(100.0)
     assert rest == [0.0] * 8
 

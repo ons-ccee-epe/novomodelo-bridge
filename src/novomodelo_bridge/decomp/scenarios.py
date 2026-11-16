@@ -381,36 +381,41 @@ def recent_observation_rows(
       before the study begins, ``semana`` oldest first, ending at the study
       start.
 
-    The most recent month is clipped where the weeks, or else the study, begin,
-    and a month wholly inside them is dropped, so no two windows overlap (a
-    novomodelo requirement of ``recent_observations``; ``start == previous end``
-    is fine). A clipped month keeps its observed value, which novomodelo casts as
-    the mean over the days it covers.
+    The windows stop at the operative month's start: a first week that starts
+    in the previous month is clipped to it, and the most recent month ends
+    there (or where the study begins, if earlier), keeping its whole observed
+    value: the source model drops a first week's previous-month days from
+    every lag month. No two windows overlap, as
+    novomodelo requires of ``recent_observations`` (``start == previous end`` is
+    fine).
     """
     study_start = first_stage.start_date
+    operative_start = first_stage.operative_month_start
     monthly = vazoes.observacoes_mensais
     weekly = vazoes.observacoes_semanais
     windows: list[tuple[date, date, pd.Series]] = []
 
-    weekly_floor = study_start
     if weekly is not None and not weekly.empty:
         ordered_weeks = weekly.sort_values("semana")
         n_weeks = len(ordered_weeks)
-        weekly_floor = study_start - timedelta(days=n_weeks * 7)
         for offset, (_, row) in enumerate(ordered_weeks.iterrows()):
             start = study_start - timedelta(days=(n_weeks - offset) * 7)
-            windows.append((start, start + timedelta(days=7), row))
+            end = start + timedelta(days=7)
+            if end > operative_start:
+                windows.append((max(start, operative_start), end, row))
 
     if monthly is not None and not monthly.empty:
         ordered_months = monthly.sort_values("mes")
-        operative = first_stage.operative_month_start
-        months = previous_months(operative.year, operative.month, len(ordered_months))
+        months = previous_months(
+            operative_start.year, operative_start.month, len(ordered_months)
+        )
+        month_ceiling = min(operative_start, study_start)
         for (year, month), (_, row) in zip(
             months, ordered_months.iterrows(), strict=True
         ):
             start, end = month_window(year, month)
-            if start < weekly_floor:
-                windows.append((start, min(end, weekly_floor), row))
+            if start < month_ceiling:
+                windows.append((start, min(end, month_ceiling), row))
 
     windows.sort(key=lambda window: window[0])
     return windows
