@@ -345,6 +345,10 @@ links are cobre-bridge's.
   9 other than 0, 1 or blank, or one that changes between a constraint's
   stages, stops the conversion with `source-field-parse`. Results change for
   decks with `RHE`, so reconvert them.
+- **`compare decomp` counted diverted flow in DECOMP's outflow, and drew
+  Novomodelo's storage P10–P90 bands on total volume beside useful-volume
+  means.** Outflow is now turbined plus spilled flow on both sides, and the
+  bands are on useful volume. Run `compare decomp` again to update a report.
 - **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms

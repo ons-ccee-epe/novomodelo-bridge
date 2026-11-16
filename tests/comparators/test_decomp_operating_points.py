@@ -19,6 +19,7 @@ import polars as pl
 import pytest
 
 from novomodelo_bridge.comparators.decomp.operating_points import (
+    _source_points,
     compare_operating_points,
 )
 from novomodelo_bridge.comparators.decomp.readers import (
@@ -460,6 +461,23 @@ class TestUnavailableSourceReports:
 
 class TestSourceModelConventions:
     """Both surfaces and the exact function at the printed operating points."""
+
+    def test_source_outflow_leaves_out_the_diversion(
+        self, decomp_mini_case: DecompCase
+    ) -> None:
+        eff, _ = build_effective_cadastro(
+            decomp_mini_case.dadger, decomp_mini_case.hidr, decomp_mini_case.calendar
+        )
+        # The defluent flow 18 counts a 3 m3/s diversion above the plant.
+        block = _source_block(
+            _CAMARGOS, patamar=1, v_useful=100.0, q=10.0, gh=2.0, s=5.0
+        ) | {"vazao_defluente_m3s": 18.0}
+
+        points = _source_points(
+            pl.DataFrame([block]), _sist(), {_CAMARGOS: 0}, eff, pl.DataFrame()
+        )
+
+        assert points["outflow_m3s"].to_list() == [15.0]
 
     def test_exact_function_reproduces_the_printed_fph(
         self,

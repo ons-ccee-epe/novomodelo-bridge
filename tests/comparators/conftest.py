@@ -97,7 +97,7 @@ def _aligned_fixture() -> _AlignedDecompFrames:
             "geracao_MW": [120.0, 60.0],
             "vazao_turbinada_m3s": [80.0, 40.0],
             "vazao_vertida_m3s": [0.0, 0.0],
-            "vazao_defluente_m3s": [80.0, 40.0],
+            "vazao_turbinada_vertida_m3s": [80.0, 40.0],
             "volume_util_final_hm3": [500.0, 300.0],
         }
     )

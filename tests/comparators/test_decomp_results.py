@@ -31,6 +31,7 @@ from novomodelo_bridge.comparators.decomp.results import (
     _energy_balance_frames,
     _hydro_side,
     _map_entities,
+    _novomodelo_hydro_percentiles,
     _result_comparisons,
     _scenario_mean,
     _stage_rows,
@@ -822,6 +823,70 @@ class TestBuildDecompDatasetSingleParse:
         assert nw_row["lhs_value"] == pytest.approx(2951.58 * MEAN_MONTH_HOURS)
         cb_row = dataset.render.gc_lhs_novomodelo.row(0, named=True)
         assert cb_row == {"constraint_id": 0, "stage_id": 0, "lhs_value": 3000.0}
+
+
+class TestHydroDefinitions:
+    """The DECOMP-side hydro values follow novomodelo's definitions."""
+
+    def test_outflow_leaves_out_the_diversion(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # dec_oper_usih's defluent flow 18 = turbined 10 + spilled 5 + diverted 3.
+        usih = pl.DataFrame(
+            {
+                "codigo_usina": [314],
+                "estagio": [1],
+                "cenario": [1],
+                "patamar": [None],
+                "geracao_MW": [100.0],
+                "vazao_turbinada_m3s": [10.0],
+                "vazao_vertida_m3s": [5.0],
+                "vazao_desviada_m3s": [3.0],
+                "vazao_defluente_m3s": [18.0],
+                "volume_util_final_hm3": [1.0],
+            }
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
+            lambda *_args, **_kwargs: usih,
+        )
+
+        frame, unmapped = _hydro_side(tmp_path, {314: 0})
+
+        outflow = next(v for v in _HYDRO_VARIABLES if v.name == "outflow")
+        assert unmapped == []
+        assert frame[outflow.source_column].to_list() == [15.0]
+
+    def test_storage_bands_are_on_useful_volume(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        bands = pl.DataFrame(
+            {
+                "entity_id": [0],
+                "stage_id": [0],
+                "storage_final_hm3_p10": [150.0],
+                "storage_final_hm3_p50": [200.0],
+                "storage_final_hm3_p90": [250.0],
+                "turbined_m3s_p50": [7.0],
+            }
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_hydro_percentiles",
+            lambda _dir: bands,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_hydro_metadata",
+            lambda _dir: {0: {"min_storage_hm3": 100.0}},
+        )
+
+        assert _novomodelo_hydro_percentiles(tmp_path).row(0, named=True) == {
+            "entity_id": 0,
+            "stage_id": 0,
+            "storage_final_hm3_p10": 50.0,
+            "storage_final_hm3_p50": 100.0,
+            "storage_final_hm3_p90": 150.0,
+            "turbined_m3s_p50": 7.0,
+        }
 
 
 _OPERATION_SIDES = [

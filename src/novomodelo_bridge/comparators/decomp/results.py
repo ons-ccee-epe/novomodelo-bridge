@@ -174,11 +174,15 @@ class _Variable:
     unit: str
 
 
+#: DECOMP's turbined plus spilled flow, novomodelo's outflow definition.
+#: ``dec_oper_usih``'s defluent flow also counts the diversion.
+_DECOMP_OUTFLOW_COLUMN = "vazao_turbinada_vertida_m3s"
+
 _HYDRO_VARIABLES: tuple[_Variable, ...] = (
     _Variable("hydro", "generation", "geracao_MW", "generation_mw", "MW"),
     _Variable("hydro", "turbined", "vazao_turbinada_m3s", "turbined_m3s", "m³/s"),
     _Variable("hydro", "spillage", "vazao_vertida_m3s", "spillage_m3s", "m³/s"),
-    _Variable("hydro", "outflow", "vazao_defluente_m3s", "outflow_m3s", "m³/s"),
+    _Variable("hydro", "outflow", _DECOMP_OUTFLOW_COLUMN, "outflow_m3s", "m³/s"),
     _Variable("hydro", "storage", "volume_util_final_hm3", "useful_storage_hm3", "hm³"),
 )
 
@@ -660,7 +664,12 @@ def _hydro_side(
     )
     if table is None:
         return pl.DataFrame(), []
-    frame = _stage_rows(table)
+    frame = _stage_rows(table).with_columns(
+        (
+            pl.col("vazao_turbinada_m3s").cast(pl.Float64)
+            + pl.col("vazao_vertida_m3s").cast(pl.Float64)
+        ).alias(_DECOMP_OUTFLOW_COLUMN)
+    )
     columns = [v.source_column for v in _HYDRO_VARIABLES]
     aggregated = _scenario_mean(
         frame,
@@ -1814,6 +1823,44 @@ def _operated_hydro_ids(id_map: DecompIdMap) -> dict[int, int]:
     return {code: id_map.hydro_id(code) for code in id_map.operated_hydro_codes}
 
 
+def _storage_floors(metadata: Mapping[int, dict]) -> pl.DataFrame:
+    """Each hydro's ``min_storage_hm3``, the volume DECOMP's useful storage
+    leaves out."""
+    return pl.DataFrame(
+        {
+            "entity_id": list(metadata.keys()),
+            "min_storage_hm3": [
+                float(m.get("min_storage_hm3") or 0.0) for m in metadata.values()
+            ],
+        },
+        schema={"entity_id": pl.Int64, "min_storage_hm3": pl.Float64},
+    )
+
+
+def _novomodelo_hydro_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Novomodelo hydro p10/p50/p90 bands, with storage on useful volume like
+    the means :func:`_novomodelo_hydro` compares."""
+    bands = novomodelo_readers.read_novomodelo_hydro_percentiles(novomodelo_output_dir)
+    columns = [
+        column
+        for column in (f"storage_final_hm3_p{q}" for q in (10, 50, 90))
+        if column in bands.columns
+    ]
+    if not columns:
+        return bands
+    floors = _storage_floors(
+        novomodelo_readers.read_novomodelo_hydro_metadata(novomodelo_output_dir)
+    )
+    return (
+        bands.join(floors, on="entity_id", how="left")
+        .with_columns(
+            (pl.col(column) - pl.col("min_storage_hm3").fill_null(0.0)).alias(column)
+            for column in columns
+        )
+        .drop("min_storage_hm3")
+    )
+
+
 def _novomodelo_hydro(
     novomodelo_output_dir: Path,
 ) -> tuple[pl.DataFrame, dict[int, str]]:
@@ -1825,15 +1872,7 @@ def _novomodelo_hydro(
     if means.is_empty():
         return means, names
 
-    floors = pl.DataFrame(
-        {
-            "entity_id": list(metadata.keys()),
-            "min_storage_hm3": [
-                float(m.get("min_storage_hm3") or 0.0) for m in metadata.values()
-            ],
-        },
-        schema={"entity_id": pl.Int64, "min_storage_hm3": pl.Float64},
-    )
+    floors = _storage_floors(metadata)
     if "storage_final_hm3" not in means.columns or floors.is_empty():
         return means, names
     return (
@@ -3133,9 +3172,7 @@ def _verbatim_read_fields(
         # percentile output (e.g. the deterministic 2-node tree) --
         # ``read_novomodelo_hydro_percentiles`` already degrades to an empty
         # frame in that case, passed through verbatim.
-        "hydro": novomodelo_readers.read_novomodelo_hydro_percentiles(
-            novomodelo_output_dir
-        ),
+        "hydro": _novomodelo_hydro_percentiles(novomodelo_output_dir),
         "novomodelo_hydro_per_stage_bounds": (
             novomodelo_readers.read_novomodelo_hydro_per_stage_bounds(
                 novomodelo_output_dir
@@ -3172,8 +3209,8 @@ def build_decomp_dataset(
     The returned dataset's ``PercentileData`` carries:
 
     - Entity-name dicts (``nw_bus_names``/``nw_hydro_names``) and the
-      novomodelo-side ``bus``/``hydro``/``thermal``/``line`` percentile bands, read
-      verbatim from the matching ``novomodelo_readers`` percentile functions.
+      novomodelo-side ``bus``/``hydro``/``thermal``/``line`` percentile bands, from
+      the ``novomodelo_readers`` percentile functions (hydro storage useful).
     - The Energy Balance tab's DECOMP-side frames ``nw_market``/
       ``nw_net_load``/``nw_sin`` (`_energy_balance_frames`) plus the novomodelo-side
       ``bus_aggregates``/``novomodelo_bus_meta``/``novomodelo_hydro_means``.

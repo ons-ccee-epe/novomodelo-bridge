@@ -339,6 +339,12 @@ console ends with each model's final lower bound and simulated mean cost. The
 lower bound includes the future cost at the end of the study, which the
 simulated mean cost leaves out, so the two rows are far apart on both models.
 
+Hydro storage is compared on useful volume, as DECOMP prints it: Novomodelo's
+means and P10–P90 bands leave out each plant's minimum storage. Outflow is
+turbined plus spilled flow on both sides. DECOMP's defluent flow in
+`dec_oper_usih` also counts the diverted flow, which leaves the river above the
+plant and which Novomodelo reports apart.
+
 Each scenario of the stochastic stage weighs by its probability on both sides:
 DECOMP's by the tree's probabilities, Novomodelo's by the probability of each
 simulated leaf path in `simulation/scenario_summary.parquet`. The `dashboard`

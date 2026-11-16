@@ -233,7 +233,12 @@ def _source_points(
             .fill_null(0.0)
             .alias("q_m3s"),
             pl.col("vazao_vertida_m3s").cast(pl.Float64).fill_null(0.0).alias("s_m3s"),
-            pl.col("vazao_defluente_m3s").cast(pl.Float64).alias("outflow_m3s"),
+            # DECOMP's defluent flow also counts the diversion, which leaves
+            # the river above the plant; novomodelo's outflow does not.
+            (
+                pl.col("vazao_turbinada_m3s").cast(pl.Float64).fill_null(0.0)
+                + pl.col("vazao_vertida_m3s").cast(pl.Float64).fill_null(0.0)
+            ).alias("outflow_m3s"),
             pl.col("geracao_MW").cast(pl.Float64).fill_null(0.0).alias("gh_mw"),
             (pl.col("price").abs() < ZERO_PRICE).fill_null(False).alias("worthless"),
         )
