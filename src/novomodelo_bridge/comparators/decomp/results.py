@@ -76,6 +76,10 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_relato_costs,
     read_relato_membership,
 )
+from novomodelo_bridge.comparators.decomp.ree_energy import (
+    ReeEnergyRule,
+    build_ree_energy_rule,
+)
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
@@ -153,14 +157,11 @@ def _emit_unreadable(
 #: turbining makes generation/turbined an undefined 0/0 on both sides.
 _PRODUCTIVITY_TURBINED_EPS: float = 1.0e-6
 
-#: novomodelo's ``stored_energy_final_mwh`` is MWh; the source model's
-#: own REE ``earm_final_MWmes`` is MWmês (average MW sustained over a month).
-#: 730 h/month is the same implicit hours-per-month convention
-#: `report_builder`'s Energy Balance chart already applies to the SIN-total
-#: EARM overlay (``novomodelo_aggregate_chart(..., nw_factor=730.0, ...)``) --
-#: reused here rather than re-derived so the two EARM reconciliations never
-#: drift apart.
-_EARM_MWH_TO_MWMES: float = 730.0
+#: Hours per month between MW-month and MW in the Energy Balance tab, the
+#: same convention `report_builder` applies to the SIN-total EARM overlay
+#: (``novomodelo_aggregate_chart(..., nw_factor=730.0, ...)``), so the two
+#: reconciliations never drift apart.
+_BALANCE_MONTH_HOURS: float = 730.0
 
 
 @dataclass(frozen=True)
@@ -1324,7 +1325,7 @@ def _energy_balance_frames(
                 pl.col("ena_MWmes").sum().alias("ENA"),
             )
             .join(hours, on="estagio", how="left")
-            .with_columns(pl.col("ENA") * _EARM_MWH_TO_MWMES / pl.col("_hours"))
+            .with_columns(pl.col("ENA") * _BALANCE_MONTH_HOURS / pl.col("_hours"))
             .drop("_hours")
         )
         nw_sin = (
@@ -2068,93 +2069,58 @@ def _log_decomp_fpha_deck_summary(decomp_dir: Path) -> None:
     )
 
 
-# --- REE energy rollup via membership ---
+# --- REE energies under DECOMP's definition ---
 #
 # DECOMP reports energy at REE (reservoir-equivalent-energy) granularity
-# (`read_dec_oper_ree`); Novomodelo has no REE entity, so the counterpart is built
-# by rolling each REE's member plants' energy up through the
-# `relato.uhes_rees_submercados` membership table (`read_relato_membership`).
+# (`read_dec_oper_ree`). Novomodelo has no REE entity, so its per-scenario plant
+# storage and inflow are valued with DECOMP's own definition
+# (:mod:`.ree_energy`) over the REE membership of relato
+# (`read_relato_membership`).
 
 
-def _ree_membership_map(
-    membership: pl.DataFrame, hydro_codes: dict[int, int]
-) -> tuple[dict[int, int], list[int]]:
-    """``{novomodelo_hydro_id: codigo_ree}`` via membership, restricted to the
-    operated hydro codes this module already resolves
-    (``{codigo_usina: novomodelo_id}``, from `DecompIdMap.hydro_id`).
+def _ree_energy_rule(case: DecompCase, membership: pl.DataFrame) -> ReeEnergyRule:
+    """DECOMP's REE energy rule over *case*'s deck."""
+    from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
+    from novomodelo_bridge.decomp.converters.rhe_shares import read_ez_fractions
 
-    A hydro code with no row in *membership* cannot be attributed to any REE
-    -- it is excluded from every REE sum and returned (sorted) as the second
-    element instead of being silently dropped.
-    """
-    code_to_ree: dict[int, int] = {}
-    if not membership.is_empty():
-        for row in membership.iter_rows(named=True):
-            code_to_ree[int(row["codigo_usina"])] = int(row["codigo_ree"])
-
-    ree_by_novomodelo_id: dict[int, int] = {}
-    unmapped: list[int] = []
-    for code, novomodelo_id in hydro_codes.items():
-        ree_code = code_to_ree.get(code)
-        if ree_code is None:
-            unmapped.append(code)
-            continue
-        ree_by_novomodelo_id[novomodelo_id] = ree_code
-    return ree_by_novomodelo_id, sorted(unmapped)
+    effective, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
+    return build_ree_energy_rule(
+        effective,
+        case.id_map.operated_hydro_codes,
+        membership,
+        read_ez_fractions(case.dadger),
+    )
 
 
-_EMPTY_NOVOMODELO_REE_SUMS_SCHEMA: dict[str, type[pl.DataType]] = {
-    "entity_id": pl.Int64,
-    "stage_id": pl.Int64,
-    "ena_mw": pl.Float64,
-    "earm_mwh": pl.Float64,
-}
-
-#: Columns :func:`_novomodelo_ree_sums` reads off *novomodelo_hydro* besides
-#: ``entity_id``/``stage_id``. A frame missing either -- e.g. a trimmed
-#: test fixture that only carries the base hydro-comparison columns --
-#: degrades to an empty sum instead of a Polars ``ColumnNotFoundError``.
-_REE_NOVOMODELO_ENERGY_COLUMNS: tuple[str, ...] = (
-    "incremental_inflow_energy_mw",
-    "stored_energy_final_mwh",
-)
-
-
-def _novomodelo_ree_sums(
-    novomodelo_hydro: pl.DataFrame, ree_by_novomodelo_id: dict[int, int]
+def _novomodelo_ree_energies(
+    rule: ReeEnergyRule,
+    hydro_codes: Mapping[int, int],
+    novomodelo_output_dir: Path,
+    stage_hours: Mapping[int, float],
 ) -> pl.DataFrame:
-    """Membership-weighted sum of Novomodelo hydro ENA/EARM per (codigo_ree, stage).
+    """Novomodelo's expected REE ``earm_mwmes``/``ena_mwmes`` per
+    (``entity_id`` = REE code, ``stage_id``).
 
-    *novomodelo_hydro* is `_AlignedDecompFrames.novomodelo_hydro` (the aligned
-    Novomodelo hydro means, reused rather than re-read); *ree_by_novomodelo_id* inverts
-    :func:`_ree_membership_map`'s own map, one entry per member plant. A
-    Novomodelo hydro id absent from it -- every plant this rollup could not
-    attribute to a membership row -- contributes to no REE sum. Returned
-    ``entity_id`` is the REE code (``codigo_ree``), matching the join key
-    :func:`_decomp_ree_frame` emits; ``earm_mwh`` is still raw MWh here --
-    the ÷730 MWmês reconciliation happens once, at the
-    :class:`~novomodelo_bridge.comparators.model.ResultComparison` emission site.
+    Each simulated scenario is valued with *rule* and weighted by its
+    probability. *hydro_codes* maps each operated ``codigo_usina`` to its
+    Novomodelo hydro id.
     """
-    empty = pl.DataFrame(schema=_EMPTY_NOVOMODELO_REE_SUMS_SCHEMA)
-    if novomodelo_hydro.is_empty() or not ree_by_novomodelo_id:
-        return empty
-    if not set(_REE_NOVOMODELO_ENERGY_COLUMNS) <= set(novomodelo_hydro.columns):
-        return empty
-    mapped = novomodelo_hydro.with_columns(
-        pl.col("entity_id")
-        .map_elements(lambda i: ree_by_novomodelo_id.get(int(i)), return_dtype=pl.Int64)
-        .alias("codigo_ree")
-    ).filter(pl.col("codigo_ree").is_not_null())
-    if mapped.is_empty():
-        return empty
+    block = novomodelo_readers.read_novomodelo_hydro_block_operation(
+        novomodelo_output_dir
+    )
+    code_of = {hydro_id: code for code, hydro_id in hydro_codes.items()}
+    plants = (
+        block.filter(pl.col("hydro_id").is_in(list(code_of)))
+        .group_by(["scenario_id", "stage_id", "hydro_id"])
+        .agg(pl.col("storage_final_hm3", "incremental_inflow_m3s").first())
+        .with_columns(pl.col("hydro_id").replace_strict(code_of).alias("codigo_usina"))
+    )
+    weights = novomodelo_readers.read_novomodelo_scenario_weights(novomodelo_output_dir)
     return (
-        mapped.group_by(["codigo_ree", "stage_id"])
-        .agg(
-            pl.col("incremental_inflow_energy_mw").sum().alias("ena_mw"),
-            pl.col("stored_energy_final_mwh").sum().alias("earm_mwh"),
-        )
+        weights.attach(rule.energies(plants, stage_hours))
+        .group_by(["codigo_ree", "stage_id"])
+        .agg(weights.mean("earm_mwmes"), weights.mean("ena_mwmes"))
         .rename({"codigo_ree": "entity_id"})
-        .cast({"entity_id": pl.Int64, "stage_id": pl.Int64})
         .sort(["entity_id", "stage_id"])
     )
 
@@ -2201,9 +2167,9 @@ def _decomp_ree_frame(
 
 
 def _ree_result_comparisons(
+    case: DecompCase,
     decomp_dir: Path,
-    novomodelo_hydro: pl.DataFrame,
-    id_map: DecompIdMap | None,
+    novomodelo_output_dir: Path,
     *,
     probabilities: pl.DataFrame | None = None,
     stage_hours: dict[int, float] | None = None,
@@ -2213,28 +2179,18 @@ def _ree_result_comparisons(
     The source-model side is `_decomp_ree_frame` (`read_dec_oper_ree`,
     scenario-averaged per REE/stage -- *probabilities* is forwarded to it
     unchanged, see :func:`_hydro_side` for its scenario-weighting contract);
-    the Novomodelo side is
-    :func:`_novomodelo_ree_sums`'s membership-weighted plant rollup, with EARM
-    converted MWh -> MWmês (:data:`_EARM_MWH_TO_MWMES`) and ENA converted from
-    a stage-mean MW (average power) to MWmês energy via the stage's own
-    duration (*stage_hours* ÷ 730 months), both at emission -- so each is on
-    DECOMP's MW-month footing. ``newave_code``/``novomodelo_id`` are both the
-    REE's own ``codigo_ree`` -- Novomodelo has no independent REE id to diverge
-    from it.
+    the Novomodelo side is :func:`_novomodelo_ree_energies`, with ENA over
+    each stage's *stage_hours* (one month without them).
+    ``newave_code``/``novomodelo_id`` are both the REE's own ``codigo_ree`` --
+    Novomodelo has no independent REE id to diverge from it.
 
-    Returns ``([], [])`` when *id_map* is ``None`` (deck unreadable -- no
-    hydro code -> Novomodelo id mapping exists to build the membership map with).
-    A missing or unreadable membership table or `dec_oper_ree` table degrades
-    to no REE rows rather than raising -- matching every other optional field
-    this module builds. A hydro code absent from the membership table is
-    excluded from every REE sum and returned (sorted) as the second element,
-    with a WARNING diagnostic recording the codes (never silently dropped).
+    A missing or unreadable membership table, ``dec_oper_ree`` table or deck
+    energy chain degrades to no REE rows rather than raising -- matching every
+    other optional field this module builds. An operated hydro code absent
+    from the membership table is left out of every REE energy and returned
+    (sorted) as the second element, with a WARNING diagnostic recording the
+    codes (never silently dropped).
     """
-    if id_map is None:
-        return [], []
-
-    hydro_codes = _operated_hydro_ids(id_map)
-
     try:
         membership = read_relato_membership(decomp_dir)
     except FileNotFoundError:
@@ -2244,7 +2200,9 @@ def _ree_result_comparisons(
         _emit_unreadable("relato.rvN", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], []
 
-    ree_by_novomodelo_id, unmapped = _ree_membership_map(membership, hydro_codes)
+    hydro_codes = _operated_hydro_ids(case.id_map)
+    members = set(membership["codigo_usina"].to_list()) if membership.height else set()
+    unmapped = sorted(code for code in hydro_codes if code not in members)
     if unmapped:
         emit(
             Diagnostic(
@@ -2257,7 +2215,7 @@ def _ree_result_comparisons(
                 summary=(
                     "The listed DECOMP plants have no row in the table of "
                     "relato.rvN that assigns each plant to its REE, so the "
-                    "comparison leaves them out of every REE energy sum."
+                    "comparison leaves them out of every REE energy."
                 ),
                 table=DiagnosticTable(
                     columns=["Code"], rows=[[code] for code in unmapped]
@@ -2275,49 +2233,35 @@ def _ree_result_comparisons(
         _emit_unreadable("dec_oper_ree.csv", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], unmapped
 
-    novomodelo_sums = _novomodelo_ree_sums(novomodelo_hydro, ree_by_novomodelo_id)
-    if source_ree.is_empty() or novomodelo_sums.is_empty():
+    try:
+        rule = _ree_energy_rule(case, membership)
+    except ValueError as exc:
+        _emit_unreadable("dadger.rvN", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], unmapped
-
-    joined = source_ree.join(novomodelo_sums, on=["entity_id", "stage_id"], how="inner")
-    if joined.is_empty():
-        return [], unmapped
+    novomodelo_ree = _novomodelo_ree_energies(
+        rule, hydro_codes, novomodelo_output_dir, stage_hours or {}
+    )
+    joined = source_ree.join(novomodelo_ree, on=["entity_id", "stage_id"], how="inner")
 
     results: list[ResultComparison] = []
     for row in joined.iter_rows(named=True):
         ree_code = int(row["entity_id"])
-        stage = int(row["stage_id"])
-        name = names.get(ree_code, "")
-        novomodelo_earm_mwmes = float(row["earm_mwh"]) / _EARM_MWH_TO_MWMES
-        # novomodelo's ``ena_mw`` is a stage-mean MW (average inflow power); DECOMP's
-        # ``ena_MWmes`` is energy *over the stage* (MW-month), scaling with stage
-        # duration. Multiply the rate by the stage's duration in months
-        # (``stage_hours / 730``, mirroring EARM's ÷730) — else a weekly stage's
-        # mean power is compared to a week's energy, a ~stage_hours/730 mismatch
-        # that inflates the weekly ENA several-fold. Falls back to one month when
-        # hours are unavailable. The residual per-REE offset is the
-        # productivity/FPHA difference vs novomodelo's per-plant model, not a unit error.
-        stage_months = (
-            stage_hours.get(stage, _EARM_MWH_TO_MWMES) / _EARM_MWH_TO_MWMES
-            if stage_hours is not None
-            else 1.0
-        )
-        novomodelo_ena_mwmes = float(row["ena_mw"]) * stage_months
-        for variable, nw_raw, novomodelo_value in (
-            ("ena_mwmes", row["ena_MWmes"], novomodelo_ena_mwmes),
-            ("earm_final_mwmes", row["earm_final_MWmes"], novomodelo_earm_mwmes),
+        for variable, nw_raw, novomodelo_raw in (
+            ("ena_mwmes", row["ena_MWmes"], row["ena_mwmes"]),
+            ("earm_final_mwmes", row["earm_final_MWmes"], row["earm_mwmes"]),
         ):
-            if nw_raw is None:
+            if nw_raw is None or novomodelo_raw is None:
                 continue
             nw_value = float(nw_raw)
+            novomodelo_value = float(novomodelo_raw)
             abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
             results.append(
                 ResultComparison(
                     entity_type="ree",
-                    entity_name=name,
+                    entity_name=names.get(ree_code, ""),
                     newave_code=ree_code,
                     novomodelo_id=ree_code,
-                    stage=stage,
+                    stage=int(row["stage_id"]),
                     variable=variable,
                     newave_value=nw_value,
                     novomodelo_value=novomodelo_value,
@@ -3270,10 +3214,9 @@ def build_decomp_dataset(
     three have no dedicated ``PercentileData`` field and flow through
     ``results``/``dataset.metadata["unmapped"]``.
 
-    Unit reconciliations: REE EARM MWh -> MWmês via
-    :data:`_EARM_MWH_TO_MWMES`, REE ENA (a stage-mean MW) -> MWmês via the
-    stage's own hours, and evaporation hm³ -> m³/s via the stage's actual
-    hours, comparing Novomodelo's value unchanged (see
+    Unit reconciliations: REE EARM/ENA valued in MWmês with DECOMP's own
+    definition (:mod:`.ree_energy`), and evaporation hm³ -> m³/s via the
+    stage's actual hours, comparing Novomodelo's value unchanged (see
     `_evaporation_result_comparisons`).
     ``nw_offset=1``: DECOMP's ``estagio`` is 1-based from the
     deck's first stage, so the offset is fixed at 1, not derived from the data.
@@ -3352,9 +3295,9 @@ def build_decomp_dataset(
     _log_decomp_fpha_deck_summary(decomp_dir)
 
     ree_results, unmapped_ree = _ree_result_comparisons(
+        case,
         decomp_dir,
-        aligned.novomodelo_hydro,
-        line_id_map,
+        novomodelo_output_dir,
         probabilities=probabilities,
         stage_hours=_novomodelo_stage_hours(novomodelo_output_dir) or None,
     )

@@ -90,6 +90,9 @@ from novomodelo_bridge.decomp.converters.hydro.productivity import (
 from novomodelo_bridge.decomp.converters.hydro.productivity import (
     outage_stage_model as outage_stage_model,
 )
+from novomodelo_bridge.decomp.converters.hydro.productivity import (
+    stored_energy_productivity_at_storage as stored_energy_productivity_at_storage,
+)
 from novomodelo_bridge.decomp.converters.hydro.turbine_limit import (
     TurbineLimits as TurbineLimits,
 )

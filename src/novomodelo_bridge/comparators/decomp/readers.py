@@ -288,8 +288,8 @@ def read_dec_oper_ree(case_dir: Path) -> pl.DataFrame:
     absolute ``_MWmes`` and ``_percentual``, plus ``earm_maximo_MWmes``), one
     row per (stage, node, scenario, REE). The DECOMP-side source
     for the REE energy rollup -- Novomodelo has no REE entity, so its counterpart
-    is a membership-weighted sum of plant output (see
-    `results._ree_result_comparisons`)."""
+    values Novomodelo's plant storage and inflow with DECOMP's own definition
+    (see `ree_energy`)."""
     return _read_dec_oper(case_dir, "dec_oper_ree.csv", DecOperRee)
 
 
@@ -417,8 +417,8 @@ def read_relato_membership(case_dir: Path) -> pl.DataFrame:
 
     The sole source that attributes a hydro plant to its REE --
     neither `DecompIdMap` nor any ``dec_oper_*`` table carries that
-    membership, so `results._ree_result_comparisons` rolls Novomodelo's
-    per-plant energy up to the REE level through this table instead.
+    membership, so `results._ree_result_comparisons` places Novomodelo's
+    plants in their REE and subsystem through this table instead.
     """
     return _read_relato_table(case_dir, "uhes_rees_submercados")
 

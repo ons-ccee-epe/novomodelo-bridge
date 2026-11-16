@@ -357,6 +357,18 @@ turbined plus spilled flow on both sides. DECOMP's defluent flow in
 `dec_oper_usih` also counts the diverted flow, which leaves the river above the
 plant and which Novomodelo reports apart.
 
+The REE stored and inflow energies (EARM, ENA) compare with DECOMP's
+`dec_oper_ree`. Novomodelo has no REE, so each plant's simulated storage and
+incremental inflow are valued with DECOMP's own definition. A plant's water
+counts at every plant of its energy chain (the `AC JUSENA` plant, else the next
+plant down the river), each at the head of its current filling. A plant with an
+`EZ` record counts in its own REE until its chain leaves it; the REE below
+counts at most the `EZ` share of the plant's useful range. Inflow energy moves
+to the REE of the first plant past a submarket boundary and, inside a
+submarket, to a plant of another REE until the chain passes a monthly
+reservoir. Both energies are in MWmês of 730.5 hours, the mean month DECOMP
+uses.
+
 Each scenario of the stochastic stage weighs by its probability on both sides:
 DECOMP's by the tree's probabilities, Novomodelo's by the probability of each
 simulated leaf path in `simulation/scenario_summary.parquet`. The `dashboard`

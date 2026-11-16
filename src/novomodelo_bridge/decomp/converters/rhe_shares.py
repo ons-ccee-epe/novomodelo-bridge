@@ -103,6 +103,31 @@ def is_stored_energy_reservoir(effective: EffectiveCadastro, code: int) -> bool:
     return vol_max - vol_min > 0.0
 
 
+def energy_chain_next(
+    effective: EffectiveCadastro, code: int, operated: set[int]
+) -> int | None:
+    """The plant after *code* on its energy chain, ``None`` at the chain's end.
+
+    The chain follows *code*'s ``AC JUSENA`` plant where one is declared, else
+    the next plant of *operated* down the water route.
+
+    Raises:
+        ValueError: the ``JUSENA`` plant is neither in the configuration nor
+            in hidr.dat.
+    """
+    link = effective.energy_link(code, 0)
+    if link is None:
+        return _downstream_in(effective, code, operated)
+    if link == 0:
+        return None
+    if link not in operated and link not in effective.base.index:
+        raise ValueError(
+            f"plant {code}'s AC JUSENA names plant {link}, which is neither "
+            "in the configuration nor in hidr.dat"
+        )
+    return link
+
+
 @dataclass(frozen=True)
 class RheShare:
     """One reservoir's share of a REE's stored energy, with its values.
@@ -207,17 +232,7 @@ class _EnergyCascade:
         return self._water[code]
 
     def _energy_next(self, code: int) -> int | None:
-        link = self._effective.energy_link(code, 0)
-        if link is None:
-            return self.water_next(code)
-        if link == 0:
-            return None
-        if link not in self._operated and link not in self._effective.base.index:
-            raise ValueError(
-                f"plant {code}'s AC JUSENA names plant {link}, which is neither "
-                "in the configuration nor in hidr.dat"
-            )
-        return link
+        return energy_chain_next(self._effective, code, self._operated)
 
     def chain(self, start: int) -> _Chain:
         """*start*'s energy chain, cut at its REE boundary iff it has an ``EZ``."""

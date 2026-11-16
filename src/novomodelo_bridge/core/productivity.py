@@ -157,21 +157,18 @@ def mean_cota(coeffs: Sequence[float], v_lo: float, v_hi: float) -> float:
     the same shape the source model uses to derive ``prodt_eq`` for reservoir
     plants. ``v_hi <= v_lo`` (run-of-river singleton collapse) falls back to
     the point cota at ``v_lo``.
+
+    Each power's difference quotient is expanded,
+    ``(v_hi^(k+1) - v_lo^(k+1)) / (v_hi - v_lo) = Σ_j v_hi^j · v_lo^(k-j)``,
+    so a range only a rounding error wide (a reservoir drawn to its floor)
+    still averages to the point cota rather than cancelling to noise.
     """
     if v_hi <= v_lo:
         return evaluate_cota(coeffs, v_lo)
-    a0, a1, a2, a3, a4 = coeffs
-
-    def _antideriv(v: float) -> float:
-        return (
-            a0 * v
-            + a1 * v * v / 2.0
-            + a2 * v**3 / 3.0
-            + a3 * v**4 / 4.0
-            + a4 * v**5 / 5.0
-        )
-
-    return (_antideriv(v_hi) - _antideriv(v_lo)) / (v_hi - v_lo)
+    return sum(
+        a_k / (k + 1) * sum(v_hi**j * v_lo ** (k - j) for j in range(k + 1))
+        for k, a_k in enumerate(coeffs)
+    )
 
 
 def apply_hydraulic_loss(h_gross: float, tipo_perda: int, perdas: float) -> float:

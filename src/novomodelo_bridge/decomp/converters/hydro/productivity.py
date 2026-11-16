@@ -4,6 +4,7 @@ machinery, the productivity-override parquet, and the production-model JSON.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
@@ -13,7 +14,7 @@ from novomodelo_bridge.decomp.converters.cadastro.effective import is_reservoir
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -52,22 +53,25 @@ def _equivalent_productivity_mw_per_m3s(
     override shifts this stage's ρ_eq; ``tipo_perda`` carries no ``AC`` register
     of its own and stays a base read.
     """
-    v_min = effective.value(code, "volume_minimo", stage_index)
-    v_max = effective.value(code, "volume_maximo", stage_index)
-    rho_esp = effective.value(code, "produtibilidade_especifica", stage_index)
-    cf = effective.value(code, "canal_fuga_medio", stage_index)
-    perdas = effective.value(code, "perdas", stage_index)
-    tipo_perda = int(effective.base.loc[code, "tipo_perda"])
-    coeffs = effective.cota_polynomial(code, stage_index)
-    return equivalent_productivity_from_coeffs(
-        coeffs,
-        volume_min_hm3=v_min,
-        volume_max_hm3=v_max,
-        rho_esp=rho_esp,
-        canal_fuga_m=cf,
-        tipo_perda=tipo_perda,
-        perdas=perdas,
+    return _stage_productivity(effective, code, stage_index)(
+        volume_min_hm3=effective.value(code, "volume_minimo", stage_index),
+        volume_max_hm3=effective.value(code, "volume_maximo", stage_index),
         reference_volume_hm3=reference_volume_hm3,
+    )
+
+
+def _stage_productivity(
+    effective: EffectiveCadastro, code: int, stage_index: int
+) -> Callable[..., float]:
+    """:func:`equivalent_productivity_from_coeffs` bound to plant *code*'s
+    stage inputs, left to take the volume anchors."""
+    return partial(
+        equivalent_productivity_from_coeffs,
+        effective.cota_polynomial(code, stage_index),
+        rho_esp=effective.value(code, "produtibilidade_especifica", stage_index),
+        canal_fuga_m=effective.value(code, "canal_fuga_medio", stage_index),
+        tipo_perda=int(effective.base.loc[code, "tipo_perda"]),
+        perdas=effective.value(code, "perdas", stage_index),
     )
 
 
@@ -89,6 +93,33 @@ def _stored_energy_productivity_mw_per_m3s(
     return _equivalent_productivity_mw_per_m3s(
         effective, code, stage_index, reference_volume_hm3=reference
     )
+
+
+def stored_energy_productivity_at_storage(
+    effective: EffectiveCadastro, code: int, stage_index: int
+) -> Callable[[float], float]:
+    """Plant *code*'s stored-energy ρ at one stage, as a function of the
+    useful volume it holds (hm³).
+
+    The source model values the energies it reports per REE at the current
+    storage: a reservoir (:func:`is_reservoir`) whose stage range spans more
+    than one volume averages the head over the filled part of the range,
+    ``[volume_minimo, volume_minimo + useful]`` with the useful volume clipped
+    to the range. Any other plant keeps the constant
+    :func:`_stored_energy_productivity_mw_per_m3s`.
+    """
+    v_min = effective.value(code, "volume_minimo", stage_index)
+    v_max = effective.value(code, "volume_maximo", stage_index)
+    if not is_reservoir(effective, code) or v_max <= v_min:
+        constant = _stored_energy_productivity_mw_per_m3s(effective, code, stage_index)
+        return lambda _useful_hm3: constant
+    productivity = _stage_productivity(effective, code, stage_index)
+
+    def at_storage(useful_hm3: float) -> float:
+        filled = min(max(useful_hm3, 0.0), v_max - v_min)
+        return productivity(volume_min_hm3=v_min, volume_max_hm3=v_min + filled)
+
+    return at_storage
 
 
 def convert_energy_productivity(

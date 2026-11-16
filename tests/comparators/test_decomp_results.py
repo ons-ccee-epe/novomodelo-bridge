@@ -50,7 +50,6 @@ from tests.comparators.conftest import (
     _patch_aligned_frames,
     _patch_ree_sources,
     _patch_shared_case,
-    _ree_aligned_fixture,
     _ree_id_map,
     _usih_frame,
     _write_generic_constraints_case,
@@ -730,7 +729,7 @@ class TestBuildDecompDatasetSingleParse:
         ``TestBuildDecompDatasetRee``, ``TestBuildDecompDatasetConstraints``)
         independently verifies in isolation. A behaviour-preserving
         consolidation of the three parse sites cannot change any of these."""
-        _patch_aligned_frames(monkeypatch, _ree_aligned_fixture())
+        _patch_aligned_frames(monkeypatch, _aligned_fixture())
         _patch_shared_case(monkeypatch, id_map=_ree_id_map())
         _patch_ree_sources(monkeypatch)
         case_dir = tmp_path / "case"

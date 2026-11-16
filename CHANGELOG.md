@@ -353,6 +353,12 @@ links are cobre-bridge's.
   Novomodelo's storage P10–P90 bands on total volume beside useful-volume
   means.** Outflow is now turbined plus spilled flow on both sides, and the
   bands are on useful volume. Run `compare decomp` again to update a report.
+- **`compare decomp` put Novomodelo's REE stored and inflow energies far from
+  DECOMP's on every deck.** It added up each plant's own energies, which value
+  the water down the whole river at a fixed head. They are now valued as
+  DECOMP values them: along each plant's energy chain, at the head of the
+  current storage, with the `EZ` cut. Run `compare decomp` again to update a
+  report.
 - **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms

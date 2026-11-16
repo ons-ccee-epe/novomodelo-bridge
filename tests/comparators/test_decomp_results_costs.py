@@ -36,7 +36,6 @@ from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
-    _aligned_fixture,
     _balance_fixture,
     _patch_aligned_frames,
     _ree_id_map,
@@ -44,6 +43,7 @@ from tests.comparators.conftest import (
 from tests.comparators.test_decomp_results_performance import (
     _relato_convergence_frame,
 )
+from tests.conftest import make_decomp_case
 
 
 def _relato_costs_frame() -> pl.DataFrame:
@@ -774,7 +774,7 @@ def test_a_partial_relato_costs_only_the_sections_of_its_missing_tables(
         probabilities = _scenario_probabilities(tmp_path)
         convergence = _decomp_convergence_frame(tmp_path)
         ree, _ = _ree_result_comparisons(
-            tmp_path, _aligned_fixture().novomodelo_hydro, _ree_id_map()
+            make_decomp_case(tmp_path, id_map=_ree_id_map()), tmp_path, tmp_path
         )
 
     assert nw_costs == {}
