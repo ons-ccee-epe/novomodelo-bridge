@@ -49,6 +49,10 @@ links are cobre-bridge's.
   because the case's CMO leaves out its multiplier wherever it binds. Write
   the term as `val_demanda` or `val_demanda_sin` where the multiplier should
   not count.
+- **`compare decomp` warns with `decomp-evaporation-calendar-convention`**
+  that DECOMP and Novomodelo read the monthly evaporation coefficients on
+  different calendars, so the evaporation rows differ even where storage
+  agrees.
 
 ### Changed
 

@@ -25,6 +25,7 @@ from novomodelo_bridge.comparators.decomp.results import (
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.units import C_M3S2HM3, HM3_PER_M3S_HOUR, MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
@@ -35,6 +36,9 @@ from tests.comparators.conftest import (
     _ree_id_map,
     _unmapped_codes,
 )
+
+#: The warning every evaporation comparison with paired rows carries.
+_CALENDAR_CONVENTION = "decomp-evaporation-calendar-convention"
 
 
 def _write_stages_json(case_dir: Path, stage_hours: dict[int, list[float]]) -> Path:
@@ -206,15 +210,19 @@ class TestEvaporationResultComparisons:
     ) -> None:
         _patch_evap_sources(monkeypatch)
 
-        results, one_sided = _evaporation_result_comparisons(
-            tmp_path,
-            tmp_path,
-            _evap_aligned_fixture().novomodelo_hydro,
-            _ree_id_map(),
-            {0: "A", 1: "B"},
-        )
+        with dx.collect() as collected:
+            results, one_sided = _evaporation_result_comparisons(
+                tmp_path,
+                tmp_path,
+                _evap_aligned_fixture().novomodelo_hydro,
+                _ree_id_map(),
+                {0: "A", 1: "B"},
+            )
 
         assert one_sided == []
+        [convention] = collected
+        assert convention.code == _CALENDAR_CONVENTION
+        assert convention.severity is Severity.WARNING
         by_id = {r.novomodelo_id: r for r in results}
         assert set(by_id) == {0, 1}
 
@@ -260,8 +268,10 @@ class TestEvaporationResultComparisons:
 
         assert [r.novomodelo_id for r in results] == [0]
         assert one_sided == [1]
-        assert len(collected) == 1
-        assert collected[0].code == "evaporation-plant-one-sided"
+        assert [d.code for d in collected] == [
+            "evaporation-plant-one-sided",
+            _CALENDAR_CONVENTION,
+        ]
         assert collected[0].table is not None
         assert collected[0].table.rows == [[20, "B", "run output"]]
 
@@ -296,7 +306,7 @@ class TestEvaporationResultComparisons:
 
         assert [r.novomodelo_id for r in results] == [0]
         assert one_sided == []
-        assert collected == []
+        assert [d.code for d in collected] == [_CALENDAR_CONVENTION]
 
     def test_plant_present_only_on_source_side_excluded_and_counted(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -317,8 +327,10 @@ class TestEvaporationResultComparisons:
 
         assert [r.novomodelo_id for r in results] == [0]
         assert one_sided == [1]
-        assert len(collected) == 1
-        assert collected[0].code == "evaporation-plant-one-sided"
+        assert [d.code for d in collected] == [
+            "evaporation-plant-one-sided",
+            _CALENDAR_CONVENTION,
+        ]
 
     def test_none_id_map_returns_no_rows_and_no_unmapped(self, tmp_path: Path) -> None:
         results, one_sided = _evaporation_result_comparisons(
@@ -402,16 +414,18 @@ class TestEvaporationResultComparisons:
             lambda *_a, **_k: {},
         )
 
-        results, one_sided = _evaporation_result_comparisons(
-            tmp_path,
-            tmp_path,
-            _evap_aligned_fixture().novomodelo_hydro,
-            _ree_id_map(),
-            {0: "A", 1: "B"},
-        )
+        with dx.collect() as collected:
+            results, one_sided = _evaporation_result_comparisons(
+                tmp_path,
+                tmp_path,
+                _evap_aligned_fixture().novomodelo_hydro,
+                _ree_id_map(),
+                {0: "A", 1: "B"},
+            )
 
         assert results == []
         assert one_sided == []
+        assert collected == []
 
 
 class TestBuildDecompDatasetEvaporation:

@@ -206,6 +206,18 @@ stage fails the conversion, naming the plant: a water calendar of more than
 one stage is not converted yet. A deck with neither writes no
 `post_study_stages.json`.
 
+Evaporation takes the monthly coefficients of `hidr.dat` with the deck's
+`AC COFEVA` overrides, linearized at the reference volume the `EV` record
+selects: the initial storage for `INI`, the middle of the useful volume for
+`MED`. A deck without the `EV` linear model warns with
+`decomp-evaporation-outside-lp`, since Novomodelo has no evaporation computed
+outside the LP. Novomodelo applies to each stage the coefficient of the
+calendar month the stage starts in, over that month's hours, where DECOMP
+applies the coefficient of the stage's operative month over a 730.5-hour
+month. The conversion leaves this convention difference in place, and
+`compare decomp` reports it with the `decomp-evaporation-calendar-convention`
+warning.
+
 Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
 `convert decomp` reports each kind once, as a warning with a table of the

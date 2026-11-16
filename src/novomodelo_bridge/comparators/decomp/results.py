@@ -2542,7 +2542,31 @@ def _evaporation_result_comparisons(
                 rel_diff=rel_diff,
             )
         )
+    if results:
+        _emit_evaporation_calendar_convention()
     return results, one_sided
+
+
+def _emit_evaporation_calendar_convention() -> None:
+    """The evaporation rows also differ by each model's calendar for the
+    monthly coefficients, a difference the conversion leaves in place."""
+    emit(
+        Diagnostic(
+            code="decomp-evaporation-calendar-convention",
+            severity=Severity.WARNING,
+            category="Compare data",
+            title="Evaporation computed on different calendars",
+            summary=(
+                "DECOMP applies to each stage the evaporation coefficient of "
+                "the operative month the stage belongs to, over a 730.5-hour "
+                "month. Novomodelo applies the coefficient of the calendar "
+                "month the stage starts in, over that month's hours. The "
+                "evaporation rows differ by this convention even where both "
+                "models hold the same storage."
+            ),
+        ),
+        logger=_LOG,
+    )
 
 
 # --- Constraints tab (gc_* metadata, DECOMP-side LHS) ---
