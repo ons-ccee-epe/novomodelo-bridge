@@ -513,6 +513,40 @@ def test_he_metadata_captured() -> None:
     assert rec.he_meta.tipo_penalidade == 1
 
 
+def test_he_violation_flag_blank_and_zero_agree_across_stages() -> None:
+    dadger = _FakeDadger(
+        he=_he(
+            (7, 1, 20.0, 2, 0, 1, None, 3370.0, 0),
+            (7, 2, 20.0, 2, 0, 1, None, 3370.0, None),
+        ),
+        cm=_cm((7, 3, 1.0)),
+    )
+    rec = _only(read_constraints(dadger).by_family["HE"], 7)
+    assert rec.he_meta is not None
+    assert rec.he_meta.violation_is_infeasible
+
+
+def test_he_violation_flag_changing_between_stages_raises() -> None:
+    dadger = _FakeDadger(
+        he=_he(
+            (7, 1, 20.0, 2, 0, 1, None, 3370.0, 0),
+            (7, 2, 20.0, 2, 0, 1, None, 3370.0, 1),
+        ),
+        cm=_cm((7, 3, 1.0)),
+    )
+    with pytest.raises(FieldParseError, match="changes its violation flag"):
+        read_constraints(dadger)
+
+
+def test_he_violation_flag_outside_zero_one_raises() -> None:
+    dadger = _FakeDadger(
+        he=_he((7, 1, 20.0, 2, 0, 1, None, 3370.0, 2)),
+        cm=_cm((7, 3, 1.0)),
+    )
+    with pytest.raises(FieldParseError, match="violation flag \\(field 9\\) 2"):
+        read_constraints(dadger)
+
+
 def test_he_is_generic() -> None:
     dadger = _FakeDadger(
         he=_he((7, 1, 20.0, 2, 0, 1, "PRODRHE.DAT", 3370.0, 1)),

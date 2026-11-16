@@ -339,6 +339,12 @@ links are cobre-bridge's.
   `decomp-evaporation-outside-lp`, and an `AC COFEVA` dated inside a month
   with `decomp-ac-cofeva-varies-within-month`. Results change for decks with
   evaporating plants, so reconvert them.
+- **`convert decomp` let novomodelo violate at their `HE` penalty the `RHE`
+  constraints DECOMP treats as infeasible when violated** (field 9 at 0 or
+  blank). They now carry the same high penalty as `RE`, `HQ` and `HV`; a field
+  9 other than 0, 1 or blank, or one that changes between a constraint's
+  stages, stops the conversion with `source-field-parse`. Results change for
+  decks with `RHE`, so reconvert them.
 - **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms

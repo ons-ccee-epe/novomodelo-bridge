@@ -2393,6 +2393,7 @@ def _emit_special_constraint_generics(
         effective=artifacts.effective,
         hydro_to_ree=shared.hydro_to_ree,
         ez_fractions=rhe_shares_conv.read_ez_fractions(artifacts.dadger),
+        big_m=shared.big_m,
         allocator=shared.allocator,
     )
     return [

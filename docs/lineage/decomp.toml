@@ -2951,9 +2951,10 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
   from = [
     { file = "dadger", register = "CD", item = "custo" },
     { file = "dadger", register = "HE", item = "valor_penalidade" },
+    { file = "dadger", register = "HE", item = "tipo_penalidade" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO · custo_violacao" },
   ]
-  how = "`RE`/`HQ`/`HV`: 10 × o maior custo de déficit do `CD` entre os submercados. `RHE`: `valor_penalidade` do `HE` (R$/MWh; 1000.0, com aviso, quando ausente ou não positivo), cobrada por MWh de violação. LIBs: `custo_violacao` do `TRATAMENTO-VIOLACAO` quando positivo, senão o mesmo 10 × déficit."
+  how = "`RE`/`HQ`/`HV`: 10 × o maior custo de déficit do `CD` entre os submercados. `RHE`, cobrada por MWh de violação: com `tipo_penalidade` (campo 9) 0 ou em branco, em que o DECOMP trata a violação como inviabilidade, o mesmo 10 × déficit; com 1, `valor_penalidade` do `HE` (R$/MWh; 1000.0, com aviso, quando ausente ou não positivo). Um `tipo_penalidade` diferente de 0, 1 ou branco, ou que muda entre os estágios de uma restrição, interrompe a conversão. LIBs: `custo_violacao` do `TRATAMENTO-VIOLACAO` quando positivo, senão o mesmo 10 × déficit."
 
   [[output.field]]
   path = "constraints[].slack.penalty_basis"
@@ -3252,12 +3253,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   item = "arquivo_produtibilidades"
   status = "unread"
   note = "Arquivo externo de produtibilidades da restrição; capturado e não consumido, e o arquivo nunca é aberto."
-
-  [[source.item]]
-  register = "HE"
-  item = "tipo_penalidade"
-  status = "unread"
-  note = "Tipo da penalidade da restrição de energia; só `valor_penalidade` é usado como penalidade da folga."
 
   # --- unread registers ------------------------------------------------------
 

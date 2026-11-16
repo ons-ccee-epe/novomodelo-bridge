@@ -110,6 +110,10 @@ def _hidr_frame(rows: dict[int, dict[str, object]]) -> pd.DataFrame:
     return df
 
 
+#: The big-M slack penalty the tests pass for hard constraints.
+_BIG_M = 50_000.0
+
+
 def _he_record(
     *,
     constraint_id: int,
@@ -118,6 +122,7 @@ def _he_record(
     bounds: dict[int, StageBounds],
     tipo_limite: int | None,
     valor_penalidade: float | None,
+    tipo_penalidade: int | None = 1,
 ) -> ConstraintRecord:
     return ConstraintRecord(
         family="HE",
@@ -130,7 +135,9 @@ def _he_record(
         bounds=bounds,
         per_block=False,
         tipo_limite=tipo_limite,
-        he_meta=HeMeta(valor_penalidade=valor_penalidade),
+        he_meta=HeMeta(
+            valor_penalidade=valor_penalidade, tipo_penalidade=tipo_penalidade
+        ),
     )
 
 
@@ -169,6 +176,7 @@ def test_emit_rhe_generics_absolute_limit_becomes_mwh_bound() -> None:
         effective=effective,
         hydro_to_ree={5: 1},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -216,6 +224,7 @@ def test_emit_rhe_generics_percentage_rhs_is_the_maximum_useful_energy() -> None
         effective=effective,
         hydro_to_ree={5: 1},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -263,6 +272,7 @@ def test_emit_rhe_generics_two_reservoir_cascade() -> None:
         effective=effective,
         hydro_to_ree={5: 1, 6: 1},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -301,6 +311,7 @@ def test_emit_rhe_generics_run_of_river_excluded() -> None:
         effective=effective,
         hydro_to_ree={5: 1, 7: 1},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -327,6 +338,7 @@ def test_emit_rhe_generics_weekly_regulating_reservoir_participates() -> None:
         effective=effective,
         hydro_to_ree={5: 1},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -364,6 +376,7 @@ def test_emit_rhe_generics_no_storage_plants_skips_and_warns() -> None:
             effective=effective,
             hydro_to_ree={7: 1},
             ez_fractions={},
+            big_m=_BIG_M,
         )
 
     assert result is None
@@ -396,6 +409,7 @@ def test_emit_rhe_generics_unmapped_ree_skips_and_warns() -> None:
             effective=effective,
             hydro_to_ree={},
             ez_fractions={},
+            big_m=_BIG_M,
         )
 
     assert result is None
@@ -427,6 +441,7 @@ def test_emit_rhe_generics_lists_every_constraint_without_storage_once() -> None
             effective=effective,
             hydro_to_ree={},
             ez_fractions={},
+            big_m=_BIG_M,
         )
 
     [diag] = collected
@@ -462,6 +477,7 @@ def test_emit_rhe_generics_one_constraint_spans_weekly_and_monthly_stages() -> N
         effective=effective,
         hydro_to_ree={5: 1},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -496,6 +512,7 @@ def test_emit_rhe_generics_percentage_fraction_is_zero_off_the_record_stages() -
         effective=effective,
         hydro_to_ree={5: 1},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -532,7 +549,7 @@ def test_emit_rhe_generics_negative_cm_sign_subtracts() -> None:
         bounds={0: StageBounds(lower=(50.0,), upper=(None,))},
         per_block=False,
         tipo_limite=1,
-        he_meta=HeMeta(valor_penalidade=250.0),
+        he_meta=HeMeta(valor_penalidade=250.0, tipo_penalidade=1),
     )
 
     result = emit_rhe_generics(
@@ -542,6 +559,7 @@ def test_emit_rhe_generics_negative_cm_sign_subtracts() -> None:
         effective=effective,
         hydro_to_ree={5: 1, 6: 2},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -575,6 +593,7 @@ def test_emit_rhe_generics_non_positive_penalty_falls_back_and_warns() -> None:
             effective=effective,
             hydro_to_ree={5: 1},
             ez_fractions={},
+            big_m=_BIG_M,
         )
 
     assert result is not None
@@ -584,6 +603,43 @@ def test_emit_rhe_generics_non_positive_penalty_falls_back_and_warns() -> None:
     assert warnings[0].code == "decomp-rhe-default-penalty"
     assert warnings[0].table is not None
     assert warnings[0].table.rows == [[108, "0", "1000"]]
+
+
+@pytest.mark.parametrize("tipo_penalidade", [0, None])
+def test_emit_rhe_generics_infeasibility_flag_prices_the_slack_at_big_m(
+    tipo_penalidade: int | None,
+) -> None:
+    """HE field 9 at 0 or blank: DECOMP treats a violation as an infeasibility,
+    so the record's own penalty, even a non-positive one, is not used."""
+    id_map, effective = _single_reservoir()
+    record = _he_record(
+        constraint_id=114,
+        ree_code=1,
+        coefficient=1.0,
+        bounds={0: StageBounds(lower=(50.0,), upper=(None,))},
+        tipo_limite=1,
+        valor_penalidade=0.0,
+        tipo_penalidade=tipo_penalidade,
+    )
+
+    with dx.collect() as collected:
+        result = emit_rhe_generics(
+            _case([_stage(0, 730.0)]),
+            id_map,
+            census=_census(record),
+            effective=effective,
+            hydro_to_ree={5: 1},
+            ez_fractions={},
+            big_m=_BIG_M,
+        )
+
+    assert result is not None
+    assert result.constraints[0]["slack"] == {
+        "enabled": True,
+        "penalty": _BIG_M,
+        "penalty_basis": "per_unit",
+    }
+    assert not [d for d in collected if d.code == "decomp-rhe-default-penalty"]
 
 
 def test_emit_rhe_generics_unknown_tipo_limite_treated_as_absolute_and_warns() -> None:
@@ -605,6 +661,7 @@ def test_emit_rhe_generics_unknown_tipo_limite_treated_as_absolute_and_warns() -
             effective=effective,
             hydro_to_ree={5: 1},
             ez_fractions={},
+            big_m=_BIG_M,
         )
 
     assert result is not None
@@ -630,6 +687,7 @@ def test_emit_rhe_generics_empty_census_returns_none() -> None:
             effective=effective,
             hydro_to_ree={},
             ez_fractions={},
+            big_m=_BIG_M,
         )
 
     assert result is None
@@ -684,6 +742,7 @@ def _emit_coupled(
         effective=effective,
         hydro_to_ree=hydro_to_ree,
         ez_fractions=_COUPLED_EZ if ez_fractions is None else ez_fractions,
+        big_m=_BIG_M,
     )
     assert result is not None
     by_name = {c["name"]: c for c in result.constraints}
@@ -815,6 +874,7 @@ def test_emit_rhe_generics_energy_link_through_a_plant_outside_the_configuration
         effective=effective,
         hydro_to_ree={1: 1, 5: 1},
         ez_fractions={},
+        big_m=_BIG_M,
     )
 
     assert result is not None
@@ -860,6 +920,7 @@ def test_emit_rhe_generics_energy_chain_that_loops_back_is_reported_once() -> No
             effective=effective,
             hydro_to_ree={1: 1, 5: 1},
             ez_fractions={},
+            big_m=_BIG_M,
         )
 
     [loop] = [d for d in collected if d.code == "decomp-energy-chain-loop"]

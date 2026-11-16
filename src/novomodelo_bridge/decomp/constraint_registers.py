@@ -173,10 +173,10 @@ class HeMeta:
 
     ``forma_calculo_produtibilidades``/``tipo_valores_produtibilidades``/
     ``arquivo_produtibilidades`` describe how the REE cascade's productivity
-    feeds the energy sum; ``valor_penalidade``/``tipo_penalidade`` are the
-    constraint's soft-penalty. This reader only captures them raw; the RHE
-    emitter interprets them (percentage-vs-absolute RHS, energy factor,
-    penalty).
+    feeds the energy sum; ``valor_penalidade`` is the violation price and
+    ``tipo_penalidade`` (field 9) how DECOMP treats a violation. This reader
+    only captures them raw; the RHE emitter interprets them
+    (percentage-vs-absolute RHS, energy factor, penalty).
     """
 
     forma_calculo_produtibilidades: int | None = None
@@ -184,6 +184,12 @@ class HeMeta:
     arquivo_produtibilidades: str | None = None
     valor_penalidade: float | None = None
     tipo_penalidade: int | None = None
+
+    @property
+    def violation_is_infeasible(self) -> bool:
+        """Field 9 at ``0`` or blank: DECOMP treats a violation as an
+        infeasibility; at ``1`` it prices it as a resource, like a deficit."""
+        return self.tipo_penalidade != 1
 
 
 @dataclass(frozen=True)
@@ -644,6 +650,18 @@ def _read_triple_family(
     return records
 
 
+def _he_violation_flag(row: pd.Series, cid: int, stage0: int) -> int | None:
+    """``HE`` field 9, refused when it is not ``0``, ``1`` or blank."""
+    flag = _opt_int(row.get("tipo_penalidade"))
+    if flag not in (None, 0, 1):
+        raise FieldParseError(
+            f"HE constraint {cid} gives violation flag (field 9) {flag} at "
+            f"stage {stage0 + 1}; the source model accepts 0, 1 or blank.",
+            field=f"HE constraint {cid}",
+        )
+    return flag
+
+
 def _read_energy_constraints(dadger: ConstraintRegisters) -> list[ConstraintRecord]:
     """Join the ``HE``/``CM`` energy family (VminOP-style, over a REE cascade).
 
@@ -654,6 +672,12 @@ def _read_energy_constraints(dadger: ConstraintRegisters) -> list[ConstraintReco
     HE is a generic constraint — the ``energy`` variable expands to
     ``Σ ρ_acum · storage`` over the REE's plants downstream (RHE energy).
     ``CM`` has no stage column, so every HE term has a constant coefficient.
+
+    Raises
+    ------
+    FieldParseError
+        An ``HE`` violation flag (field 9) other than ``0``, ``1`` or blank,
+        or one that changes between a constraint's stages.
     """
     he = _df(dadger, "he")
     cm = _df(dadger, "cm")
@@ -679,6 +703,13 @@ def _read_energy_constraints(dadger: ConstraintRegisters) -> list[ConstraintReco
         per_stage.setdefault(cid, {})[stage0] = StageBounds(
             lower=(_opt_float(row["limite"]),), upper=(None,)
         )
+        violation_flag = _he_violation_flag(row, cid, stage0)
+        if cid in meta and (meta[cid][1].tipo_penalidade or 0) != (violation_flag or 0):
+            raise FieldParseError(
+                f"HE constraint {cid} changes its violation flag (field 9) at "
+                f"stage {stage0 + 1}; the source model rejects such a deck.",
+                field=f"HE constraint {cid}",
+            )
         meta[cid] = (
             _opt_int(row["tipo_limite"]),
             HeMeta(
@@ -690,7 +721,7 @@ def _read_energy_constraints(dadger: ConstraintRegisters) -> list[ConstraintReco
                 ),
                 arquivo_produtibilidades=_opt_str(row.get("arquivo_produtibilidades")),
                 valor_penalidade=_opt_float(row.get("valor_penalidade")),
-                tipo_penalidade=_opt_int(row.get("tipo_penalidade")),
+                tipo_penalidade=violation_flag,
             ),
         )
 
