@@ -53,6 +53,11 @@ links are cobre-bridge's.
   that DECOMP and Novomodelo read the monthly evaporation coefficients on
   different calendars, so the evaporation rows differ even where storage
   agrees.
+- **`compare newave` and `compare decomp` give the hydro gaps without the
+  ties** in an Excl. ties column beside the gap, leaving out the points where
+  a plant's energy or water is worth nothing in either model; the agreement
+  still judges every point, and the exported summary and `--json` carry the
+  new gap. Run `compare` again to update a report.
 
 ### Changed
 

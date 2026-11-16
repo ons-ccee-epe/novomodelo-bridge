@@ -257,7 +257,10 @@ class TestAgreementTable:
     """The compare summary table labels each variable with its dataset band."""
 
     def _print(
-        self, results: list[ResultComparison], **kwargs: Any
+        self,
+        results: list[ResultComparison],
+        pct: PercentileData | None = None,
+        **kwargs: Any,
     ) -> tuple[ComparisonDataset, _MakeTableSpy]:
         from novomodelo_bridge.comparators.analyze import build_results_dataset
         from novomodelo_bridge.comparators.verdict import build_compare_verdict
@@ -265,7 +268,7 @@ class TestAgreementTable:
             print_results_summary_from_dataset,
         )
 
-        dataset = build_results_dataset(results, PercentileData(), 0.05)
+        dataset = build_results_dataset(results, pct or PercentileData(), 0.05)
         spy = _MakeTableSpy()
         with patch("novomodelo_bridge.ui.compare_summary.make_table", side_effect=spy):
             print_results_summary_from_dataset(
@@ -306,6 +309,61 @@ class TestAgreementTable:
         # One bold heading row opens the hydro group.
         assert rows[0][0] == "Hydro plants"
         assert spy.records[0]["row_styles"] == ["bold", None, None]
+        assert "Excl. ties" not in spy.records[0]["columns"]
+
+    def test_the_gap_without_ties_sits_beside_the_gap(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.comparators.operating_points import (
+            MASKED_HYDRO_SCHEMA,
+        )
+
+        thermal = dataclasses.replace(
+            _hydro_result("ANGRA", "generation_mw", 100.0, 100.0),
+            entity_type="thermal",
+        )
+        masked = pl.DataFrame(
+            [
+                dataclasses.asdict(
+                    _hydro_result("ITAIPU", "generation_mw", 100.0, 105.0)
+                )
+            ],
+            schema=MASKED_HYDRO_SCHEMA,
+        )
+
+        dataset, spy = self._print(
+            [_hydro_result("ITAIPU", "generation_mw", 100.0, 150.0), thermal],
+            PercentileData(hydro_masked=masked),
+        )
+
+        record = spy.records[0]
+        assert record["columns"] == [
+            "Variable",
+            "Points",
+            "Gap",
+            "Excl. ties",
+            "r",
+            "Agreement",
+        ]
+        cells = [
+            (str(row[0]).strip(), row[2], row[3], str(row[5]))
+            for row in record["rows"]
+            if str(row[0]).startswith("  ")
+        ]
+        assert cells == [
+            ("Generation (MW)", "50%", "5%", "far"),
+            ("Generation (MW)", "0%", "—", "close"),
+        ]
+        excl = dict(
+            zip(
+                dataset.summary["entity_type"],
+                dataset.summary["gap_excl_ties"],
+                strict=True,
+            )
+        )
+        assert excl == {"hydro": pytest.approx(0.05), "thermal": None}
+        out = " ".join(capsys.readouterr().out.split())
+        assert "Excl. ties is the gap without the points" in out
 
     def test_policy_rows_stay_out_of_the_table(self) -> None:
         dataset, spy = self._print(

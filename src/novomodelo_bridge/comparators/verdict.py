@@ -35,6 +35,9 @@ class FarVariable:
     variable: str
     #: ``None`` when the gap is undefined.
     gap: float | None
+    #: The gap over the points that are not ties; ``None`` when the tie
+    #: mask does not cover the variable.
+    gap_excl_ties: float | None = None
 
 
 @dataclass(frozen=True)
@@ -82,9 +85,14 @@ def build_compare_verdict(dataset: ComparisonDataset) -> CompareVerdict:
         row_band = Band(row["band"])
         counts[row_band] += 1
         if row_band is Band.FAR:
-            gap = row["gap"]
+            gap, excl = row["gap"], row["gap_excl_ties"]
             far.append(
-                FarVariable(entity_type, variable, None if gap is None else float(gap))
+                FarVariable(
+                    entity_type,
+                    variable,
+                    None if gap is None else float(gap),
+                    None if excl is None else float(excl),
+                )
             )
     far.sort(
         key=lambda v: (

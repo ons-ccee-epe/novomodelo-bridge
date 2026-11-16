@@ -193,6 +193,7 @@ def tidy_results_dataset(
 def summary_frame_from_results(
     results: Sequence[ResultComparison],
     tolerance: float,
+    masked_hydro: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Project the existing summary into a ``SUMMARY_SCHEMA`` frame.
 
@@ -206,6 +207,10 @@ def summary_frame_from_results(
         results: The result comparisons to summarize; consumed verbatim.
         tolerance: Relative tolerance forwarded to ``build_results_summary``
             for the within-tolerance match rate and the gap band.
+        masked_hydro: The hydro rows averaged over the points that are not
+            ties (:func:`with_masked_hydro_rows`). Each hydro variable they
+            carry takes, as ``gap_excl_ties``, the gap of the same summary
+            built with them in place of its rows.
 
     Returns:
         A frame conforming exactly (columns, order, dtypes) to
@@ -215,11 +220,23 @@ def summary_frame_from_results(
         return pl.DataFrame(schema=SUMMARY_SCHEMA)
 
     summary = build_results_summary(list(results), tolerance)
+    excl_ties: dict[tuple[str, str], float | None] = {}
+    if masked_hydro is not None and not masked_hydro.is_empty():
+        covered = set(masked_hydro["variable"].unique().to_list())
+        masked_summary = build_results_summary(
+            with_masked_hydro_rows(results, masked_hydro), tolerance
+        )
+        excl_ties = {
+            key: stats.gap
+            for key, stats in masked_summary.by_variable.items()
+            if key[0] == "hydro" and key[1] in covered
+        }
 
     entity_types: list[str] = []
     variables: list[str] = []
     counts: list[int] = []
     gaps: list[float | None] = []
+    gaps_excl_ties: list[float | None] = []
     bands: list[str] = []
     mean_abs_diff: list[float] = []
     max_abs_diff: list[float] = []
@@ -233,6 +250,7 @@ def summary_frame_from_results(
         variables.append(variable)
         counts.append(stats.count)
         gaps.append(stats.gap)
+        gaps_excl_ties.append(excl_ties.get((entity_type, variable)))
         bands.append(stats.band.value)
         mean_abs_diff.append(stats.mean_abs_diff)
         max_abs_diff.append(stats.max_abs_diff)
@@ -247,6 +265,7 @@ def summary_frame_from_results(
             "variable": variables,
             "count": counts,
             "gap": gaps,
+            "gap_excl_ties": gaps_excl_ties,
             "band": bands,
             "mean_abs_diff": mean_abs_diff,
             "max_abs_diff": max_abs_diff,
@@ -374,7 +393,7 @@ def build_results_dataset(
         SchemaError: If the assembled dataset fails :meth:`validate`.
     """
     tidy = tidy_results_dataset(results, pct)
-    summary = summary_frame_from_results(results, tolerance)
+    summary = summary_frame_from_results(results, tolerance, pct.hydro_masked)
     metadata: dict[str, object] = {
         "top_divergences": top_divergences_from_results(results),
         "footer_counts": results_footer_counts(results),

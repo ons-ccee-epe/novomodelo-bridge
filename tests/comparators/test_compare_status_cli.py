@@ -69,6 +69,7 @@ def _decomp_dataset(*, all_close: bool) -> ComparisonDataset:
             "variable": ["generation_mw"],
             "count": [1],
             "gap": [0.0 if all_close else 0.1],
+            "gap_excl_ties": [None],
             "band": ["close" if all_close else "moderate"],
             "mean_abs_diff": [0.0 if all_close else 10.0],
             "max_abs_diff": [0.0 if all_close else 10.0],

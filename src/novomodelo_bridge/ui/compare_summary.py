@@ -49,10 +49,11 @@ def _group_order(entity_type: str) -> tuple[int, str]:
 
 
 def _agreement_rows(
-    dataset: ComparisonDataset,
+    dataset: ComparisonDataset, *, excl_ties: bool
 ) -> tuple[list[list[object]], list[str | None]]:
     """The table rows, an unstyled heading row before each entity group, and
-    the style of each row."""
+    the style of each row; with *excl_ties*, each row carries its
+    ``gap_excl_ties`` after the gap."""
     by_group: dict[str, list[dict[str, Any]]] = {}
     for row in dataset.summary.to_dicts():
         entity_type, variable = str(row["entity_type"]), str(row["variable"])
@@ -62,7 +63,8 @@ def _agreement_rows(
     rows: list[list[object]] = []
     styles: list[str | None] = []
     for entity_type in sorted(by_group, key=_group_order):
-        rows.append([ENTITY_GROUPS.get(entity_type, entity_type), "", "", "", ""])
+        blanks = [""] * (5 if excl_ties else 4)
+        rows.append([ENTITY_GROUPS.get(entity_type, entity_type), *blanks])
         styles.append("bold")
         for stats in sorted(
             by_group[entity_type],
@@ -70,13 +72,17 @@ def _agreement_rows(
         ):
             row_band = Band(stats["band"])
             gap = stats["gap"]
+            excl = stats["gap_excl_ties"]
             correlation = stats["correlation"]
             judged = counts_in_headline(entity_type, str(stats["variable"]))
+            gaps: list[object] = [format_gap(None if gap is None else float(gap))]
+            if excl_ties:
+                gaps.append("—" if excl is None else format_gap(float(excl)))
             rows.append(
                 [
                     f"  {variable_label(str(stats['variable']))}",
                     f"{int(stats['count']):,}",
-                    format_gap(None if gap is None else float(gap)),
+                    *gaps,
                     "—" if correlation is None else f"{float(correlation):.3f}",
                     Text(row_band.value, style=BAND_STYLE[row_band])
                     if judged
@@ -149,13 +155,18 @@ def print_results_summary_from_dataset(
         f"Novomodelo output: {novomodelo_output_dir}", soft_wrap=True, markup=False
     )
 
-    rows, row_styles = _agreement_rows(dataset)
+    excl_ties = dataset.summary["gap_excl_ties"].is_not_null().any()
+    rows, row_styles = _agreement_rows(dataset, excl_ties=excl_ties)
     if rows:
         target.print(
             make_table(
-                ["Variable", "Points", "Gap", "r", "Agreement"],
+                ["Variable", "Points", "Gap", "Excl. ties", "r", "Agreement"]
+                if excl_ties
+                else ["Variable", "Points", "Gap", "r", "Agreement"],
                 rows,
-                justify=["left", "right", "right", "right", "left"],
+                justify=["left", "right", "right", "right", "right", "left"]
+                if excl_ties
+                else ["left", "right", "right", "right", "left"],
                 row_styles=row_styles,
             )
         )
@@ -167,6 +178,16 @@ def print_results_summary_from_dataset(
             soft_wrap=True,
             markup=False,
         )
+        if excl_ties:
+            target.print(
+                "Excl. ties is the gap without the points where a plant's "
+                "energy or water is worth nothing in either model, so either "
+                "may turbine or spill at no cost. The agreement judges the "
+                "gap over every point.",
+                style="dim",
+                soft_wrap=True,
+                markup=False,
+            )
         if (dataset.summary["variable"] == TIED_NET_FLOW).any():
             target.print(
                 "Net flow on tied routes is not in the headline: the two "

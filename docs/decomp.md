@@ -475,5 +475,9 @@ every bus the plant feeds, or Novomodelo's water value is zero, all at DECOMP's
 two-decimal print resolution. Either model may then turbine or spill at no
 cost. Ties are left out of the split and of the per-plant ranking of
 generation, turbined flow, productivity, spillage and outflow on the Hydro
-Plant Details tab, and the tab reports their share per stage. DECOMP prints no
-water value, so on its side a tie is detected through the marginal cost only.
+Plant Details tab, and the tab reports their share per stage. The console
+table gives the same five variables' gaps without the ties in an Excl. ties
+column beside the gap, and the exported summary and the `--json` summary
+carry them too. The agreement band still judges the gap over every point.
+DECOMP prints no water value, so on its side a tie is detected through the
+marginal cost only.

@@ -1742,3 +1742,34 @@ def test_with_masked_hydro_rows_replaces_each_masked_variable() -> None:
 def test_with_masked_hydro_rows_without_masked_rows_is_unchanged() -> None:
     results = _make_results()
     assert with_masked_hydro_rows(results, pl.DataFrame()) == results
+
+
+def test_summary_frame_gives_the_gap_without_ties_to_each_masked_variable() -> None:
+    """Generation is masked down to ITAIPU's stage-0 point at no difference;
+    storage has no masked rows and the thermal row is never masked."""
+    storage = ResultComparison(
+        entity_type="hydro",
+        entity_name="ITAIPU",
+        newave_code=10,
+        novomodelo_id=0,
+        stage=0,
+        variable="storage_hm3",
+        newave_value=100.0,
+        novomodelo_value=120.0,
+        abs_diff=20.0,
+        rel_diff=0.2,
+    )
+
+    frame = summary_frame_from_results(
+        [*_make_results(), storage], 1e-2, _masked_generation(0, 0, 95.0)
+    )
+
+    rows = {
+        (row["entity_type"], row["variable"]): (row["gap"], row["gap_excl_ties"])
+        for row in frame.to_dicts()
+    }
+    assert rows == {
+        ("hydro", "generation_mw"): (pytest.approx(20.0 / 150.0), 0.0),
+        ("hydro", "storage_hm3"): (pytest.approx(0.2), None),
+        ("thermal", "generation_mw"): (None, None),
+    }

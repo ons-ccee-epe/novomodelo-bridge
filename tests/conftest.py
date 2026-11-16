@@ -552,6 +552,7 @@ def _fake_dataset(*, all_close: bool = False) -> ComparisonDataset:
             "variable": ["generation_mw", "turbined_m3s"],
             "count": [1, 1],
             "gap": [0.0, turbined_diff / 100.0],
+            "gap_excl_ties": [0.0, turbined_diff / 200.0],
             "band": ["close", "close" if all_close else "far"],
             "mean_abs_diff": [0.0, turbined_diff],
             "max_abs_diff": [0.0, turbined_diff],

@@ -117,6 +117,7 @@ def _small_summary() -> pl.DataFrame:
             "variable": ["generation_mw"],
             "count": [1],
             "gap": [0.005],
+            "gap_excl_ties": [None],
             "band": ["close"],
             "mean_abs_diff": [0.5],
             "max_abs_diff": [0.5],
