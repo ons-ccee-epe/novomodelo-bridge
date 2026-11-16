@@ -8,6 +8,12 @@ from novomodelo_bridge.core.penalties import storage_violation_cost
 from novomodelo_bridge.decomp.converters.config import (
     convert_penalties,
     rhv_slack_penalty,
+    with_outflow_volume_violation_cost,
+)
+
+_OUTFLOW_VOLUME_KEYS = (
+    "outflow_volume_violation_below_cost",
+    "outflow_volume_violation_above_cost",
 )
 
 
@@ -27,3 +33,22 @@ def test_rhv_slack_penalty_empty_productivities_uses_unit_rho_max() -> None:
     assert rhv_slack_penalty(100.0, []) == storage_violation_cost(
         max_deficit_cost=100.0, rho_max_acum=1.0
     )
+
+
+def test_with_outflow_volume_violation_cost_prices_both_keys_without_mutating() -> None:
+    doc = convert_penalties(1000.0, [1.0, 2.0])
+
+    priced = with_outflow_volume_violation_cost(doc, 42.0)
+
+    assert {key: priced["hydro"][key] for key in _OUTFLOW_VOLUME_KEYS} == {
+        key: 42.0 for key in _OUTFLOW_VOLUME_KEYS
+    }
+    assert {
+        key: value
+        for key, value in priced["hydro"].items()
+        if key not in _OUTFLOW_VOLUME_KEYS
+    } == doc["hydro"]
+    assert {key: value for key, value in priced.items() if key != "hydro"} == {
+        key: value for key, value in doc.items() if key != "hydro"
+    }
+    assert not set(_OUTFLOW_VOLUME_KEYS) & doc["hydro"].keys()

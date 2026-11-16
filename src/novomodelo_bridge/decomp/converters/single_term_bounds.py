@@ -14,6 +14,8 @@ on anything else, so an unhandled family fails loud instead of silently
 dropping a bound. An ``"HV"`` record is skipped there and lowered by
 :func:`single_term_hv_contributions`: ``VARM`` to absolute storage, the volume
 tipos (``VDEF``/``VDES``/``VBOM``) to absolute hm3 contributions, unshifted.
+:func:`rhv_bound_conflict_error` words an HV-involved empty intersection for the
+user.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
+from novomodelo_bridge.core.errors import RhvBoundConflictError
 from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import sided_bounds
@@ -35,6 +38,7 @@ from novomodelo_bridge.decomp.converters.hydro import split_plant_group_id
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
+    from novomodelo_bridge.decomp.bounds_accumulator import EmptyIntersectionError
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.constraint_registers import (
         ConstraintCensus,
@@ -73,6 +77,23 @@ _STORAGE_RANGE = "storage-range"
 
 #: Contributor label of the ``>= 0`` clamp a negative volume upper trips on.
 _NON_NEGATIVE_VOLUME = "non-negative volume"
+
+_QUANTITY_BY_AXIS: dict[str, str] = {
+    "storage": "stored volume",
+    "outflow_volume": "stage outflow volume",
+    "diversion_volume": "stage diverted volume",
+    "volume": "stage pumped volume",
+}
+
+#: Keys are the contributor labels ``convert_storage_bounds`` and
+#: ``convert_volume_espera_bounds`` set; a label missing here reads as
+#: "another bound on the plant" instead of failing.
+_SOURCE_PHRASES: dict[str, str] = {
+    "storage-envelope": "the plant's storage range",
+    _STORAGE_RANGE: "the plant's storage range",
+    "VE": "the VE flood-control volume",
+    _NON_NEGATIVE_VOLUME: "a volume cannot be negative",
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -668,3 +689,48 @@ def single_term_hv_contributions(
                     )
                 )
     return contributions
+
+
+def rhv_bound_conflict_error(
+    error: EmptyIntersectionError,
+    *,
+    id_map: DecompIdMap,
+    hydro_names: Mapping[int, str],
+    pumping_station_ids: Mapping[int, int],
+) -> RhvBoundConflictError | None:
+    """Reword an empty intersection that an HV contributes to, else ``None``."""
+    hv_ids = sorted(
+        {
+            int(label.removeprefix("HV_"))
+            for label, _ in (*error.lowers, *error.uppers)
+            if label.startswith("HV_")
+        }
+    )
+    if not hv_ids:
+        return None
+    if error.family == "hydro":
+        entity = (
+            f"plant code {id_map.hydro_codes[error.entity_id]} "
+            f"({hydro_names[error.entity_id]})"
+        )
+    else:
+        codes = {station: code for code, station in pumping_station_ids.items()}
+        entity = f"pumping station code {codes[error.entity_id]}"
+    described: list[tuple[float, str]] = []
+    for side, pick in ((error.lowers, max), (error.uppers, min)):
+        bound = pick(value for _, value in side)
+        phrases = dict.fromkeys(
+            f"HV constraint {label.removeprefix('HV_')}"
+            if label.startswith("HV_")
+            else _SOURCE_PHRASES.get(label, "another bound on the plant")
+            for label, value in side
+            if value == bound
+        )
+        described.append((bound, ", ".join(phrases)))
+    (lower, lower_sources), (upper, upper_sources) = described
+    return RhvBoundConflictError(
+        f"HV constraint(s) {', '.join(map(str, hv_ids))} cannot all hold on {entity} "
+        f"at stage {error.stage_id + 1}: the {_QUANTITY_BY_AXIS[error.axis]} must be "
+        f"at least {lower} hm³ ({lower_sources}) and at most {upper} hm³ "
+        f"({upper_sources})."
+    )

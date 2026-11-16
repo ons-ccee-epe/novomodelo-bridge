@@ -8,6 +8,7 @@ from novomodelo_bridge.core.errors import (
     FieldParseError,
     NovomodeloOutputError,
     NovomodeloPartitionMissingError,
+    RhvBoundConflictError,
     SourceFileError,
     diagnostic_from_exception,
 )
@@ -99,6 +100,19 @@ class TestDiagnosticFromException:
         assert diag.code == "novomodelo-partition-missing"
         assert diag.category == "Comparison failure"
         assert "file: /out/simulation/hydro_bus_generation" in diag.notes
+
+    def test_rhv_bound_conflict_error_maps_to_its_own_code_and_remediation(
+        self,
+    ) -> None:
+        diag = diagnostic_from_exception(
+            RhvBoundConflictError("x"), context="Conversion"
+        )
+        assert diag.code == "decomp-rhv-bound-conflict"
+        assert diag.severity is Severity.ERROR
+        assert diag.remediation == (
+            "Correct the LV limits of the named HV constraints so that one value "
+            "meets all of them at that stage."
+        )
 
 
 def test_no_source_string_carries_the_remediation_arrow() -> None:

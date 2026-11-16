@@ -178,3 +178,15 @@ def convert_penalties(
         "line": {"exchange_cost": PINT},
         "non_controllable_source": {"curtailment_cost": PCORTEOL},
     }
+
+
+def with_outflow_volume_violation_cost(penalties: dict, cost: float) -> dict:
+    """A copy of *penalties* pricing the outflow-volume slack at *cost* (R$/hm³)."""
+    return {
+        **penalties,
+        "hydro": {
+            **penalties["hydro"],
+            "outflow_volume_violation_below_cost": cost,
+            "outflow_volume_violation_above_cost": cost,
+        },
+    }

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import re
 from datetime import date
 from pathlib import Path
 
@@ -23,8 +24,13 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import (
+    RhvBoundConflictError,
+    diagnostic_from_exception,
+)
 from novomodelo_bridge.decomp.bounds_accumulator import (
     BoundContribution,
+    EmptyIntersectionError,
     build_bound_tables,
     resolve,
 )
@@ -42,6 +48,7 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 )
 from novomodelo_bridge.decomp.converters.single_term_bounds import (
     HydroCapacities,
+    rhv_bound_conflict_error,
     single_term_bound_contributions,
     single_term_hv_contributions,
     split_plant_group_contributions,
@@ -1564,3 +1571,196 @@ def test_hv_lowering_ignores_other_families(id_map: DecompIdMap) -> None:
     )
 
     assert _hv_contributions(record, id_map, _hv_effective(1)) == []
+
+
+_CONFLICT_ID_MAP = DecompIdMap(
+    bus_codes=(1,), bus_names=("SE",), hydro_codes=(43,), thermal_codes=()
+)
+
+
+def _empty_intersection(
+    lowers: tuple[tuple[str, float], ...],
+    uppers: tuple[tuple[str, float], ...],
+    *,
+    family: str = "hydro",
+    entity_id: int = 0,
+    stage_id: int = 1,
+    axis: str = "storage",
+) -> EmptyIntersectionError:
+    return EmptyIntersectionError(
+        "raw accumulator message",
+        family=family,
+        entity_id=entity_id,
+        stage_id=stage_id,
+        block_id=None,
+        axis=axis,
+        lowers=lowers,
+        uppers=uppers,
+    )
+
+
+def _translate(error: EmptyIntersectionError) -> RhvBoundConflictError | None:
+    return rhv_bound_conflict_error(
+        error,
+        id_map=_CONFLICT_ID_MAP,
+        hydro_names={0: "FURNAS"},
+        pumping_station_ids={4: 2},
+    )
+
+
+def _conflict_message(error: EmptyIntersectionError) -> str | None:
+    translated = _translate(error)
+    return None if translated is None else str(translated)
+
+
+def test_hv_against_the_storage_range_is_worded_with_plant_stage_and_values() -> None:
+    error = _empty_intersection(
+        (("HV_20", 1600.0), ("storage-range", 100.0)),
+        (("storage-range", 1100.0),),
+    )
+
+    assert _conflict_message(error) == (
+        "HV constraint(s) 20 cannot all hold on plant code 43 (FURNAS) at stage 2: "
+        "the stored volume must be at least 1600.0 hm³ (HV constraint 20) and at "
+        "most 1100.0 hm³ (the plant's storage range)."
+    )
+
+
+def test_two_hvs_are_listed_ascending_and_only_the_binding_upper_is_named() -> None:
+    error = _empty_intersection((("HV_20", 900.0),), (("HV_115", 500.0), ("VE", 800.0)))
+
+    assert _conflict_message(error) == (
+        "HV constraint(s) 20, 115 cannot all hold on plant code 43 (FURNAS) at "
+        "stage 2: the stored volume must be at least 900.0 hm³ (HV constraint 20) "
+        "and at most 500.0 hm³ (HV constraint 115)."
+    )
+
+
+def test_negative_pumping_volume_upper_names_the_station_and_the_zero_floor() -> None:
+    error = _empty_intersection(
+        (("non-negative volume", 0.0),),
+        (("HV_903", -3.0),),
+        family="pumping",
+        entity_id=2,
+        stage_id=0,
+        axis="volume",
+    )
+
+    assert _conflict_message(error) == (
+        "HV constraint(s) 903 cannot all hold on pumping station code 4 at stage 1: "
+        "the stage pumped volume must be at least 0.0 hm³ (a volume cannot be "
+        "negative) and at most -3.0 hm³ (HV constraint 903)."
+    )
+
+
+@pytest.mark.parametrize(
+    ("axis", "quantity"),
+    [
+        ("outflow_volume", "stage outflow volume"),
+        ("diversion_volume", "stage diverted volume"),
+    ],
+)
+def test_hydro_volume_axes_are_worded_as_stage_volumes(
+    axis: str, quantity: str
+) -> None:
+    error = _empty_intersection((("HV_20", 900.0),), (("HV_21", 500.0),), axis=axis)
+
+    message = _conflict_message(error)
+
+    assert message is not None
+    assert f"the {quantity} must be at least" in message
+
+
+@pytest.mark.parametrize(
+    ("label", "phrase"),
+    [
+        ("storage-envelope", "the plant's storage range"),
+        ("storage-range", "the plant's storage range"),
+        ("VE", "the VE flood-control volume"),
+        ("non-negative volume", "a volume cannot be negative"),
+        ("RQ", "another bound on the plant"),
+    ],
+)
+def test_non_hv_source_is_phrased_by_label(label: str, phrase: str) -> None:
+    error = _empty_intersection((("HV_20", 900.0),), ((label, 500.0),))
+
+    message = _conflict_message(error)
+
+    assert message is not None
+    assert message.endswith(f"at most 500.0 hm³ ({phrase}).")
+
+
+def test_sources_tied_at_the_binding_value_are_listed_once_per_phrase() -> None:
+    error = _empty_intersection(
+        (("HV_20", 900.0), ("HV_21", 900.0), ("storage-range", 100.0)),
+        (("storage-envelope", 500.0), ("storage-range", 500.0)),
+    )
+
+    message = _conflict_message(error)
+
+    assert message is not None
+    assert "(HV constraint 20, HV constraint 21)" in message
+    assert message.endswith("at most 500.0 hm³ (the plant's storage range).")
+
+
+def test_one_hv_on_both_sides_is_listed_once() -> None:
+    error = _empty_intersection((("HV_20", 900.0),), (("HV_20", 500.0),))
+
+    message = _conflict_message(error)
+
+    assert message is not None
+    assert message.startswith("HV constraint(s) 20 cannot all hold")
+
+
+def test_conflict_without_an_hv_contributor_is_not_translated() -> None:
+    error = _empty_intersection((("storage-envelope", 900.0),), (("VE", 500.0),))
+
+    assert _conflict_message(error) is None
+
+
+def test_conflict_on_a_plant_missing_from_the_names_raises_key_error() -> None:
+    error = _empty_intersection((("HV_20", 900.0),), (("HV_21", 500.0),))
+
+    with pytest.raises(KeyError):
+        rhv_bound_conflict_error(
+            error,
+            id_map=_CONFLICT_ID_MAP,
+            hydro_names={},
+            pumping_station_ids={},
+        )
+
+
+def test_rhv_bound_conflict_diagnostics_have_no_repo_internal_references() -> None:
+    errors = [
+        _empty_intersection(
+            (("HV_20", 1600.0), ("storage-range", 100.0)),
+            (("storage-range", 1100.0),),
+        ),
+        _empty_intersection((("HV_20", 900.0),), (("HV_115", 500.0), ("VE", 800.0))),
+        _empty_intersection(
+            (("non-negative volume", 0.0),),
+            (("HV_903", -3.0),),
+            family="pumping",
+            entity_id=2,
+            axis="volume",
+        ),
+    ]
+    leaks = (
+        "storage-range",
+        "storage-envelope",
+        "HV_",
+        ".py",
+        "plans/",
+        "ticket",
+        "epic",
+    )
+
+    for error in errors:
+        translated = _translate(error)
+        assert translated is not None
+        diagnostic = diagnostic_from_exception(translated, context="Conversion")
+        for text in (diagnostic.summary, diagnostic.remediation or ""):
+            assert text
+            assert re.search(r"_[a-z]", text) is None, text
+            for leak in leaks:
+                assert leak not in text, f"leaks {leak!r}: {text!r}"

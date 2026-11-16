@@ -21,6 +21,7 @@ from novomodelo_bridge.decomp.bounds_accumulator import (
     AXES,
     AxisSpec,
     BoundContribution,
+    EmptyIntersectionError,
     ResolvedRow,
     _effective,
     axis_spec,
@@ -244,6 +245,71 @@ def test_empty_intersection_raises() -> None:
     ]
     with pytest.raises(ValueError, match="RQ.*HQ_164"):
         intersect(contribs, spec)
+
+
+def _conflicting_storage_contributions() -> list[BoundContribution]:
+    return [
+        BoundContribution(
+            family="hydro",
+            entity_id=3,
+            stage_id=1,
+            block_id=None,
+            axis="storage",
+            lower=lower,
+            upper=upper,
+            contributor=contributor,
+        )
+        for lower, upper, contributor in (
+            (500.0, None, "HV_20"),
+            (100.0, 400.0, "storage-range"),
+        )
+    ]
+
+
+def test_empty_intersection_carries_its_group_key() -> None:
+    with pytest.raises(EmptyIntersectionError) as excinfo:
+        resolve(_conflicting_storage_contributions(), {1: 1})
+    exc = excinfo.value
+    assert exc.family == "hydro"
+    assert exc.entity_id == 3
+    assert exc.stage_id == 1
+    assert exc.block_id is None
+    assert exc.axis == "storage"
+    assert exc.lowers == (("HV_20", 500.0), ("storage-range", 100.0))
+    assert exc.uppers == (("storage-range", 400.0),)
+
+
+def test_empty_intersection_on_a_block_carries_the_block_id() -> None:
+    contribs = [
+        BoundContribution(
+            family="hydro",
+            entity_id=7,
+            stage_id=0,
+            block_id=block_id,
+            axis="outflow",
+            lower=lower,
+            upper=upper,
+            contributor=contributor,
+        )
+        for block_id, lower, upper, contributor in (
+            (None, None, 100.0, "RQ"),
+            (1, 200.0, None, "RQ_block1"),
+        )
+    ]
+    with pytest.raises(EmptyIntersectionError) as excinfo:
+        resolve(contribs, {0: 2})
+    assert excinfo.value.block_id == 1
+
+
+def test_empty_intersection_message_is_unchanged() -> None:
+    with pytest.raises(EmptyIntersectionError) as excinfo:
+        resolve(_conflicting_storage_contributions(), {1: 1})
+    assert isinstance(excinfo.value, ValueError)
+    assert str(excinfo.value) == (
+        "empty intersection on hydro axis: lower 500.0 "
+        "(from HV_20=500.0, storage-range=100.0) exceeds upper 400.0 "
+        "(from storage-range=400.0)"
+    )
 
 
 def test_lower_on_upper_only_axis_raises() -> None:

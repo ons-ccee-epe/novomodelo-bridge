@@ -145,6 +145,7 @@ class DecompCaseArtifacts:
     initial_conditions: dict | None = None
     deficit_cost: float | None = None
     hv_slack_penalty: float | None = None
+    penalties_doc: dict | None = None
     fpha_codes: set[int] | None = None
     turbine_limits: hydro_conv.TurbineLimits | None = None
     # Populated by `_resolve_bounds`.
@@ -1169,7 +1170,9 @@ def _write_hydro_production_files(
 
 def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     """The ``step("Converting entities")`` phase: CVaR, ``config``/``stages``,
-    FPHA configs, productivity, penalties, the ``initial_conditions`` doc,
+    FPHA configs, productivity, penalties (kept on *artifacts*, not written --
+    the bounds phase writes ``penalties.json`` once it knows whether an
+    outflow-volume bound exists), the ``initial_conditions`` doc,
     buses, hydros (kept on *artifacts*, not written -- the bounds phase defers
     ``hydros.json`` for the diversion-channel coupling), lines (+ the Itaipu
     SE<->IV line), pumping, thermals + the GNL splice, production models,
@@ -1224,9 +1227,8 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.hv_slack_penalty = config_conv.rhv_slack_penalty(
         deficit_cost, productivities
     )
-    writer.write_json(
-        "penalties.json",
-        config_conv.convert_penalties(deficit_cost, productivities),
+    artifacts.penalties_doc = config_conv.convert_penalties(
+        deficit_cost, productivities
     )
     # week_hours is stage 0's own duration, never a hardcoded 168: a deck whose
     # first stage is not a full operative week still tiles past_defluences exactly.
@@ -1540,7 +1542,9 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     pumping/line bound, fold in the TI irrigation withdrawal and the
     diversion channels, and write the diversion-coupled ``system/hydros.json``
     (deferred from ``_convert_core_entities``'s system-file block for exactly
-    that coupling). Stores the resolved bound tables, the per-group
+    that coupling), plus ``penalties.json``, which prices the outflow-volume
+    slack only when a resolved hydro row carries an outflow-volume bound.
+    Stores the resolved bound tables, the per-group
     ``availability_values``, the ``census``/``pumping_ids``/``block_counts``
     maps and the ``diversion_hydro_ids`` set the later phases need back onto
     *artifacts*.
@@ -1556,6 +1560,10 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     assert line_bounds is not None
     turbine_limits = artifacts.turbine_limits
     assert turbine_limits is not None
+    penalties_doc = artifacts.penalties_doc
+    assert penalties_doc is not None
+    hv_slack_penalty = artifacts.hv_slack_penalty
+    assert hv_slack_penalty is not None
 
     census = _read_constraint_census(dadger, effective)
     pumping_ids = network_conv.pumping_station_id_map(dadger)
@@ -1584,7 +1592,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     # power, the CT thermal generation bounds, and the RE/RHQ/RHV single-term
     # special-constraint bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
-    # exactly ONE resolve() + build_bound_tables() pass, so a new special
+    # one full resolve() + build_bound_tables() pass, so a new special
     # constraint colliding with a legacy bound on the same (entity, stage,
     # block) cell correctly intersects instead of producing the
     # two-rows-same-column parquet novomodelo rejects.
@@ -1635,9 +1643,19 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             diversion_hydro_ids=diversion_hydro_ids,
         )
     )
-    bound_tables = bounds_accumulator.build_bound_tables(
-        bounds_accumulator.resolve(contribs, block_counts)
-    )
+    try:
+        resolved = bounds_accumulator.resolve(contribs, block_counts)
+    except bounds_accumulator.EmptyIntersectionError as err:
+        conflict = single_term_bounds.rhv_bound_conflict_error(
+            err,
+            id_map=id_map,
+            hydro_names={h["id"]: h["name"] for h in hydros_dict["hydros"]},
+            pumping_station_ids=pumping_ids,
+        )
+        if conflict is None:
+            raise
+        raise conflict from err
+    bound_tables = bounds_accumulator.build_bound_tables(resolved)
     hydro_bounds = bound_tables.hydro.sort_by(
         [("hydro_id", "ascending"), *_BOUND_SORT_KEYS]
     )
@@ -1657,6 +1675,16 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         base_diversion_channels,
         id_map,
         effective,
+    )
+    has_outflow_volume = any(
+        hydro_bounds.column(column).null_count < hydro_bounds.num_rows
+        for column in ("min_outflow_hm3", "max_outflow_hm3")
+    )
+    writer.write_json(
+        "penalties.json",
+        config_conv.with_outflow_volume_violation_cost(penalties_doc, hv_slack_penalty)
+        if has_outflow_volume
+        else penalties_doc,
     )
     writer.write_json("system/hydros.json", hydros_dict)
     thermal_bounds_table = _rejoin_thermal_cost(

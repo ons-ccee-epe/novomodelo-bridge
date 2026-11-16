@@ -24,6 +24,7 @@ import functools
 import importlib.util
 import json
 import logging
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, TypedDict
@@ -122,6 +123,31 @@ requires_stage_volume_tokens = pytest.mark.skipif(
     reason=(
         "requires a novomodelo-python wheel with the stage-volume "
         "generic-constraint tokens"
+    ),
+)
+
+
+@functools.cache
+def has_outflow_volume_penalty() -> bool:
+    """Whether the installed novomodelo wheel's penalties schema has the outflow-volume violation costs.
+
+    The pairing change that moves the ``novomodelo-python`` pin deletes this probe.
+    """
+    if importlib.util.find_spec("novomodelo") is None:
+        return False
+    import novomodelo.schema
+
+    with tempfile.TemporaryDirectory() as tmp:
+        novomodelo.schema.export(tmp)
+        schema = Path(tmp, "penalties.schema.json").read_text(encoding="utf-8")
+    return "outflow_volume_violation_below_cost" in schema
+
+
+requires_outflow_volume_penalty = pytest.mark.skipif(
+    condition=not has_outflow_volume_penalty(),
+    reason=(
+        "requires a novomodelo-python wheel whose penalties schema has the "
+        "outflow-volume violation costs"
     ),
 )
 

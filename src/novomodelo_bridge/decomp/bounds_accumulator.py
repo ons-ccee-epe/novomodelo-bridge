@@ -251,6 +251,31 @@ def _effective(value: float | None) -> float | None:
     return value if is_bounded(value) else None
 
 
+class EmptyIntersectionError(ValueError):
+    """An axis group whose effective lower bound exceeds its effective upper bound."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        family: str,
+        entity_id: int,
+        stage_id: int,
+        block_id: int | None,
+        axis: str,
+        lowers: tuple[tuple[str, float], ...],
+        uppers: tuple[tuple[str, float], ...],
+    ) -> None:
+        super().__init__(message)
+        self.family = family
+        self.entity_id = entity_id
+        self.stage_id = stage_id
+        self.block_id = block_id
+        self.axis = axis
+        self.lowers = lowers
+        self.uppers = uppers
+
+
 def intersect(
     contribs: Sequence[BoundContribution], spec: AxisSpec
 ) -> tuple[float | None, float | None]:
@@ -272,9 +297,11 @@ def intersect(
         and some contribution supplies an effective upper — a bound cannot
         land on the side a one-sided axis has no column for; the message
         names the axis, the missing side, and the offending contributors.
-        Also when an effective lower and an effective upper both survive and
-        the lower exceeds the upper past float noise — the message names
-        every contributing label and the conflicting values.
+    EmptyIntersectionError
+        (a ``ValueError``) When an effective lower and an effective upper both
+        survive and the lower exceeds the upper past float noise — the message
+        names every contributing label and the conflicting values; the group
+        key and the labelled values ride on the exception's attributes.
     """
     lowers: list[tuple[float, str]] = []
     uppers: list[tuple[float, str]] = []
@@ -308,10 +335,19 @@ def intersect(
         if lower - upper > tolerance:
             lower_desc = ", ".join(f"{name}={value}" for value, name in lowers)
             upper_desc = ", ".join(f"{name}={value}" for value, name in uppers)
-            raise ValueError(
+            raise EmptyIntersectionError(
                 f"empty intersection on {spec.family} axis: lower {lower} "
                 f"(from {lower_desc}) exceeds upper {upper} "
-                f"(from {upper_desc})"
+                f"(from {upper_desc})",
+                family=contribs[0].family,
+                entity_id=contribs[0].entity_id,
+                stage_id=contribs[0].stage_id,
+                block_id=next(
+                    (c.block_id for c in contribs if c.block_id is not None), None
+                ),
+                axis=contribs[0].axis,
+                lowers=tuple((name, value) for value, name in lowers),
+                uppers=tuple((name, value) for value, name in uppers),
             )
 
     return lower, upper
@@ -367,8 +403,10 @@ def resolve(
         carries a non-``None`` ``block_id`` — the message names the axis,
         the entity, and the stage. Also when a group needs materialization
         but ``block_counts`` has no entry for its ``stage_id``. ``intersect``'s
-        own raises (upper-only violation, empty intersection) propagate
-        unchanged.
+        own raises propagate unchanged.
+    EmptyIntersectionError
+        (a ``ValueError``) Propagated from :func:`intersect` when a group's
+        effective lower exceeds its effective upper.
     """
     groups: defaultdict[tuple[str, int, int, str], list[BoundContribution]] = (
         defaultdict(list)

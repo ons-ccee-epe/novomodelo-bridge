@@ -85,6 +85,10 @@ class NovomodeloPartitionMissingError(BridgeError):
         self.path = path
 
 
+class RhvBoundConflictError(BridgeError):
+    """HV limits that no single value can meet at one stage."""
+
+
 # Per-type mapping: exception type → (code, remediation). Looked up by walking
 # ``type(exc).__mro__`` so a subclass still resolves to its base's entry. An
 # exception not present here falls back to ``_FALLBACK`` ("unexpected-error").
@@ -104,6 +108,11 @@ _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
     NovomodeloPartitionMissingError: (
         "novomodelo-partition-missing",
         "Re-run novomodelo at the required version to produce this partition.",
+    ),
+    RhvBoundConflictError: (
+        "decomp-rhv-bound-conflict",
+        "Correct the LV limits of the named HV constraints so that one value "
+        "meets all of them at that stage.",
     ),
     # Base-class fallback (last, for readability — a concrete subclass above
     # always wins the MRO walk regardless of dict order). No remediation: an

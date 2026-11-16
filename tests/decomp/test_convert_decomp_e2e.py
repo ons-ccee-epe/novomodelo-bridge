@@ -13,10 +13,16 @@ import json
 import shutil
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from novomodelo_bridge.core.diagnostics import Severity
+from novomodelo_bridge.core.errors import (
+    RhvBoundConflictError,
+    diagnostic_from_exception,
+)
+from novomodelo_bridge.decomp.bounds_accumulator import EmptyIntersectionError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import read_constraints
 from novomodelo_bridge.decomp.converters.network import pumping_station_id_map
@@ -24,7 +30,9 @@ from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 from tests.conftest import (
     FloatDigitsKwargs,
     case_json_floats,
+    has_outflow_volume_penalty,
     requires_novomodelo_python,
+    requires_outflow_volume_penalty,
     requires_stage_volume_tokens,
 )
 
@@ -66,6 +74,49 @@ _RHV_VOLUME_LINES = (
     "CV  904   1   118         0.5     VDEF",
 )
 
+#: ``HV`` 904 alone: a multi-term ``VARM`` + ``VDEF`` register that stays generic.
+_RHV_MULTI_TERM_VDEF_LINES = _RHV_VOLUME_LINES[-4:]
+
+#: ``HV`` 925 on plant 118 with a negative lower outflow volume and no upper: the
+#: lower is dropped, so the register writes no outflow-volume bound.
+_HV_NEGATIVE_LOWER_LINES = (
+    "HV  925   1    4",
+    "LV  925   1         -5.0",
+    "CV  925   1   118         1.0     VDEF",
+)
+
+_OUTFLOW_VOLUME_COST_KEYS = (
+    "outflow_volume_violation_below_cost",
+    "outflow_volume_violation_above_cost",
+)
+
+#: ``HV`` 921 (lower 50.0) and ``HV`` 922 (upper 10.0) ``VARM`` on plant 6 over
+#: stages 1 to 4: no value meets both.
+_HV_PAIR_CONFLICT_LINES = (
+    "HV  921   1    4",
+    "LV  921   1         50.0",
+    "CV  921   1     6         1.0     VARM",
+    "HV  922   1    4",
+    "LV  922   1                   10.0",
+    "CV  922   1     6         1.0     VARM",
+)
+
+#: ``HV`` 923 on plant 61 with a lower stored volume above the plant's storage
+#: range; plant 61's VE register is 100% at every stage, so the range is the
+#: tightest upper side.
+_HV_RANGE_CONFLICT_LINES = (
+    "HV  923   1    4",
+    "LV  923   1     999999.0",
+    "CV  923   1    61         1.0     VARM",
+)
+
+#: ``HV`` 924 on plant 118 with a negative upper outflow volume.
+_HV_NEGATIVE_UPPER_LINES = (
+    "HV  924   1    4",
+    "LV  924   1                   -5.0",
+    "CV  924   1   118         1.0     VDEF",
+)
+
 
 def _deck_with_lines(
     deck: Path, tmp_path: Path, anchor: str, lines: tuple[str, ...]
@@ -83,6 +134,25 @@ def _deck_with_lines(
         encoding="latin-1",
     )
     return copy
+
+
+def _injected_hvs(
+    deck: Path, ids: tuple[int, ...]
+) -> dict[int, tuple[list[tuple[int, str]], list[tuple[float | None, float | None]]]]:
+    """``{id: (terms, per-stage (lower, upper))}`` of the ``HV`` records *ids*."""
+    return {
+        record.constraint_id: (
+            [(term.code, term.variable) for term in record.terms],
+            [
+                (record.bounds[stage].lower[0], record.bounds[stage].upper[0])
+                for stage in range(record.stage_start, record.stage_end + 1)
+            ],
+        )
+        for record in read_constraints(
+            DecompCase.from_directory(deck).dadger
+        ).by_family["HV"]
+        if record.constraint_id in ids
+    }
 
 
 @requires_novomodelo_python
@@ -289,9 +359,170 @@ def test_single_term_hvs_land_in_their_entity_bound_columns(
             assert row["max_storage_hm3"] <= reservoir["max_storage_hm3"] + tolerance
 
 
+def test_hv_pair_with_disjoint_limits_fails_the_conversion(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _HV_PAIR_CONFLICT_LINES,
+    )
+    assert _injected_hvs(deck, (921, 922)) == {
+        921: ([(6, "VARM")], [(50.0, None)] * 4),
+        922: ([(6, "VARM")], [(None, 10.0)] * 4),
+    }
+
+    with pytest.raises(RhvBoundConflictError) as raised:
+        convert_decomp_case(deck, tmp_path / "converted", force=True)
+
+    message = str(raised.value)
+    for fragment in (
+        "HV constraint(s) 921, 922",
+        "plant code 6",
+        "stage 1",
+        "stored volume",
+    ):
+        assert fragment in message
+    assert isinstance(raised.value.__cause__, EmptyIntersectionError)
+    diagnostic = diagnostic_from_exception(raised.value, context="Conversion")
+    assert diagnostic.code == "decomp-rhv-bound-conflict"
+
+
+def test_hv_lower_above_the_storage_range_fails_the_conversion(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _HV_RANGE_CONFLICT_LINES,
+    )
+    assert _injected_hvs(deck, (923,)) == {
+        923: ([(61, "VARM")], [(999999.0, None)] * 4)
+    }
+
+    with pytest.raises(RhvBoundConflictError) as raised:
+        convert_decomp_case(deck, tmp_path / "converted", force=True)
+
+    message = str(raised.value)
+    for fragment in ("HV constraint(s) 923", "the plant's storage range"):
+        assert fragment in message
+
+
+def test_hv_negative_outflow_upper_fails_the_conversion(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _HV_NEGATIVE_UPPER_LINES,
+    )
+    assert _injected_hvs(deck, (924,)) == {924: ([(118, "VDEF")], [(None, -5.0)] * 4)}
+
+    with pytest.raises(RhvBoundConflictError) as raised:
+        convert_decomp_case(deck, tmp_path / "converted", force=True)
+
+    message = str(raised.value)
+    for fragment in (
+        "HV constraint(s) 924",
+        "plant code 118",
+        "stage outflow volume",
+        "a volume cannot be negative",
+    ):
+        assert fragment in message
+
+
+def test_penalties_omit_the_outflow_volume_keys_without_a_vdef_hv(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    hydro = json.loads((dst / "penalties.json").read_text())["hydro"]
+    assert not set(_OUTFLOW_VOLUME_COST_KEYS) & hydro.keys()
+
+
+def test_single_term_vdef_hv_prices_the_outflow_volume_slack(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _RHV_VOLUME_LINES,
+    )
+    assert _injected_hvs(deck, (901,)) == {901: ([(118, "VDEF")], [(100.0, None)] * 4)}
+
+    dst = tmp_path / "converted"
+    convert_decomp_case(deck, dst, force=True)
+
+    hydro = json.loads((dst / "penalties.json").read_text())["hydro"]
+    for key in _OUTFLOW_VOLUME_COST_KEYS:
+        assert hydro[key] == hydro["storage_violation_below_cost"]
+
+
+def test_multi_term_vdef_hv_leaves_the_outflow_volume_slack_unpriced(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _RHV_MULTI_TERM_VDEF_LINES,
+    )
+    assert _injected_hvs(deck, (904,)) == {
+        904: ([(34, "VARM"), (118, "VDEF")], [(100.0, None)] * 4)
+    }
+
+    dst = tmp_path / "converted"
+    convert_decomp_case(deck, dst, force=True)
+
+    constraints = json.loads(
+        (dst / "constraints" / "generic_constraints.json").read_text()
+    )["constraints"]
+    assert "HV_904" in {c["name"] for c in constraints}
+    hydro = json.loads((dst / "penalties.json").read_text())["hydro"]
+    assert not set(_OUTFLOW_VOLUME_COST_KEYS) & hydro.keys()
+
+
+def test_vdef_hv_with_only_a_negative_lower_leaves_the_outflow_volume_slack_unpriced(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _HV_NEGATIVE_LOWER_LINES,
+    )
+    assert _injected_hvs(deck, (925,)) == {925: ([(118, "VDEF")], [(-5.0, None)] * 4)}
+
+    dst = tmp_path / "converted"
+    convert_decomp_case(deck, dst, force=True)
+
+    hydro_bounds = pq.read_table(dst / "constraints" / "hydro_bounds.parquet")
+    assert hydro_bounds.column("min_outflow_hm3").null_count == hydro_bounds.num_rows
+    assert hydro_bounds.column("max_outflow_hm3").null_count == hydro_bounds.num_rows
+    hydro = json.loads((dst / "penalties.json").read_text())["hydro"]
+    assert not set(_OUTFLOW_VOLUME_COST_KEYS) & hydro.keys()
+
+
+def test_dry_run_records_penalties_json_once_and_writes_nothing(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+
+    report = convert_decomp_case(decomp_mini_deck, dst, force=True, dry_run=True)
+
+    assert report.would_write_paths.count(str(dst / "penalties.json")) == 1
+    assert not dst.exists()
+
+
 @requires_novomodelo_python
 @requires_stage_volume_tokens
-def test_rhv_volume_tipos_pass_novomodelo_validation(
+@requires_outflow_volume_penalty
+def test_single_term_rhv_volume_tipos_pass_novomodelo_validation(
     decomp_mini_deck: Path, tmp_path: Path
 ) -> None:
     import novomodelo.io  # tier-2: guarded import inside the body, never module scope
@@ -305,9 +536,85 @@ def test_rhv_volume_tipos_pass_novomodelo_validation(
     dst = tmp_path / "converted"
     convert_decomp_case(deck, dst, force=True)
 
+    hydro = json.loads((dst / "penalties.json").read_text())["hydro"]
+    assert "outflow_volume_violation_below_cost" in hydro
     result = novomodelo.io.validate(str(dst))
     assert result["valid"] is True
     assert result["errors"] == []
+
+
+@requires_novomodelo_python
+@requires_stage_volume_tokens
+@requires_outflow_volume_penalty
+@pytest.mark.parametrize(
+    ("table_path", "column"),
+    [
+        ("constraints/hydro_bounds.parquet", "min_outflow_hm3"),
+        ("constraints/hydro_bounds.parquet", "min_diversion_hm3"),
+        ("constraints/pumping_bounds.parquet", "min_hm3"),
+    ],
+)
+def test_novomodelo_rejects_a_negative_stage_volume_bound(
+    decomp_mini_deck: Path,
+    decomp_mini_case: DecompCase,
+    tmp_path: Path,
+    table_path: str,
+    column: str,
+) -> None:
+    import novomodelo.io  # tier-2: guarded import inside the body, never module scope
+
+    deck = _deck_with_lines(
+        decomp_mini_deck,
+        tmp_path,
+        "CV  117   1    43  -1.5866762     VARM",
+        _RHV_VOLUME_LINES,
+    )
+    dst = tmp_path / "converted"
+    convert_decomp_case(deck, dst, force=True)
+    entity_column, entity_id = {
+        "constraints/hydro_bounds.parquet": (
+            "hydro_id",
+            decomp_mini_case.id_map.hydro_id(118),
+        ),
+        "constraints/pumping_bounds.parquet": (
+            "pumping_station_id",
+            pumping_station_id_map(decomp_mini_case.dadger)[4],
+        ),
+    }[table_path]
+
+    # A reader that ignores an unknown column still validates the positive case;
+    # only a rejected negative value proves it consumes this column. The row must
+    # be a stage row (null block): an hm3 value on a block row fails for another reason.
+    # The rewrite keeps the file's codec: the solver's reader has no snappy,
+    # pyarrow's default, and would reject the file for that reason instead.
+    path = dst / table_path
+    codec = pq.read_metadata(path).row_group(0).column(0).compression
+    table = pq.read_table(path)
+    index = next(
+        i
+        for i, row in enumerate(table.to_pylist())
+        if row[entity_column] == entity_id and row["block_id"] is None
+    )
+    values = table.column(column).to_pylist()
+    values[index] = -1.0
+    table = table.set_column(
+        table.schema.get_field_index(column),
+        table.schema.field(column),
+        pa.array(values, pa.float64()),
+    )
+    pq.write_table(table, path, compression=codec)
+
+    result = novomodelo.io.validate(str(dst))
+    assert result["valid"] is False
+    assert any(column in str(error) for error in result["errors"])
+
+
+def test_outflow_volume_probe_is_false_without_novomodelo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("importlib.util.find_spec", lambda *_args, **_kwargs: None)
+
+    assert has_outflow_volume_penalty.__wrapped__() is False
 
 
 @pytest.mark.parametrize(
