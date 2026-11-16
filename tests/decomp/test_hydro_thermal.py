@@ -39,6 +39,8 @@ from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from idecomp.decomp import Dadger
 
 _EVAPORATION_COLUMNS = (
@@ -57,7 +59,7 @@ _EVAPORATION_COLUMNS = (
 )
 
 
-def _evaporation_hidr(rows: dict[int, list[float]]) -> pd.DataFrame:
+def _evaporation_hidr(rows: Mapping[int, Sequence[float]]) -> pd.DataFrame:
     """A ``hidr``-shaped frame carrying only the 12 monthly evaporation columns."""
     df = pd.DataFrame(
         {
@@ -112,6 +114,7 @@ class TestEvaporationEmission:
             overrides={(7, 7): (5.0, 9.0, 9.0), (7, 8): (5.0, 3.0, 3.0)},
         )
         coefficients, varies = _evaporation_coefficients_mm(effective, 7, (7, 7, 8))
+        assert coefficients is not None
         assert coefficients[6] == 5.0
         assert coefficients[7] == 3.0
         assert varies == [[7, "", "JUL", 5.0, "1"]]
@@ -120,6 +123,7 @@ class TestEvaporationEmission:
         hidr = _evaporation_hidr({7: [5.0] * 12})
         effective = _evaporation_effective(hidr, overrides={(7, 1): (5.0, 5.0, 8.0)})
         coefficients, _ = _evaporation_coefficients_mm(effective, 7, (7, 7, 8))
+        assert coefficients is not None
         assert coefficients[0] == 8.0
 
     def test_all_zero_months_is_none(self) -> None:

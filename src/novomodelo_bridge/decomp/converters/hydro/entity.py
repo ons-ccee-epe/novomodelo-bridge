@@ -346,9 +346,9 @@ def _evaporation_references(
         or ``MED``.
     """
     register = case.dadger.ev
-    model = None if register is None else register.modelo
-    if model in (None, 0):
+    if register is None or register.modelo in (None, 0):
         return None
+    model = register.modelo
     reference = str(register.volume_referencia or "").strip().upper()
     if model != 1 or reference not in ("INI", "MED"):
         raise FieldParseError(
