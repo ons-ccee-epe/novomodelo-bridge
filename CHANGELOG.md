@@ -374,6 +374,11 @@ links are cobre-bridge's.
   DECOMP values them: along each plant's energy chain, at the head of the
   current storage, with the `EZ` cut. Run `compare decomp` again to update a
   report.
+- **`compare newave` and `compare decomp` drew the source model's stored energy
+  on the system chart 0.07% low**, at 730 hours a month instead of the
+  730.5-hour mean month both models use; `compare decomp`'s Energy Balance tab
+  read DECOMP's inflow energy the same way. Run the comparison again to update
+  a report.
 - **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms

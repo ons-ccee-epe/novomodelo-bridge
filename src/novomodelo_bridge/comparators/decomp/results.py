@@ -167,13 +167,6 @@ def _emit_unreadable(
 #: turbining makes generation/turbined an undefined 0/0 on both sides.
 _PRODUCTIVITY_TURBINED_EPS: float = 1.0e-6
 
-#: Hours per month between MW-month and MW in the Energy Balance tab, the
-#: same convention `report_builder` applies to the SIN-total EARM overlay
-#: (``novomodelo_aggregate_chart(..., nw_factor=730.0, ...)``), so the two
-#: reconciliations never drift apart.
-_BALANCE_MONTH_HOURS: float = 730.0
-
-
 @dataclass(frozen=True)
 class _Variable:
     """One comparable quantity and its column on each side."""
@@ -1339,7 +1332,7 @@ def _energy_balance_frames(
                 pl.col("ena_MWmes").sum().alias("ENA"),
             )
             .join(hours, on="estagio", how="left")
-            .with_columns(pl.col("ENA") * _BALANCE_MONTH_HOURS / pl.col("_hours"))
+            .with_columns(pl.col("ENA") * MEAN_MONTH_HOURS / pl.col("_hours"))
             .drop("_hours")
         )
         nw_sin = (
