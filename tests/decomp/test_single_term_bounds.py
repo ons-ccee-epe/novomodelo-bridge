@@ -164,7 +164,6 @@ def _hv_contributions(
     effective: EffectiveCadastro,
 ) -> list[BoundContribution]:
     return single_term_hv_contributions(
-        _case([_stage(index, 1) for index in range(effective.n_stages)]),
         id_map,
         census=_census(record),
         effective=effective,

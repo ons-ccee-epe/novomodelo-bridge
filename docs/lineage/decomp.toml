@@ -2065,13 +2065,13 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
   path = "stage_id"
   from = [ { file = "dadger", register = "DP", item = "estagio" } ]
   status = "derived"
-  how = "Índice 0-based do estágio no calendário operativo (`estagio` − 1); os registros com trio mês/semana/ano (`AC`) e os limites por `estagio` (`LU`/`LQ`, `VE`, `TI`) são resolvidos para esse índice."
+  how = "Índice 0-based do estágio no calendário operativo (`estagio` − 1); os registros com trio mês/semana/ano (`AC`) e os limites por `estagio` (`LU`/`LQ`/`LV`, `VE`, `TI`) são resolvidos para esse índice."
 
   [[output.field]]
   path = "block_id"
   from = [ { file = "dadger", register = "DP", item = "numero_patamares" } ]
   status = "derived"
-  how = "Nulo na linha-base (vale para todos os patamares); 0..n−1 quando algum contribuinte do eixo naquele estágio é por patamar (`LU`/`LQ` por patamar): então todos os patamares do estágio são materializados. O piso `RQ`/`UH` de defluência é por estágio (linha-base). Os eixos de armazenamento e retirada de água são sempre de estágio."
+  how = "Nulo na linha-base (vale para todos os patamares); 0..n−1 quando algum contribuinte do eixo naquele estágio é por patamar (`LU`/`LQ` por patamar): então todos os patamares do estágio são materializados. O piso `RQ`/`UH` de defluência é por estágio (linha-base). Os eixos de armazenamento, de retirada de água, de volume defluente (`HV` `VDEF`) e de volume desviado (`HV` `VDES`) são sempre de estágio, com `block_id` nulo."
 
   [[output.field]]
   path = "min_outflow_m3s"

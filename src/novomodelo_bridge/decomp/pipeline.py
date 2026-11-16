@@ -1635,7 +1635,6 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     )
     contribs.extend(
         single_term_bounds.single_term_hv_contributions(
-            case,
             id_map,
             census=census,
             effective=effective,

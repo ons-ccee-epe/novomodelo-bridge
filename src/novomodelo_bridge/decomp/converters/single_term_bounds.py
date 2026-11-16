@@ -594,7 +594,6 @@ def _stage_sides(
 
 
 def single_term_hv_contributions(
-    case: DecompCase,
     id_map: DecompIdMap,
     *,
     census: ConstraintCensus,
@@ -621,8 +620,7 @@ def single_term_hv_contributions(
     A stage whose two sides are unbounded emits nothing; a record
     :func:`hv_terms_convertible` refuses is skipped whole, the guard having
     emitted the diagnostic. An HV side no stage range meets is left to the
-    accumulator, which raises on resolve. *case* keeps the signature of the
-    sibling lowerings; a stage-level bound reads no calendar.
+    accumulator, which raises on resolve.
 
     Raises
     ------
