@@ -366,23 +366,28 @@ def split_nw_inflows(
 
 
 def recent_observation_rows(
-    vazoes: ObservationTables, study_start: date
+    vazoes: ObservationTables, first_stage: OperativeStage
 ) -> list[tuple[date, date, pd.Series]]:
     """The deck's pre-study observation windows, oldest first, each with its row.
 
     Each row is one ``vazoes`` observation, a column per posto. The tables are:
 
-    - ``observacoes_mensais`` — the ``N`` full calendar months before the
-      study, ``mes`` oldest first (``mes = N`` is the month before the
-      study-start month);
-    - ``observacoes_semanais`` — the ``W`` 7-day weeks of the study-start month
+    - ``observacoes_mensais`` — the ``N`` calendar months before the first
+      operative month, ``mes`` oldest first (``mes = N`` is the month before
+      it). The operative month is the first stage's season, not the month of
+      its start: an RV0 whose first week starts on 27/12/2025 studies January
+      2026, so its ``mes = N`` is December 2025;
+    - ``observacoes_semanais`` — the ``W`` 7-day weeks of the operative month
       before the study begins, ``semana`` oldest first, ending at the study
       start.
 
-    The most recent month is clipped where the weeks begin and a month wholly
-    inside them is dropped, so no two windows overlap (a novomodelo requirement of
-    ``recent_observations``; ``start == previous end`` is fine).
+    The most recent month is clipped where the weeks, or else the study, begin,
+    and a month wholly inside them is dropped, so no two windows overlap (a
+    novomodelo requirement of ``recent_observations``; ``start == previous end``
+    is fine). A clipped month keeps its observed value, which novomodelo casts as
+    the mean over the days it covers.
     """
+    study_start = first_stage.start_date
     monthly = vazoes.observacoes_mensais
     weekly = vazoes.observacoes_semanais
     windows: list[tuple[date, date, pd.Series]] = []
@@ -398,9 +403,8 @@ def recent_observation_rows(
 
     if monthly is not None and not monthly.empty:
         ordered_months = monthly.sort_values("mes")
-        months = previous_months(
-            study_start.year, study_start.month, len(ordered_months)
-        )
+        operative = first_stage.operative_month_start
+        months = previous_months(operative.year, operative.month, len(ordered_months))
         for (year, month), (_, row) in zip(
             months, ordered_months.iterrows(), strict=True
         ):
@@ -437,7 +441,7 @@ def convert_recent_observation_windows(
     stations = [str(effective.coupling_gauge(code)) for code in id_map.hydro_codes]
     rows = [
         (hydro_id, start, end, float(row[station]))
-        for start, end, row in recent_observation_rows(vazoes, calendar[0].start_date)
+        for start, end, row in recent_observation_rows(vazoes, calendar[0])
         for hydro_id, station in enumerate(stations)
     ]
     rows.sort(key=lambda entry: (entry[0], entry[1]))

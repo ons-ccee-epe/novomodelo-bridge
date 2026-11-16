@@ -92,6 +92,11 @@ class OperativeStage:
             return self.start_date.year - 1
         return self.start_date.year
 
+    @property
+    def operative_month_start(self) -> date:
+        """First day of the ``season_id`` month (see :attr:`operative_year`)."""
+        return date(self.operative_year, self.season_id + 1, 1)
+
 
 def hours_weighted(values: Sequence[float], stage: OperativeStage) -> float:
     """Hours-weighted mean of per-block *values* over *stage*'s block hours.

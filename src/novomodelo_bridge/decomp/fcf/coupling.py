@@ -213,6 +213,25 @@ def _monthly_means(
     )
 
 
+def _covered_means(
+    windows: Iterable[tuple[date, date, float]], months: Sequence[tuple[int, int]]
+) -> tuple[float, ...]:
+    """Each month's mean over the days *windows* cover (0 when none is covered),
+    as novomodelo casts the ``recent_observations`` seed onto a lag period."""
+    materialized = tuple(windows)
+    means: list[float] = []
+    for year, month in months:
+        shares = [
+            (_month_share(start, end, year, month), value)
+            for start, end, value in materialized
+        ]
+        covered = sum(share for share, _ in shares)
+        means.append(
+            sum(share * value for share, value in shares) / covered if covered else 0.0
+        )
+    return tuple(means)
+
+
 def _trunk_rows(
     weekly: pd.DataFrame | None,
     monthly: pd.DataFrame | None,
@@ -220,8 +239,13 @@ def _trunk_rows(
 ) -> list[tuple[date, date, pd.Series]]:
     """The deterministic stages' rows (every stage before the terminal one), in
     stage order: the *weekly* forecasts, then the monthly trunk stages, whose
-    single scenario sits in the *monthly* scenario table."""
+    single scenario sits in the *monthly* scenario table.
+
+    A first week that starts before the operative month is clipped to it: the
+    source model excludes those days from every lag month, and novomodelo's lag
+    periods start at the first stage's season."""
     terminal = len(calendar) - 1
+    operative_start = calendar[0].operative_month_start
     rows: list[tuple[date, date, pd.Series]] = []
     for table in (weekly, monthly):
         if table is None:
@@ -230,7 +254,9 @@ def _trunk_rows(
             stage_index = int(row["estagio"]) - 1
             if 0 <= stage_index < terminal:
                 stage = calendar[stage_index]
-                rows.append((stage.start_date, stage.end_date, row))
+                rows.append(
+                    (max(stage.start_date, operative_start), stage.end_date, row)
+                )
     rows.sort(key=lambda entry: entry[0])
     return rows
 
@@ -309,24 +335,38 @@ def source_only_lag_inflows(
 ) -> dict[int, tuple[float, ...]]:
     """Per-depth m³/s lag values of cut plants no converted hydro takes.
 
-    Read on each plant's coupling posto over the pre-study observations and
-    the deterministic study stages; a plant absent from ``hidr.dat`` has no
-    posto and is skipped.
+    Read on each plant's coupling posto, the way novomodelo builds a coupled
+    hydro's lag: a month before the first operative month is the mean of the
+    pre-study observations over the days they cover, and a later month the
+    day-weighted mean over those observations and the deterministic study
+    stages. A plant absent from ``hidr.dat`` has no posto and is skipped.
     """
-    study_start = calendar[0].start_date
-    observation_rows = recent_observation_rows(vazoes, study_start)
+    operative_start = calendar[0].operative_month_start
+    observation_rows = recent_observation_rows(vazoes, calendar[0])
     trunk = _coupling_trunk(vazoes, calendar)
+    seeded = [month_window(*month)[0] < operative_start for month in months]
     inflows: dict[int, tuple[float, ...]] = {}
     for index in plant_indices:
         code = plant_codes[index]
         if code not in effective.base.index:
             continue
         posto = effective.coupling_gauge(code)
-        windows = (
+        observed = tuple(
             (start, end, posto_value(row, posto))
-            for start, end, row in (*observation_rows, *trunk)
+            for start, end, row in observation_rows
         )
-        inflows[index] = _monthly_means(windows, months)
+        study = tuple(
+            (start, end, posto_value(row, posto)) for start, end, row in trunk
+        )
+        inflows[index] = tuple(
+            seed if before else mean
+            for before, seed, mean in zip(
+                seeded,
+                _covered_means(observed, months),
+                _monthly_means((*observed, *study), months),
+                strict=True,
+            )
+        )
     return inflows
 
 

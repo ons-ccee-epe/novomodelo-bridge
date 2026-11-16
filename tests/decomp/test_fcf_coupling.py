@@ -30,7 +30,7 @@ from novomodelo_bridge.decomp.fcf.coupling import (
 )
 from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.temporal import OperativeStage
+from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
 
 
 def _stage(index: int, start: date, end: date) -> OperativeStage:
@@ -194,6 +194,48 @@ def test_coupling_lag_offsets_month_weights_the_deterministic_stages() -> None:
     assert rest == [0.0] * 10
 
 
+#: January 2026 RV0: six weeks from 2025-12-27, then the rest of February.
+_RV0_CALENDAR = tuple(
+    build_operative_calendar(date(2025, 12, 27), [[168.0]] * 6 + [[528.0]])
+)
+_RV0_MONTHS = lag_months(2026, 2)
+
+
+def _rv0_trunk(column: str, values: tuple[float, ...]) -> pd.DataFrame:
+    return pd.DataFrame({"estagio": [1, 2, 3, 4, 5, 6], column: list(values)})
+
+
+def test_coupling_lag_offsets_leave_out_the_days_before_the_operative_month() -> None:
+    effective = _effective(coupling_gauges={1: (11,)})
+    vazoes = SimpleNamespace(
+        previsoes_com_postos_artificiais=_rv0_trunk(
+            "11", (10.0, 20.0, 30.0, 40.0, 50.0, 60.0)
+        ),
+        previsoes=_rv0_trunk("1", (4.0,) * 6),
+        cenarios_calculados_com_postos_artificiais=pd.DataFrame(
+            {"estagio": [7], "cenario": [1], "11": [900.0]}
+        ),
+        cenarios_gerados=pd.DataFrame({"estagio": [7], "cenario": [1], "1": [0.0]}),
+    )
+
+    offsets = coupling_lag_offsets(
+        vazoes,
+        effective,
+        _id_map(1),
+        _RV0_CALENDAR,
+        _RV0_MONTHS,
+        (HydroCoupling(0, 0, 0.0),),
+    )
+
+    february, january, *rest = offsets[0]
+    assert february == pytest.approx(6 / 28 * 56.0)
+    assert january == pytest.approx(
+        (2 * 6.0 + 7 * (16.0 + 26.0 + 36.0 + 46.0) + 1 * 56.0) / 31
+    )
+    # The first week's 27/12..31/12 belong to no lag month.
+    assert rest == [0.0] * 10
+
+
 def test_coupling_lag_offsets_rejects_a_missing_posto() -> None:
     effective = _effective(coupling_gauges={1: (11, 11, 11, 11)})
     vazoes = SimpleNamespace(
@@ -236,6 +278,34 @@ def test_source_only_lag_inflows_join_history_and_trunk_on_the_coupling_posto() 
     assert february == pytest.approx((27 * 200.0 + 1 * 300.0) / 28)
     assert january == pytest.approx(100.0)
     assert rest == [0.0] * 8
+
+
+def test_source_only_lag_inflows_keep_the_observed_month_the_study_starts_in() -> None:
+    vazoes = SimpleNamespace(
+        observacoes_mensais=pd.DataFrame(
+            {"mes": [1, 2, 3], "901": [100.0, 200.0, 300.0]}
+        ),
+        observacoes_semanais=None,
+        previsoes_com_postos_artificiais=_rv0_trunk(
+            "901", (10.0, 20.0, 30.0, 40.0, 50.0, 60.0)
+        ),
+        cenarios_calculados_com_postos_artificiais=pd.DataFrame(
+            {"estagio": [7], "cenario": [1], "901": [900.0]}
+        ),
+    )
+
+    inflows = source_only_lag_inflows(
+        vazoes, _effective(), (901,), (0,), _RV0_CALENDAR, _RV0_MONTHS
+    )
+
+    february, january, december, november, october, *rest = inflows[0]
+    assert february == pytest.approx(6 / 28 * 60.0)
+    assert january == pytest.approx(
+        (2 * 10.0 + 7 * (20.0 + 30.0 + 40.0 + 50.0) + 1 * 60.0) / 31
+    )
+    # December 2025 is observed up to the study start and keeps its value.
+    assert (december, november, october) == (300.0, 200.0, 100.0)
+    assert rest == [0.0] * 7
 
 
 def test_terminal_shares_lists_differing_and_source_only_plants() -> None:

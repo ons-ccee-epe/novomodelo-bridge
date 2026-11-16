@@ -93,6 +93,26 @@ class TestRecentObservationWindows:
         assert _run(None, None) == []
         assert _run(pd.DataFrame(), pd.DataFrame()) == []
 
+    def test_rv0_starting_in_the_previous_month_dates_from_the_operative_month(
+        self,
+    ) -> None:
+        # January 2026 RV0: the first week starts on 2025-12-27, so mes = 11 is
+        # December 2025, clipped where the study begins.
+        calendar = build_operative_calendar(
+            date(2025, 12, 27), [[168.0]] * 6 + [[528.0]]
+        )
+        monthly = pd.DataFrame(
+            {"mes": list(range(1, 12)), "1": [float(m) for m in range(1, 12)]}
+        )
+        out = convert_recent_observation_windows(
+            _vazoes(monthly, None), _CoupledOn(1), _id_map(), calendar
+        )
+        windows = [(o["start_date"], o["end_date"], o["value_m3s"]) for o in out]
+        assert windows[0] == ("2025-02-01", "2025-03-01", 1.0)
+        assert windows[-2] == ("2025-11-01", "2025-12-01", 10.0)
+        assert windows[-1] == ("2025-12-01", "2025-12-27", 11.0)
+        assert len(windows) == 11
+
     def test_windows_are_read_on_the_coupling_gauge(self) -> None:
         monthly = pd.DataFrame({"mes": [1], "1": [50.0], "7": [5.0]})
         weekly = pd.DataFrame({"semana": [1], "1": [80.0], "7": [8.0]})
