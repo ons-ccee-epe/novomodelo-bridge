@@ -41,7 +41,6 @@ from tests._fcf_fixtures import (
 from tests.conftest import (
     FloatDigitsKwargs,
     case_json_floats,
-    requires_block_thermal_cost,
     requires_novomodelo_python,
     requires_writer_binding,
 )
@@ -125,7 +124,6 @@ def test_decomp_mini_deck_converts_and_validates(
 
 
 @requires_novomodelo_python
-@requires_block_thermal_cost
 def test_differing_ct_cvus_case_validates(
     decomp_mini_deck: Path, tmp_path: Path
 ) -> None:

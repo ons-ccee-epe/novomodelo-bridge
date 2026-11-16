@@ -392,13 +392,3 @@ def terminal_shares(
         gap = max((abs(posto_value(row, posto)) for row in coupling_fan), default=0.0)
         shares.append(TerminalShare(code, posto, None, gap))
     return tuple(shares)
-
-
-def carried_lag_share(
-    calendar: Sequence[OperativeStage], cut_year: int, cut_month: int
-) -> float:
-    """The fraction of the cut month the stages before the terminal one cover."""
-    return sum(
-        _month_share(stage.start_date, stage.end_date, cut_year, cut_month)
-        for stage in calendar[:-1]
-    )

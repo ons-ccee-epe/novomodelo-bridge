@@ -50,7 +50,6 @@ from novomodelo_bridge.decomp.fcf.cortes import (
     summarize_cut_families,
 )
 from novomodelo_bridge.decomp.fcf.coupling import (
-    carried_lag_share,
     coupling_lag_offsets,
     lag_months,
     resolve_couplings,
@@ -98,8 +97,6 @@ _LOG = logging.getLogger(__name__)
 #: `boundary-fcf-gnl-anticipated-deviation` diagnostic's relative `max_spread`
 #: HEADLINE only; its per-row table values are unaffected.
 _GNL_DEVIATION_REL_FLOOR = 1e-3
-
-_CARRIED_SHARE_TOLERANCE = 1e-9
 
 
 def _gnl_targets_from(
@@ -270,7 +267,6 @@ class _DeckCoupling:
     inflow_lag_offsets: Mapping[int, tuple[float, ...]]
     source_only_inflows: Mapping[int, tuple[float, ...]]
     terminal_shares: tuple[TerminalShare, ...]
-    carried_share: float
     gnl_plan: GnlRingPlan | None
     recent_observations: list[dict]
     names: Mapping[int, str]
@@ -312,7 +308,6 @@ def _read_deck_coupling(
             (plant_codes[index] for index in source_only),
             calendar,
         ),
-        carried_share=carried_lag_share(calendar, *cut),
         gnl_plan=_build_gnl_ring_plan(
             case_dir, case, cortesh, cut, cuts.header.lag_maximo_gnl
         ),
@@ -581,7 +576,6 @@ def _emit_transit_pricing(
 def _emit_coupling_diagnostics(
     resolution: CouplingResolution,
     shares: Sequence[TerminalShare],
-    carried_share: float,
     *,
     names: Mapping[int, str],
 ) -> None:
@@ -638,27 +632,6 @@ def _emit_coupling_diagnostics(
                     columns=["Code", "Name"],
                     rows=[[code, names.get(code, "")] for code in resolution.unowned],
                     justify=["right", "left"],
-                ),
-            ),
-            logger=_LOG,
-        )
-
-    # TRACKED NOVOMODELO-GAP (C25): the coupling stage's outgoing lag 1 is its own
-    # inflow alone; the share of the month earlier stages carry is left out.
-    if carried_share > _CARRIED_SHARE_TOLERANCE:
-        dx.emit(
-            dx.Diagnostic(
-                code="boundary-fcf-coupling-lag-carried-share",
-                severity=dx.Severity.WARNING,
-                category="Boundary FCF",
-                title="Boundary cut's inflow month priced on the last stage alone",
-                summary=(
-                    f"{carried_share:.1%} of the month whose inflow the boundary "
-                    "cuts price falls in stages before the last one. Novomodelo "
-                    "evaluates that inflow on the last stage's inflow alone, so "
-                    "that share is priced at the last stage's inflow instead of "
-                    "the inflow that occurred, and the boundary cost differs "
-                    "from DECOMP's."
                 ),
             ),
             logger=_LOG,
@@ -878,7 +851,6 @@ def import_boundary_fcf(
     _emit_coupling_diagnostics(
         coupling.resolution,
         coupling.terminal_shares,
-        coupling.carried_share,
         names=coupling.names,
     )
 

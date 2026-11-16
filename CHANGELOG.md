@@ -316,6 +316,10 @@ links are cobre-bridge's.
   one capped at a unit group's capacity as
   `decomp-re-unit-group-generation-clamped`; update scripts that filter on
   the old ids.
+- **BREAKING: `convert decomp` no longer reports
+  `boundary-fcf-coupling-lag-carried-share`**: Novomodelo evaluates the
+  boundary cut's first inflow lag on the whole month the cut prices; update
+  scripts that filter on it.
 
 ### Fixed
 

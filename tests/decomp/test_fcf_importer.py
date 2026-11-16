@@ -74,7 +74,6 @@ def _no_coupling() -> _DeckCoupling:
         inflow_lag_offsets={},
         source_only_inflows={},
         terminal_shares=(),
-        carried_share=0.0,
         gnl_plan=None,
         recent_observations=[],
         names={},
@@ -650,7 +649,7 @@ def test_emit_coupling_diagnostics_is_silent_when_every_plant_owns_its_row() -> 
     resolution = CouplingResolution((HydroCoupling(0, 0, 0.0),), (), ())
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), 0.0, names=_NAMES)
+        _emit_coupling_diagnostics(resolution, (), names=_NAMES)
 
     assert sink == []
 
@@ -663,7 +662,7 @@ def test_emit_coupling_diagnostics_reports_borrowed_owners() -> None:
     )
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), 0.0, names=_NAMES)
+        _emit_coupling_diagnostics(resolution, (), names=_NAMES)
 
     (owners,) = sink
     assert owners.code == "boundary-fcf-coefficient-owners"
@@ -679,7 +678,7 @@ def test_emit_coupling_diagnostics_unowned_plant_is_an_error() -> None:
     resolution = CouplingResolution((), (), (305,))
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), 0.0, names=_NAMES)
+        _emit_coupling_diagnostics(resolution, (), names=_NAMES)
 
     (unowned,) = sink
     assert unowned.code == "boundary-fcf-unowned-plants"
@@ -688,23 +687,18 @@ def test_emit_coupling_diagnostics_unowned_plant_is_an_error() -> None:
     assert unowned.table.rows == [[305, "ITIQUIRA II"]]
 
 
-def test_emit_coupling_diagnostics_warns_on_a_carried_lag_share() -> None:
+def test_emit_coupling_diagnostics_is_silent_on_a_resolved_coupling() -> None:
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(CouplingResolution((), (), ()), (), 0.1, names={})
+        _emit_coupling_diagnostics(CouplingResolution((), (), ()), (), names={})
 
-    (carried,) = sink
-    assert carried.code == "boundary-fcf-coupling-lag-carried-share"
-    assert carried.severity is dx.Severity.WARNING
-    assert "10.0%" in carried.summary
+    assert sink == []
 
 
 def test_emit_coupling_diagnostics_lists_unrepresented_coupling_inflows() -> None:
     shares = (TerminalShare(1, 1, 301, 2.5), TerminalShare(901, 901, None, 40.0))
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(
-            CouplingResolution((), (), ()), shares, 0.0, names=_NAMES
-        )
+        _emit_coupling_diagnostics(CouplingResolution((), (), ()), shares, names=_NAMES)
 
     (terminal,) = sink
     assert terminal.code == "boundary-fcf-coupling-inflow-unrepresented"

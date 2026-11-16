@@ -22,7 +22,6 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 )
 from novomodelo_bridge.decomp.fcf.coupling import (
     BorrowedOwner,
-    carried_lag_share,
     coupling_lag_offsets,
     lag_months,
     resolve_couplings,
@@ -444,9 +443,3 @@ def test_terminal_shares_skip_a_monthly_trunk_stage() -> None:
     )
 
     assert shares == ()
-
-
-def test_carried_lag_share_is_the_cut_month_before_the_last_stage() -> None:
-    assert carried_lag_share(_CALENDAR, 2026, 4) == pytest.approx(3 / 30)
-    month_only = (_stage(0, date(2026, 4, 1), date(2026, 5, 1)),)
-    assert carried_lag_share(month_only, 2026, 4) == 0.0
