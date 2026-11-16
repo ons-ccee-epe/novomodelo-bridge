@@ -449,6 +449,31 @@ def test_operative_week_months_books_weeks_by_gs_counts() -> None:
     assert weeks[date(2026, 5, 30)] == (2026, 5)
 
 
+def test_operative_week_months_books_an_rv0_from_its_operative_month() -> None:
+    # May's RV0 starts on Saturday 2026-04-25, in April.
+    calendar = [
+        *(
+            OperativeStage(
+                i,
+                date(2026, 4, 25) + timedelta(weeks=i),
+                date(2026, 5, 2) + timedelta(weeks=i),
+                4,
+                (168.0,),
+            )
+            for i in range(5)
+        ),
+        OperativeStage(5, date(2026, 5, 30), date(2026, 7, 1), 5, (768.0,)),
+    ]
+
+    weeks = operative_week_months({1: 6, 2: 3, 3: 6}, calendar)
+
+    assert weeks[date(2026, 4, 25)] == (2026, 5)
+    assert weeks[date(2026, 5, 30)] == (2026, 5)
+    assert weeks[date(2026, 6, 6)] == (2026, 6)
+    assert weeks[date(2026, 6, 27)] == (2026, 7)
+    assert weeks[date(2026, 8, 1)] == (2026, 7)
+
+
 def test_operative_week_months_empty_without_gs() -> None:
     assert operative_week_months({}, _EMIT_CALENDAR) == {}
 

@@ -542,17 +542,17 @@ def operative_week_months(
     keyed by the interval's start.
 
     Walks the ``gs`` counts in ascending month order from the study start, the
-    first count being the study-start month's. The intervals are operative
+    first count being the first stage's operative month's, which an RV0 starts
+    in the month before (May's RV0 on 2026-04-25). The intervals are operative
     weeks, and a week belongs to the month ``gs`` books it to even when it
     ends in the next one (mar-26-rv2: the week starting 2026-05-30 is a May
     week); a study of monthly stages only has one interval per month, the
     month itself. Empty without a ``gs`` block.
     """
-    study_start = calendar[0].start_date
     monthly_only = weekly_stage_count(calendar) == 0
     weeks: dict[date, tuple[int, int]] = {}
-    week_start = study_start
-    year, month = study_start.year, study_start.month
+    week_start = calendar[0].start_date
+    year, month = calendar[0].operative_year, calendar[0].season_id + 1
     for key in sorted(weeks_per_month):
         if monthly_only:
             weeks[date(year, month, 1)] = (year, month)
