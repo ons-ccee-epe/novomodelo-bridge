@@ -8,7 +8,7 @@ register, and a coefficient/participation register naming the entities:
     ----    ----  -----        -----        -----------                       ----------
     RE      RE    LU (1..5)    FU/FT/FI/FE  gen, interchange, contract        per-block
     HQ      HQ    LQ (1..5)    CQ           flow, per-term CQ.tipo            per-block
-    HV      HV    LV           CV           hydro useful volume (hm3)         per-stage
+    HV      HV    LV           CV           VARM/VDEF/VDES/VBOM volume (hm3)  per-stage
     HE      HE    (inline)     CM           energy over a REE cascade         per-stage
 
 RE spreads its participation over up to four coefficient registers — ``FU``
@@ -99,7 +99,7 @@ class ConstraintTerm:
     (RE hydro, ``FU``), ``thermal_generation`` (RE thermal, ``FT``),
     ``interchange`` (RE submarket pair, ``FI``), ``contract`` (RE ``CI``/``CE``
     contract, ``FE``), the ``CQ.tipo`` flow
-    (``QDEF``/``QTUR``/``QDES``/``QBOM``) for HQ,
+    (``QDEF``/``QTUR``/``QDES``/``QVER``/``QBOM``) for HQ,
     ``VARM``/``VDEF``/``VDES``/``VBOM`` for HV, or ``energy``
     for HE. ``frequency`` is the 50/60 Hz tag carried only by RE ``FU`` terms
     (``None`` elsewhere); a plant split across both frequencies contributes two

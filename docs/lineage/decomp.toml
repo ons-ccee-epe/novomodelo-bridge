@@ -274,6 +274,8 @@ reads = [
   { file = "dadger", register = "AC" },
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "DT" },
+  { file = "dadger", register = "HV" },
+  { file = "dadger", register = "CV" },
   { file = "hidr" },
 ]
 summary = "Custo de déficit de `CD` e micro-penalidades fixas do modelo de origem; o bloco hidráulico é escalado pela produtibilidade equivalente média (ρ_avg) e máxima (ρ_max) das usinas operadas, calculadas do cadastro `hidr.dat` ancorado no volume inicial de `UH`."
@@ -342,6 +344,20 @@ summary = "Custo de déficit de `CD` e micro-penalidades fixas do modelo de orig
   from = [ { file = "dadger", register = "CD", item = "custo" }, { file = "hidr", item = "produtibilidade_especifica" }, { file = "hidr", item = "a0_volume_cota … a4_volume_cota" }, { file = "hidr", item = "canal_fuga_medio" }, { file = "hidr", item = "perdas, tipo_perda" }, { file = "dadger", register = "UH", item = "volume_inicial" } ]
   status = "derived"
   how = "`10 × custo_déficit × ρ_avg` (folga de vazão defluente máxima)."
+
+  [[output.field]]
+  path = "hydro.outflow_volume_violation_below_cost"
+  from = [ { file = "dadger", register = "CD", item = "custo" }, { file = "hidr", item = "produtibilidade_especifica" }, { file = "hidr", item = "a0_volume_cota … a4_volume_cota" }, { file = "hidr", item = "canal_fuga_medio" }, { file = "hidr", item = "perdas, tipo_perda" }, { file = "dadger", register = "UH", item = "volume_inicial" }, { file = "dadger", register = "HV", item = "codigo_restricao" }, { file = "dadger", register = "CV", item = "tipo" } ]
+  status = "derived"
+  when = "somente quando ao menos uma `HV` de termo único sobre `VDEF` deixa um limite de volume defluente em `constraints/hydro_bounds.parquet`"
+  how = "Igual a `hydro.storage_violation_below_cost`, em R$/hm³: a folga do volume defluente de estágio abaixo do piso custa o mesmo que a folga de uma `HV` que permanece restrição genérica."
+
+  [[output.field]]
+  path = "hydro.outflow_volume_violation_above_cost"
+  from = [ { file = "dadger", register = "CD", item = "custo" }, { file = "hidr", item = "produtibilidade_especifica" }, { file = "hidr", item = "a0_volume_cota … a4_volume_cota" }, { file = "hidr", item = "canal_fuga_medio" }, { file = "hidr", item = "perdas, tipo_perda" }, { file = "dadger", register = "UH", item = "volume_inicial" }, { file = "dadger", register = "HV", item = "codigo_restricao" }, { file = "dadger", register = "CV", item = "tipo" } ]
+  status = "derived"
+  when = "somente quando ao menos uma `HV` de termo único sobre `VDEF` deixa um limite de volume defluente em `constraints/hydro_bounds.parquet`"
+  how = "Igual a `hydro.storage_violation_below_cost`, em R$/hm³: a folga do volume defluente de estágio acima do teto custa o mesmo que a folga de uma `HV` que permanece restrição genérica."
 
   [[output.field]]
   path = "hydro.generation_violation_below_cost"
@@ -985,12 +1001,15 @@ summary = "Limites de geração e CVU de cada térmica de `CT` em cada estágio 
 [[output]]
 path = "constraints/pumping_bounds.parquet"
 kind = "parquet"
-when = "somente quando alguma restrição hidráulica `HQ` de termo único `QBOM` (coeficiente ±1 em `CQ`) limita uma estação de bombeamento declarada em `UE`"
+when = "somente quando alguma restrição hidráulica `HQ` de termo único `QBOM` (coeficiente ±1 em `CQ`) ou alguma restrição de volume `HV` de termo único `VBOM` (coeficiente ±1 em `CV`) limita uma estação de bombeamento declarada em `UE`"
 module = "src/novomodelo_bridge/decomp/converters/single_term_bounds.py"
 reads = [
   { file = "dadger", register = "HQ" },
   { file = "dadger", register = "LQ" },
   { file = "dadger", register = "CQ" },
+  { file = "dadger", register = "HV" },
+  { file = "dadger", register = "LV" },
+  { file = "dadger", register = "CV" },
   { file = "dadger", register = "UE" },
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "UH" },
@@ -998,25 +1017,25 @@ reads = [
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "DT" },
 ]
-summary = "Limites de vazão bombeada por estação, estágio e patamar, oriundos exclusivamente das restrições `HQ`/`LQ`/`CQ` cujo único termo é `QBOM`. Os limites de `UE` ficam em `system/pumping_stations.json`. Um `QBOM` sem estação correspondente é avisado e ignorado."
+summary = "Limites de vazão bombeada por estação, estágio e patamar, oriundos das restrições `HQ`/`LQ`/`CQ` cujo único termo é `QBOM`, e limites de volume bombeado por estação e estágio (sem patamar), oriundos das restrições `HV`/`LV`/`CV` cujo único termo é `VBOM` com coeficiente ±1. Os limites de `UE` ficam em `system/pumping_stations.json`. Um `QBOM` ou `VBOM` sem estação correspondente é avisado e ignorado."
 
   [[output.field]]
   path = "pumping_station_id"
-  from = [ { file = "dadger", register = "CQ", item = "codigo_usina" }, { file = "dadger", register = "UE", item = "codigo_usina" } ]
+  from = [ { file = "dadger", register = "CQ", item = "codigo_usina" }, { file = "dadger", register = "CV", item = "codigo_usina" }, { file = "dadger", register = "UE", item = "codigo_usina" } ]
   status = "derived"
-  how = "Id da estação em `system/pumping_stations.json`, resolvido pelo `codigo_usina` do termo `QBOM`."
+  how = "Id da estação em `system/pumping_stations.json`, resolvido pelo `codigo_usina` do termo `QBOM` (`HQ`) ou `VBOM` (`HV`)."
 
   [[output.field]]
   path = "stage_id"
-  from = [ { file = "dadger", register = "HQ", item = "estagio_inicial, estagio_final" }, { file = "dadger", register = "LQ", item = "estagio" } ]
+  from = [ { file = "dadger", register = "HQ", item = "estagio_inicial, estagio_final" }, { file = "dadger", register = "LQ", item = "estagio" }, { file = "dadger", register = "HV", item = "estagio_inicial, estagio_final" }, { file = "dadger", register = "LV", item = "estagio" } ]
   status = "derived"
-  how = "Índice 0-based de cada estágio entre `estagio_inicial` e `estagio_final` da `HQ`; estágios sem `LQ` herdam o limite declarado mais recente (os anteriores à primeira declaração herdam a primeira)."
+  how = "Índice 0-based de cada estágio entre `estagio_inicial` e `estagio_final` da `HQ` (ou da `HV`, no limite de volume `VBOM`); estágios sem `LQ` (ou `LV`) herdam o limite declarado mais recente (os anteriores à primeira declaração herdam a primeira)."
 
   [[output.field]]
   path = "block_id"
   from = [ { file = "dadger", register = "DP", item = "numero_patamares" } ]
   status = "derived"
-  how = "Sempre `0..n-1`: os limites `LQ` são por patamar, logo cada estágio se materializa em uma linha por patamar do calendário."
+  how = "Uma linha de vazão (`HQ` `QBOM`) é sempre por patamar, `0..n-1`: os limites `LQ` são por patamar, logo cada estágio se materializa em uma linha por patamar do calendário. Uma linha de volume (`HV` `VBOM`) é de estágio, com `block_id` nulo, e preenche só `min_hm3`/`max_hm3`."
 
   [[output.field]]
   path = "min_m3s"
@@ -1030,15 +1049,33 @@ summary = "Limites de vazão bombeada por estação, estágio e patamar, oriundo
 
   [[output.field]]
   path = "min_hm3"
-  from = []
-  status = "null"
-  how = "Sempre nulo."
+  from = [
+    { file = "dadger", register = "HV", item = "codigo_restricao" },
+    { file = "dadger", register = "HV", item = "estagio_inicial" },
+    { file = "dadger", register = "HV", item = "estagio_final" },
+    { file = "dadger", register = "LV", item = "limite_inferior" },
+    { file = "dadger", register = "CV", item = "codigo_usina" },
+    { file = "dadger", register = "CV", item = "tipo" },
+    { file = "dadger", register = "CV", item = "coeficiente" },
+  ]
+  status = "derived"
+  when = "somente quando uma `HV` de termo único sobre `VBOM` (coeficiente ±1) deixa um limite inferior de volume bombeado na estação"
+  how = "Piso do volume bombeado no estágio, em hm³ absolutos e sem patamar: `limite_inferior` do `LV` da `HV`, herdado entre os estágios de `estagio_inicial` a `estagio_final` e sem deslocamento; coeficiente −1 troca e inverte os lados. Um lado em branco ou na sentinela ±1e21 não acrescenta limite, um piso negativo é descartado e um piso zero é gravado como está. O maior piso prevalece."
 
   [[output.field]]
   path = "max_hm3"
-  from = []
-  status = "null"
-  how = "Sempre nulo."
+  from = [
+    { file = "dadger", register = "HV", item = "codigo_restricao" },
+    { file = "dadger", register = "HV", item = "estagio_inicial" },
+    { file = "dadger", register = "HV", item = "estagio_final" },
+    { file = "dadger", register = "LV", item = "limite_superior" },
+    { file = "dadger", register = "CV", item = "codigo_usina" },
+    { file = "dadger", register = "CV", item = "tipo" },
+    { file = "dadger", register = "CV", item = "coeficiente" },
+  ]
+  status = "derived"
+  when = "somente quando uma `HV` de termo único sobre `VBOM` (coeficiente ±1) deixa um limite superior de volume bombeado na estação"
+  how = "Teto do volume bombeado no estágio, em hm³ absolutos e sem patamar: `limite_superior` do `LV` da `HV`, herdado entre os estágios de `estagio_inicial` a `estagio_final` e sem deslocamento; coeficiente −1 troca e inverte os lados. Um lado em branco ou na sentinela ±1e21 não acrescenta limite. Um teto negativo, ou limites sem valor comum no estágio, interrompem a conversão com `decomp-rhv-bound-conflict`. O menor teto prevalece."
 
 # ---------------------------------------------------------------------------
 # post_study_stages.json (conditional)
@@ -1987,7 +2024,7 @@ summary = "Famílias de curvas de nível de jusante por usina (uma linha por seg
 [[output]]
 path = "constraints/hydro_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ de termo único, canal de desvio de base, ou limite de turbinamento e potência disponível de Itaipu)"
+when = "somente quando ao menos uma contribuição de limite é produzida (RQ/UH, VE, TI, faixa de armazenamento por estágio, restrição RE/RHQ/RHV de termo único, canal de desvio de base, ou limite de turbinamento e potência disponível de Itaipu)"
 module = "src/novomodelo_bridge/decomp/converters/bounds.py"
 reads = [
   { file = "dadger", register = "UH" },
@@ -2007,13 +2044,16 @@ reads = [
   { file = "dadger", register = "HQ" },
   { file = "dadger", register = "LQ" },
   { file = "dadger", register = "CQ" },
+  { file = "dadger", register = "HV" },
+  { file = "dadger", register = "LV" },
+  { file = "dadger", register = "CV" },
   { file = "dadger", register = "MP" },
   { file = "dadger", register = "FD" },
   { file = "hidr" },
   { file = "polinjus" },
   { file = "vazoes" },
 ]
-summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ de termo único e coeficiente ±1, canal de desvio de base, limite de turbinamento de Itaipu) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único. Uma `HV` nunca vira limite de armazenamento: toda `HV`, inclusive a de termo único, é restrição genérica (ver `constraints/generic_constraints.json`)."
+summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em `system/hydros.json`. Toda contribuição (defluência mínima RQ/UH, faixa de armazenamento por estágio, volume de espera VE, irrigação TI, restrições RE/RHQ/RHV de termo único e coeficiente ±1, canal de desvio de base, limite de turbinamento de Itaipu) é interseccionada por eixo (máximo dos pisos, mínimo dos tetos) e cada célula vira uma única linha; um estágio com contribuição por patamar é materializado em uma linha por patamar, sem linha-base. `FT`/`FI` entram só para decidir se uma `RE` tem termo único. Uma `HV` de termo único com coeficiente ±1 em `CV` vira limite de estágio (sem patamar) da usina conforme o `tipo` do `CV`: `VARM` (ou em branco) armazenamento, `VDEF` volume defluente e `VDES` volume desviado, em hm³; um `VBOM` limita a estação de bombeamento (ver `constraints/pumping_bounds.parquet`). Qualquer outra `HV` permanece restrição genérica (ver `constraints/generic_constraints.json`)."
 
   [[output.field]]
   path = "hydro_id"
@@ -2133,8 +2173,13 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "AC", item = "VOLMAX" },
     { file = "hidr", item = "tipo_regulacao" },
     { file = "hidr", item = "volume_referencia" },
+    { file = "dadger", register = "HV", item = "codigo_restricao" },
+    { file = "dadger", register = "LV", item = "limite_inferior" },
+    { file = "dadger", register = "CV", item = "tipo" },
+    { file = "dadger", register = "CV", item = "coeficiente" },
   ]
-  how = "Piso de armazenamento por estágio, sem patamar: o `volume_minimo` efetivo do estágio quando a faixa efetiva difere do envelope declarado em `system/hydros.json` (um `AC VOLMIN`/`VOLMAX` temporal)."
+  status = "derived"
+  how = "Piso de armazenamento por estágio, sem patamar: o `volume_minimo` efetivo do estágio quando a faixa efetiva difere do envelope declarado em `system/hydros.json` (um `AC VOLMIN`/`VOLMAX` temporal) e o piso de uma `HV` de termo único sobre `VARM` (ou `CV` sem `tipo`) com coeficiente ±1. O `limite_inferior` do `LV` é relativo ao piso efetivo do estágio: esse piso é somado a um lado limitado, um lado em branco ou na sentinela ±1e21 não acrescenta limite e o coeficiente −1 troca e inverte os lados. O resultado é interseccionado com a faixa de armazenamento efetiva do estágio, e os dois lados de armazenamento são gravados nos estágios com `HV`. O maior piso prevalece."
 
   [[output.field]]
   path = "max_storage_hm3"
@@ -2147,8 +2192,13 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "hidr", item = "volume_referencia" },
     { file = "dadger", register = "VE", item = "codigo_usina" },
     { file = "dadger", register = "VE", item = "volume" },
+    { file = "dadger", register = "HV", item = "codigo_restricao" },
+    { file = "dadger", register = "LV", item = "limite_superior" },
+    { file = "dadger", register = "CV", item = "tipo" },
+    { file = "dadger", register = "CV", item = "coeficiente" },
   ]
-  how = "Teto de armazenamento por estágio: o `volume_maximo` efetivo do estágio quando difere do envelope; o volume de espera `VE` (percentual do volume útil por estágio, `volume_k` → estágio k−1) convertido em hm³ absoluto e emitido só quando fica abaixo do envelope. O menor teto prevalece."
+  status = "derived"
+  how = "Teto de armazenamento por estágio: o `volume_maximo` efetivo do estágio quando difere do envelope; o volume de espera `VE` (percentual do volume útil por estágio, `volume_k` → estágio k−1) convertido em hm³ absoluto e emitido só quando fica abaixo do envelope; e o teto de uma `HV` de termo único sobre `VARM` (ou `CV` sem `tipo`) com coeficiente ±1. O `limite_superior` do `LV` é relativo ao piso efetivo do estágio: esse piso é somado a um lado limitado, um lado em branco ou na sentinela ±1e21 não acrescenta limite e o coeficiente −1 troca e inverte os lados. O resultado é interseccionado com a faixa de armazenamento efetiva do estágio, e os dois lados de armazenamento são gravados nos estágios com `HV`. O menor teto prevalece; limites sem valor comum no estágio interrompem a conversão com `decomp-rhv-bound-conflict`."
 
   [[output.field]]
   path = "min_diversion_m3s"
@@ -2201,27 +2251,63 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
 
   [[output.field]]
   path = "min_outflow_hm3"
-  from = []
-  status = "null"
-  how = "Sempre nulo."
+  from = [
+    { file = "dadger", register = "HV", item = "codigo_restricao" },
+    { file = "dadger", register = "HV", item = "estagio_inicial" },
+    { file = "dadger", register = "HV", item = "estagio_final" },
+    { file = "dadger", register = "LV", item = "limite_inferior" },
+    { file = "dadger", register = "CV", item = "codigo_usina" },
+    { file = "dadger", register = "CV", item = "tipo" },
+    { file = "dadger", register = "CV", item = "coeficiente" },
+  ]
+  status = "derived"
+  when = "somente quando uma `HV` de termo único sobre `VDEF` (coeficiente ±1) deixa um limite inferior de volume defluente na usina"
+  how = "Piso do volume defluente do estágio (turbinado mais vertido, sem o desvio), em hm³ absolutos e sem patamar: `limite_inferior` do `LV` da `HV`, herdado entre os estágios de `estagio_inicial` a `estagio_final` e sem deslocamento; coeficiente −1 troca e inverte os lados. Um lado em branco ou na sentinela ±1e21 não acrescenta limite, um piso negativo é descartado e um piso zero é gravado como está. O maior piso prevalece; a violação do piso é penalizada por `hydro.outflow_volume_violation_below_cost` em `penalties.json`."
 
   [[output.field]]
   path = "max_outflow_hm3"
-  from = []
-  status = "null"
-  how = "Sempre nulo."
+  from = [
+    { file = "dadger", register = "HV", item = "codigo_restricao" },
+    { file = "dadger", register = "HV", item = "estagio_inicial" },
+    { file = "dadger", register = "HV", item = "estagio_final" },
+    { file = "dadger", register = "LV", item = "limite_superior" },
+    { file = "dadger", register = "CV", item = "codigo_usina" },
+    { file = "dadger", register = "CV", item = "tipo" },
+    { file = "dadger", register = "CV", item = "coeficiente" },
+  ]
+  status = "derived"
+  when = "somente quando uma `HV` de termo único sobre `VDEF` (coeficiente ±1) deixa um limite superior de volume defluente na usina"
+  how = "Teto do volume defluente do estágio (turbinado mais vertido, sem o desvio), em hm³ absolutos e sem patamar: `limite_superior` do `LV` da `HV`, herdado entre os estágios de `estagio_inicial` a `estagio_final` e sem deslocamento; coeficiente −1 troca e inverte os lados. Um lado em branco ou na sentinela ±1e21 não acrescenta limite. Um teto negativo, ou limites sem valor comum no estágio, interrompem a conversão com `decomp-rhv-bound-conflict`. O menor teto prevalece; a violação do teto é penalizada por `hydro.outflow_volume_violation_above_cost` em `penalties.json`."
 
   [[output.field]]
   path = "min_diversion_hm3"
-  from = []
-  status = "null"
-  how = "Sempre nulo."
+  from = [
+    { file = "dadger", register = "HV", item = "codigo_restricao" },
+    { file = "dadger", register = "HV", item = "estagio_inicial" },
+    { file = "dadger", register = "HV", item = "estagio_final" },
+    { file = "dadger", register = "LV", item = "limite_inferior" },
+    { file = "dadger", register = "CV", item = "codigo_usina" },
+    { file = "dadger", register = "CV", item = "tipo" },
+    { file = "dadger", register = "CV", item = "coeficiente" },
+  ]
+  status = "derived"
+  when = "somente quando uma `HV` de termo único sobre `VDES` (coeficiente ±1) deixa um limite inferior de volume desviado em uma usina com canal de desvio convertido"
+  how = "Piso do volume desviado no estágio, em hm³ absolutos e sem patamar: `limite_inferior` do `LV` da `HV`, herdado entre os estágios de `estagio_inicial` a `estagio_final` e sem deslocamento; coeficiente −1 troca e inverte os lados. Um lado em branco ou na sentinela ±1e21 não acrescenta limite, um piso negativo é descartado e um piso zero é gravado como está. O maior piso prevalece. Uma `HV` sobre `VDES` de usina sem canal de desvio convertido é pulada inteira, com diagnóstico."
 
   [[output.field]]
   path = "max_diversion_hm3"
-  from = []
-  status = "null"
-  how = "Sempre nulo."
+  from = [
+    { file = "dadger", register = "HV", item = "codigo_restricao" },
+    { file = "dadger", register = "HV", item = "estagio_inicial" },
+    { file = "dadger", register = "HV", item = "estagio_final" },
+    { file = "dadger", register = "LV", item = "limite_superior" },
+    { file = "dadger", register = "CV", item = "codigo_usina" },
+    { file = "dadger", register = "CV", item = "tipo" },
+    { file = "dadger", register = "CV", item = "coeficiente" },
+  ]
+  status = "derived"
+  when = "somente quando uma `HV` de termo único sobre `VDES` (coeficiente ±1) deixa um limite superior de volume desviado em uma usina com canal de desvio convertido"
+  how = "Teto do volume desviado no estágio, em hm³ absolutos e sem patamar: `limite_superior` do `LV` da `HV`, herdado entre os estágios de `estagio_inicial` a `estagio_final` e sem deslocamento; coeficiente −1 troca e inverte os lados. Um lado em branco ou na sentinela ±1e21 não acrescenta limite. Um teto negativo, ou limites sem valor comum no estágio, interrompem a conversão com `decomp-rhv-bound-conflict`. O menor teto prevalece. Uma `HV` sobre `VDES` de usina sem canal de desvio convertido é pulada inteira, com diagnóstico."
 
   [[output.field]]
   path = "water_withdrawal_m3s"
@@ -2760,7 +2846,7 @@ summary = "Carga determinística replicada nas colunas de cenário da biblioteca
 [[output]]
 path = "constraints/generic_constraints.json"
 kind = "json"
-when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
+when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ, RHV com vários termos ou com coeficiente diferente de ±1, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
 module = "src/novomodelo_bridge/decomp/converters/constraints.py"
 reads = [
   { file = "dadger", register = "SB" },
@@ -2797,7 +2883,7 @@ reads = [
   { file = "libs_restricao_eletrica" },
   { file = "renovaveis" },
 ]
-summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`/`FE`) ou com termo de contrato (`FE`), `RHQ` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), toda `RHV`, inclusive a de termo único, `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `FE` sem um único contrato `CI`/`CE` com o seu número no seu submercado, `QBOM` sem estação `UE`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma `HV` é pulada inteira, com um aviso por causa, quando um termo cita usina ausente do cadastro ou não operada (`decomp-rhv-varm-plant-uncadastred`, em todo tipo exceto `VBOM`), quando um termo `VBOM` não tem estação `UE` (`decomp-rhv-vbom-no-station`) ou quando um termo `VDES` cita usina sem canal de desvio no `system/hydros.json` convertido, inclusive um canal que a conversão fechou (`decomp-rhv-vdes-no-diversion`). Uma `RHQ` ou `RHV` com coeficiente zero em todos os termos e estágios é pulada com `decomp-rhq-rhv-zero-coefficients`; numa `HV`, essa verificação vem antes das outras. Um termo declarado com coeficiente 0.0 explícito no primeiro estágio da restrição e não nulo depois não a faz ser pulada: nos primeiros estágios a expressão vale zero e a linha só verifica `0 in [L, U]`. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem."
+summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`/`FE`) ou com termo de contrato (`FE`), `RHQ` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHV` com vários termos ou com coeficiente diferente de ±1 (a de termo único com coeficiente ±1 vira limite de entidade em `constraints/hydro_bounds.parquet` ou `constraints/pumping_bounds.parquet`), `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Uma restrição com termo não resolvível (`FU` por frequência, térmica GNL, `FI` sem linha `IA`, `FE` sem um único contrato `CI`/`CE` com o seu número no seu submercado, `QBOM` sem estação `UE`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma `HV` é pulada inteira, com um aviso por causa, quando um termo cita usina ausente do cadastro ou não operada (`decomp-rhv-varm-plant-uncadastred`, em todo tipo exceto `VBOM`), quando um termo `VBOM` não tem estação `UE` (`decomp-rhv-vbom-no-station`) ou quando um termo `VDES` cita usina sem canal de desvio no `system/hydros.json` convertido, inclusive um canal que a conversão fechou (`decomp-rhv-vdes-no-diversion`). Uma `RHQ` ou `RHV` com coeficiente zero em todos os termos e estágios é pulada com `decomp-rhq-rhv-zero-coefficients`; numa `HV`, essa verificação vem antes das outras. Um termo declarado com coeficiente 0.0 explícito no primeiro estágio da restrição e não nulo depois não a faz ser pulada: nos primeiros estágios a expressão vale zero e a linha só verifica `0 in [L, U]`. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem."
 
   [[output.field]]
   path = "constraints[].id"
@@ -2905,13 +2991,13 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "HE", item = "valor_penalidade" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO · custo_violacao" },
   ]
-  how = "`RE`/`HQ`: 10 × o maior custo de déficit do `CD` entre os submercados. `HV`: o valor de `hydro.storage_violation_below_cost` em `penalties.json`, `10 × custo_déficit × ρ_max × (1e6/3600)` em R$/hm³, o patamar de déficit em energia equivalente a um hm³ na maior produtibilidade equivalente ρ_max entre as usinas operadas. Não há verificação de dominância: a folga só custa ao menos o déficit que a água liberada pela violação evita quando ρ_cum/|c| ≤ 10·ρ_max, com ρ_cum a produtibilidade acumulada da usina do termo e c o seu coeficiente. `RHE`: `valor_penalidade` do `HE` (R$/MWh; 1000.0, com aviso, quando ausente ou não positivo), cobrada por MWh de violação. LIBs: `custo_violacao` do `TRATAMENTO-VIOLACAO` quando positivo, senão o mesmo 10 × déficit."
+  how = "`RE`/`HQ`: 10 × o maior custo de déficit do `CD` entre os submercados. `HV` que permanece genérica: o valor de `hydro.storage_violation_below_cost` em `penalties.json`, `10 × custo_déficit × ρ_max × (1e6/3600)` em R$/hm³, o patamar de déficit em energia equivalente a um hm³ na maior produtibilidade equivalente ρ_max entre as usinas operadas. Não há verificação de dominância: a folga só custa ao menos o déficit que a água liberada pela violação evita quando ρ_cum/|c| ≤ 10·ρ_max, com ρ_cum a produtibilidade acumulada da usina do termo e c o seu coeficiente. `RHE`: `valor_penalidade` do `HE` (R$/MWh; 1000.0, com aviso, quando ausente ou não positivo), cobrada por MWh de violação. LIBs: `custo_violacao` do `TRATAMENTO-VIOLACAO` quando positivo, senão o mesmo 10 × déficit."
 
   [[output.field]]
   path = "constraints[].slack.penalty_basis"
   from = []
   status = "derived"
-  how = "Como o Novomodelo cobra a folga: `per_unit` na `RHE` (penalidade por MWh de violação, igual em estágio semanal e mensal) e na `HV` (penalidade por hm³ de violação); `per_hour` em `RE`, `HQ` e LIBs (penalidade × horas da restrição)."
+  how = "Como o Novomodelo cobra a folga: `per_unit` na `RHE` (penalidade por MWh de violação, igual em estágio semanal e mensal) e na `HV` que permanece genérica (penalidade por hm³ de violação); `per_hour` em `RE`, `HQ` e LIBs (penalidade × horas da restrição)."
 
 # ---------------------------------------------------------------------------
 # constraints/generic_constraint_bounds.parquet
@@ -2919,7 +3005,7 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
 [[output]]
 path = "constraints/generic_constraint_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
+when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ, RHV com vários termos ou com coeficiente diferente de ±1, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica"
 module = "src/novomodelo_bridge/decomp/converters/constraints.py"
 reads = [
   { file = "dadger", register = "SB" },
@@ -3032,7 +3118,7 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "`RE`/`HQ`: `limite_inferior` do patamar (nulo quando em branco). `HV`: `limite_inferior` do `LV`; um lado em branco ou na sentinela ±1e21 fica sem limite. Num lado limitado soma-se `Σ cᵢ·(piso efetivo do estágio − min_storage_hm3)` sobre os termos `VARM`, pois o `LV` é relativo ao piso do estágio e `hydro_useful_volume_final` ao `min_storage_hm3` de `system/hydros.json`; os termos `VDEF`/`VDES`/`VBOM` não deslocam o limite. O deslocamento segue o sinal do coeficiente, e nenhum lado troca de posição. `HE`: `limite` (MWmês, potência média do estágio) vezes as horas do estágio, em MWh, quando `tipo_limite` = 1 (outro valor trata como absoluto, com aviso); 0.0 com `tipo_limite` = 2, cujo limite está na expressão, nos estágios do registro. LIBs: `limite_inferior` da fórmula (sentinela ±1E+31 vira nulo) ou o lado constante da inequação com os termos de dados avaliados na célula (`demanda`, `carga_ande`, aliases, `disp_usih` = potência disponível `MP`×`FD`, e `peq_<nome>_<submercado>` = geração da série `PQ` desse nome no submercado, com o sufixo dado pela sigla do `SB` ou por `SECO` = `SE` e `SUL` = `S`; um `peq_` sem série correspondente descarta a restrição com aviso; `ger_usit` de uma térmica GNL do `dadgnl` = geração comandada no `GL` em cada patamar, média das semanas `GL` do estágio ponderada pela `duracao` do patamar; um estágio ativo sem semana `GL` interrompe a conversão)."
+  how = "`RE`/`HQ`: `limite_inferior` do patamar (nulo quando em branco). `HV` que permanece genérica: `limite_inferior` do `LV`; um lado em branco ou na sentinela ±1e21 fica sem limite. Num lado limitado soma-se `Σ cᵢ·(piso efetivo do estágio − min_storage_hm3)` sobre os termos `VARM`, pois o `LV` é relativo ao piso do estágio e `hydro_useful_volume_final` ao `min_storage_hm3` de `system/hydros.json`; os termos `VDEF`/`VDES`/`VBOM` não deslocam o limite. O deslocamento segue o sinal do coeficiente, e nenhum lado troca de posição. `HE`: `limite` (MWmês, potência média do estágio) vezes as horas do estágio, em MWh, quando `tipo_limite` = 1 (outro valor trata como absoluto, com aviso); 0.0 com `tipo_limite` = 2, cujo limite está na expressão, nos estágios do registro. LIBs: `limite_inferior` da fórmula (sentinela ±1E+31 vira nulo) ou o lado constante da inequação com os termos de dados avaliados na célula (`demanda`, `carga_ande`, aliases, `disp_usih` = potência disponível `MP`×`FD`, e `peq_<nome>_<submercado>` = geração da série `PQ` desse nome no submercado, com o sufixo dado pela sigla do `SB` ou por `SECO` = `SE` e `SUL` = `S`; um `peq_` sem série correspondente descarta a restrição com aviso; `ger_usit` de uma térmica GNL do `dadgnl` = geração comandada no `GL` em cada patamar, média das semanas `GL` do estágio ponderada pela `duracao` do patamar; um estágio ativo sem semana `GL` interrompe a conversão)."
 
   [[output.field]]
   path = "bound_upper"
@@ -3061,7 +3147,7 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "MP", item = "manutencao" },
     { file = "dadger", register = "FD", item = "fator" },
   ]
-  how = "`RE`/`HQ`: `limite_superior` do patamar (nulo quando em branco). `HV`: `limite_superior` do `LV`, com as mesmas regras de `bound_lower` para o lado sem limite e para o deslocamento sobre os termos `VARM`. `HE`: sempre nulo, o `limite` é só inferior. LIBs: `limite_superior` da fórmula ou o lado constante da inequação, como em `bound_lower`; um lado com magnitude ≥ 1e21 também lê nulo."
+  how = "`RE`/`HQ`: `limite_superior` do patamar (nulo quando em branco). `HV` que permanece genérica: `limite_superior` do `LV`, com as mesmas regras de `bound_lower` para o lado sem limite e para o deslocamento sobre os termos `VARM`. `HE`: sempre nulo, o `limite` é só inferior. LIBs: `limite_superior` da fórmula ou o lado constante da inequação, como em `bound_lower`; um lado com magnitude ≥ 1e21 também lê nulo."
 
 # ---------------------------------------------------------------------------
 # boundary/ (checkpoint da função de custo futuro de fronteira)

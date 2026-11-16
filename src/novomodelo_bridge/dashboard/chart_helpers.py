@@ -50,10 +50,14 @@ COST_GROUPS: dict[str, list[str]] = {
     "Pumping": ["pumping_cost"],
     "Inflow Penalty": ["inflow_penalty_cost"],
     # Hydro violation costs (each broken out for visibility)
-    # NOTE: hydro_violation_cost is an aggregate of the 6 costs below — excluded
+    # NOTE: hydro_violation_cost aggregates the hydro violation costs below — excluded
     # via _NON_COST_COLS to avoid double-counting.
     "Outflow Min": ["outflow_violation_below_cost"],
     "Outflow Max": ["outflow_violation_above_cost"],
+    "Outflow Volume": [
+        "outflow_volume_violation_below_cost",
+        "outflow_volume_violation_above_cost",
+    ],
     "Turbining Bounds": ["turbined_violation_cost"],
     "Generation Bounds": ["generation_violation_cost"],
     "Storage Bounds": ["storage_violation_cost"],
@@ -83,6 +87,7 @@ COST_GROUP_COLORS: dict[str, str] = {
     # Hydro violations — red-orange gradient (penalty costs)
     "Outflow Min": "#E11D48",
     "Outflow Max": "#F43F5E",
+    "Outflow Volume": "#B91C1C",
     "Turbining Bounds": "#FB923C",
     "Generation Bounds": "#F97316",
     "Storage Bounds": "#C2410C",

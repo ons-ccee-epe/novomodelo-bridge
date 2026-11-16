@@ -21,7 +21,6 @@ from novomodelo_bridge.comparators.decomp.results import (
     _DecompConstraintLookups,
     _generic_constraint_lhs_decomp,
     _rhe_lhs_lookup,
-    _stage_floor_by_id_stage,
     _stage_frame_to_lookup,
     _term_lookup_value,
     _useful_volume_lookup,
@@ -33,6 +32,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintRecord,
     ConstraintTerm,
 )
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo.constraint_expr import ResolvedGenericConstraints
 from tests.comparators.conftest import (
@@ -45,7 +45,7 @@ from tests.comparators.conftest import (
     _write_generic_constraints_case,
 )
 from tests.conftest import _FakeDadger as _ConstraintFakeDadger
-from tests.conftest import make_decomp_case
+from tests.conftest import hv_floor_frame, make_decomp_case
 
 
 def _re_record(
@@ -105,20 +105,33 @@ class TestStageFrameToLookup:
 
 
 class TestUsefulVolumeLookup:
-    """`_useful_volume_lookup`: useful volume + (stage floor - static floor),
-    the id map resolving a source code onto the novomodelo hydro id both floors
-    are keyed by."""
+    """`_useful_volume_lookup`: useful volume + (deck effective stage floor -
+    static floor), the id map resolving a source code onto the novomodelo hydro
+    id the static floor is keyed by."""
 
-    def test_without_stage_floor_term_is_the_useful_volume(self) -> None:
+    @staticmethod
+    def _effective(
+        floor: float,
+        stage_floors: tuple[float, ...] | None = None,
+    ) -> EffectiveCadastro:
+        return EffectiveCadastro(
+            base=hv_floor_frame({10: floor}),
+            n_stages=len(stage_floors) if stage_floors else 1,
+            stage_varying=(
+                {(10, "volume_minimo"): stage_floors} if stage_floors else {}
+            ),
+        )
+
+    def test_deck_floor_equal_to_static_term_is_the_useful_volume(self) -> None:
         hydro_frame = pl.DataFrame(
             {"codigo_usina": [10], "estagio": [1], "volume_util_final_hm3": [120.0]}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _useful_volume_lookup(hydro_frame, id_map, {0: 30.0}, {}) == {
-            (10, 0): 120.0
-        }
+        assert _useful_volume_lookup(
+            hydro_frame, id_map, {0: 30.0}, self._effective(30.0)
+        ) == {(10, 0): 120.0}
 
-    def test_stage_floor_shifts_the_term_by_its_excess_over_the_static_floor(
+    def test_deck_stage_floor_shifts_the_term_by_its_excess_over_the_static_floor(
         self,
     ) -> None:
         hydro_frame = pl.DataFrame(
@@ -130,7 +143,7 @@ class TestUsefulVolumeLookup:
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
         assert _useful_volume_lookup(
-            hydro_frame, id_map, {0: 30.0}, {(0, 0): 50.0}
+            hydro_frame, id_map, {0: 30.0}, self._effective(30.0, (50.0, 30.0))
         ) == {
             (10, 0): 140.0,
             (10, 1): 120.0,
@@ -141,59 +154,19 @@ class TestUsefulVolumeLookup:
             {"codigo_usina": [99], "estagio": [1], "volume_util_final_hm3": [120.0]}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _useful_volume_lookup(hydro_frame, id_map, {0: 30.0}, {}) == {}
+        assert (
+            _useful_volume_lookup(hydro_frame, id_map, {0: 30.0}, self._effective(30.0))
+            == {}
+        )
 
     def test_missing_static_floor_is_excluded(self) -> None:
         hydro_frame = pl.DataFrame(
             {"codigo_usina": [10], "estagio": [1], "volume_util_final_hm3": [120.0]}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _useful_volume_lookup(hydro_frame, id_map, {}, {(0, 0): 50.0}) == {}
-
-
-class TestStageFloorByIdStage:
-    """`_stage_floor_by_id_stage`: the first non-null per-stage storage floor per
-    (novomodelo hydro id, stage); empty without a storage-floor column."""
-
-    @staticmethod
-    def _write_bounds(
-        case_dir: Path, rows: dict[str, list[float | int | None]]
-    ) -> None:
-        (case_dir / "constraints").mkdir()
-        pl.DataFrame(rows).write_parquet(
-            case_dir / "constraints" / "hydro_bounds.parquet"
+        assert (
+            _useful_volume_lookup(hydro_frame, id_map, {}, self._effective(50.0)) == {}
         )
-
-    def test_parquet_without_a_storage_column_gives_no_floor(
-        self, tmp_path: Path
-    ) -> None:
-        self._write_bounds(
-            tmp_path,
-            {
-                "hydro_id": [0],
-                "stage_id": [0],
-                "block_id": [0],
-                "min_turbined_m3s": [5.0],
-            },
-        )
-        assert _stage_floor_by_id_stage(tmp_path / "output") == {}
-
-    def test_takes_the_first_non_null_floor_per_hydro_and_stage(
-        self, tmp_path: Path
-    ) -> None:
-        self._write_bounds(
-            tmp_path,
-            {
-                "hydro_id": [0, 0, 0, 1],
-                "stage_id": [0, 0, 0, 1],
-                "block_id": [0, 1, 2, 0],
-                "min_storage_hm3": [None, 130.0, 140.0, 40.0],
-            },
-        )
-        assert _stage_floor_by_id_stage(tmp_path / "output") == {
-            (0, 0): 130.0,
-            (1, 1): 40.0,
-        }
 
 
 class TestTermLookupValue:
@@ -406,30 +379,29 @@ class TestGenericConstraintLhsDecomp:
         assert [r["lhs_value"] for r in result.to_dicts()] == [300.0, 400.0]
 
     @pytest.mark.parametrize(
-        ("bound_rows", "expected"),
+        ("deck_floor", "parquet_floor", "expected"),
         [
-            pytest.param([], 50.0, id="no-per-stage-floor"),
-            pytest.param([(0, 130.0)], 80.0, id="stage-floor-above-static"),
-            pytest.param(
-                [(0, None), (1, 130.0)], 80.0, id="null-row-does-not-mask-floor"
-            ),
+            pytest.param(100.0, None, 50.0, id="deck-floor-equals-static"),
+            pytest.param(130.0, None, 80.0, id="deck-stage-floor-above-static"),
+            pytest.param(130.0, 160.0, 80.0, id="parquet-floor-is-ignored"),
         ],
     )
     def test_hv_varm_term_pairs_on_useful_volume(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
-        bound_rows: list[tuple[int, float | None]],
+        deck_floor: float,
+        parquet_floor: float | None,
         expected: float,
     ) -> None:
-        if bound_rows:
+        if parquet_floor is not None:
             (tmp_path / "constraints").mkdir()
             pl.DataFrame(
                 {
-                    "hydro_id": [0] * len(bound_rows),
-                    "stage_id": [0] * len(bound_rows),
-                    "block_id": [block for block, _ in bound_rows],
-                    "min_storage_hm3": [floor for _, floor in bound_rows],
+                    "hydro_id": [0],
+                    "stage_id": [0],
+                    "block_id": [0],
+                    "min_storage_hm3": [parquet_floor],
                 },
                 schema={
                     "hydro_id": pl.Int64,
@@ -449,10 +421,25 @@ class TestGenericConstraintLhsDecomp:
             by_family={"RE": (), "HQ": (), "HV": (record,), "HE": ()}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        case = make_decomp_case(tmp_path, dadger=_ConstraintFakeDadger(), id_map=id_map)
+        case = make_decomp_case(
+            tmp_path,
+            dadger=_ConstraintFakeDadger(),
+            id_map=id_map,
+            hidr=[],
+            calendar=[],
+        )
+        effective = EffectiveCadastro(
+            base=hv_floor_frame({10: 100.0}),
+            n_stages=1,
+            stage_varying={(10, "volume_minimo"): (deck_floor,)},
+        )
         monkeypatch.setattr(
             "novomodelo_bridge.decomp.constraint_registers.read_constraints",
             lambda *_a, **_k: census,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.build_effective_cadastro",
+            lambda *_a, **_k: (effective, None),
         )
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
@@ -619,10 +606,23 @@ class TestGenericConstraintLhsDecomp:
             by_family={"RE": (), "HQ": (), "HV": (record,), "HE": ()}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        case = make_decomp_case(tmp_path, dadger=_ConstraintFakeDadger(), id_map=id_map)
+        case = make_decomp_case(
+            tmp_path,
+            dadger=_ConstraintFakeDadger(),
+            id_map=id_map,
+            hidr=[],
+            calendar=[],
+        )
+        effective = EffectiveCadastro(
+            base=hv_floor_frame({10: 30.0}), n_stages=1, stage_varying={}
+        )
         monkeypatch.setattr(
             "novomodelo_bridge.decomp.constraint_registers.read_constraints",
             lambda *_a, **_k: census,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.build_effective_cadastro",
+            lambda *_a, **_k: (effective, None),
         )
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",

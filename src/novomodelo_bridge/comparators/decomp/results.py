@@ -75,6 +75,11 @@ from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.pandas_utils import as_int
+from novomodelo_bridge.decomp.converters.cadastro import (
+    EffectiveCadastro,
+    build_effective_cadastro,
+    effective_storage_range,
+)
 from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
 from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
@@ -84,6 +89,7 @@ if TYPE_CHECKING:
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.constraint_registers import (
+        ConstraintCensus,
         ConstraintRecord,
         ConstraintTerm,
     )
@@ -2433,42 +2439,20 @@ def _stage_frame_to_lookup(
     }
 
 
-def _stage_floor_by_id_stage(
-    novomodelo_output_dir: Path,
-) -> dict[tuple[int, int], float]:
-    """``{(novomodelo hydro id, stage_0based): per-stage storage floor hm3}``.
-
-    Empty when the case has no per-stage storage bound. Null rows are dropped
-    before the first value per key, so a row bounding another column cannot
-    mask the storage row.
-    """
-    bounds = novomodelo_readers.read_novomodelo_hydro_per_stage_bounds(
-        novomodelo_output_dir
-    )
-    if "min_storage_hm3" not in bounds.columns:
-        return {}
-    return {
-        (int(hydro_id), int(stage)): float(floor)
-        for hydro_id, stage, floor in bounds.filter(
-            pl.col("min_storage_hm3").is_not_null()
-        )
-        .unique(subset=["entity_id", "stage_id"], keep="first", maintain_order=True)
-        .select("entity_id", "stage_id", "min_storage_hm3")
-        .iter_rows()
-    }
-
-
 def _useful_volume_lookup(
     hydro_frame: pl.DataFrame,
     id_map: DecompIdMap,
     static_floor_by_id: dict[int, float],
-    stage_floor_by_id_stage: dict[tuple[int, int], float],
+    effective: EffectiveCadastro,
 ) -> dict[tuple[int, int], float]:
     """``{(source code, stage_0based): S - V_lo hm3}`` for an HV ``VARM`` term.
 
     Both sides measure S - V_lo, V_lo being the static ``min_storage_hm3``.
     The source model's ``volume_util_final_hm3`` is measured from the stage
-    floor f, so it gains ``f - V_lo``; f is V_lo where no per-stage row exists.
+    floor f, so it gains ``f - V_lo``; f is the deck's effective stage floor
+    (``effective_storage_range`` of *effective*), the floor the conversion
+    shifts an HV's ``VARM`` terms by, never a floor read back from the
+    converted case.
     """
     useful = _stage_frame_to_lookup(hydro_frame, "volume_util_final_hm3")
     out: dict[tuple[int, int], float] = {}
@@ -2480,9 +2464,29 @@ def _useful_volume_lookup(
         v_lo = static_floor_by_id.get(novomodelo_id)
         if v_lo is None:
             continue
-        floor = stage_floor_by_id_stage.get((novomodelo_id, stage), v_lo)
+        floor = effective_storage_range(effective, code, stage)[0]
         out[(code, stage)] = value + (floor - v_lo)
     return out
+
+
+def _hv_storage_lookup(
+    case: DecompCase,
+    census: ConstraintCensus,
+    hydro_frame: pl.DataFrame,
+    static_floor_by_id: dict[int, float],
+) -> dict[tuple[int, int], float]:
+    """`_useful_volume_lookup` over the deck's effective cadastro; empty, with
+    no cadastro read, when the census holds no HV ``VARM`` term."""
+    if not any(
+        term.variable == "VARM"
+        for record in census.by_family.get("HV", ())
+        for term in record.terms
+    ):
+        return {}
+    effective, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
+    return _useful_volume_lookup(
+        hydro_frame, case.id_map, static_floor_by_id, effective
+    )
 
 
 @dataclass(frozen=True)
@@ -2593,11 +2597,13 @@ def _generic_constraint_lhs_decomp(
 
     *case* is the shared, once-parsed deck :func:`build_decomp_dataset`
     builds: its ``id_map`` resolves a plant code to its Novomodelo hydro id (the
-    HV storage floor), and ``dadger`` feeds the special-constraint census
-    (:func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`) --
-    neither is re-parsed here. The ``dec_oper_*`` tables are read directly
-    off *case*'s own directory. *probabilities* is forwarded unchanged to
-    every underlying :func:`_scenario_mean` fold this derivation relies on
+    HV static floor), ``dadger`` feeds the special-constraint census
+    (:func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`),
+    and ``dadger``/``hidr``/``calendar`` give the HV deck's effective stage
+    floor (see `_hv_storage_lookup`) -- none is re-parsed here. The
+    ``dec_oper_*`` tables are read directly off *case*'s own directory.
+    *probabilities* is forwarded unchanged to every underlying
+    :func:`_scenario_mean` fold this derivation relies on
     (:func:`_dec_oper_hydro_stage_frame`/:func:`_dec_oper_thermal_stage_frame`/
     :func:`_rhe_lhs_lookup`) -- see :func:`_hydro_side` for its
     scenario-weighting contract.
@@ -2649,12 +2655,7 @@ def _generic_constraint_lhs_decomp(
             novomodelo_output_dir
         ).items()
     }
-    storage_lookup = _useful_volume_lookup(
-        hydro_frame,
-        case.id_map,
-        min_storage,
-        _stage_floor_by_id_stage(novomodelo_output_dir),
-    )
+    storage_lookup = _hv_storage_lookup(case, census, hydro_frame, min_storage)
 
     thermal_frame = _dec_oper_thermal_stage_frame(
         decomp_dir, probabilities=probabilities

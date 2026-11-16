@@ -137,9 +137,8 @@ def test_stage_volume_axes_are_stage_level() -> None:
 
 
 def test_pre_existing_eight_axes_unchanged() -> None:
-    """Every previously registered axis resolves to the exact
-    same :class:`AxisSpec` it always did — the six new families/axes are
-    additive only."""
+    """Each axis listed below resolves to its exact :class:`AxisSpec`;
+    registering further families and axes leaves these specs unchanged."""
     expected = {
         ("hydro", "turbined"): ("min_turbined_m3s", "max_turbined_m3s", True),
         ("hydro", "outflow"): ("min_outflow_m3s", "max_outflow_m3s", True),

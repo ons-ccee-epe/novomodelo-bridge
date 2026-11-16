@@ -766,7 +766,7 @@ def test_hq_qtur_lowers_to_turbined(hq_id_map: DecompIdMap) -> None:
 
 
 def test_hq_qtur_ceiling_above_capacity_clamps_upper(hq_id_map: DecompIdMap) -> None:
-    """Boundary-review fix 1: a QTUR ceiling above the plant's declared
+    """A QTUR ceiling above the plant's declared
     ``max_turbined_m3s`` is clamped down to that capacity — mirroring the RE
     ``generation`` clamp for the identical rule-43 exposure (``QTUR`` ceiling
     exceeding a head-derated ``max_turbined_m3s`` declared elsewhere) —

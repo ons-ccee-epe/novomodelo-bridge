@@ -74,18 +74,20 @@ _NON_COST_COLS: frozenset[str] = frozenset(
         "immediate_cost",
         "future_cost",
         "discount_factor",
-        "hydro_violation_cost",  # aggregate of 6 individual hydro violations
+        "hydro_violation_cost",  # aggregate of the individual hydro violations
     }
 )
 
 # All known violation cost column names from the costs DataFrame spec.
-# NOTE: hydro_violation_cost is excluded — it's an aggregate of the 6 below.
+# NOTE: hydro_violation_cost is excluded — it aggregates the hydro violations below.
 _VIOLATION_COLS: frozenset[str] = frozenset(
     {
         "storage_violation_cost",
         "filling_target_cost",
         "outflow_violation_below_cost",
         "outflow_violation_above_cost",
+        "outflow_volume_violation_below_cost",
+        "outflow_volume_violation_above_cost",
         "turbined_violation_cost",
         "generation_violation_cost",
         "evaporation_violation_cost",

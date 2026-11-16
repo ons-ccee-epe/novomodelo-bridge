@@ -52,6 +52,25 @@ def test_comparator_cost_map_covers_exactly_the_canonical_columns() -> None:
     )
 
 
+def test_outflow_volume_violation_columns_are_classified_as_violations() -> None:
+    from novomodelo_bridge.comparators.charts.costs import (
+        _COST_MAP,
+        _VIOLATION_CATEGORIES,
+    )
+    from novomodelo_bridge.dashboard.tabs.costs import _VIOLATION_COLS
+
+    columns = {
+        "outflow_volume_violation_below_cost",
+        "outflow_volume_violation_above_cost",
+    }
+    labels = {label for label, _, cols, _ in _COST_MAP if columns & set(cols)}
+
+    assert columns <= set(NOVOMODELO_COST_COMPONENT_COLUMNS)
+    assert labels == {"Outflow Volume Viol."}
+    assert labels <= _VIOLATION_CATEGORIES
+    assert columns <= _VIOLATION_COLS
+
+
 def test_comparator_exclusion_set_is_the_shared_aggregate_set() -> None:
     from novomodelo_bridge.comparators.charts import _NOVOMODELO_NON_COST_KEYS
 

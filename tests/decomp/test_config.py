@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from novomodelo_bridge.core.penalties import storage_violation_cost
+from novomodelo_bridge.core.units import HM3_TO_MWH_PER_RHO
 from novomodelo_bridge.decomp.converters.config import (
     convert_penalties,
     rhv_slack_penalty,
@@ -32,6 +33,22 @@ def test_rhv_slack_penalty_matches_penalties_json_storage_violation_cost(
 def test_rhv_slack_penalty_empty_productivities_uses_unit_rho_max() -> None:
     assert rhv_slack_penalty(100.0, []) == storage_violation_cost(
         max_deficit_cost=100.0, rho_max_acum=1.0
+    )
+
+
+@pytest.mark.parametrize(
+    ("deficit_cost", "productivities"),
+    [(3000.0, [0.5, 2.0, 1.0]), (1000.0, [0.0, 0.8, 0.8]), (100.0, [])],
+)
+def test_inflow_slack_price_matches_the_rhv_slack_price_plus_one_m3s_hour(
+    deficit_cost: float, productivities: list[float]
+) -> None:
+    """Inflow price in R$/(m³/s)·h, scaled to R$/hm³ by ``HM3_TO_MWH_PER_RHO``."""
+    inflow = convert_penalties(deficit_cost, productivities)["hydro"][
+        "inflow_nonnegativity_cost"
+    ]
+    assert inflow * HM3_TO_MWH_PER_RHO == pytest.approx(
+        rhv_slack_penalty(deficit_cost, productivities) + HM3_TO_MWH_PER_RHO
     )
 
 

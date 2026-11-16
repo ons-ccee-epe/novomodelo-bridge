@@ -66,6 +66,15 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
         "#F43F5E",
     ),
     (
+        "Outflow Volume Viol.",
+        [],
+        [
+            "outflow_volume_violation_below_cost",
+            "outflow_volume_violation_above_cost",
+        ],
+        "#B91C1C",
+    ),
+    (
         "Turbining Bounds Viol.",
         ["VIOL. TURB. MINIMO", "VIOL. TURB. MAXIMO"],
         ["turbined_violation_cost"],
@@ -108,10 +117,14 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
     ("Inflow Non-Negativity", [], ["inflow_penalty_cost"], "#EA580C"),
     # Generic constraint violations: The source model reports the risk-aversion curve
     # and surface (CAR/SAR), electric (RESTELETRICA), interchange-group (INTERC. MIN.),
-    # hydraulic (RHQ/RHV) and piecewise-linear (RLPP) restriction violations as separate
-    # parcelas, but novomodelo-bridge converts them all into Novomodelo generic constraints, so
-    # Novomodelo aggregates their slacks into a single `generic_violation_cost`. Sum the
-    # source model parcelas to compare like-for-like.
+    # and piecewise-linear (RLPP) restriction violations as separate
+    # parcelas. novomodelo-bridge converts the restrictions that stay generic into Novomodelo
+    # generic constraints, so Novomodelo aggregates their slacks into a single
+    # `generic_violation_cost`; a single-plant `HV`'s violation lands in the outflow-volume
+    # or inflow-non-negativity category instead. Sum the source model parcelas to compare
+    # like-for-like.
+    # DECOMP's report itemizes no RHQ/RHV parcel: their penalty is part of the
+    # "Unitemized Constr. Slack" row above.
     (
         "Generic Constr. Viol.",
         [
@@ -137,6 +150,7 @@ _VIOLATION_CATEGORIES: frozenset[str] = frozenset(
     {
         "Outflow Min Viol.",
         "Outflow Max Viol.",
+        "Outflow Volume Viol.",
         "Turbining Bounds Viol.",
         "Generation Bounds Viol.",
         "Storage Bounds Viol.",

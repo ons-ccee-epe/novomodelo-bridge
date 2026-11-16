@@ -17,21 +17,26 @@ links are cobre-bridge's.
 ### Added
 
 - **`convert decomp` converts `HV` volume restrictions whose `CV` terms are
-  `VDEF`, `VDES` or `VBOM`**; it dropped them with a
-  `decomp-rhv-volume-tipo-deferred` warning. An `HV` is skipped with a
-  warning when a `VBOM` term has no `UE` pumping station
-  (`decomp-rhv-vbom-no-station`) or a `VDES` term's plant has no diversion
-  channel in the converted case (`decomp-rhv-vdes-no-diversion`), and an `HQ`
-  or `HV` whose coefficients are all zero is skipped with
+  `VDEF`, `VDES` or `VBOM`**, which the previous release dropped with a
+  `decomp-rhv-volume-tipo-deferred` warning; a single-plant `HV` becomes a
+  stage limit in `constraints/hydro_bounds.parquet` (`VDEF`, `VDES`) or
+  `constraints/pumping_bounds.parquet` (`VBOM`), any other `HV` becomes a
+  generic constraint, and novomodelo reads these limits only from the paired
+  release.
+  An `HV` is skipped with a warning when a `VBOM` term has no `UE` pumping
+  station (`decomp-rhv-vbom-no-station`) or a `VDES` term's plant has no
+  diversion channel in the converted case (`decomp-rhv-vdes-no-diversion`), and
+  an `HQ` or `HV` whose coefficients are all zero is skipped with
   `decomp-rhq-rhv-zero-coefficients`.
 
 ### Changed
 
-- **`convert decomp` writes every `HV` volume restriction as a soft constraint
-  in `constraints/generic_constraints.json` and
-  `constraints/generic_constraint_bounds.parquet`**, a single-plant one
-  included, which it wrote as a storage bound in
-  `constraints/hydro_bounds.parquet`. Results change; reconvert DECOMP cases.
+- **`convert decomp` holds a single-plant `VARM` `HV` limit within the plant's
+  storage range for the stage**; it wrote the limit as declared. Results
+  change; reconvert DECOMP cases.
+- **BREAKING:** `convert decomp` stops with `decomp-rhv-bound-conflict` when a
+  single-plant `HV` limit cannot hold together with the plant's other limits for
+  the stage; correct the `LV` limits in the deck.
 
 ### Removed
 

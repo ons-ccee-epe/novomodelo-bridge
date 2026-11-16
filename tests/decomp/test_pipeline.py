@@ -2120,7 +2120,8 @@ class TestDiversionChannelDroppedDiagnostic:
         assert diagnostic.table.rows == [["TOCOS", 180, 999, 25.0]]
 
     def test_remediation_has_no_repo_internal_references(self) -> None:
-        text = f"{self._diagnostic().summary} {self._diagnostic().remediation}"
+        diagnostic = self._diagnostic()
+        text = f"{diagnostic.summary} {diagnostic.remediation}"
         for leak in ("docs/", "plans/", "~/git", "ticket-", "epic-", "_"):
             assert leak not in text
 
@@ -2188,8 +2189,6 @@ class TestMiniDeckDiversionChannels:
     def test_channels_and_their_limits(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
-        import json
-
         from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 
         report = convert_decomp_case(decomp_mini_deck, tmp_path / "out")
@@ -2339,8 +2338,6 @@ class TestMiniDeckFphaProductionModels:
 
     @staticmethod
     def _stage_ranges(out: Path) -> dict[str, list[dict]]:
-        import json
-
         names = {
             h["id"]: h["name"]
             for h in json.loads(
@@ -2395,8 +2392,6 @@ class TestMiniDeckFphaProductionModels:
     ) -> None:
         """PROMISSAO is under ``MP`` maintenance on every stage, so its fit
         range sits above the widest turbined limit it declares."""
-        import json
-
         from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 
         convert_decomp_case(decomp_mini_deck, tmp_path / "out")

@@ -79,15 +79,47 @@ ceiling is closed and reported, so the water stays in the plant's own river;
 a positive diversion floor cannot be closed, and the conversion fails.
 
 A restriction register on one plant variable, such as an `HQ` on `QDEF`,
-becomes a bound on that plant. A volume restriction (`HV`) never does: every
-`HV`, a single-plant one included, becomes a generic constraint with its own
-slack; the [DECOMP data map](decomp-data-map.md) gives its bounds and penalty.
+becomes a bound on that plant.
 Two `HQ` restrictions on the same plant variable that no value meets at once,
 such as a 0 m³/s ceiling and a 6 m³/s floor, become generic constraints
 instead, each with its own slack at the same penalty. DECOMP prices every
 `RHQ` violation per unit and violates the cheaper restriction, whatever their
 order or numbers, so Novomodelo then makes the same choice. The conversion
 reports each such pair as a warning.
+
+A single-plant volume restriction (`HV`), one with a single term of coefficient
+±1, becomes a limit on that term's plant or pumping station, set stage by
+stage. A storage (`VARM`), outflow-volume (`VDEF`) or diversion-volume (`VDES`)
+term limits the plant in `constraints/hydro_bounds.parquet`; a pumped-volume
+(`VBOM`) term limits the pumping station in
+`constraints/pumping_bounds.parquet`. Every other `HV` becomes a generic
+constraint with its own slack. The [DECOMP data map](decomp-data-map.md) gives
+the fields, bounds and penalty of each.
+
+The storage, diversion-volume and pumped-volume limits are hard bounds. The
+outflow-volume limit is soft: its slack is priced in `penalties.json`, in
+`hydro.outflow_volume_violation_below_cost` and `_above_cost`, at the `HV`
+violation price, the price of the slack of an `HV` that stays generic. Those two
+fields are written only when an outflow-volume limit exists.
+
+When a hard minimum binds and the plant cannot meet it with its own water, the
+priced inflow slack that the paragraph on incremental inflows describes meets
+it: Novomodelo adds artificial inflow at that plant, at the `HV` violation
+price plus a small fixed amount. That water shows in Novomodelo's
+inflow-non-negativity slack and cost, not as an `HV` violation.
+
+A single-plant `HV` limit that no value can meet together with the plant's
+other limits on the same quantity, such as another `HV`, the storage range or a
+negative volume ceiling, stops the conversion with the error
+`decomp-rhv-bound-conflict`, which names the plant or pumping station, the
+stage and the limits. Correct the `LV` limits in the deck and convert again.
+
+A Novomodelo release without stage-volume bounds ignores the outflow-volume,
+diversion-volume and pumped-volume limits without a message, and its `validate`
+refuses a case whose `penalties.json` carries
+`outflow_volume_violation_below_cost`. The pairing rule between a bridge
+release and a novomodelo release is under [Running a case with an imported
+boundary](#running-a-case-with-an-imported-boundary).
 
 Incremental inflows are converted as the inflow file gives them, negative
 values included. DECOMP reports a negative incremental inflow as zero in its
@@ -270,6 +302,14 @@ minimum of an export contract at its price as a cost, and only the energy
 above it as revenue. Novomodelo counts every exported MWh as revenue, so on a deck
 with an export minimum the two contract costs differ by twice the minimum's
 value; the comparison logs that amount.
+
+The per-constraint comparison covers only the `HV`s that stay generic.
+DECOMP's cost report prints no `RHV` parcel, so the penalty of a binding `HV`
+sits in the unitemized-slack category described above, which has no Novomodelo
+counterpart. Novomodelo books a single-plant `HV` violation as outflow-volume
+violation or as inflow-non-negativity cost, and an `HV` that stays generic as
+generic-constraint violation cost, so on a deck where an `HV` binds the cost
+breakdown does not line up category by category.
 
 DECOMP's `Zsup` is the lowest upper bound reached so far, and the relato
 prints no upper bound per iteration, so the convergence chart sets it against

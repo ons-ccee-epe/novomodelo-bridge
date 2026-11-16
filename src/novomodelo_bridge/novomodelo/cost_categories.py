@@ -21,7 +21,7 @@ stay in the two consumers.
 from __future__ import annotations
 
 # : Derived/aggregate columns in the ``costs`` parquet that are NOT individual
-# : cost components. ``hydro_violation_cost`` is the sum of the six hydro-violation
+# : cost components. ``hydro_violation_cost`` is the sum of the hydro-violation
 # : components, and ``total/immediate/future_cost`` are roll-ups — summing any of
 # : these alongside the components would double-count. ``discount_factor`` is the
 # : per-(scenario, stage) NPV weight, not a cost.
@@ -74,6 +74,9 @@ NOVOMODELO_COST_COMPONENT_COLUMNS: tuple[str, ...] = (
     "filling_target_cost",
     "evaporation_violation_cost",
     "withdrawal_violation_cost",
+    # The outflow-volume pair is absent in older runs (read as 0).
+    "outflow_volume_violation_below_cost",
+    "outflow_volume_violation_above_cost",
     # Generic constraints
     "generic_violation_cost",
 )
