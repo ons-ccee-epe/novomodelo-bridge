@@ -358,6 +358,12 @@ turbined plus spilled flow on both sides. DECOMP's defluent flow in
 `dec_oper_usih` also counts the diverted flow, which leaves the river above the
 plant and which Novomodelo reports apart.
 
+DECOMP prints the same spilled flow in every patamar of a stage. Novomodelo
+spills per block, and the conversion does not tie a stage's blocks together.
+A spilling plant can therefore split its turbined and spilled flow between the
+blocks differently from DECOMP, and the spillage, turbined flow and generation
+gaps include that difference.
+
 Each submarket's net import compares with the net interchange of
 `dec_oper_sist`; the fictitious subsystem has no row. The lines on a loop whose
 exchange costs tie, such as a direct line and its route through the
@@ -433,7 +439,7 @@ On the Energy Balance tab, the ANDE load of the deck's `RI` register is added
 to the demand of Itaipu's submarket, as the conversion adds it to that bus:
 DECOMP's `dec_oper_sist` demand leaves it out, while its hydro generation
 includes the Itaipu output that serves it. DECOMP prints the system's natural
-inflow energy (ENA) as energy over the stage, in MWmês of 730 hours; the
+inflow energy (ENA) as energy over the stage, in MWmês of 730.5 hours; the
 chart converts it to the stage's mean MW, the unit of Novomodelo's series.
 
 The Productivity tab compares the two models at the operating points each one
