@@ -945,6 +945,7 @@ class TestConvertHydroPenaltyOverrides:
         assert {"hydro_id", "stage_id"}.issubset(df.columns)
         assert "generation_violation_below_cost" not in df.columns
         assert "filling_target_violation_cost" not in df.columns
+        assert "fpha_violation_cost" not in df.columns
 
         # Stage 1 matches the base exactly → no rows emitted for it (sparse).
         assert sorted(df["stage_id"].unique().tolist()) == [0, 2]
@@ -958,6 +959,47 @@ class TestConvertHydroPenaltyOverrides:
         # Output obeys the (hydro_id, stage_id) ordering contract.
         ordered = df.sort_values(["hydro_id", "stage_id"]).reset_index(drop=True)
         assert df.reset_index(drop=True).equals(ordered)
+
+    @patch(
+        "novomodelo_bridge.newave.converters.network._read_penalid_costs",
+        return_value={},
+    )
+    def test_filling_target_follows_per_stage_rho_max_acum(
+        self, _mock_penalid, tmp_path
+    ) -> None:
+        from novomodelo_bridge.core.penalties import hydro_penalty_costs
+        from novomodelo_bridge.newave.converters.network import (
+            convert_hydro_penalty_overrides,
+        )
+
+        case = make_case(tmp_path, sistema=_make_sistema_mock())
+        base = hydro_penalty_costs(
+            rho_avg=0.6, rho_max_acum=2.0, penalid_costs={}, max_deficit_cost=1000.0
+        )
+        moved = hydro_penalty_costs(
+            rho_avg=0.6, rho_max_acum=3.0, penalid_costs={}, max_deficit_cost=1000.0
+        )
+        table = convert_hydro_penalty_overrides(
+            case,
+            hydro_ids=[0, 1],
+            base_hydro_penalties=base,
+            per_stage_rho_avg=[0.6, 0.6, 0.6],
+            per_stage_rho_max_acum=[2.0, 2.0, 3.0],
+        )
+        assert table is not None
+        df = table.to_pandas()
+
+        assert sorted(df["stage_id"].unique().tolist()) == [2]
+        assert (
+            df["filling_target_violation_cost"].tolist()
+            == [pytest.approx(moved["filling_target_violation_cost"])] * 2
+        )
+        assert (
+            df["storage_violation_below_cost"].tolist()
+            == [pytest.approx(moved["storage_violation_below_cost"])] * 2
+        )
+        assert "generation_violation_below_cost" not in df.columns
+        assert "fpha_violation_cost" not in df.columns
 
     @patch(
         "novomodelo_bridge.newave.converters.network._read_penalid_costs",

@@ -660,6 +660,7 @@ Recalcula o bloco `hydro` de `penalties.json` com a PROD_MEDIA_SIN de cada está
 | `outflow_violation_below_cost` | `penalid.dat` › `VAZMIN · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `modif.dat` › `CFUGA`, `modif.dat` › `CMONT` *(condicional: somente quando o valor do estágio difere de `penalties.json`)* | VAZMIN (ou 10 × maior custo de déficit) × PROD_MEDIA_SIN do estágio. |
 | `outflow_violation_above_cost` | `penalid.dat` › `TURBMX · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `modif.dat` › `CFUGA`, `modif.dat` › `CMONT` *(condicional: somente quando o valor do estágio difere de `penalties.json`)* | TURBMX (ou 10 × maior custo de déficit) × PROD_MEDIA_SIN do estágio. |
 | `storage_violation_below_cost` | `penalid.dat` › `VOLMIN · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica`, `confhd.dat` › `usinas · codigo_usina_jusante` *(condicional: somente quando o valor do estágio difere de `penalties.json`)* | Mesma fórmula de `penalties.json` com a MAX_PRODTACUM_SIN do estágio. Como o pipeline mantém essa constante fixa em todo o horizonte, na prática a coluna nunca difere e não é emitida. |
+| `filling_target_violation_cost` | `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica`, `confhd.dat` › `usinas · codigo_usina_jusante` *(condicional: somente quando o valor do estágio difere de `penalties.json`)* | Mesma fórmula de `penalties.json` com a MAX_PRODTACUM_SIN do estágio. Como o pipeline mantém essa constante fixa em todo o horizonte, na prática a coluna nunca difere e não é emitida. |
 | `evaporation_violation_cost` | `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica`, `confhd.dat` › `usinas · codigo_usina_jusante` *(condicional: somente quando o valor do estágio difere de `penalties.json`)* | 10 × maior custo de déficit × MAX_PRODTACUM_SIN do estágio; constante no horizonte, logo na prática não emitida. |
 | `water_withdrawal_violation_cost` | `penalid.dat` › `DESVIO · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica`, `confhd.dat` › `usinas · codigo_usina_jusante` *(condicional: somente quando o valor do estágio difere de `penalties.json`)* | DESVIO (ou 10 × maior custo de déficit) × MAX_PRODTACUM_SIN do estágio; constante no horizonte, logo na prática não emitida. |
 | `inflow_nonnegativity_cost` | `penalid.dat` › `DESVIO · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica` *(condicional: somente quando o valor do estágio difere de `penalties.json`)* | `water_withdrawal_violation_cost` do estágio + 1; segue a constante MAX_PRODTACUM_SIN, logo na prática não emitida. |
@@ -921,6 +922,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `usinas · codigo_usina` → `constraints/generic_parameters.json` › `scalar_parameters[].computed_spec.hydro_id`
 - `usinas · codigo_usina` → `constraints/penalty_overrides_hydro.parquet` › `hydro_id`
 - `usinas · codigo_usina_jusante` → `constraints/penalty_overrides_hydro.parquet` › `storage_violation_below_cost`
+- `usinas · codigo_usina_jusante` → `constraints/penalty_overrides_hydro.parquet` › `filling_target_violation_cost`
 - `usinas · codigo_usina_jusante` → `constraints/penalty_overrides_hydro.parquet` › `evaporation_violation_cost`
 - `usinas · codigo_usina_jusante` → `constraints/penalty_overrides_hydro.parquet` › `water_withdrawal_violation_cost`
 - `codigo_usina` → `system/hydros.json` › `hydros[].id`
@@ -1037,6 +1039,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `custo_deficit · custo` → `constraints/penalty_overrides_hydro.parquet` › `outflow_violation_below_cost`
 - `custo_deficit · custo` → `constraints/penalty_overrides_hydro.parquet` › `outflow_violation_above_cost`
 - `custo_deficit · custo` → `constraints/penalty_overrides_hydro.parquet` › `storage_violation_below_cost`
+- `custo_deficit · custo` → `constraints/penalty_overrides_hydro.parquet` › `filling_target_violation_cost`
 - `custo_deficit · custo` → `constraints/penalty_overrides_hydro.parquet` › `evaporation_violation_cost`
 - `custo_deficit · custo` → `constraints/penalty_overrides_hydro.parquet` › `water_withdrawal_violation_cost`
 - `custo_deficit · custo` → `constraints/penalty_overrides_hydro.parquet` › `inflow_nonnegativity_cost`
@@ -1167,6 +1170,7 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `turbined_cost`
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `diversion_cost`
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `storage_violation_below_cost`
+- `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `filling_target_violation_cost`
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `evaporation_violation_cost`
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `water_withdrawal_violation_cost`
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `inflow_nonnegativity_cost`

@@ -595,19 +595,15 @@ def _own_productivities(
     return out
 
 
-# Hydro penalty columns whose value scales with productivity (ρ_avg or
-# ρ_max_acum) and is therefore stage-varying. ``generation_violation_below_cost``
-# (energy-domain) never differs per stage and is excluded. After the
-# deficit-derived rewrite ``storage_violation_below_cost`` always scales with
-# ρ_max_acum (both the VOLMIN and default paths), so it is included.
-# ``filling_target_violation_cost`` now also scales with ρ_max_acum, but is
-# deliberately kept OUT of the per-stage override: its LP slot is dormant, so it
-# is populated once from the base ρ_max_acum rather than re-emitted per stage.
+# Hydro penalty columns that scale with ρ_avg or ρ_max_acum, so they can differ
+# per stage. ``generation_violation_below_cost`` and ``fpha_violation_cost`` are
+# energy-domain, never differ per stage, and are excluded.
 _RHO_SCALED_HYDRO_COLUMNS: tuple[str, ...] = (
     "spillage_cost",
     "turbined_cost",
     "diversion_cost",
     "storage_violation_below_cost",
+    "filling_target_violation_cost",
     "turbined_violation_below_cost",
     "outflow_violation_below_cost",
     "outflow_violation_above_cost",
@@ -765,10 +761,8 @@ def convert_hydro_penalty_overrides(
     The override is SIN-uniform (one value per stage, applied to every hydro, matching
     the source model's use of a single SIN constant) and **sparse**: a row is emitted
     only for ``(hydro, stage)`` pairs and columns whose value actually differs from the
-    global ``penalties.json`` default. ``generation_violation_below_cost``
-    (energy-domain, ρ-independent) and ``filling_target_violation_cost``
-    (ρ_max_acum-derived but deliberately excluded from the per-stage override —
-    its LP slot is dormant) are never emitted.
+    global ``penalties.json`` default. ``generation_violation_below_cost`` and
+    ``fpha_violation_cost`` (energy-domain, ρ-independent) are never emitted.
 
     Parameters
     ----------
