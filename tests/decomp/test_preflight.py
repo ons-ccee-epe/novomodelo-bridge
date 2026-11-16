@@ -336,8 +336,8 @@ class TestAcCoverageRegistry:
     (``NCHAVE``/``TIPERH``/``VERTJU``) the old blanket warning never named.
     """
 
-    def test_coverage_registry_applied_classes_count_is_19(self) -> None:
-        assert len(APPLIED_AC_CLASSES) == 19
+    def test_coverage_registry_applied_classes_count_is_20(self) -> None:
+        assert len(APPLIED_AC_CLASSES) == 20
         assert ACNPOSNW in APPLIED_AC_CLASSES
 
     def test_coverage_registry_applies_altefe(self) -> None:

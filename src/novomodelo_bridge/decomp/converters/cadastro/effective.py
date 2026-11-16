@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 from idecomp.decomp.modelos.dadger import (
+    ACCOFEVA,
     ACCOTVOL,
     ACJUSENA,
     ACNPOSNW,
@@ -24,6 +25,7 @@ from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     DiversionChannel,
     MachineSet,
     OutOfHorizon,
+    _evaporation_month_key,
     _forward_fill_series,
     _plant_code_key,
     _read_diversion_overrides,
@@ -31,6 +33,23 @@ from novomodelo_bridge.decomp.converters.cadastro.overrides import (
     _read_machine_set_overrides,
     _read_polynomial_overrides,
     _read_scalar_overrides,
+)
+
+#: The ``hidr.dat`` evaporation coefficient column of each calendar month,
+#: January first.
+EVAPORATION_MONTH_COLUMNS = (
+    "evaporacao_JAN",
+    "evaporacao_FEV",
+    "evaporacao_MAR",
+    "evaporacao_ABR",
+    "evaporacao_MAI",
+    "evaporacao_JUN",
+    "evaporacao_JUL",
+    "evaporacao_AGO",
+    "evaporacao_SET",
+    "evaporacao_OUT",
+    "evaporacao_NOV",
+    "evaporacao_DEZ",
 )
 
 
@@ -63,6 +82,9 @@ class EffectiveCadastro:
     inflow_gauges: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
     coupling_gauges: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
     energy_links: Mapping[int, tuple[int | None, ...]] = field(default_factory=dict)
+    evaporation_coefficients: Mapping[tuple[int, int], tuple[float, ...]] = field(
+        default_factory=dict
+    )
 
     def value(self, code: int, param: str, stage_index: int) -> float:
         """Effective value of *param* for plant *code* at *stage_index*."""
@@ -177,6 +199,17 @@ class EffectiveCadastro:
         if code not in self.inflow_gauges:
             return int(self.base.loc[code, "posto"])
         return self.inflow_gauges[code][stage_index]
+
+    def evaporation_coefficient_series(
+        self, code: int, month: int
+    ) -> tuple[float, ...]:
+        """Plant *code*'s per-stage evaporation coefficient (mm) for calendar
+        *month* (1..12): ``AC COFEVA`` in force, else ``hidr.dat``'s."""
+        series = self.evaporation_coefficients.get((code, month))
+        if series is not None:
+            return series
+        base = float(self.base.loc[code, EVAPORATION_MONTH_COLUMNS[month - 1]])
+        return (base,) * self.n_stages
 
     def coupling_gauge(self, code: int) -> int:
         """The ``posto`` whose inflows *code* couples to the boundary cut with.
@@ -361,6 +394,7 @@ class _AcOverrideRecords:
     gauge: dict[int, list[tuple[int, int]]]
     coupling: dict[int, list[tuple[int, int]]]
     energy: dict[int, list[tuple[int, int]]]
+    evaporation: dict[tuple[int, int], list[tuple[int, float]]]
     out_of_horizon: list[OutOfHorizon]
 
 
@@ -413,6 +447,15 @@ def _read_ac_overrides(
         int,
         _plant_code_key,
     )
+    evaporation_records, evaporation_out_of_horizon = _read_keyed_overrides(
+        dadger,
+        calendar,
+        ACCOFEVA,
+        "coeficiente",
+        "evaporacao",
+        float,
+        _evaporation_month_key,
+    )
     return _AcOverrideRecords(
         scalar=records,
         diversion=diversion_records,
@@ -426,6 +469,7 @@ def _read_ac_overrides(
         gauge=gauge_records,
         coupling=coupling_records,
         energy=energy_records,
+        evaporation=evaporation_records,
         out_of_horizon=(
             out_of_horizon
             + diversion_out_of_horizon
@@ -435,6 +479,7 @@ def _read_ac_overrides(
             + gauge_out_of_horizon
             + coupling_out_of_horizon
             + energy_out_of_horizon
+            + evaporation_out_of_horizon
         ),
     )
 
@@ -457,6 +502,7 @@ def _applied_counts(overrides: _AcOverrideRecords) -> dict[str, int]:
         ("posto", overrides.gauge),
         ("posto_acoplamento", overrides.coupling),
         ("jusante_energia", overrides.energy),
+        ("evaporacao", {code for code, _month in overrides.evaporation}),
     )
     for param, records in family_records:
         if records:
@@ -575,6 +621,23 @@ def _plant_series[T](
     return series
 
 
+def _evaporation_series(
+    hidr: pd.DataFrame,
+    records: Mapping[tuple[int, int], Sequence[tuple[int, float]]],
+    n_stages: int,
+) -> dict[tuple[int, int], tuple[float, ...]]:
+    """Each ``AC COFEVA`` ``(code, month)`` pair's per-stage coefficient,
+    seeded from that month's ``hidr.dat`` column."""
+    series: dict[tuple[int, int], tuple[float, ...]] = {}
+    for (code, month), overrides in records.items():
+        _require_cadastro_row(hidr, code)
+        base_value = float(hidr.loc[code, EVAPORATION_MONTH_COLUMNS[month - 1]])
+        series[(code, month)] = tuple(
+            _forward_fill_series(base_value, overrides, n_stages)
+        )
+    return series
+
+
 def build_effective_cadastro(
     dadger: AcRegisters,
     hidr: pd.DataFrame,
@@ -635,7 +698,9 @@ def build_effective_cadastro(
     stored-energy links (:meth:`EffectiveCadastro.energy_link`),
     seeded with ``None`` (follow the water-routing link). ``coupling_gauges``
     holds the ``AC NPOSNW`` boundary-cut coupling gauges
-    (:meth:`EffectiveCadastro.coupling_gauge`).
+    (:meth:`EffectiveCadastro.coupling_gauge`), and
+    ``evaporation_coefficients`` the ``AC COFEVA`` monthly coefficients, keyed
+    ``(code, month)`` and seeded from that month's ``hidr.dat`` column.
 
     Raises
     ------
@@ -688,6 +753,9 @@ def build_effective_cadastro(
         ),
         energy_links=_plant_series(
             hidr, overrides.energy, lambda _code: None, n_stages
+        ),
+        evaporation_coefficients=_evaporation_series(
+            hidr, overrides.evaporation, n_stages
         ),
     )
     report = CadastroResolutionReport(

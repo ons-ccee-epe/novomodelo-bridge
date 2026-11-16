@@ -45,6 +45,7 @@ from novomodelo_bridge.core.productivity import (
 )
 from novomodelo_bridge.decomp import plants
 from novomodelo_bridge.decomp.converters.cadastro import (
+    EVAPORATION_MONTH_COLUMNS,
     effective_storage_range,
     is_reservoir,
     storage_envelope,
@@ -58,6 +59,7 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from novomodelo_bridge.decomp.case import DecompCase
@@ -234,24 +236,6 @@ def _cascade_link_invalid_diagnostic(rows: list[list[object]]) -> Diagnostic:
     )
 
 
-#: ``hidr.dat``'s 12 monthly reservoir-evaporation columns in calendar order
-#: (Jan..Dec) — novomodelo's ``evaporation.coefficients_mm`` is index 0 = January.
-_EVAPORATION_MONTH_COLUMNS = (
-    "evaporacao_JAN",
-    "evaporacao_FEV",
-    "evaporacao_MAR",
-    "evaporacao_ABR",
-    "evaporacao_MAI",
-    "evaporacao_JUN",
-    "evaporacao_JUL",
-    "evaporacao_AGO",
-    "evaporacao_SET",
-    "evaporacao_OUT",
-    "evaporacao_NOV",
-    "evaporacao_DEZ",
-)
-
-
 def _evaporation_flag_codes(dadger: UhRegisters) -> set[int]:
     """Plant codes whose ``UH`` register sets the reservoir-evaporation flag.
 
@@ -265,26 +249,140 @@ def _evaporation_flag_codes(dadger: UhRegisters) -> set[int]:
     return set(uh.loc[uh["evaporacao"].fillna(0) != 0, "codigo_usina"].astype(int))
 
 
-def _evaporation_coefficients_mm(hidr: pd.DataFrame, code: int) -> list[float] | None:
-    """The plant's 12 monthly evaporation coefficients [mm/month], Jan..Dec,
-    from ``hidr.dat`` — or ``None`` when the plant is absent or every month is
-    zero (nothing to model).
+_MONTH_LABELS = (
+    "JAN",
+    "FEV",
+    "MAR",
+    "ABR",
+    "MAI",
+    "JUN",
+    "JUL",
+    "AGO",
+    "SET",
+    "OUT",
+    "NOV",
+    "DEZ",
+)
 
-    novomodelo (>= 0.14) computes the evaporation-outflow model internally from
-    these monthly rates and the reservoir area geometry
-    (``hydro_geometry.parquet``, emitted by the FPHA path), scaling each stage
-    to its ``stage_hours / month_hours`` share of the calendar month. The
-    bridge supplies only the monthly mm rates.
+
+def _evaporation_coefficients_mm(
+    effective: EffectiveCadastro, code: int, stage_months: Sequence[int]
+) -> tuple[list[float] | None, list[list[object]]]:
+    """The plant's 12 monthly evaporation coefficients [mm/month], Jan..Dec,
+    with ``AC COFEVA`` applied — ``None`` when the plant is absent or every
+    month is zero — and a row per month whose coefficient changes between the
+    stages that read it.
+
+    novomodelo holds one coefficient per plant and calendar month, and a stage
+    reads the month its start falls in (*stage_months*, one per stage). A month
+    takes the value in force on the first stage that reads it, or on the last
+    stage when none does.
     """
-    if code not in hidr.index or not all(
-        column in hidr.columns for column in _EVAPORATION_MONTH_COLUMNS
+    base = effective.base
+    if code not in base.index or not all(
+        column in base.columns for column in EVAPORATION_MONTH_COLUMNS
     ):
-        return None
-    row = hidr.loc[code]
-    coefficients = [float(row[column]) for column in _EVAPORATION_MONTH_COLUMNS]
+        return None, []
+    coefficients: list[float] = []
+    varies: list[list[object]] = []
+    for month in range(1, 13):
+        series = effective.evaporation_coefficient_series(code, month)
+        reading = [stage for stage, m in enumerate(stage_months) if m == month]
+        used = series[reading[0]] if reading else series[-1]
+        coefficients.append(used)
+        differs = [stage for stage in reading if series[stage] != used]
+        if differs:
+            varies.append(
+                [
+                    code,
+                    _registry_name(base, code),
+                    _MONTH_LABELS[month - 1],
+                    used,
+                    format_stage_ranges(differs),
+                ]
+            )
     if not any(coefficients):
+        return None, varies
+    return coefficients, varies
+
+
+def _evaporation_varies_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-ac-cofeva-varies-within-month",
+        severity=Severity.WARNING,
+        category="Cadastro overrides",
+        title=f"Evaporation coefficients that change within a month ({len(rows)})",
+        summary=(
+            "An AC COFEVA register changes the listed coefficients from a "
+            "stage inside the month they apply to. The converted case holds "
+            "one coefficient per plant and month and uses the value of the "
+            "month's first stage, so on the listed stages the plant "
+            "evaporates differently from DECOMP."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Month", "Used (mm)", "Differs on stages"],
+            rows=rows,
+            justify=["right", "left", "left", "right", "left"],
+            caption="Stage ids are 0-based.",
+        ),
+    )
+
+
+def _evaporation_references(
+    case: DecompCase, effective: EffectiveCadastro
+) -> dict[int, float] | None:
+    """``{plant code: evaporation reference volume (hm³)}`` from the ``EV``
+    record's linear model, or ``None`` when DECOMP evaporates outside the LP
+    (no ``EV`` record, or model 0).
+
+    ``INI`` is the plant's initial storage and ``MED`` the middle of its useful
+    volume, both at stage 0 (:func:`_initial_volume_hm3`); DECOMP linearizes
+    every stage at that one volume.
+
+    Raises
+    ------
+    FieldParseError
+        If the ``EV`` record gives another model, or model 1 without ``INI``
+        or ``MED``.
+    """
+    register = case.dadger.ev
+    model = None if register is None else register.modelo
+    if model in (None, 0):
         return None
-    return coefficients
+    reference = str(register.volume_referencia or "").strip().upper()
+    if model != 1 or reference not in ("INI", "MED"):
+        raise FieldParseError(
+            f"dadger.rvN's EV record gives model {model} with reference "
+            f"'{reference}'; DECOMP accepts model 0, or model 1 with INI or MED",
+            field="EV",
+        )
+    return {
+        code: _initial_volume_hm3(effective, code, pct if reference == "INI" else 50.0)
+        for code, pct in initial_volume_percentages(case.dadger).items()
+    }
+
+
+def _evaporation_outside_lp_diagnostic(rows: list[list[object]]) -> Diagnostic:
+    return Diagnostic(
+        code="decomp-evaporation-outside-lp",
+        severity=Severity.WARNING,
+        category="Evaporation",
+        title=f"Evaporation linearized where DECOMP computes it outside the LP ({len(rows)})",
+        summary=(
+            "Without an EV record selecting the linear model in dadger.rvN, "
+            "DECOMP computes the listed plants' evaporation outside the LP "
+            "from each stage's initial storage. Novomodelo has no such model: the case "
+            "linearizes it at the middle of the plant's storage range, so "
+            "evaporation, storage and generation differ from DECOMP's."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name"], rows=rows, justify=["right", "left"]
+        ),
+        remediation=(
+            "To compare against the linear model the case converts, set EV "
+            "model 1 with INI or MED in dadger.rvN and rerun DECOMP."
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -303,6 +401,8 @@ class _HydroContext:
     fd: pd.DataFrame | None
     op_date: str
     evaporation_codes: set[int]
+    stage_months: tuple[int, ...]
+    evaporation_references: dict[int, float] | None
     travel_time_hours: dict[int, float] | None
     fpha_codes: set[int] | None
 
@@ -340,6 +440,10 @@ def _hydro_context(
     if _ITAIPU_CODE in converted_codes:
         mp = as_frame(dadger.mp(df=True))
         fd = as_frame(dadger.fd(df=True))
+    evaporation_codes = _evaporation_flag_codes(dadger)
+    evaporation_references = (
+        _evaporation_references(case, effective) if evaporation_codes else None
+    )
 
     return _HydroContext(
         hidr=hidr,
@@ -353,7 +457,9 @@ def _hydro_context(
         mp=mp,
         fd=fd,
         op_date=start_date.isoformat(),
-        evaporation_codes=_evaporation_flag_codes(dadger),
+        evaporation_codes=evaporation_codes,
+        stage_months=tuple(stage.start_date.month for stage in case.calendar),
+        evaporation_references=evaporation_references,
         travel_time_hours=travel_time_hours,
         fpha_codes=fpha_codes,
     )
@@ -453,6 +559,7 @@ class _PlantEntry(NamedTuple):
     runofriver_collapsed: bool
     efficiency_row: list[object] | None
     invalid_link_row: list[object] | None
+    evaporation_varies_rows: list[list[object]]
 
 
 def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _PlantEntry:
@@ -508,14 +615,27 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
     travel_time_hours = context.travel_time_hours
     if travel_time_hours and code in travel_time_hours and downstream is not None:
         entry["travel_time_hours"] = travel_time_hours[code]
+    evaporation_varies_rows: list[list[object]] = []
     if code in context.evaporation_codes:
-        evaporation_mm = _evaporation_coefficients_mm(hidr, code)
+        evaporation_mm, evaporation_varies_rows = _evaporation_coefficients_mm(
+            effective, code, context.stage_months
+        )
         if evaporation_mm is not None:
-            entry["evaporation"] = {"coefficients_mm": evaporation_mm}
+            evaporation: dict = {"coefficients_mm": evaporation_mm}
+            references = context.evaporation_references
+            if references is not None and code in references:
+                evaporation["reference_volumes_hm3"] = [references[code]] * 12
+            entry["evaporation"] = evaporation
     invalid_link_row: list[object] | None = (
         None if invalid_link is None else [code, name, invalid_link]
     )
-    return _PlantEntry(entry, runofriver_collapsed, efficiency_row, invalid_link_row)
+    return _PlantEntry(
+        entry,
+        runofriver_collapsed,
+        efficiency_row,
+        invalid_link_row,
+        evaporation_varies_rows,
+    )
 
 
 def _refuse_unsupported_dormant_plants(
@@ -707,9 +827,14 @@ def convert_hydros(
     efficiency_rows: list[list[object]] = []
     no_curve_rows: list[list[object]] = []
     invalid_link_rows: list[list[object]] = []
+    evaporation_varies_rows: list[list[object]] = []
+    outside_lp_rows: list[list[object]] = []
     for code in id_map.hydro_codes:
         plant = _hydro_entry(code, context, id_map)
         hydros.append(plant.entry)
+        evaporation_varies_rows.extend(plant.evaporation_varies_rows)
+        if "evaporation" in plant.entry and context.evaporation_references is None:
+            outside_lp_rows.append([code, plant.entry["name"]])
         if plant.runofriver_collapsed:
             n_runofriver_collapsed += 1
         if plant.efficiency_row is not None:
@@ -734,6 +859,13 @@ def convert_hydros(
         emit(forebay_curve_missing_diagnostic(no_curve_rows), logger=_LOG)
     if invalid_link_rows:
         emit(_cascade_link_invalid_diagnostic(invalid_link_rows), logger=_LOG)
+    if evaporation_varies_rows:
+        emit(_evaporation_varies_diagnostic(evaporation_varies_rows), logger=_LOG)
+    if outside_lp_rows:
+        # TRACKED NOVOMODELO-GAP (C43): novomodelo has no evaporation computed
+        # outside the LP at each stage's initial storage, so these plants keep
+        # the linear model at novomodelo's default reference volume.
+        emit(_evaporation_outside_lp_diagnostic(outside_lp_rows), logger=_LOG)
 
     return {
         "$schema": novomodelo_schemas.schema_url_for("system/hydros.json"),

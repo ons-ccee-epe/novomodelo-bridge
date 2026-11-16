@@ -333,6 +333,12 @@ links are cobre-bridge's.
   months one month early, and a later revision counted the first observed
   week's previous-month days into that month. The case's prices moved away
   from DECOMP's. Results change for those decks, so reconvert them.
+- **`convert decomp` evaporated reservoirs differently from DECOMP**: it
+  ignored `AC COFEVA` and the reference volume of the `EV` record. Both are
+  now applied; a deck without the `EV` linear model warns with
+  `decomp-evaporation-outside-lp`, and an `AC COFEVA` dated inside a month
+  with `decomp-ac-cofeva-varies-within-month`. Results change for decks with
+  evaporating plants, so reconvert them.
 - **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms

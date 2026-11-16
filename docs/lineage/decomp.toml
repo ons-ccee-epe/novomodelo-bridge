@@ -1262,6 +1262,7 @@ reads = [
   { file = "dadger", register = "LQ" },
   { file = "dadger", register = "CQ" },
   { file = "dadger", register = "VI" },
+  { file = "dadger", register = "EV" },
   { file = "hidr" },
   { file = "polinjus" },
   { file = "vazoes" },
@@ -1591,12 +1592,25 @@ summary = "Uma entrada por usina hidráulica convertida (registro `UH` com `volu
 
   [[output.field]]
   path = "hydros[].evaporation.coefficients_mm[]"
-  when = "somente quando o `UH` da usina liga o flag `evaporacao` e o `hidr.dat` traz ao menos um coeficiente mensal não nulo"
+  when = "somente quando o `UH` da usina liga o flag `evaporacao` e algum coeficiente mensal efetivo não é nulo"
   from = [
     { file = "dadger", register = "UH", item = "evaporacao" },
     { file = "hidr", item = "evaporacao_JAN..evaporacao_DEZ" },
+    { file = "dadger", register = "AC", item = "COFEVA" },
   ]
-  how = "Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, sem conversão; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês. `AC COFEVA` não é consumido."
+  how = "Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, com o `AC COFEVA` aplicado; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês civil em que o estágio começa. O caso guarda um coeficiente por usina e mês: um `AC COFEVA` datado entra com o valor em vigor no primeiro estágio que lê aquele mês (no último estágio, se nenhum o lê), e uma mudança dentro do mês é avisada com `decomp-ac-cofeva-varies-within-month`."
+
+  [[output.field]]
+  path = "hydros[].evaporation.reference_volumes_hm3[]"
+  when = "somente quando a usina tem evaporação e o `dadger` traz o registro `EV` com o modelo linear (campo 2 = 1)"
+  from = [
+    { file = "dadger", register = "EV", item = "modelo" },
+    { file = "dadger", register = "EV", item = "volume_referencia" },
+    { file = "dadger", register = "UH", item = "volume_inicial" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+  ]
+  how = "Doze valores iguais (hm³), um por mês civil: com `INI`, o volume inicial da usina (o de `initial_conditions.json`); com `MED`, o meio do volume útil efetivo no estágio 0. O DECOMP lineariza a evaporação de todos os estágios nesse volume. Sem registro `EV`, ou com o modelo 0, o DECOMP calcula a evaporação fora do PL a partir do volume inicial de cada estágio; o Novomodelo não tem esse modelo, o campo fica ausente (linearização no meio da faixa de armazenamento) e a conversão avisa com `decomp-evaporation-outside-lp`. Outro modelo, ou o modelo 1 sem `INI` nem `MED`, interrompe a conversão."
 
   [[output.field]]
   path = "hydros[].travel_time_hours"
@@ -3155,12 +3169,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
 
   [[source.item]]
   register = "AC"
-  item = "COFEVA"
-  status = "deferred"
-  note = "Alteração do coeficiente de evaporação mensal. Avisado pelo `check decomp` e pelo `convert decomp` (diagnóstico `decomp-ac-overrides-deferred`), sem consumidor no conversor: a evaporação usa os coeficientes mensais de `hidr.dat`. Converter exige sobrepor o coeficiente do mês na tabela efetiva antes de emitir os coeficientes de evaporação."
-
-  [[source.item]]
-  register = "AC"
   item = "COTARE"
   status = "deferred"
   note = "Alteração de um coeficiente do polinômio cota-área. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA."
@@ -3339,11 +3347,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "CS"
   status = "unread"
   note = "Habilita a consistência de dados do DECOMP. Sem contrapartida."
-
-  [[source.item]]
-  register = "EV"
-  status = "unread"
-  note = "Configuração da evaporação (modelo e volume de referência). Não lido: a evaporação é convertida a partir do sinalizador `evaporacao` do `UH` e dos coeficientes mensais de `hidr.dat`."
 
   [[source.item]]
   register = "FA"

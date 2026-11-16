@@ -51,6 +51,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `CT` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `DP` | ● | ● | ● | ● | ● | ● | ● |  | ● | ● | ● |
 | `dadger.rvN` › `DT` | ● | ● | ● | ● | ● | ● | ● |  | ● | ● | ● |
+| `dadger.rvN` › `EV` |  |  |  | ● |  |  |  |  |  |  |  |
 | `dadger.rvN` › `FD` |  |  |  | ● | ● |  |  |  |  |  |  |
 | `dadger.rvN` › `FP` |  |  |  |  | ● |  |  |  |  |  |  |
 | `dadger.rvN` › `HQ` |  |  |  | ● |  |  |  |  |  |  |  |
@@ -345,7 +346,7 @@ Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1 ponderados
 
 ### `system/hydros.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `HQ`, `LQ`, `CQ`, `VI`), `hidr.dat`, `polinjus.csv` (opcional), `vazoes.rvN`  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `HQ`, `LQ`, `CQ`, `VI`, `EV`), `hidr.dat`, `polinjus.csv` (opcional), `vazoes.rvN`  
 **Quando:** sempre.  
 **Esquema:** [hydros.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/hydros.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/entity.py`
 
@@ -382,7 +383,8 @@ Uma entrada por usina hidráulica convertida (registro `UH` com `volume_inicial`
 | `hydros[].hydraulic_losses.type` | `hidr.dat` › `tipo_perda`, `hidr.dat` › `perdas`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas com `generation.model` = `fpha`)* | `factor` quando `tipo_perda` = 1 e a perda efetiva (`AC PERHID` aplicado) é positiva; `constant` quando `tipo_perda` = 2 e a perda é positiva; nos demais casos `factor` com valor 0.0, porque o Novomodelo exige o bloco em toda usina FPHA. |
 | `hydros[].hydraulic_losses.value` | `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas FPHA com `hydraulic_losses.type` = `factor`)* | Fração da queda bruta perdida: `perdas`/100 quando `tipo_perda` = 1; 0.0 quando a usina não tem perda modelada. |
 | `hydros[].hydraulic_losses.value_m` | `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas FPHA com `tipo_perda` = 2 e perda positiva)* | Perda de carga constante em metros, igual ao `perdas` efetivo (`AC PERHID` aplicado). |
-| `hydros[].evaporation.coefficients_mm[]` | `dadger.rvN` › `UH` › `evaporacao`, `hidr.dat` › `evaporacao_JAN..evaporacao_DEZ` *(condicional: somente quando o `UH` da usina liga o flag `evaporacao` e o `hidr.dat` traz ao menos um coeficiente mensal não nulo)* | Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, sem conversão; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês. `AC COFEVA` não é consumido. |
+| `hydros[].evaporation.coefficients_mm[]` | `dadger.rvN` › `UH` › `evaporacao`, `hidr.dat` › `evaporacao_JAN..evaporacao_DEZ`, `dadger.rvN` › `AC` › `COFEVA` *(condicional: somente quando o `UH` da usina liga o flag `evaporacao` e algum coeficiente mensal efetivo não é nulo)* | Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, com o `AC COFEVA` aplicado; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês civil em que o estágio começa. O caso guarda um coeficiente por usina e mês: um `AC COFEVA` datado entra com o valor em vigor no primeiro estágio que lê aquele mês (no último estágio, se nenhum o lê), e uma mudança dentro do mês é avisada com `decomp-ac-cofeva-varies-within-month`. |
+| `hydros[].evaporation.reference_volumes_hm3[]` | `dadger.rvN` › `EV` › `modelo`, `dadger.rvN` › `EV` › `volume_referencia`, `dadger.rvN` › `UH` › `volume_inicial`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo` *(condicional: somente quando a usina tem evaporação e o `dadger` traz o registro `EV` com o modelo linear (campo 2 = 1))* | Doze valores iguais (hm³), um por mês civil: com `INI`, o volume inicial da usina (o de `initial_conditions.json`); com `MED`, o meio do volume útil efetivo no estágio 0. O DECOMP lineariza a evaporação de todos os estágios nesse volume. Sem registro `EV`, ou com o modelo 0, o DECOMP calcula a evaporação fora do PL a partir do volume inicial de cada estágio; o Novomodelo não tem esse modelo, o campo fica ausente (linearização no meio da faixa de armazenamento) e a conversão avisa com `decomp-evaporation-outside-lp`. Outro modelo, ou o modelo 1 sem `INI` nem `MED`, interrompe a conversão. |
 | `hydros[].travel_time_hours` | `dadger.rvN` › `VI` › `duracao` *(condicional: somente quando a usina declara um registro `VI`, está operada e tem um arco de jusante (`downstream_id` não nulo) para o atraso atuar)* | Tempo de viagem da água, em horas, da defluência da usina até a usina de jusante (`VI.duracao`), sem conversão. A água em trânsito que ele representa no início do estudo é semeada em `past_defluences` de `initial_conditions.json`. Uma usina sem `VI` fica com o arco instantâneo (padrão do Novomodelo). |
 | `hydros[].diversion.downstream_id` | `hidr.dat` › `desvio`, `dadger.rvN` › `AC` › `DESVIO`, `dadger.rvN` › `HQ` › `codigo_restricao`, `dadger.rvN` › `LQ` › `limite_inferior`, `dadger.rvN` › `LQ` › `limite_superior`, `dadger.rvN` › `CQ` › `codigo_usina`, `dadger.rvN` › `CQ` › `tipo` *(condicional: somente quando a vazão desviada da usina pode ser positiva em algum estágio (piso ou teto positivo em `constraints/hydro_bounds.parquet`, de uma RHQ `QDES` de termo único ou de um `desvio` de base sem limite RHQ) e a usina receptora é operada)* | Id Novomodelo da usina que recebe a água desviada: o `codigo_usina_jusante` do primeiro `AC DESVIO` em vigor ou, na falta dele, o `desvio` do `hidr.dat`, a usina para onde o DECOMP envia o `QDES`. Com a usina receptora fora do caso, um piso positivo deixa o bloco nulo e a conversão falha (`hydro-diversion-without-channel`); um teto sem piso é fechado em 0 com aviso (`decomp-diversion-channel-dropped`), e a água fica no rio da própria usina. Uma usina com desvio fechado em [0, 0] em todos os estágios fica com `diversion` nulo. |
 | `hydros[].diversion.max_flow_m3s` | `dadger.rvN` › `AC` › `DESVIO`, `hidr.dat` › `desvio` *(condicional: somente quando a vazão desviada da usina pode ser positiva em algum estágio (piso ou teto positivo em `constraints/hydro_bounds.parquet`, de uma RHQ `QDES` de termo único ou de um `desvio` de base sem limite RHQ) e a usina receptora é operada)* | `limite_vazao` do `AC DESVIO` em vigor. Nulo (canal sem limite, como no DECOMP) quando não há `AC DESVIO` com limite, como num `desvio` de base (caso MOXOTÓ → P.AFONSO 4), e quando o limite vale 9 999 999 m³/s ou mais, o valor do DECOMP para canal sem limite (diagnóstico `diversion-channel-unlimited`); os tetos `max_diversion_m3s` de `constraints/hydro_bounds.parquet` continuam valendo em cada estágio. |
@@ -867,6 +869,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `PERHID` → `system/hydros.json` › `hydros[].hydraulic_losses.type`
 - `PERHID` → `system/hydros.json` › `hydros[].hydraulic_losses.value`
 - `PERHID` → `system/hydros.json` › `hydros[].hydraulic_losses.value_m`
+- `COFEVA` → `system/hydros.json` › `hydros[].evaporation.coefficients_mm[]`
 - `DESVIO` → `system/hydros.json` › `hydros[].diversion.downstream_id`
 - `DESVIO` → `system/hydros.json` › `hydros[].diversion.max_flow_m3s`
 - `COTVOL` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].model`
@@ -939,7 +942,6 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `VOLMIN · volume` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
 - `VOLMAX · volume` → `constraints/generic_constraint_bounds.parquet` › `bound_lower`
 - `VOLMIN · volume` → `constraints/generic_constraint_bounds.parquet` › `bound_upper`
-- `COFEVA` — *adiado.* Alteração do coeficiente de evaporação mensal. Avisado pelo `check decomp` e pelo `convert decomp` (diagnóstico `decomp-ac-overrides-deferred`), sem consumidor no conversor: a evaporação usa os coeficientes mensais de `hidr.dat`. Converter exige sobrepor o coeficiente do mês na tabela efetiva antes de emitir os coeficientes de evaporação.
 - `COTARE` — *adiado.* Alteração de um coeficiente do polinômio cota-área. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA.
 - `COTVAZ` — *adiado.* Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina.
 - `NCHAVE` — *adiado.* Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`.
@@ -1223,9 +1225,10 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `EV`
 
-**Estado:** não lido.
+**Estado:** convertido. **Lido por:** `system/hydros.json`.
 
-- todo o registro — *não lido.* Configuração da evaporação (modelo e volume de referência). Não lido: a evaporação é convertida a partir do sinalizador `evaporacao` do `UH` e dos coeficientes mensais de `hidr.dat`.
+- `modelo` → `system/hydros.json` › `hydros[].evaporation.reference_volumes_hm3[]`
+- `volume_referencia` → `system/hydros.json` › `hydros[].evaporation.reference_volumes_hm3[]`
 
 ### `dadger.rvN` › `EZ`
 
@@ -1703,6 +1706,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `volume_inicial` → `system/hydros.json` › `hydros[].generation.max_turbined_m3s`
 - `volume_inicial` → `system/hydros.json` › `hydros[].unit_groups[].max_turbined_m3s`
 - `evaporacao` → `system/hydros.json` › `hydros[].evaporation.coefficients_mm[]`
+- `volume_inicial` → `system/hydros.json` › `hydros[].evaporation.reference_volumes_hm3[]`
 - `codigo_usina` → `system/hydro_production_models.json` › `production_models[].hydro_id`
 - `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_min_hm3`
 - `volume_inicial` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.fitting_window.volume_max_hm3`
@@ -1913,6 +1917,8 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `perdas` → `system/hydros.json` › `hydros[].hydraulic_losses.value_m`
 - `tipo_perda` → `system/hydros.json` › `hydros[].hydraulic_losses.value_m`
 - `evaporacao_JAN..evaporacao_DEZ` → `system/hydros.json` › `hydros[].evaporation.coefficients_mm[]`
+- `volume_minimo` → `system/hydros.json` › `hydros[].evaporation.reference_volumes_hm3[]`
+- `volume_maximo` → `system/hydros.json` › `hydros[].evaporation.reference_volumes_hm3[]`
 - `desvio` → `system/hydros.json` › `hydros[].diversion.downstream_id`
 - `desvio` → `system/hydros.json` › `hydros[].diversion.max_flow_m3s`
 - `a0_volume_cota..a4_volume_cota` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].model`
@@ -2276,7 +2282,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `HA` — *adiado.* Declaração da família de restrições de afluência `HA`/`LA`/`CA` (declaração, limites e coeficientes). Lida pelos leitores do idecomp, sem conversão; diagnóstico `decomp-rha-family-unconverted`, que lista os códigos das restrições. Cada RHA limita a afluência total da usina (incremental mais a defluência de montante e a água em trânsito) na média do estágio, ponderada pelas horas dos patamares, e não em cada patamar; as restrições genéricas do Novomodelo ainda não têm uma variável de afluência no nível do estágio.
 - `dadger.rvN` › `LA` — *adiado.* Limites por estágio da família `HA`/`LA`/`CA`; ver `HA`.
 - `dadger.rvN` › `CA` — *adiado.* Coeficientes da família `HA`/`LA`/`CA`; ver `HA`.
-- `dadger.rvN` › `AC` › `COFEVA` — *adiado.* Alteração do coeficiente de evaporação mensal. Avisado pelo `check decomp` e pelo `convert decomp` (diagnóstico `decomp-ac-overrides-deferred`), sem consumidor no conversor: a evaporação usa os coeficientes mensais de `hidr.dat`. Converter exige sobrepor o coeficiente do mês na tabela efetiva antes de emitir os coeficientes de evaporação.
 - `dadger.rvN` › `AC` › `COTARE` — *adiado.* Alteração de um coeficiente do polinômio cota-área. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA.
 - `dadger.rvN` › `AC` › `COTVAZ` — *adiado.* Alteração de um coeficiente do polinômio cota-vazão (curva de jusante). Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: as curvas de jusante vêm de `polinjus`. Converter exige aplicar a alteração sobre a família de `tailrace_curves.parquet` da usina.
 - `dadger.rvN` › `AC` › `NCHAVE` — *adiado.* Alteração do número da curva-chave (cota-vazão) e do nível de jusante da faixa. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: a seleção de família de jusante segue `polinjus`.
@@ -2309,7 +2314,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `VL` — *não lido.* Usina que sofre influência de vazão lateral na cota de jusante (polinômio e fator de impacto). Não lido; ver `VA`.
 - `dadger.rvN` › `VU` — *não lido.* Usina cuja defluência influencia a cota de jusante de outra. Não lido; ver `VA`.
 - `dadger.rvN` › `CS` — *não lido.* Habilita a consistência de dados do DECOMP. Sem contrapartida.
-- `dadger.rvN` › `EV` — *não lido.* Configuração da evaporação (modelo e volume de referência). Não lido: a evaporação é convertida a partir do sinalizador `evaporacao` do `UH` e dos coeficientes mensais de `hidr.dat`.
 - `dadger.rvN` › `FA` — *arquivo de índice, lido para localizar os demais.* Nome do arquivo índice CSV das LIBs. Lido para localizar o índice; sem `FA`, nenhum arquivo LIBs é lido.
 - `dadger.rvN` › `FJ` — *arquivo de índice, lido para localizar os demais.* Nome do arquivo de polinômios de jusante. Lido para localizar o arquivo, sozinho ou junto da chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` do índice; se os dois apontam arquivos diferentes, é erro.
 - `dadger.rvN` › `PU` — *não lido.* Habilita a solução do problema via PL único. Sem contrapartida.

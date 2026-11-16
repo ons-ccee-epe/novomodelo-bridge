@@ -14,11 +14,12 @@ from datetime import date
 
 import pandas as pd
 import pytest
-from idecomp.decomp.modelos.dadger import ACVAZMIN, ACVOLMAX, ACVOLMIN
+from idecomp.decomp.modelos.dadger import ACCOFEVA, ACVAZMIN, ACVOLMAX, ACVOLMIN
 
 from novomodelo_bridge.decomp.converters.cadastro import (
     _SCALAR_AC_SPECS,
     AC_REGISTER_BY_PARAM,
+    EVAPORATION_MONTH_COLUMNS,
     CadastroResolutionReport,
     EffectiveCadastro,
     OutOfHorizon,
@@ -271,6 +272,71 @@ def test_build_effective_cadastro_no_overrides_falls_through_to_base(
     assert report.applied == {}
 
 
+def _evaporation_cadastro_hidr() -> pd.DataFrame:
+    hidr = _hidr_frame()
+    for column in EVAPORATION_MONTH_COLUMNS:
+        hidr[column] = 12.0
+    return hidr
+
+
+def test_build_effective_cadastro_cofeva_overrides_its_month(
+    scalar_calendar: list[OperativeStage],
+) -> None:
+    """The deck shape ``AC 95 COFEVA 10 0`` (undated) and one dated at the
+    August stage."""
+    dadger = _FakeDadger(
+        {
+            ACCOFEVA: pd.DataFrame(
+                [
+                    {
+                        "codigo_usina": 1,
+                        "mes_coeficiente": 10,
+                        "coeficiente": 0,
+                        "mes": "",
+                        "semana": None,
+                        "ano": None,
+                    },
+                    {
+                        "codigo_usina": 2,
+                        "mes_coeficiente": 8,
+                        "coeficiente": 40,
+                        "mes": "AGO",
+                        "semana": None,
+                        "ano": 2026.0,
+                    },
+                ]
+            )
+        }
+    )
+    effective, report = build_effective_cadastro(
+        dadger, _evaporation_cadastro_hidr(), scalar_calendar
+    )
+    assert effective.evaporation_coefficient_series(1, 10) == (0.0, 0.0, 0.0)
+    assert effective.evaporation_coefficient_series(2, 8) == (12.0, 12.0, 40.0)
+    assert effective.evaporation_coefficient_series(1, 1) == (12.0, 12.0, 12.0)
+    assert report.applied == {"evaporacao": 2}
+    assert AC_REGISTER_BY_PARAM["evaporacao"] == "COFEVA"
+
+
+def test_build_effective_cadastro_cofeva_month_outside_the_calendar_raises(
+    scalar_calendar: list[OperativeStage],
+) -> None:
+    dadger = _FakeDadger(
+        {
+            ACCOFEVA: _ac_frame(
+                codigo_usina=1,
+                mes_coeficiente=13,
+                coeficiente=5,
+                mes="",
+                semana=None,
+                ano=None,
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="COFEVA gives month 13"):
+        build_effective_cadastro(dadger, _evaporation_cadastro_hidr(), scalar_calendar)
+
+
 def test_build_effective_cadastro_unknown_plant_code_raises_value_error(
     scalar_calendar: list[OperativeStage],
 ) -> None:
@@ -332,6 +398,7 @@ def test_every_applied_parameter_names_its_ac_register() -> None:
         gauge=one_plant,
         coupling=one_plant,
         energy=one_plant,
+        evaporation={(1, 10): [(0, 0.0)]},
         out_of_horizon=[],
     )
     assert set(_applied_counts(records)) == set(AC_REGISTER_BY_PARAM)
