@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -19,6 +20,7 @@ import polars as pl
 import pytest
 
 from novomodelo_bridge.comparators.decomp.operating_points import (
+    _plant_hydraulics,
     _source_points,
     compare_operating_points,
 )
@@ -27,6 +29,11 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_desvfpha,
 )
 from novomodelo_bridge.comparators.decomp.results import _bus_side, _hydro_side
+from novomodelo_bridge.comparators.operating_points import (
+    SourceProductionModel,
+    StagePhysics,
+    evaluate_points,
+)
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.pandas_utils import as_float, as_frame
 from novomodelo_bridge.decomp.case import DecompCase
@@ -280,6 +287,56 @@ def _compare(
     names = {h: f"P{h}" for h in runs.hydro_ids} if names is None else names
     return compare_operating_points(
         decomp_dir, case, tmp_path / "novomodelo", pl.DataFrame(), names
+    )
+
+
+_Q_PIMENTAL, _S_PIMENTAL, _Q_BELO_MONTE = 200.0, 3000.0, 10000.0
+
+
+def _belo_monte_runs(case: DecompCase, aggregates: list[dict[str, object]]) -> _Runs:
+    """Belo Monte and Pimental over stage 1, the source model's per-stage
+    *aggregates* beside its blocks."""
+    pimental, belo_monte = (case.id_map.hydro_id(c) for c in (_PIMENTAL, _BELO_MONTE))
+    blocks = [
+        _source_block(code, patamar=p, v_useful=0.0, q=q, s=s, gh=gh, submarket="N")
+        for p in (1, 2, 3)
+        for code, q, s, gh in (
+            (_PIMENTAL, _Q_PIMENTAL, _S_PIMENTAL, 10.0),
+            (_BELO_MONTE, _Q_BELO_MONTE, 0.0, 9000.0),
+        )
+    ]
+    novomodelo = [
+        _novomodelo_block(h, block=b, storage=(2276.29, 2276.29), q=q, gh=gh)
+        for b in range(3)
+        for h, q, gh in ((pimental, 200.0, 10.0), (belo_monte, 9000.0, 8000.0))
+    ]
+    return _Runs(
+        usih=pl.DataFrame(blocks + aggregates),
+        sist=_sist(submarket="N"),
+        novomodelo=pl.DataFrame(novomodelo),
+        prices=_prices(),
+        novomodelo_planes=_novomodelo_planes(belo_monte),
+        hydro_ids=(belo_monte, pimental),
+    )
+
+
+def _belo_monte_planes(
+    monkeypatch: pytest.MonkeyPatch, lateral_coefficient: float
+) -> None:
+    monkeypatch.setattr(
+        f"{_MODULE}.read_avl_cortesfpha",
+        lambda _d: pl.DataFrame(
+            {
+                "codigo_usina": [_BELO_MONTE],
+                "estagio": [1],
+                "fator_correcao": [1.0],
+                "rhs": [0.0],
+                "coeficiente_volume_util": [0.0],
+                "coeficiente_vazao_turbinada": [0.9],
+                "coeficiente_vazao_vertida": [0.0],
+                "coeficiente_vazao_lateral": [lateral_coefficient],
+            }
+        ),
     )
 
 
@@ -542,74 +599,26 @@ class TestSourceModelConventions:
             abs=0.01,
         )
 
-    def test_lateral_flow_and_gauge_share_reach_the_tailrace(
+    def test_lateral_flow_and_gauge_flow_reach_the_tailrace(
         self,
         decomp_mini_case: DecompCase,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Belo Monte's ``VU`` routes Pimental's turbined and spilled flow into
-        its tailrace and its ``VA`` adds a share of Pimental's gauge; the
-        planes see only the ``VU`` part."""
+        its tailrace and its ``VA`` adds a share of Pimental's incremental
+        inflow; the planes see only the ``VU`` part."""
         case = decomp_mini_case
-        pimental, belo_monte = (
-            case.id_map.hydro_id(c) for c in (_PIMENTAL, _BELO_MONTE)
-        )
-        q_pimental, s_pimental, q_belo_monte, incremental = (
-            200.0,
-            3000.0,
-            10000.0,
-            500.0,
-        )
-        blocks = [
-            _source_block(
-                code,
-                patamar=p,
-                v_useful=0.0,
-                q=q,
-                s=s,
-                gh=gh,
-                submarket="N",
-            )
-            for p in (1, 2, 3)
-            for code, q, s, gh in (
-                (_PIMENTAL, q_pimental, s_pimental, 10.0),
-                (_BELO_MONTE, q_belo_monte, 0.0, 9000.0),
-            )
-        ]
-        stages = [
-            _source_stage(_PIMENTAL, incremental=incremental),
-            _source_stage(_BELO_MONTE),
-        ]
-        novomodelo = [
-            _novomodelo_block(h, block=b, storage=(2276.29, 2276.29), q=q, gh=gh)
-            for b in range(3)
-            for h, q, gh in ((pimental, 200.0, 10.0), (belo_monte, 9000.0, 8000.0))
-        ]
-        runs = _Runs(
-            usih=pl.DataFrame(blocks + stages),
-            sist=_sist(submarket="N"),
-            novomodelo=pl.DataFrame(novomodelo),
-            prices=_prices(),
-            novomodelo_planes=_novomodelo_planes(belo_monte),
-            hydro_ids=(belo_monte, pimental),
+        incremental = 500.0
+        runs = _belo_monte_runs(
+            case,
+            [
+                _source_stage(_PIMENTAL, incremental=incremental),
+                _source_stage(_BELO_MONTE),
+            ],
         )
         lateral_coefficient = 0.01
-        monkeypatch.setattr(
-            f"{_MODULE}.read_avl_cortesfpha",
-            lambda _d: pl.DataFrame(
-                {
-                    "codigo_usina": [_BELO_MONTE],
-                    "estagio": [1],
-                    "fator_correcao": [1.0],
-                    "rhs": [0.0],
-                    "coeficiente_volume_util": [0.0],
-                    "coeficiente_vazao_turbinada": [0.9],
-                    "coeficiente_vazao_vertida": [0.0],
-                    "coeficiente_vazao_lateral": [lateral_coefficient],
-                }
-            ),
-        )
+        _belo_monte_planes(monkeypatch, lateral_coefficient)
 
         result = _compare(monkeypatch, tmp_path, case, runs)
 
@@ -621,12 +630,106 @@ class TestSourceModelConventions:
         ]
         (row,) = result.fit_inputs.iter_rows(named=True)
         assert row["source_lateral_m3s"] == pytest.approx(
-            q_pimental + s_pimental + factor * incremental
+            _Q_PIMENTAL + _S_PIMENTAL + factor * incremental
         )
         (split,) = result.split.iter_rows(named=True)
         assert split["rho_source_planes_at_source"] == pytest.approx(
-            0.9 + lateral_coefficient * (q_pimental + s_pimental) / q_belo_monte
+            0.9 + lateral_coefficient * (_Q_PIMENTAL + _S_PIMENTAL) / _Q_BELO_MONTE
         )
+
+    def test_a_mapped_plant_without_incremental_rows_is_logged_and_adds_nothing(
+        self,
+        decomp_mini_case: DecompCase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runs = _belo_monte_runs(decomp_mini_case, [_source_stage(_BELO_MONTE)])
+        _belo_monte_planes(monkeypatch, 0.01)
+
+        with caplog.at_level(logging.INFO, logger=_MODULE):
+            result = _compare(monkeypatch, tmp_path, decomp_mini_case, runs)
+
+        assert result is not None
+        missing = [
+            r.getMessage()
+            for r in caplog.records
+            if "has no incremental inflow" in r.getMessage()
+        ]
+        assert len(missing) == 1
+        assert missing[0].startswith(
+            f"VA register of plant {_BELO_MONTE}: plant {_PIMENTAL} has no "
+            "incremental inflow at 3 source points"
+        )
+        (row,) = result.fit_inputs.iter_rows(named=True)
+        assert row["source_lateral_m3s"] == pytest.approx(_Q_PIMENTAL + _S_PIMENTAL)
+
+    def test_gauge_flow_is_the_mapped_plants_incremental_of_the_same_stage(
+        self, decomp_mini_case: DecompCase
+    ) -> None:
+        case = decomp_mini_case
+        eff, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
+        incremental = {1: 500.0, 2: 800.0}
+        blocks = [
+            _source_block(
+                code,
+                estagio=estagio,
+                patamar=p,
+                v_useful=0.0,
+                q=q,
+                s=s,
+                gh=gh,
+                submarket="N",
+            )
+            for estagio in incremental
+            for p in (1, 2, 3)
+            for code, q, s, gh in (
+                (_PIMENTAL, 200.0, 3000.0, 10.0),
+                (_BELO_MONTE, 10000.0, 0.0, 9000.0),
+            )
+        ]
+        stages = [
+            _source_stage(code, estagio=estagio, incremental=value)
+            for estagio, value in incremental.items()
+            for code in (_PIMENTAL, _BELO_MONTE)
+        ]
+        points = _source_points(
+            pl.DataFrame(blocks + stages),
+            _sist(submarket="N", stages={1: (1,), 2: (1,)}),
+            {
+                code: case.id_map.hydro_id(code)
+                for code in case.id_map.operated_hydro_codes
+            },
+            eff,
+            pl.DataFrame(),
+        )
+        hydraulics, links, gauge_links = _plant_hydraulics(case, {_BELO_MONTE}, eff)
+        model = SourceProductionModel(
+            planes={},
+            windows={},
+            hydraulics=hydraulics,
+            physics={
+                (_BELO_MONTE, stage): StagePhysics(
+                    cota=tuple(eff.cota_polynomial(_BELO_MONTE, stage)),
+                    rho_esp=eff.value(_BELO_MONTE, "produtibilidade_especifica", stage),
+                    losses=eff.value(_BELO_MONTE, "perdas", stage),
+                    max_generation_mw=math.inf,
+                )
+                for stage in (0, 1)
+            },
+            downstream={(_BELO_MONTE, stage): None for stage in (0, 1)},
+            cota=eff.cota_polynomial,
+            links=links,
+            gauge_links=gauge_links,
+        )
+
+        evaluated = evaluate_points(points, model)
+
+        assert gauge_links.rows() == [(_BELO_MONTE, _PIMENTAL, 0.07)]
+        assert {
+            stage: set(group["gauge_m3s"])
+            for (stage,), group in evaluated.partition_by("stage", as_dict=True).items()
+        } == {0: {0.07 * 500.0}, 1: {0.07 * 800.0}}
 
 
 class TestFitInputsAndSlices:

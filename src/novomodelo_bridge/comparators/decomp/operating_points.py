@@ -7,15 +7,15 @@ checked against its own printed deviation table (``dec_desvfpha``):
 - Its planes read ``GH <= fc · (rhs + cv · V_u + cq · Q + cs · S + cl ·
   Q_lat)``, ``V_u`` measured above the ``hidr.dat`` minimum and ``Q_lat`` the
   ``VU`` share of the influencing plants' turbined plus spilled flow in the
-  same block. The ``VA`` gauge share is folded into ``rhs``.
+  same block. The ``VA`` gauge flow is folded into ``rhs``.
 - Its FPHA storage is the stage's mean, the effective minimum plus the mean of
   the initial and final useful volumes.
 - The forebay comes from the effective cota polynomial. The tailrace is read
-  at ``VL · (Q + S) + Q_lat + VA share``, with spill left out where
+  at ``VL · (Q + S) + Q_lat + VA flow``, with spill left out where
   ``hidr.dat`` says it does not reach the tailrace. ``G_max`` is the
-  ``eco_fpha_`` generation window. The ``VA`` share is the factor times the
-  gauge plant's first-stage incremental inflow, held over the horizon as the
-  source model prints it.
+  ``eco_fpha_`` generation window. The ``VA`` flow is the factor times the
+  mapped plant's incremental inflow in the same stage and scenario, the gauge
+  mapped through the effective ``AC NUMPOS`` gauge of stage 0.
 
 Its points are flagged worthless on the submarket CMO; the source model
 prints no water value.
@@ -147,7 +147,6 @@ def compare_operating_points(
             novomodelo_output_dir,
             source,
             novomodelo,
-            _first_stage_incremental(usih),
             names,
         ),
         tie_share=tie_share(source, novomodelo),
@@ -209,8 +208,15 @@ def _source_points(
         pl.col("nome_submercado").str.strip_chars().alias("submarket"),
         pl.col("cmo").cast(pl.Float64).alias("price"),
     )
+    incremental = usih.filter(pl.col("patamar").is_null()).select(
+        pl.col("codigo_usina").cast(pl.Int64).alias("code"),
+        (pl.col("estagio").cast(pl.Int64) - 1).alias("stage"),
+        pl.col("cenario").cast(pl.Int64).alias("scenario"),
+        pl.col("vazao_incremental_m3s").cast(pl.Float64).alias("incremental_m3s"),
+    )
     return (
         points.join(floors, on=["code", "stage"], how="left")
+        .join(incremental, on=["code", "stage", "scenario"], how="left")
         .with_columns(pl.col("nome_submercado").str.strip_chars().alias("submarket"))
         .join(cmo, on=[*POINT_KEYS, "submarket"], how="left")
         .select(
@@ -240,25 +246,10 @@ def _source_points(
                 + pl.col("vazao_vertida_m3s").cast(pl.Float64).fill_null(0.0)
             ).alias("outflow_m3s"),
             pl.col("geracao_MW").cast(pl.Float64).fill_null(0.0).alias("gh_mw"),
+            "incremental_m3s",
             (pl.col("price").abs() < ZERO_PRICE).fill_null(False).alias("worthless"),
         )
     )
-
-
-def _first_stage_incremental(usih: pl.DataFrame) -> dict[int, float]:
-    """``{code: incremental inflow}`` of the first stage's aggregate rows."""
-    rows = usih.filter(
-        pl.col("patamar").is_null()
-        & (pl.col("estagio") == pl.col("estagio").min())
-        & (pl.col("cenario") == pl.col("cenario").min())
-    )
-    return {
-        int(code): float(value)
-        for code, value in rows.select(
-            "codigo_usina", "vazao_incremental_m3s"
-        ).iter_rows()
-        if value is not None
-    }
 
 
 def _fpha_frames(
@@ -269,7 +260,6 @@ def _fpha_frames(
     novomodelo_output_dir: Path,
     source: pl.DataFrame,
     novomodelo: pl.DataFrame,
-    first_incremental: Mapping[int, float],
     names: Mapping[int, str],
 ) -> dict[str, pl.DataFrame]:
     """The :class:`OperatingPointComparison` FPHA fields; empty when either
@@ -316,9 +306,22 @@ def _fpha_frames(
         if code in code_to_novomodelo
         and (code_to_novomodelo[code], stage) in novomodelo_by_key
     }
-    hydraulics, links = _plant_hydraulics(
-        case, {code for code, _ in pairs}, first_incremental
+    hydraulics, links, gauge_links = _plant_hydraulics(
+        case, {code for code, _ in pairs}, eff
     )
+    for target, plant, _ in gauge_links.iter_rows():
+        missing = source.filter(
+            (pl.col("code") == plant) & pl.col("incremental_m3s").is_null()
+        ).height
+        if missing:
+            _LOG.info(
+                "VA register of plant %d: plant %d has no incremental inflow at "
+                "%d source points; its flow in the tailrace is taken as 0.0 "
+                "there in the exact production function.",
+                target,
+                plant,
+                missing,
+            )
     missing = sorted({code for code, _ in pairs if code not in hydraulics})
     if missing:
         _LOG.info(
@@ -350,6 +353,7 @@ def _fpha_frames(
         },
         cota=eff.cota_polynomial,
         links=links,
+        gauge_links=gauge_links,
     )
     source_eval = with_envelopes(
         evaluate_points(source, model), model, novomodelo_by_key
@@ -397,13 +401,14 @@ def _fit_windows(eco: pl.DataFrame) -> dict[tuple[int, int], FitWindow]:
 
 
 def _plant_hydraulics(
-    case: DecompCase, codes: set[int], first_incremental: Mapping[int, float]
-) -> tuple[dict[int, Hydraulics], pl.DataFrame]:
-    """Each plant's exact-function inputs, and the ``VU`` links
-    (:data:`~novomodelo_bridge.comparators.operating_points.LINK_SCHEMA`).
+    case: DecompCase, codes: set[int], eff: EffectiveCadastro
+) -> tuple[dict[int, Hydraulics], pl.DataFrame, pl.DataFrame]:
+    """Each plant's exact-function inputs, the ``VU`` links and the ``VA``
+    links (:data:`~novomodelo_bridge.comparators.operating_points.LINK_SCHEMA`).
 
-    A ``VA`` gauge with no operated plant on it contributes nothing and is
-    logged.
+    A ``VA`` gauge maps to the operated plant whose effective ``AC NUMPOS``
+    gauge of stage 0 it is; one with no single such plant contributes nothing
+    and is logged.
     """
     hidr = case.hidr
     families = tailrace_families(case, case.id_map)
@@ -438,11 +443,10 @@ def _plant_hydraulics(
         schema=LINK_SCHEMA,
         orient="row",
     )
-    operated = set(case.id_map.operated_hydro_codes)
-    plant_of_gauge = {
-        int(p): int(c) for c, p in hidr["posto"].items() if int(c) in operated
-    }
-    gauge_share: dict[int, float] = defaultdict(float)
+    plants_on_gauge: dict[int, list[int]] = defaultdict(list)
+    for code in sorted(case.id_map.operated_hydro_codes):
+        plants_on_gauge[eff.inflow_gauge(code, 0)].append(code)
+    gauge_rows: list[tuple[int, int, float]] = []
     if va is not None:
         for gauge, target, factor in zip(
             va["codigo_posto_influenciador"],
@@ -450,17 +454,18 @@ def _plant_hydraulics(
             va["fator_impacto_incremental"],
             strict=True,
         ):
-            plant = plant_of_gauge.get(int(gauge))
-            if plant is None or plant not in first_incremental:
+            plants = plants_on_gauge.get(int(gauge), [])
+            if len(plants) != 1:
                 _LOG.info(
-                    "VA register of plant %d: no operated plant on gauge %d; its "
-                    "share of the tail flow is left out of the exact production "
-                    "function.",
+                    "VA register of plant %d: no single operated plant on gauge "
+                    "%d; its flow in the tailrace is left out of the exact "
+                    "production function.",
                     int(target),
                     int(gauge),
                 )
                 continue
-            gauge_share[int(target)] += float(factor) * first_incremental[plant]
+            gauge_rows.append((int(target), plants[0], float(factor)))
+    gauge_links = pl.DataFrame(gauge_rows, schema=LINK_SCHEMA, orient="row")
     hydraulics = {
         code: Hydraulics(
             families=families[code],
@@ -470,12 +475,11 @@ def _plant_hydraulics(
             tipo_perda=int(hidr.loc[code, "tipo_perda"]),
             volume_floor_hm3=float(hidr.loc[code, "volume_minimo"]),
             outflow_factor=outflow_factor.get(code, 1.0),
-            gauge_share_m3s=gauge_share.get(code, 0.0),
         )
         for code in codes
         if code in families
     }
-    return hydraulics, links
+    return hydraulics, links, gauge_links
 
 
 def _exact_check(
@@ -483,7 +487,8 @@ def _exact_check(
 ) -> dict[tuple[int, int], float]:
     """``{(code, stage): max |exact − printed FPH|}`` over the source model's
     printed deviation points, with its printed storage, flows, ``VU`` lateral
-    flow and the downstream plant's printed forebay; empty without the table.
+    flow, ``VA`` gauge flow and the downstream plant's printed forebay; empty
+    without the table.
     """
     printed = read_or_note(
         read_dec_desvfpha,
@@ -502,13 +507,14 @@ def _exact_check(
         ).iter_rows()
     }
     worst: dict[tuple[int, int], float] = {}
-    for code, estagio, no, patamar, v, q, s, lateral, fph in printed.select(
+    for code, estagio, no, patamar, v, q, s, lateral, gauge, fph in printed.select(
         "codigo_usina",
         *keys,
         "volume_total_hm3",
         "vazao_turbinada_m3s",
         "vazao_vertida_m3s",
         "vazao_lateral_usina_m3s",
+        "vazao_lateral_posto_m3s",
         "geracao_hidraulica_fph",
     ).iter_rows():
         key = (code, estagio - 1)
@@ -522,6 +528,7 @@ def _exact_check(
             q=q,
             s=s,
             lateral_m3s=lateral or 0.0,
+            gauge_m3s=gauge or 0.0,
             downstream_level_m=forebay.get((downstream, estagio, no, patamar)),
         )
         worst[key] = max(worst.get(key, 0.0), abs(point_head.generation_mw - fph))

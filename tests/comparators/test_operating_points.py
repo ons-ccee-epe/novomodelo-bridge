@@ -11,11 +11,14 @@ import polars as pl
 import pytest
 
 from novomodelo_bridge.comparators.operating_points import (
+    LINK_SCHEMA,
     PLANE_SCHEMA,
     FitWindow,
     Hydraulics,
     OperatingPointComparison,
+    SourceProductionModel,
     StagePhysics,
+    evaluate_points,
     head,
     operating_point_fields,
     source_envelope,
@@ -60,6 +63,7 @@ class TestHead:
                 q=100.0,
                 s=400.0,
                 lateral_m3s=0.0,
+                gauge_m3s=0.0,
                 downstream_level_m=None,
             ).tailrace_m
 
@@ -78,11 +82,68 @@ class TestHead:
             q=100.0,
             s=0.0,
             lateral_m3s=0.0,
+            gauge_m3s=0.0,
             downstream_level_m=None,
         )
 
         assert point.net_head_m == pytest.approx(99.0)
         assert point.generation_mw == 50.0
+
+
+class TestGaugeFlow:
+    def test_gauge_flow_follows_each_stage_and_scenario(self) -> None:
+        target, plant, factor = 1, 2, 0.07
+        incremental = {(0, 0): 500.0, (0, 1): 520.0, (1, 0): 800.0, (1, 1): 760.0}
+        points = pl.DataFrame(
+            [
+                {
+                    "code": code,
+                    "stage": stage,
+                    "scenario": scenario,
+                    "block": 0,
+                    "v_hm3": 60.0,
+                    "q_m3s": 100.0,
+                    "s_m3s": 0.0,
+                    "incremental_m3s": incremental[(stage, scenario)]
+                    if code == plant
+                    else 0.0,
+                }
+                for code in (target, plant)
+                for stage, scenario in incremental
+            ]
+        )
+        stages = (0, 1)
+        model = SourceProductionModel(
+            planes={},
+            windows={},
+            hydraulics={target: _hydraulics(spill_in_tailrace=False)},
+            physics={(target, stage): _PHYSICS for stage in stages},
+            downstream={(target, stage): None for stage in stages},
+            cota=lambda _code, _stage: _PHYSICS.cota,
+            gauge_links=pl.DataFrame(
+                [(target, plant, factor)], schema=LINK_SCHEMA, orient="row"
+            ),
+        )
+
+        evaluated = evaluate_points(points, model)
+
+        assert evaluated.height == len(incremental)
+        for row in evaluated.iter_rows(named=True):
+            gauge = factor * incremental[(row["stage"], row["scenario"])]
+            assert row["gauge_m3s"] == gauge
+            assert (
+                row["exact_mw"]
+                == head(
+                    _hydraulics(spill_in_tailrace=False),
+                    _PHYSICS,
+                    v=60.0,
+                    q=100.0,
+                    s=0.0,
+                    lateral_m3s=0.0,
+                    gauge_m3s=gauge,
+                    downstream_level_m=None,
+                ).generation_mw
+            )
 
 
 class TestSourceEnvelope:

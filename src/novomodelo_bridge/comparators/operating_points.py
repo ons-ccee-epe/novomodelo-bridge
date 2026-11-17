@@ -18,8 +18,8 @@ Novomodelo's is the mean of its initial and final storage.
 
 The exact production function is ``min(ρ_esp · Q · h_net, G_max)``
 (:func:`head`). The forebay comes from the cota polynomial at the point's
-storage. The tailrace is read at ``outflow_factor · (Q + S) + Q_lat + gauge
-share``, with spill left out where it does not reach the tailrace, and
+storage. The tailrace is read at ``outflow_factor · (Q + S) + Q_lat + Q_gauge``,
+with spill left out where it does not reach the tailrace, and
 interpolated between families at the downstream plant's forebay at the same
 operating point.
 
@@ -171,7 +171,8 @@ PLANE_SCHEMA: dict[str, type[pl.DataType]] = {
 }
 
 #: ``Q_lat`` of ``code`` sums ``factor`` times each influencer's turbined plus
-#: spilled flow at the same point.
+#: spilled flow at the same point; ``Q_gauge`` sums ``factor`` times each
+#: influencer's ``incremental_m3s`` there.
 LINK_SCHEMA: dict[str, type[pl.DataType]] = {
     "code": pl.Int64,
     "influencer": pl.Int64,
@@ -230,7 +231,6 @@ class Hydraulics:
     tipo_perda: int
     volume_floor_hm3: float
     outflow_factor: float = 1.0
-    gauge_share_m3s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -272,7 +272,10 @@ class SourceProductionModel:
     ``physics`` names the pairs; ``planes`` (:data:`PLANE_SCHEMA`) and
     ``downstream`` (the plant downstream, ``None`` for none) cover each, and
     ``hydraulics`` each pair's plant. ``cota`` returns any operated plant's
-    cota polynomial at a stage, for the downstream plant's forebay.
+    cota polynomial at a stage, for the downstream plant's forebay. ``links``
+    and ``gauge_links`` (:data:`LINK_SCHEMA`) give each plant's lateral and
+    gauge flows; a ``gauge_links`` influencer is the plant whose points carry
+    the ``incremental_m3s`` the gauge reads.
     """
 
     planes: Mapping[tuple[int, int], pl.DataFrame]
@@ -282,6 +285,9 @@ class SourceProductionModel:
     downstream: Mapping[tuple[int, int], int | None]
     cota: Callable[[int, int], Sequence[float]]
     links: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema=LINK_SCHEMA)
+    )
+    gauge_links: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(schema=LINK_SCHEMA)
     )
 
@@ -368,6 +374,7 @@ def novomodelo_points(
         pl.col("spillage_m3s").fill_null(0.0).alias("s_m3s"),
         "outflow_m3s",
         pl.col("generation_mw").fill_null(0.0).alias("gh_mw"),
+        pl.col("incremental_inflow_m3s").fill_null(0.0).alias("incremental_m3s"),
         pl.when(pl.col("accumulated_productivity_mw_per_m3s") > 0.0)
         .then(
             (
@@ -603,6 +610,7 @@ def head(
     q: float,
     s: float,
     lateral_m3s: float,
+    gauge_m3s: float,
     downstream_level_m: float | None,
 ) -> Head:
     """The exact production function's head and generation at one point."""
@@ -610,7 +618,7 @@ def head(
     tail_flow = (
         hydraulics.outflow_factor * (q + (s if hydraulics.spill_in_tailrace else 0.0))
         + lateral_m3s
-        + hydraulics.gauge_share_m3s
+        + gauge_m3s
     )
     tailrace = tailrace_level_m(hydraulics.families, tail_flow, downstream_level_m)
     net = apply_hydraulic_loss(
@@ -627,12 +635,12 @@ def head(
 
 
 def evaluate_points(points: pl.DataFrame, model: SourceProductionModel) -> pl.DataFrame:
-    """*points* at the pairs *model* covers, with ``lateral_m3s``, the
-    downstream plant's storage and forebay at the same point, and
-    ``exact_mw``.
+    """*points* at the pairs *model* covers, with ``lateral_m3s``,
+    ``gauge_m3s``, the downstream plant's storage and forebay at the same
+    point, and ``exact_mw``.
 
-    The other plants' rows stay in *points* only to supply the lateral flow
-    and the downstream storage.
+    The other plants' rows stay in *points* only to supply the lateral flow,
+    the gauge flow and the downstream storage.
     """
     downstream = pl.DataFrame(
         [
@@ -642,7 +650,7 @@ def evaluate_points(points: pl.DataFrame, model: SourceProductionModel) -> pl.Da
         schema={"code": pl.Int64, "stage": pl.Int64, "downstream": pl.Int64},
         orient="row",
     )
-    frame = _with_context(points, model.links, downstream)
+    frame = _with_context(points, model.links, model.gauge_links, downstream)
     cota_cache: dict[tuple[int, int], tuple[float, ...]] = {}
 
     def _downstream_level(
@@ -657,13 +665,14 @@ def evaluate_points(points: pl.DataFrame, model: SourceProductionModel) -> pl.Da
 
     levels: list[float | None] = []
     exact: list[float] = []
-    for code, stage, v, q, s, lateral, down, down_v in frame.select(
+    for code, stage, v, q, s, lateral, gauge, down, down_v in frame.select(
         "code",
         "stage",
         "v_hm3",
         "q_m3s",
         "s_m3s",
         "lateral_m3s",
+        "gauge_m3s",
         "downstream",
         "downstream_v_hm3",
     ).iter_rows():
@@ -677,6 +686,7 @@ def evaluate_points(points: pl.DataFrame, model: SourceProductionModel) -> pl.Da
                 q=q,
                 s=s,
                 lateral_m3s=lateral,
+                gauge_m3s=gauge,
                 downstream_level_m=level,
             ).generation_mw
         )
@@ -687,10 +697,15 @@ def evaluate_points(points: pl.DataFrame, model: SourceProductionModel) -> pl.Da
 
 
 def _with_context(
-    points: pl.DataFrame, links: pl.DataFrame, downstream: pl.DataFrame
+    points: pl.DataFrame,
+    links: pl.DataFrame,
+    gauge_links: pl.DataFrame,
+    downstream: pl.DataFrame,
 ) -> pl.DataFrame:
-    """The FPHA plants' points, with the lateral flow and the downstream
-    plant's storage at the same point."""
+    """The FPHA plants' points, with the lateral flow, the gauge flow and the
+    downstream plant's storage at the same point.
+
+    The gauge flow reads ``incremental_m3s`` only when *gauge_links* has rows."""
     release = points.select(
         *POINT_KEYS,
         pl.col("code").alias("influencer"),
@@ -706,11 +721,29 @@ def _with_context(
         pl.col("code").alias("downstream"),
         pl.col("v_hm3").alias("downstream_v_hm3"),
     )
-    return (
+    frame = (
         points.join(downstream, on=["code", "stage"])
         .join(lateral, on=["code", *POINT_KEYS], how="left")
         .join(storage, on=["downstream", *POINT_KEYS], how="left")
-        .with_columns(pl.col("lateral_m3s").fill_null(0.0))
+    )
+    if gauge_links.is_empty():
+        frame = frame.with_columns(pl.lit(0.0).alias("gauge_m3s"))
+    else:
+        incremental = points.select(
+            *POINT_KEYS,
+            pl.col("code").alias("influencer"),
+            "incremental_m3s",
+        )
+        gauge = (
+            gauge_links.join(incremental, on="influencer")
+            .group_by("code", *POINT_KEYS)
+            .agg(
+                (pl.col("factor") * pl.col("incremental_m3s")).sum().alias("gauge_m3s")
+            )
+        )
+        frame = frame.join(gauge, on=["code", *POINT_KEYS], how="left")
+    return frame.with_columns(
+        pl.col("lateral_m3s").fill_null(0.0), pl.col("gauge_m3s").fill_null(0.0)
     )
 
 
@@ -811,7 +844,7 @@ def _mean_points(points: pl.DataFrame, prefix: str) -> pl.DataFrame:
         pl.col("code").first(),
         *[
             weighted_mean(c).alias(f"{prefix}_{c}")
-            for c in ("v_hm3", "q_m3s", "s_m3s", "gh_mw", "lateral_m3s")
+            for c in ("v_hm3", "q_m3s", "s_m3s", "gh_mw", "lateral_m3s", "gauge_m3s")
         ],
         (
             (pl.col("weight") * pl.col("downstream_level_m")).sum()
@@ -865,6 +898,7 @@ def _fit_inputs_and_slices(
                 q=m[f"{prefix}_q_m3s"] if q is None else q,
                 s=m[f"{prefix}_s_m3s"],
                 lateral_m3s=m[f"{prefix}_lateral_m3s"],
+                gauge_m3s=m[f"{prefix}_gauge_m3s"],
                 downstream_level_m=None
                 if level is None or math.isnan(level)
                 else level,
@@ -902,7 +936,7 @@ def _fit_inputs_and_slices(
             row[f"{prefix}_lateral_m3s"] = (
                 None
                 if m[f"{prefix}_lateral_m3s"] is None
-                else m[f"{prefix}_lateral_m3s"] + hyd.gauge_share_m3s
+                else m[f"{prefix}_lateral_m3s"] + m[f"{prefix}_gauge_m3s"]
             )
             level = m[f"{prefix}_downstream_level_m"]
             row[f"{prefix}_downstream_level_m"] = (
