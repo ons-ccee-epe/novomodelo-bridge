@@ -226,6 +226,20 @@ the deck's `NW` codes, then `none` or the `UE` rows that name one of them:
 | --- | --- |
 | Operative calendar | The July 2026 RV4 PMO has one operative week, 25/07 to 01/08 2026, then August as a monthly stage. As published and with its last stage's openings cut to two, `novomodelo-bridge convert decomp <deck> <case> --validate --json` exits 0 and the converted case validates with no errors, and `novomodelo-bridge check decomp <deck> --json` exits 0, with its operative calendar check reading 2 stages from 2026-07-25 to 2026-09-01. The case's `stages.json` holds the week with the 15, 64 and 89 h blocks of its `DP` records and August with 63, 280 and 401 h. Captured with a novomodelo 0.20.0 build in November 2026. |
 
+### A full DECOMP deck with `UH` spillage ceilings and `QVER` restrictions, converted before and after the ceiling moved to `hydros.json`
+
+The deck is a copy of `DEC_ONS_112026_RV0_VE`, run without its boundary FCF (`--no-fcf`). Its own `UH` records carry one spillage ceiling, a zero, and no `RHQ` reads `QVER`, so the copy adds ceilings of 1000, 800 and 600 m³/s to three plants in field 9. It also adds two single-term `RHQ`s on `QVER`. One gives one of those plants per-block ceilings of 400, 500 and 700 m³/s, all below its `UH` ceiling, on stages 1–2. The other gives a second plant a floor of 5 m³/s and a ceiling of 900 m³/s, above its `UH` ceiling, on stage 3. Each case is converted with the previous bridge and with this one, at `--json-float-digits 17`, and with this one again at the default precision.
+
+| Check | Verified |
+| --- | --- |
+| File-diff scope | Only `system/hydros.json` and `constraints/hydro_bounds.parquet` differ, apart from `conversion_manifest.json`. The four plants with a ceiling carry it as `spillage.max_spillage_m3s`. `hydro_bounds.parquet` keeps spillage rows only on the `RHQ` cells. On the floor-only `RHQ`'s stage, those rows pair the floor with the `UH` ceiling. |
+| Effective spillage bounds | Resolved per plant, stage and block with the precedence of `tests/decomp/test_spillage_lp_equivalence.py` (block row, then stage row, then the `hydros.json` value), the two conversions give identical floors and ceilings on every cell. |
+| `novomodelo validate` | Valid on all three cases. |
+| Training bounds | Two training iterations on each 17-digit case give bit-identical lower and upper bounds. |
+| Entity value at the default precision | Each plant's `spillage.max_spillage_m3s` equals, as a parsed double, its `max_spillage_m3s` in the previous conversion's `hydro_bounds.parquet` on every stage where that row came from the `UH` ceiling alone. |
+
+Captured with a novomodelo 0.21.0 build that accepts the `spillage` object, in November 2026.
+
 ## Excerpts still to capture
 
 These would restore the remaining reader checks as ordinary tests. Take the
