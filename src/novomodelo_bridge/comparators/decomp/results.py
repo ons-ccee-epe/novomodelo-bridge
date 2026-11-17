@@ -576,14 +576,13 @@ def _hydro_productivity_results(
 def reconcile_kdollars_to_reais(value: float) -> float:
     """Convert a native k$ cost value to R$ (×10³).
 
-    Every cost the source model reports — `read_relato_costs`,
-    `read_relato_expected_cost`, `read_dec_oper_gnl`'s ``custo_geracao`` — is
-    in k$ (thousands of BRL), while novomodelo reports costs in R$. Silently
-    mixing the two is the same unit trap documented in
-    `project_decomp_fcf_unit_conversion_bug`: novomodelo's boundary FCF coefficients
-    were consumed verbatim in k$ against a R$-denominated model, undervaluing
-    water by three orders of magnitude. This helper is the single conversion
-    site — readers stay in native k$, and callers convert once, explicitly.
+    Every cost the source model reports (`read_relato_costs`,
+    `read_relato2_costs`) is in k$ (thousands of BRL), while novomodelo reports
+    costs in R$. Mixing the two silently is the unit trap that once had
+    novomodelo's boundary FCF coefficients consumed verbatim in k$ against a
+    R$-denominated model, undervaluing water by three orders of magnitude.
+    This helper is the single conversion site — readers stay in native k$,
+    and callers convert once, explicitly.
 
     Downstream, two different R$ conventions apply: the Overview cost dict
     uses plain R$ (this factor, ×10³), while `nw_sin` uses

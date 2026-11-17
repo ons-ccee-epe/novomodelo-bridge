@@ -34,7 +34,6 @@ from idecomp.decomp import (
     DecEstatFpha,
     Decomptim,
     DecOperEvap,
-    DecOperGnl,
     DecOperInterc,
     DecOperRee,
     DecOperRheSoft,
@@ -262,13 +261,6 @@ def read_dec_oper_rhesoft(case_dir: Path) -> pl.DataFrame:
     return _read_dec_oper(case_dir, "dec_oper_rhesoft.csv", DecOperRheSoft)
 
 
-def read_dec_oper_gnl(case_dir: Path) -> pl.DataFrame:
-    """Per-anticipated-thermal (GNL) operation: dispatch bounds, incremental
-    cost, and the fuel cost (``custo_geracao``, native k$). Resolved via the
-    same root-only lookup shared with every other ``dec_oper_*`` table."""
-    return _read_dec_oper(case_dir, "dec_oper_gnl.csv", DecOperGnl)
-
-
 def read_dec_oper_evap(case_dir: Path) -> pl.DataFrame:
     """Per-hydro/stage/node/scenario reservoir evaporation.
 
@@ -378,12 +370,6 @@ def read_decomp_tim(case_dir: Path) -> pl.DataFrame:
     return _finalize_table(path, Decomptim.read(str(path)).tempos_etapas)
 
 
-def read_relato_balance(case_dir: Path) -> pl.DataFrame:
-    """Read the per-submarket energy balance table (demand, generation by
-    source, purchase/sale, ENA, and EARM in/out) from the general report."""
-    return _read_relato_table(case_dir, "balanco_energetico")
-
-
 def read_relato_costs(case_dir: Path) -> pl.DataFrame:
     """Read the per-(stage, scenario) operating cost table (present/future
     cost, thermal generation, deviation/spillage/turbining penalties, and
@@ -421,16 +407,6 @@ def read_relato2_costs(case_dir: Path) -> pl.DataFrame:
     if table is None or table.empty:
         raise ValueError(f"{path} has no relatorio_operacao_custos table")
     return pl.from_pandas(table)
-
-
-def read_relato_expected_cost(case_dir: Path) -> pl.DataFrame:
-    """Read the per-parcela expected operating cost table (one ``estagio_N``
-    column per stage) from the general report.
-
-    Costs are **native k$**, unconverted -- converted once in the analysis
-    layer, see `results.reconcile_kdollars_to_reais`.
-    """
-    return _read_relato_table(case_dir, "custo_operacao_valor_esperado")
 
 
 def read_relato_membership(case_dir: Path) -> pl.DataFrame:

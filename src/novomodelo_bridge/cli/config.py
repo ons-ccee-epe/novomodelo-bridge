@@ -25,7 +25,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-FORMAT_DEFAULT: tuple[str, ...] = ("console", "parquet", "json")
 # out-dir has no fixed default (it derives from <novomodelo_output_dir>); the config
 # value, when absent, is None and the CLI keeps its derived default.
 

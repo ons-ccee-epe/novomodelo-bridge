@@ -22,7 +22,6 @@ from idecomp.decomp import (
     DecEstatFpha,
     Decomptim,
     DecOperEvap,
-    DecOperGnl,
     DecOperRee,
     DecOperRheSoft,
     EcoFpha,
@@ -41,7 +40,6 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_desvfpha,
     read_dec_estatfpha,
     read_dec_oper_evap,
-    read_dec_oper_gnl,
     read_dec_oper_ree,
     read_dec_oper_rhesoft,
     read_dec_oper_sist,
@@ -49,10 +47,8 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_eco_fpha,
     read_or_note,
     read_relato2_costs,
-    read_relato_balance,
     read_relato_convergence,
     read_relato_costs,
-    read_relato_expected_cost,
     read_relato_membership,
 )
 from novomodelo_bridge.comparators.decomp.results import reconcile_kdollars_to_reais
@@ -638,62 +634,6 @@ class TestReadRelatoTable:
         assert "saidas/" not in str(exc_info.value)
 
 
-class TestReadRelatoBalance:
-    """`read_relato_balance`: per-submarket energy balance table."""
-
-    def test_returns_expected_columns(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "relato.rv2").touch()
-        stub_table = pd.DataFrame(
-            {
-                "estagio": [1],
-                "cenario": [1],
-                "nome_submercado": ["SUDESTE"],
-                "geracao_hidraulica": [1000.0],
-                "geracao_termica": [200.0],
-                "compra": [0.0],
-                "venda": [0.0],
-                "geracao_itaipu_50hz": [50.0],
-                "geracao_itaipu_60hz": [60.0],
-            }
-        )
-        monkeypatch.setattr(
-            Relato,
-            "read",
-            staticmethod(lambda _path: _StubRelatoFile(balanco_energetico=stub_table)),
-        )
-        result = read_relato_balance(tmp_path)
-        assert isinstance(result, pl.DataFrame)
-        assert result.height == 1
-        for column in (
-            "nome_submercado",
-            "geracao_hidraulica",
-            "geracao_termica",
-            "compra",
-            "venda",
-            "geracao_itaipu_50hz",
-            "geracao_itaipu_60hz",
-        ):
-            assert column in result.columns
-
-    def test_none_table_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "relato.rv2").touch()
-        monkeypatch.setattr(
-            Relato,
-            "read",
-            staticmethod(lambda _path: _StubRelatoFile(balanco_energetico=None)),
-        )
-        with pytest.raises(ValueError, match="balanco_energetico"):
-            read_relato_balance(tmp_path)
-
-    def test_missing_relato_raises(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="relato"):
-            read_relato_balance(tmp_path)
-
-
 class TestReadRelatoCosts:
     """`read_relato_costs`: per-(stage, scenario) operating cost table."""
 
@@ -820,53 +760,6 @@ class TestReadRelato2Costs:
             read_relato2_costs(tmp_path)
 
 
-class TestReadRelatoExpectedCost:
-    """`read_relato_expected_cost`: per-parcela expected cost, wide by stage."""
-
-    def test_returns_estagio_columns(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "relato.rv2").touch()
-        stub_table = pd.DataFrame(
-            {
-                "parcela": ["GERACAO TERMICA"],
-                "estagio_1": [10.0],
-                "estagio_2": [20.0],
-                "estagio_3": [30.0],
-            }
-        )
-        monkeypatch.setattr(
-            Relato,
-            "read",
-            staticmethod(
-                lambda _path: _StubRelatoFile(custo_operacao_valor_esperado=stub_table)
-            ),
-        )
-        result = read_relato_expected_cost(tmp_path)
-        assert isinstance(result, pl.DataFrame)
-        assert result.height == 1
-        for column in ("parcela", "estagio_1", "estagio_2", "estagio_3"):
-            assert column in result.columns
-
-    def test_none_table_raises_naming_attr(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "relato.rv2").touch()
-        monkeypatch.setattr(
-            Relato,
-            "read",
-            staticmethod(
-                lambda _path: _StubRelatoFile(custo_operacao_valor_esperado=None)
-            ),
-        )
-        with pytest.raises(ValueError, match="custo_operacao_valor_esperado"):
-            read_relato_expected_cost(tmp_path)
-
-    def test_missing_relato_raises(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="relato"):
-            read_relato_expected_cost(tmp_path)
-
-
 class TestReadRelatoMembership:
     """`read_relato_membership`: hydro -> REE -> submarket membership table."""
 
@@ -921,62 +814,6 @@ class TestReadRelatoMembership:
     def test_missing_relato_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="relato"):
             read_relato_membership(tmp_path)
-
-
-class TestReadDecOperGnl:
-    """`read_dec_oper_gnl`: anticipated-thermal operation, root-only file."""
-
-    def test_finds_root_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "dec_oper_gnl.csv").touch()
-        stub_table = pd.DataFrame(
-            {
-                "estagio": [1],
-                "codigo_usina": [1],
-                "custo_incremental": [5.0],
-                "geracao_MW": [100.0],
-                "custo_geracao": [42.0],
-            }
-        )
-        monkeypatch.setattr(
-            DecOperGnl,
-            "read",
-            staticmethod(lambda _path, version=None: _StubFile(stub_table)),
-        )
-        result = read_dec_oper_gnl(tmp_path)
-        assert isinstance(result, pl.DataFrame)
-        assert result.height == 1
-        assert "custo_geracao" in result.columns
-        assert "geracao_MW" in result.columns
-
-    def test_saidas_only_is_not_found(self, tmp_path: Path) -> None:
-        saidas = tmp_path / "saidas"
-        saidas.mkdir()
-        (saidas / "dec_oper_gnl.csv").touch()
-        with pytest.raises(FileNotFoundError, match="dec_oper_gnl.csv") as exc_info:
-            read_dec_oper_gnl(tmp_path)
-        assert "saidas/" not in str(exc_info.value)
-
-    def test_missing_file_raises(self, tmp_path: Path) -> None:
-        with pytest.raises(FileNotFoundError, match="dec_oper_gnl.csv"):
-            read_dec_oper_gnl(tmp_path)
-
-    def test_empty_parse_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        (tmp_path / "dec_oper_gnl.csv").touch()
-        monkeypatch.setattr(
-            DecOperGnl,
-            "read",
-            staticmethod(lambda _path, version=None: _StubFile(None)),
-        )
-        with pytest.raises(ValueError, match="parsed empty"):
-            read_dec_oper_gnl(tmp_path)
-
-    def test_result_excerpt_parses(self) -> None:
-        df = read_dec_oper_gnl(_RESULTS_EXCERPT)
-        assert df.height > 0
 
 
 class TestReadDecOperRee:
@@ -1276,7 +1113,6 @@ class TestReconcileKdollarsToReais:
     def test_docstring_names_kdollar_provenance(self) -> None:
         docstring = reconcile_kdollars_to_reais.__doc__
         assert docstring is not None
-        assert "project_decomp_fcf_unit_conversion_bug" in docstring
         assert "k$" in docstring
 
 

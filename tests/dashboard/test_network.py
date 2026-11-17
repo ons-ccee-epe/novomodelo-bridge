@@ -1,7 +1,7 @@
 """Unit tests for novomodelo_bridge.dashboard.tabs.network.
 
-Covers module constants, can_render, build_line_explorer, build_heatmap,
-build_bus_balance, and the render() guard path.
+Covers module constants, can_render, build_line_explorer, build_bus_balance,
+and the render() guard path.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from novomodelo_bridge.dashboard.tabs.network import (
     TAB_LABEL,
     TAB_ORDER,
     build_bus_balance,
-    build_heatmap,
     build_line_explorer,
     can_render,
     render,
@@ -475,152 +474,6 @@ def test_build_line_explorer_bound_lines_in_js() -> None:
     # Legacy chart id and section label are gone
     assert "nw-util" not in html
     assert "Capacity Utilisation" not in html
-
-
-# ---------------------------------------------------------------------------
-# test_build_heatmap
-# ---------------------------------------------------------------------------
-
-
-def test_build_heatmap_with_line_bounds_returns_plotly_html() -> None:
-    """build_heatmap with line_bounds returns HTML containing Plotly content."""
-    exchanges_lf = _make_exchanges_lf([0, 1])
-    bh_df = _make_bh_df()
-    line_bounds = _make_line_bounds([0, 1])
-    line_meta = _make_line_meta([0, 1])
-    names = _make_names([0, 1])
-    stage_labels = _make_stage_labels()
-    stage_dates = _make_stage_dates()
-
-    html = build_heatmap(
-        exchanges_lf, line_bounds, line_meta, names, stage_labels, stage_dates, bh_df
-    )
-
-    # Should contain plotly div content
-    assert "plotly" in html.lower() or "Heatmap" in html or "<div" in html
-    assert html  # non-empty
-
-
-def test_build_heatmap_does_not_raise() -> None:
-    """build_heatmap must not raise any exception with valid inputs."""
-    exchanges_lf = _make_exchanges_lf([0, 1])
-    bh_df = _make_bh_df()
-    line_bounds = _make_line_bounds([0, 1])
-    line_meta = _make_line_meta([0, 1])
-    names = _make_names([0, 1])
-    stage_labels = _make_stage_labels()
-    stage_dates = _make_stage_dates()
-
-    # No exception expected
-    html = build_heatmap(
-        exchanges_lf, line_bounds, line_meta, names, stage_labels, stage_dates, bh_df
-    )
-    assert isinstance(html, str)
-
-
-def test_build_heatmap_without_line_bounds_falls_back_to_line_meta() -> None:
-    """build_heatmap with empty line_bounds falls back to static capacity."""
-    exchanges_lf = _make_exchanges_lf([0, 1])
-    bh_df = _make_bh_df()
-    empty_bounds = pd.DataFrame(
-        columns=["line_id", "stage_id", "direct_mw", "reverse_mw"]
-    )
-    line_meta = _make_line_meta([0, 1])
-    names = _make_names([0, 1])
-    stage_labels = _make_stage_labels()
-    stage_dates = _make_stage_dates()
-
-    # Must not raise even with empty bounds
-    html = build_heatmap(
-        exchanges_lf, empty_bounds, line_meta, names, stage_labels, stage_dates, bh_df
-    )
-    assert isinstance(html, str)
-    assert html  # non-empty
-
-
-def test_build_heatmap_empty_exchanges_returns_no_data() -> None:
-    """build_heatmap returns a no-data message when exchanges_lf has no rows."""
-    exchanges_lf = _make_empty_exchanges_lf()
-    bh_df = _make_bh_df()
-    line_bounds = _make_line_bounds([0, 1])
-    line_meta = _make_line_meta([0, 1])
-    names = _make_names([0, 1])
-    stage_labels = _make_stage_labels()
-    stage_dates = _make_stage_dates()
-
-    html = build_heatmap(
-        exchanges_lf, line_bounds, line_meta, names, stage_labels, stage_dates, bh_df
-    )
-
-    assert "<p>" in html
-
-
-# ---------------------------------------------------------------------------
-# test_build_heatmap — single net utilisation heatmap
-# ---------------------------------------------------------------------------
-
-
-def test_build_heatmap_single_trace() -> None:
-    """build_heatmap returns HTML with exactly one heatmap trace (not two).
-
-    Plotly embeds the figure in a ``Plotly.newPlot(el, [traces], layout)``
-    call; the traces array appears before the layout dict.  We extract the
-    traces JSON array and count ``"type":"heatmap"`` occurrences inside it.
-    """
-    exchanges_lf = _make_exchanges_lf([0, 1])
-    bh_df = _make_bh_df()
-    line_bounds = _make_line_bounds([0, 1])
-    line_meta = _make_line_meta([0, 1])
-    names = _make_names([0, 1])
-    stage_labels = _make_stage_labels()
-    stage_dates = _make_stage_dates()
-
-    html = build_heatmap(
-        exchanges_lf, line_bounds, line_meta, names, stage_labels, stage_dates, bh_df
-    )
-
-    # Plotly serialises as: Plotly.newPlot(el, [<traces>], <layout>, ...)
-    # The traces array is the first JSON array argument after the element.
-    # We count zmin/zmax pairs which appear once per Heatmap trace.
-    assert html.count('"zmin":0') == 1, "Expected exactly one Heatmap trace (zmin)"
-    assert html.count('"zmax":100') == 1, "Expected exactly one Heatmap trace (zmax)"
-    # Confirm subplot annotation strings are absent (old two-panel layout used xaxis2)
-    assert "xaxis2" not in html
-
-
-def test_build_heatmap_no_subplots() -> None:
-    """build_heatmap does not emit Direct Utilization or Reverse Utilization titles."""
-    exchanges_lf = _make_exchanges_lf([0, 1])
-    bh_df = _make_bh_df()
-    line_bounds = _make_line_bounds([0, 1])
-    line_meta = _make_line_meta([0, 1])
-    names = _make_names([0, 1])
-    stage_labels = _make_stage_labels()
-    stage_dates = _make_stage_dates()
-
-    html = build_heatmap(
-        exchanges_lf, line_bounds, line_meta, names, stage_labels, stage_dates, bh_df
-    )
-
-    assert "Direct Utilization" not in html
-    assert "Reverse Utilization" not in html
-
-
-def test_build_heatmap_title_contains_net() -> None:
-    """build_heatmap title contains 'Net'."""
-    exchanges_lf = _make_exchanges_lf([0, 1])
-    bh_df = _make_bh_df()
-    line_bounds = _make_line_bounds([0, 1])
-    line_meta = _make_line_meta([0, 1])
-    names = _make_names([0, 1])
-    stage_labels = _make_stage_labels()
-    stage_dates = _make_stage_dates()
-
-    html = build_heatmap(
-        exchanges_lf, line_bounds, line_meta, names, stage_labels, stage_dates, bh_df
-    )
-
-    assert "Net" in html
 
 
 # ---------------------------------------------------------------------------

@@ -131,24 +131,6 @@ def convert_tailrace_curves(case: DecompCase, id_map: DecompIdMap) -> pa.Table |
     return build_tailrace_table(families, segments, id_map.hydro_id)
 
 
-def is_fpha_eligible(effective: EffectiveCadastro, code: int) -> bool:
-    """Whether plant *code* can be fit by novomodelo's computed FPHA.
-
-    Requires a non-degenerate (post-``AC COTVOL``) volume→cota polynomial, a
-    positive ``produtibilidade_especifica`` at the initial stage, and a
-    positive rated turbined flow **and** rated power
-    (:func:`~novomodelo_bridge.decomp.converters.hydro.bounds._rated_envelope`,
-    the ``AC NUMCON``/``NUMMAQ``/``POTEFE``/``VAZEFE``-adjusted envelope
-    ``hydros.json`` emits). novomodelo samples the fit on ``[0, max_turbined]`` and
-    clamps it at ``max_generation``, so a zero on either side collapses the
-    production cloud and aborts the fit. Storage swing is not required — a
-    run-of-river plant fits through the single-volume path.
-    """
-    return _has_fpha_curve_inputs(effective, code) and _has_rated_capacity(
-        effective, code
-    )
-
-
 def _has_fpha_curve_inputs(effective: EffectiveCadastro, code: int) -> bool:
     coeffs = effective.cota_polynomial(code, 0)
     if all(c == 0.0 for c in coeffs):

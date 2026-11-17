@@ -131,13 +131,6 @@ _LOG = logging.getLogger(__name__)
 # global `PINT` value.
 _PINT_FICTITIOUS_DISCOUNT = 0.5
 
-# --- Soft fallback for ELETRI when PENALID is silent ----------------------- The source
-# model's behaviour when ELETRI is absent: use the constraint only in final simulation,
-# not in policy. Novomodelo can't represent that nuance, so we keep the slack enabled with a
-# high penalty (10 × MAX_DEFICIT, matching The source model's evaporation/FPHA default
-# magnitude).
-_ELETRI_HIGH_MULT = 10.0
-
 
 def line_ids(case: NewaveCase) -> dict[tuple[int, int], int]:
     """``(smaller, larger)`` submarket code pair -> 0-based line id.
