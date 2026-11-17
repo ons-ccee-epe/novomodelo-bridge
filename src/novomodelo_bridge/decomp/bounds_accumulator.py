@@ -84,9 +84,12 @@ class AxisSpec:
     the one-sided guard for every axis registered that way.
     ``block_eligible`` is ``False`` for axes novomodelo rejects a ``block_id`` on
     (stage-level only, e.g. storage and water_withdrawal). ``soft_floor`` is
-    ``True`` where novomodelo charges a penalty for a shortfall below the lower
-    bound instead of enforcing it, so a floor above the ceiling still solves;
-    :func:`resolve` refuses that conflict on every other axis.
+    ``True`` where :func:`resolve` keeps a floor above the ceiling for the
+    caller, which settles it within the deck's written precision: every axis
+    whose shortfall below the lower bound novomodelo prices, so the pair still
+    solves, and storage, whose floor novomodelo enforces and the caller refuses
+    past that precision. :func:`resolve` refuses the conflict on every other
+    axis.
     """
 
     family: str

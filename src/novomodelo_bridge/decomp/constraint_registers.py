@@ -430,14 +430,23 @@ def _row_stage(row: pd.Series) -> int:
     return int(row["estagio"]) - 1
 
 
-def _read_terms(coeff: pd.DataFrame, config: _FamilyConfig) -> _DeclaredTerms:
-    """Group a coefficient register into its declared terms per constraint."""
+def _read_terms(
+    coeff: pd.DataFrame, config: _FamilyConfig, dadger_path: str | None
+) -> _DeclaredTerms:
+    """Group a coefficient register into its declared terms per constraint.
+
+    Raises
+    ------
+    FieldParseError
+        A row has a blank ``tipo``, which names the variable its coefficient
+        multiplies.
+    """
     collector = _TermCollector()
     for _, row in coeff.iterrows():
         variable = (
             config.fixed_variable
             if config.fixed_variable is not None
-            else str(row["tipo"]).strip()
+            else _tipo(row, config, dadger_path)
         )
         frequency = (
             _opt_float(row["frequencia"])
@@ -455,6 +464,22 @@ def _read_terms(coeff: pd.DataFrame, config: _FamilyConfig) -> _DeclaredTerms:
             ),
         )
     return collector.result()
+
+
+def _tipo(row: pd.Series, config: _FamilyConfig, dadger_path: str | None) -> str:
+    """A ``CQ``/``CV`` row's ``tipo``, refused when blank."""
+    raw = row["tipo"]
+    tipo = "" if raw is None or pd.isna(raw) else str(raw).strip()
+    if not tipo:
+        register = config.coeff_attr.upper()
+        raise FieldParseError(
+            f"{config.family} {int(row['codigo_restricao'])} has a {register} "
+            f"record with no tipo at stage {int(row['estagio'])}, so the "
+            "variable its coefficient multiplies is unknown.",
+            path=dadger_path,
+            field=f"{register} tipo",
+        )
+    return tipo
 
 
 def _read_re_terms(dadger: ConstraintRegisters) -> _DeclaredTerms:
@@ -574,25 +599,35 @@ _TRIPLE_FAMILIES: tuple[_FamilyConfig, ...] = (
 def _read_triple_family(
     dadger: ConstraintRegisters,
     config: _FamilyConfig,
-) -> list[ConstraintRecord]:
-    """Join one RE/HQ/HV register triple into classified constraint records.
+    dadger_path: str | None,
+) -> tuple[list[ConstraintRecord], list[ZeroTerm]]:
+    """Join one RE/HQ/HV register triple into classified constraint records,
+    with the zero terms left out of them.
+
+    An ``HQ`` or ``HV`` term whose coefficient is zero at every stage of its
+    constraint adds nothing, in DECOMP too: it is left out, and a constraint
+    with no other term is left out whole.
 
     Raises
     ------
     FieldParseError
         A constraint has no term at its first stage, a deck the source model
-        rejects.
+        rejects; a constraint with only zero terms has limits that exclude
+        zero, which no operation meets; or a ``CQ``/``CV`` row has a blank
+        ``tipo``.
     """
     decl = _df(dadger, config.decl_attr)
     if decl is None:
-        return []
+        return [], []
     if config.term_reader is not None:
         terms_by_cid = config.term_reader(dadger)
     else:
         coeff = _df(dadger, config.coeff_attr)
-        terms_by_cid = _read_terms(coeff, config) if coeff is not None else {}
+        terms_by_cid = (
+            _read_terms(coeff, config, dadger_path) if coeff is not None else {}
+        )
     if not terms_by_cid:
-        return []
+        return [], []
     limit = _df(dadger, config.limit_attr)
 
     limits_by_cid: dict[int, dict[int, StageBounds]] = {}
@@ -605,6 +640,7 @@ def _read_triple_family(
             )
 
     records: list[ConstraintRecord] = []
+    zero_terms: list[ZeroTerm] = []
     skipped_no_terms = 0
     for _, row in decl.iterrows():
         cid = int(row["codigo_restricao"])
@@ -624,11 +660,23 @@ def _read_triple_family(
                 f"{config.family} constraint {cid} has no coefficient at its "
                 f"first stage ({stage_start + 1}); the source model rejects "
                 "such a deck.",
+                path=dadger_path,
                 field=f"{config.family} constraint {cid}",
             )
         bounds = _forward_fill_bounds(
             limits_by_cid.get(cid, {}), stage_start, stage_end
         )
+        if config.family in _ZERO_TERM_FAMILIES:
+            kept = [t for t in terms if not _zero_throughout(t, stage_start, stage_end)]
+            zero_terms.extend(
+                ZeroTerm(config.family, cid, term.code, term.variable, len(kept))
+                for term in terms
+                if _zero_throughout(term, stage_start, stage_end)
+            )
+            if not kept:
+                _refuse_limits_excluding_zero(config.family, cid, bounds, dadger_path)
+                continue
+            terms = kept
         records.append(
             ConstraintRecord(
                 family=config.family,
@@ -647,7 +695,34 @@ def _read_triple_family(
             config.family,
             skipped_no_terms,
         )
-    return records
+    return records, zero_terms
+
+
+def _zero_throughout(term: ConstraintTerm, stage_start: int, stage_end: int) -> bool:
+    return all(
+        term.coefficient_at(stage) == 0.0 for stage in range(stage_start, stage_end + 1)
+    )
+
+
+def _refuse_limits_excluding_zero(
+    family: str,
+    cid: int,
+    bounds: Mapping[int, StageBounds],
+    dadger_path: str | None,
+) -> None:
+    """Refuse a constraint with only zero terms whose limits exclude zero."""
+    for stage, stage_bounds in sorted(bounds.items()):
+        for lower, upper in zip(stage_bounds.lower, stage_bounds.upper, strict=True):
+            if (is_bounded(lower) and lower > 0.0) or (
+                is_bounded(upper) and upper < 0.0
+            ):
+                raise FieldParseError(
+                    f"{family} {cid} has a zero coefficient on every term, and "
+                    f"its limits exclude zero at stage {stage + 1}, so no "
+                    "operation meets it.",
+                    path=dadger_path,
+                    field=f"{family} {cid}",
+                )
 
 
 def _he_violation_flag(row: pd.Series, cid: int, stage0: int) -> int | None:
@@ -769,6 +844,23 @@ def _read_energy_constraints(dadger: ConstraintRegisters) -> list[ConstraintReco
 #: numbers; a plant bound cannot hold two disjoint ranges.
 _SOFT_CONFLICT_FAMILIES = frozenset({"HQ"})
 
+_ZERO_TERM_FAMILIES = frozenset({"HQ", "HV"})
+
+
+@dataclass(frozen=True)
+class ZeroTerm:
+    """A term whose coefficient is zero at every stage of its constraint.
+
+    ``others`` counts the terms the constraint keeps; at 0 the constraint is
+    left out.
+    """
+
+    family: str
+    constraint_id: int
+    code: int
+    variable: str
+    others: int
+
 
 @dataclass(frozen=True)
 class BoundConflict:
@@ -801,6 +893,8 @@ class ConstraintCensus:
     to_generic: Sequence[ConstraintRecord] = field(default_factory=tuple)
     #: Single-term records kept in ``to_generic`` because their limits conflict.
     bound_conflicts: Sequence[BoundConflict] = field(default_factory=tuple)
+    #: Terms left out of their records, already gone from every bucket.
+    zero_terms: Sequence[ZeroTerm] = field(default_factory=tuple)
 
 
 _Slot = tuple[int, int]
@@ -1238,11 +1332,25 @@ def screen_constraints(
     coupling_only_codes: Collection[int],
     thermal_codes: Collection[int],
     pumping_codes: Collection[int],
+    diversion_codes: Collection[int] | None,
     plant_names: Mapping[int, str],
+    dadger_path: str | None,
 ) -> tuple[ConstraintCensus, list[Diagnostic]]:
     """*census* screened by :func:`drop_unknown_entities`, with the diagnostics
     ``check decomp`` and ``convert decomp`` both raise for it: those of the
-    screen, then the conflicting flow restrictions, under their *plant_names*."""
+    screen, the zero terms left out, then the conflicting flow restrictions,
+    under their *plant_names*.
+
+    *diversion_codes* are the plants with a diversion channel, ``None`` when
+    the plants' channels are unknown, which skips the check below.
+
+    Raises
+    ------
+    FieldParseError
+        A kept ``QDES`` or ``VDES`` term is on a plant outside
+        *diversion_codes*: novomodelo diverts water only through a plant's
+        channel, so the term bounds a flow the case cannot have.
+    """
     census, diagnostics = drop_unknown_entities(
         census,
         hydro_codes=hydro_codes,
@@ -1250,23 +1358,105 @@ def screen_constraints(
         thermal_codes=thermal_codes,
         pumping_codes=pumping_codes,
     )
+    if diversion_codes is not None:
+        _refuse_diversion_without_channel(
+            census, set(diversion_codes), plant_names, dadger_path
+        )
+    zero_terms = _zero_terms_diagnostic(census)
+    if zero_terms is not None:
+        diagnostics.append(zero_terms)
     conflicts = bound_conflicts_diagnostic(census.bound_conflicts, plant_names)
     if conflicts is not None:
         diagnostics.append(conflicts)
     return census, diagnostics
 
 
-def read_constraints(dadger: ConstraintRegisters) -> ConstraintCensus:
+_DIVERSION_VARIABLES = frozenset({"QDES", "VDES"})
+
+
+def _refuse_diversion_without_channel(
+    census: ConstraintCensus,
+    diversion_codes: AbstractSet[int],
+    plant_names: Mapping[int, str],
+    dadger_path: str | None,
+) -> None:
+    offending: dict[int, set[tuple[str, int]]] = defaultdict(set)
+    for record in (*census.to_bounds, *census.to_generic):
+        for term in record.terms:
+            if (
+                term.variable in _DIVERSION_VARIABLES
+                and term.code not in diversion_codes
+            ):
+                offending[term.code].add((record.family, record.constraint_id))
+    if not offending:
+        return
+    code = min(offending)
+    records = ", ".join(f"{family} {cid}" for family, cid in sorted(offending[code]))
+    every_record = sorted(set().union(*offending.values()))
+    raise FieldParseError(
+        f"{records} {'has' if len(offending[code]) == 1 else 'have'} a QDES or "
+        f"VDES term on plant {code} ({plant_names.get(code, '')}), which has no "
+        "diversion: no desvio in hidr.dat and no AC DESVIO record. The case "
+        "can divert water only through a plant's diversion, so it would have "
+        "no flow for the term to bound.",
+        path=dadger_path,
+        field=", ".join(f"{family} {cid}" for family, cid in every_record),
+    )
+
+
+def _zero_terms_diagnostic(census: ConstraintCensus) -> Diagnostic | None:
+    """INFO listing the zero terms left out, but not those of a constraint
+    :func:`drop_unknown_entities` left out, which it already reports."""
+    kept = {
+        (r.family, r.constraint_id) for r in (*census.to_bounds, *census.to_generic)
+    }
+    rows = [
+        [f"{z.family} {z.constraint_id}", z.code, z.variable, z.others]
+        for z in sorted(
+            census.zero_terms, key=lambda z: (z.family, z.constraint_id, z.code)
+        )
+        if z.others == 0 or (z.family, z.constraint_id) in kept
+    ]
+    if not rows:
+        return None
+    return Diagnostic(
+        code="decomp-constraint-zero-terms-left-out",
+        severity=Severity.INFO,
+        category=_CATEGORY,
+        title=f"HQ and HV terms with a zero coefficient left out ({len(rows)})",
+        summary=(
+            "The listed HQ and HV constraints have a CQ or CV term whose "
+            "coefficient is zero at every stage. The term adds nothing in "
+            "DECOMP either, so the conversion leaves it out and keeps the rest "
+            "of the constraint; a constraint with no other term, whose limits "
+            "admit zero, is left out."
+        ),
+        table=DiagnosticTable(
+            columns=["Constraint", "Plant code", "Variable", "Other terms"],
+            rows=rows,
+            justify=["left", "right", "left", "right"],
+        ),
+    )
+
+
+def read_constraints(
+    dadger: ConstraintRegisters, *, dadger_path: str | None = None
+) -> ConstraintCensus:
     """Read all four special-constraint families and split them by lowering target.
 
     Returns a :class:`ConstraintCensus`: every record grouped by family, plus the
     two lowering buckets — ``to_bounds`` (single-term on a bounded variable) and
     ``to_generic`` (multi-term, unbounded-variable, ``HE``, or a single-term RHQ
-    whose limits conflict with another's, listed in ``bound_conflicts``).
+    whose limits conflict with another's, listed in ``bound_conflicts``), and
+    the ``zero_terms`` left out of the records. *dadger_path* is the deck file
+    a refusal names.
     """
     by_family: dict[str, list[ConstraintRecord]] = {}
+    zero_terms: list[ZeroTerm] = []
     for config in _TRIPLE_FAMILIES:
-        by_family[config.family] = _read_triple_family(dadger, config)
+        records, zeros = _read_triple_family(dadger, config, dadger_path)
+        by_family[config.family] = records
+        zero_terms.extend(zeros)
     by_family["HE"] = _read_energy_constraints(dadger)
 
     to_bounds: list[ConstraintRecord] = []
@@ -1288,6 +1478,7 @@ def read_constraints(dadger: ConstraintRegisters) -> ConstraintCensus:
         to_bounds=tuple(to_bounds),
         to_generic=tuple(to_generic),
         bound_conflicts=tuple(conflicts),
+        zero_terms=tuple(zero_terms),
     )
 
 

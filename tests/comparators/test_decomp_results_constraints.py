@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import polars as pl
 import pytest
 
@@ -34,6 +35,7 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintRecord,
     ConstraintTerm,
 )
+from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo.constraint_expr import ResolvedGenericConstraints
 from tests.comparators.conftest import (
@@ -71,6 +73,21 @@ def _re_record(
     )
 
 
+def _effective(
+    code: int, volume_minimo: tuple[float, ...], volume_maximo: float = 500.0
+) -> EffectiveCadastro:
+    """Plant *code* with a per-stage ``volume_minimo``, one entry per stage."""
+    base = pd.DataFrame(
+        {code: {"volume_minimo": volume_minimo[0], "volume_maximo": volume_maximo}}
+    ).T
+    base.index.name = "codigo_usina"
+    return EffectiveCadastro(
+        base=base,
+        n_stages=len(volume_minimo),
+        stage_varying={(code, "volume_minimo"): volume_minimo},
+    )
+
+
 def _gc(cid: int, name: str, expression: str = "") -> dict[str, object]:
     """A minimal ``generic_constraints.json`` entry: only ``id``/``name``
     are read by `_generic_constraint_lhs_decomp` itself."""
@@ -105,29 +122,29 @@ class TestStageFrameToLookup:
 
 
 class TestStorageLookup:
-    """`_storage_lookup`: absolute storage = useful volume + Vmin, Vmin
-    resolved via the id map onto the novomodelo-side `min_storage_hm3` registry."""
+    """`_storage_lookup`: absolute storage = useful volume + the stage's
+    effective floor, the floor the conversion shifts an HV's bounds by."""
 
-    def test_adds_min_storage_floor_via_id_map(self) -> None:
+    def test_adds_each_stage_effective_floor(self) -> None:
         hydro_frame = pl.DataFrame(
-            {"codigo_usina": [10], "estagio": [1], "volume_util_final_hm3": [120.0]}
+            {
+                "codigo_usina": [10, 10],
+                "estagio": [1, 2],
+                "volume_util_final_hm3": [120.0, 120.0],
+            }
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _storage_lookup(hydro_frame, id_map, {0: 30.0}) == {(10, 0): 150.0}
+        assert _storage_lookup(hydro_frame, id_map, _effective(10, (30.0, 50.0))) == {
+            (10, 0): 150.0,
+            (10, 1): 170.0,
+        }
 
     def test_unmapped_code_is_excluded(self) -> None:
         hydro_frame = pl.DataFrame(
             {"codigo_usina": [99], "estagio": [1], "volume_util_final_hm3": [120.0]}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _storage_lookup(hydro_frame, id_map, {0: 30.0}) == {}
-
-    def test_missing_min_storage_entry_is_excluded(self) -> None:
-        hydro_frame = pl.DataFrame(
-            {"codigo_usina": [10], "estagio": [1], "volume_util_final_hm3": [120.0]}
-        )
-        id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        assert _storage_lookup(hydro_frame, id_map, {}) == {}
+        assert _storage_lookup(hydro_frame, id_map, _effective(10, (30.0,))) == {}
 
 
 class TestTermLookupValue:
@@ -270,7 +287,7 @@ class TestGenericConstraintLhsDecomp:
     def test_no_constraints_returns_empty_schema(self, tmp_path: Path) -> None:
         case = make_decomp_case(tmp_path)
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [])
+        result = _generic_constraint_lhs_decomp(case, [])
 
         assert result.schema == _GC_LHS_SCHEMA
         assert result.is_empty()
@@ -312,7 +329,7 @@ class TestGenericConstraintLhsDecomp:
             lambda *_a, **_k: pl.DataFrame(),
         )
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(0, "RE_401")])
+        result = _generic_constraint_lhs_decomp(case, [_gc(0, "RE_401")])
 
         row = result.row(0, named=True)
         assert row["constraint_id"] == 0
@@ -362,11 +379,11 @@ class TestGenericConstraintLhsDecomp:
             lambda *_a, **_k: pl.DataFrame(),
         )
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(0, "RE_402")])
+        result = _generic_constraint_lhs_decomp(case, [_gc(0, "RE_402")])
 
         assert [r["lhs_value"] for r in result.to_dicts()] == [300.0, 400.0]
 
-    def test_hv_varm_term_uses_absolute_storage_floor(
+    def test_hv_varm_term_adds_each_stage_effective_floor(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         record = _re_record(
@@ -374,13 +391,19 @@ class TestGenericConstraintLhsDecomp:
             (ConstraintTerm(code=10, coefficient=1.0, variable="VARM"),),
             family="HV",
             stage_start=0,
-            stage_end=0,
+            stage_end=1,
         )
         census = ConstraintCensus(
             by_family={"RE": (), "HQ": (), "HV": (record,), "HE": ()}
         )
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(10,))
-        case = make_decomp_case(tmp_path, dadger=_ConstraintFakeDadger(), id_map=id_map)
+        case = make_decomp_case(
+            tmp_path,
+            dadger=_ConstraintFakeDadger(),
+            id_map=id_map,
+            hidr=pd.DataFrame(),
+            calendar=[],
+        )
         monkeypatch.setattr(
             "novomodelo_bridge.decomp.constraint_registers.read_constraints",
             lambda *_a, **_k: census,
@@ -388,7 +411,14 @@ class TestGenericConstraintLhsDecomp:
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
             lambda *_a, **_k: _usih_frame(
-                [{"codigo_usina": 10, "estagio": 1, "volume_util_final_hm3": 120.0}]
+                [
+                    {
+                        "codigo_usina": 10,
+                        "estagio": stage,
+                        "volume_util_final_hm3": 120.0,
+                    }
+                    for stage in (1, 2)
+                ]
             ),
         )
         monkeypatch.setattr(
@@ -400,15 +430,15 @@ class TestGenericConstraintLhsDecomp:
             lambda *_a, **_k: pl.DataFrame(),
         )
         monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
-            "read_novomodelo_hydro_metadata",
-            lambda *_a, **_k: {0: {"min_storage_hm3": 30.0}},
+            "novomodelo_bridge.decomp.converters.cadastro.build_effective_cadastro",
+            lambda *_a, **_k: (_effective(10, (30.0, 50.0)), None),
         )
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(3, "HV_9001")])
+        result = _generic_constraint_lhs_decomp(case, [_gc(3, "HV_9001")])
 
         assert result.to_dicts() == [
-            {"constraint_id": 3, "stage_id": 0, "lhs_value": 150.0}
+            {"constraint_id": 3, "stage_id": 0, "lhs_value": 150.0},
+            {"constraint_id": 3, "stage_id": 1, "lhs_value": 170.0},
         ]
 
     def test_rhe_soft_constraint_lhs_is_the_achieved_valor(
@@ -455,7 +485,7 @@ class TestGenericConstraintLhsDecomp:
             encoding="utf-8",
         )
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(7, "RHE_115")])
+        result = _generic_constraint_lhs_decomp(case, [_gc(7, "RHE_115")])
 
         rows = result.to_dicts()
         assert len(rows) == 1
@@ -508,7 +538,7 @@ class TestGenericConstraintLhsDecomp:
             lambda *_a, **_k: pl.DataFrame(),
         )
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(2, "RE_405")])
+        result = _generic_constraint_lhs_decomp(case, [_gc(2, "RE_405")])
 
         assert result.is_empty()
 
@@ -533,7 +563,7 @@ class TestGenericConstraintLhsDecomp:
             lambda *_a, **_k: pl.DataFrame(),
         )
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(9, "VminOP_1")])
+        result = _generic_constraint_lhs_decomp(case, [_gc(9, "VminOP_1")])
 
         assert result.is_empty()
 
@@ -565,7 +595,7 @@ class TestGenericConstraintLhsDecomp:
             lambda *_a, **_k: pl.DataFrame(),
         )
 
-        result = _generic_constraint_lhs_decomp(case, tmp_path, [_gc(0, "RE_401")])
+        result = _generic_constraint_lhs_decomp(case, [_gc(0, "RE_401")])
 
         assert result.is_empty()
 

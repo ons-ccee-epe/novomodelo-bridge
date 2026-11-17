@@ -891,6 +891,48 @@ class TestBoundAccumulatorWiring:
         ]
         assert _convert_status(diagnostics, success="ok") == "ok"
 
+    def test_hv_storage_ceiling_above_the_reservoir_is_capped_with_a_note(
+        self, tmp_path: Path
+    ) -> None:
+        """A single-term HV ``VARM`` ceiling above the plant's useful volume is
+        capped at the reservoir, as DECOMP holds it, and reported as a note
+        naming the HV, instead of letting the plant store more than it holds."""
+        hv = ConstraintRecord(
+            family="HV",
+            constraint_id=73,
+            stage_start=0,
+            stage_end=0,
+            terms=(ConstraintTerm(code=1, coefficient=1.0, variable="VARM"),),
+            bounds={0: StageBounds(lower=(None,), upper=(1e6,))},
+            per_block=False,
+        )
+        diagnostics: list[Diagnostic] = []
+        dst = _run_cadastro_pipeline(
+            tmp_path, ac_volmax_frame=None, to_bounds=(hv,), diagnostics_out=diagnostics
+        )
+
+        hydro = json.loads(
+            (dst / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"][0]
+        reservoir_max = hydro["reservoir"]["max_storage_hm3"]
+        table = pq.read_table(dst / "constraints" / "hydro_bounds.parquet")
+        assert table["max_storage_hm3"].drop_null().to_pylist() == [reservoir_max]
+        (capped,) = [
+            d
+            for d in diagnostics
+            if d.code == "hydro-bounds-clamped-to-declared-capacity"
+        ]
+        assert capped.table is not None
+        ((code, name, limit, set_by, stages, _, cap),) = capped.table.rows
+        assert (code, name, limit, set_by, stages) == (
+            1,
+            hydro["name"],
+            "Max storage (hm³)",
+            "RHV 73",
+            "0",
+        )
+        assert cap == pytest.approx(reservoir_max)
+
     def test_re_ceiling_below_the_plant_minimum_stays(self, tmp_path: Path) -> None:
         """A ceiling below the plant's declared minimum is written as the deck
         has it, not raised: the source model violates whichever soft limit is
@@ -999,15 +1041,14 @@ class TestBoundAccumulatorWiring:
         assert raised.value.field == "RHQ 30, RHQ 31"
 
     @pytest.mark.parametrize(
-        ("floor", "kept_floor", "reported"),
-        [(100.0 * (1 + 1e-7), 100.0, False), (101.0, 101.0, True)],
+        ("floor", "settled_floor"), [(100.0 * (1 + 1e-7), 100.0), (101.0, 101.0)]
     )
-    def test_storage_floor_above_the_ceiling_is_kept_past_the_written_precision(
-        self, floor: float, kept_floor: float, *, reported: bool
+    def test_storage_floor_above_the_ceiling_is_settled_only_within_precision(
+        self, floor: float, settled_floor: float
     ) -> None:
         """A storage floor above the ceiling by less than the deck's written
-        precision is lowered to the ceiling silently; past it, the floor stays
-        and the conflict is recorded for the warning."""
+        precision is lowered to the ceiling silently; past it, the pair stays
+        for the shared clamp to refuse, and no warning records it."""
         contribs = [
             BoundContribution(
                 family="hydro",
@@ -1028,10 +1069,67 @@ class TestBoundAccumulatorWiring:
         (row,) = _keep_soft_conflicts(
             resolve(contribs, {0: 1}), lambda _row: (1, "Hydro 1", ""), kept
         )
-        assert (row.lower, row.upper) == (kept_floor, 100.0)
-        assert [(k.code, k.limit, k.stage_id) for k in kept] == (
-            [(1, "Storage (hm³)", 0)] if reported else []
+        assert (row.lower, row.upper) == (settled_floor, 100.0)
+        assert kept == []
+
+    @pytest.mark.parametrize(
+        ("records", "named"),
+        [
+            (((30, 50.0, None), (31, None, 20.0)), "RHV 30, RHV 31"),
+            (((30, 1e6, None),), "RHV 30"),
+        ],
+        ids=["above-another-records-ceiling", "above-the-reservoir"],
+    )
+    def test_hv_storage_floor_above_what_the_stage_allows_is_refused(
+        self,
+        tmp_path: Path,
+        records: tuple[tuple[int, float | None, float | None], ...],
+        named: str,
+    ) -> None:
+        """novomodelo holds a plant's storage at or above the stage floor, so a
+        floor above the stage's ceiling or the reservoir has no solution: the
+        conversion stops naming the records."""
+        hvs = tuple(
+            ConstraintRecord(
+                family="HV",
+                constraint_id=constraint_id,
+                stage_start=0,
+                stage_end=0,
+                terms=(ConstraintTerm(code=1, coefficient=1.0, variable="VARM"),),
+                bounds={0: StageBounds(lower=(lower,), upper=(upper,))},
+                per_block=False,
+            )
+            for constraint_id, lower, upper in records
         )
+
+        with pytest.raises(FieldParseError) as raised:
+            _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None, to_bounds=hvs)
+
+        diagnostic = diagnostic_from_exception(raised.value, context="convert")
+        assert diagnostic.code == "source-field-parse"
+        assert "storage" in diagnostic.summary
+        assert "stage 1" in diagnostic.summary
+        assert raised.value.field == named
+
+    def test_a_qdes_restriction_on_a_plant_without_a_diversion_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """The mock deck's plant 1 has no ``desvio`` and no ``AC DESVIO``."""
+        qdes = ConstraintRecord(
+            family="HQ",
+            constraint_id=12,
+            stage_start=0,
+            stage_end=0,
+            terms=(ConstraintTerm(code=1, coefficient=1.0, variable="QDES"),),
+            bounds={0: StageBounds(lower=(None,), upper=(50.0,))},
+            per_block=True,
+        )
+
+        with pytest.raises(FieldParseError) as raised:
+            _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None, to_bounds=(qdes,))
+
+        assert "QDES" in str(raised.value)
+        assert raised.value.field == "HQ 12"
 
     def test_no_pumping_records_writes_no_pumping_bounds_file(
         self, tmp_path: Path

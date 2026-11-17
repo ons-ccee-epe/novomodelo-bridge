@@ -27,7 +27,7 @@ from novomodelo_bridge.core.emission_checks import (
     clamp_hydro_bounds_to_declared,
     run_and_gate,
 )
-from novomodelo_bridge.core.errors import EmissionCheckError
+from novomodelo_bridge.core.errors import EmissionCheckError, FieldParseError
 from novomodelo_bridge.core.tolerances import WRITTEN_PRECISION_TOLERANCE
 
 _LOG = logging.getLogger(__name__)
@@ -198,10 +198,12 @@ def _hydro_with_envelope(
     turbined: tuple[float, float] | None = None,
     generation: tuple[float, float] | None = None,
     outflow: tuple[float, float | None] | None = None,
+    storage: tuple[float, float] | None = None,
 ) -> dict:
     """A ``hydros.json`` entry declaring ``(min, max)`` for any of the clampable
     variables — ``generation.min/max_turbined_m3s``, ``generation.min/max_
-    generation_mw``, ``outflow.min/max_outflow_m3s`` (max may be ``None``)."""
+    generation_mw``, ``outflow.min/max_outflow_m3s`` (max may be ``None``),
+    ``reservoir.min/max_storage_hm3``."""
     entry: dict = {"id": hydro_id, "name": f"Hydro {hydro_id}"}
     gen: dict[str, float] = {}
     if turbined is not None:
@@ -214,6 +216,11 @@ def _hydro_with_envelope(
         entry["outflow"] = {
             "min_outflow_m3s": outflow[0],
             "max_outflow_m3s": outflow[1],
+        }
+    if storage is not None:
+        entry["reservoir"] = {
+            "min_storage_hm3": storage[0],
+            "max_storage_hm3": storage[1],
         }
     return entry
 
@@ -293,6 +300,160 @@ class TestClampHydroBoundsToDeclared:
         assert [(d.code, d.severity) for d in collected] == [
             ("hydro-bounds-clamped-to-declared-capacity", Severity.INFO)
         ]
+
+    def test_storage_above_the_reservoir_is_capped_with_a_note(self) -> None:
+        # novomodelo takes a stage's storage ceiling as written, so one above
+        # the reservoir would let the plant store more than it holds.
+        hydros = _hydros(_hydro_with_envelope(0, storage=(10.0, 445.35)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0, 0], type=pa.int32()),
+                "stage_id": pa.array([2, 3], type=pa.int32()),
+                "min_storage_hm3": pa.array([81.5, 81.5], type=pa.float64()),
+                "max_storage_hm3": pa.array([448.68, 400.0], type=pa.float64()),
+            }
+        )
+        labels: BoundLabels = {(0, 2, None, "max_storage_hm3"): [("HV 73", 448.68)]}
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros,
+                hydro_bounds,
+                source_codes=_CODES,
+                raise_to_minimum=False,
+                labels=labels,
+            )
+
+        assert result is not None
+        assert result["max_storage_hm3"].to_pylist() == [445.35, 400.0]
+        assert result["min_storage_hm3"].to_pylist() == [81.5, 81.5]
+        (diag,) = collected
+        assert diag.code == "hydro-bounds-clamped-to-declared-capacity"
+        assert diag.severity is Severity.INFO
+        assert diag.table is not None
+        assert diag.table.rows == [
+            [6, "Hydro 0", "Max storage (hm³)", "HV 73", "2", 448.68, 445.35]
+        ]
+
+    def test_storage_floor_above_the_reservoir_stops_the_conversion(self) -> None:
+        # novomodelo holds a plant's storage at or above the stage floor as a
+        # bound, never priced, so this stage would have no solution.
+        hydros = _hydros(_hydro_with_envelope(0, storage=(10.0, 445.35)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([1], type=pa.int32()),
+                "min_storage_hm3": pa.array([460.0], type=pa.float64()),
+            }
+        )
+        labels: BoundLabels = {(0, 1, None, "min_storage_hm3"): [("RHV 9", 460.0)]}
+
+        with pytest.raises(
+            FieldParseError, match=r"Hydro 0.*stage 2.*460\.0 hm³.*445\.35 hm³"
+        ) as raised:
+            clamp_hydro_bounds_to_declared(
+                hydros,
+                hydro_bounds,
+                source_codes=_CODES,
+                raise_to_minimum=False,
+                labels=labels,
+                deck_file="dadger.rv0",
+            )
+
+        assert raised.value.path == "dadger.rv0"
+        assert raised.value.field == "RHV 9"
+
+    def test_storage_floor_within_written_precision_of_the_reservoir_is_lowered(
+        self,
+    ) -> None:
+        hydros = _hydros(_hydro_with_envelope(0, storage=(10.0, 445.35)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([1], type=pa.int32()),
+                "min_storage_hm3": pa.array([445.35 * (1 + 1e-7)], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=False
+            )
+
+        assert result is not None
+        assert result["min_storage_hm3"].to_pylist() == [445.35]
+        assert collected == []
+
+    def test_storage_floor_below_the_plant_minimum_is_raised_with_a_note(self) -> None:
+        # The storage cannot fall below the plant's minimum, so the raise
+        # cannot bind.
+        hydros = _hydros(_hydro_with_envelope(0, storage=(10.0, 445.35)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0, 0], type=pa.int32()),
+                "stage_id": pa.array([0, 1], type=pa.int32()),
+                "min_storage_hm3": pa.array([4.0, 20.0], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=False
+            )
+
+        assert result is not None
+        assert result["min_storage_hm3"].to_pylist() == [10.0, 20.0]
+        (diag,) = collected
+        assert diag.code == "hydro-bounds-storage-floor-below-minimum"
+        assert diag.severity is Severity.INFO
+        assert diag.table is not None
+        assert diag.table.rows == [[6, "Hydro 0", "Min storage (hm³)", "0", 4.0, 10.0]]
+
+    @pytest.mark.parametrize(
+        ("min_storage", "max_storage"),
+        [(None, 5.0), (81.5, 50.0)],
+        ids=["below-the-plant-minimum", "below-the-stage-floor"],
+    )
+    def test_storage_ceiling_below_the_floor_stops_the_conversion(
+        self, min_storage: float | None, max_storage: float
+    ) -> None:
+        hydros = _hydros(_hydro_with_envelope(0, storage=(10.0, 445.35)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([3], type=pa.int32()),
+                "min_storage_hm3": pa.array([min_storage], type=pa.float64()),
+                "max_storage_hm3": pa.array([max_storage], type=pa.float64()),
+            }
+        )
+
+        with pytest.raises(FieldParseError, match=r"Hydro 0.*stage 4"):
+            clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=False
+            )
+
+    def test_storage_ceiling_below_the_floor_is_raised_on_raise_to_minimum(
+        self,
+    ) -> None:
+        hydros = _hydros(_hydro_with_envelope(0, storage=(10.0, 445.35)))
+        hydro_bounds = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([3], type=pa.int32()),
+                "min_storage_hm3": pa.array([81.5], type=pa.float64()),
+                "max_storage_hm3": pa.array([50.0], type=pa.float64()),
+            }
+        )
+
+        with dx.collect() as collected:
+            result = clamp_hydro_bounds_to_declared(
+                hydros, hydro_bounds, source_codes=_CODES, raise_to_minimum=True
+            )
+
+        assert result is not None
+        assert result["max_storage_hm3"].to_pylist() == [81.5]
+        (diag,) = collected
+        assert diag.code == "hydro-bounds-raised-to-declared-minimum"
 
     def test_null_declared_max_leaves_bound_untouched(self) -> None:
         # Run-of-river plant: no outflow ceiling declared -> nothing to clamp.
