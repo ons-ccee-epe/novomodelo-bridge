@@ -91,7 +91,9 @@ def test_no_other_decomp_module_compares_configuracao_newave() -> None:
         f"{path.relative_to(_DECOMP_SRC)}:{number}"
         for path in sorted(_DECOMP_SRC.rglob("*.py"))
         if path != _DECOMP_SRC / "plants.py"
-        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
         if _NW_COLUMN.search(line)
     ]
 
@@ -103,7 +105,9 @@ def test_no_other_decomp_module_filters_uh_rows_on_the_initial_volume() -> None:
         f"{path.relative_to(_DECOMP_SRC)}:{number}"
         for path in sorted(_DECOMP_SRC.rglob("*.py"))
         if path != _DECOMP_SRC / "plants.py"
-        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
         if _INLINE_PREDICATE.search(line)
     ]
 

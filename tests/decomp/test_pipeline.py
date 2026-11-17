@@ -1799,7 +1799,9 @@ class TestOptionalLinesAndThermals:
 
         [convert_gnl_mock] = convert_gnl_mock_out
         assert convert_gnl_mock.call_args.kwargs["first_thermal_id"] == 0
-        thermals = json.loads((dst / "system" / "thermals.json").read_text())
+        thermals = json.loads(
+            (dst / "system" / "thermals.json").read_text(encoding="utf-8")
+        )
         assert thermals["thermals"] == _EMPTY_THERMAL_BOUNDS_GNL_EMISSION.thermals
 
 
