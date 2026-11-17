@@ -1413,6 +1413,16 @@ summary = "Recalcula o bloco `hydro` de `penalties.json` com a PROD_MEDIA_SIN de
   how = "Mesma fórmula de `penalties.json` com a MAX_PRODTACUM_SIN do estágio. Como o pipeline mantém essa constante fixa em todo o horizonte, na prática a coluna nunca difere e não é emitida."
 
   [[output.field]]
+  path = "filling_target_violation_cost"
+  from = [
+    { file = "sistema", item = "custo_deficit · custo" },
+    { file = "hidr", item = "cadastro · produtibilidade_especifica" },
+    { file = "confhd", item = "usinas · codigo_usina_jusante" },
+  ]
+  when = "somente quando o valor do estágio difere de `penalties.json`"
+  how = "Mesma fórmula de `penalties.json` com a MAX_PRODTACUM_SIN do estágio. Como o pipeline mantém essa constante fixa em todo o horizonte, na prática a coluna nunca difere e não é emitida."
+
+  [[output.field]]
   path = "evaporation_violation_cost"
   from = [
     { file = "sistema", item = "custo_deficit · custo" },
