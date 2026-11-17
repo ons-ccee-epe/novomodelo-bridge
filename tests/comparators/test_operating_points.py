@@ -5,6 +5,7 @@ tested with its builder."""
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -20,11 +21,13 @@ from novomodelo_bridge.comparators.operating_points import (
     StagePhysics,
     evaluate_points,
     head,
+    novomodelo_points,
     operating_point_fields,
     source_envelope,
     window_gh_max,
 )
 from novomodelo_bridge.core.tailrace import TailraceFamily, TailraceSegment
+from novomodelo_bridge.novomodelo import readers as novomodelo_readers
 
 _LINEAR_TAILRACE = (
     TailraceFamily(
@@ -144,6 +147,83 @@ class TestGaugeFlow:
                     downstream_level_m=None,
                 ).generation_mw
             )
+
+
+class TestNovomodeloIncremental:
+    @staticmethod
+    def _points(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        method: str | None,
+        slack: float | None,
+    ) -> pl.DataFrame:
+        block = {
+            "scenario_id": 0,
+            "stage_id": 0,
+            "block_id": 0,
+            "hydro_id": 1,
+            "hours": 24.0,
+            "turbined_m3s": 100.0,
+            "spillage_m3s": 0.0,
+            "outflow_m3s": 100.0,
+            "incremental_inflow_m3s": -5.0,
+            "inflow_nonnegativity_slack_m3s": slack,
+            "storage_initial_hm3": 60.0,
+            "storage_final_hm3": 60.0,
+            "generation_mw": 80.0,
+            "water_value_per_hm3": 1.0,
+            "accumulated_productivity_mw_per_m3s": 0.9,
+        }
+        patches = {
+            "read_novomodelo_hydro_block_operation": pl.DataFrame(
+                [block],
+                schema_overrides={"inflow_nonnegativity_slack_m3s": pl.Float64},
+            ),
+            "read_novomodelo_inflow_non_negativity_method": method,
+            "read_novomodelo_bus_block_prices": pl.DataFrame(
+                schema={
+                    "scenario_id": pl.Int64,
+                    "stage_id": pl.Int64,
+                    "block_id": pl.Int64,
+                    "bus_id": pl.Int64,
+                    "spot_price": pl.Float64,
+                }
+            ),
+            "read_novomodelo_hydro_bus_labels": {1: frozenset({0})},
+        }
+        for name, value in patches.items():
+            monkeypatch.setattr(
+                novomodelo_readers, name, lambda _dir, value=value: value
+            )
+        return novomodelo_points(tmp_path, {1: 10})
+
+    @pytest.mark.parametrize(
+        ("method", "expected"),
+        [
+            ("truncation", 0.0),
+            ("truncation_with_penalty", 0.0),
+            ("penalty", -5.0),
+            ("none", -5.0),
+            (None, -5.0),
+        ],
+    )
+    def test_incremental_is_the_one_the_lp_saw(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        method: str | None,
+        expected: float,
+    ) -> None:
+        points = self._points(monkeypatch, tmp_path, method, slack=5.0)
+
+        assert points["incremental_m3s"].to_list() == [expected]
+
+    def test_a_missing_slack_adds_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        points = self._points(monkeypatch, tmp_path, "truncation", slack=None)
+
+        assert points["incremental_m3s"].to_list() == [-5.0]
 
 
 class TestSourceEnvelope:

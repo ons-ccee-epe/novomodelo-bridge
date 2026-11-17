@@ -40,6 +40,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_default_exchange_cost,
     read_novomodelo_fpha_fit_config,
     read_novomodelo_gnl_delivered_cost,
+    read_novomodelo_hydro_block_operation,
     read_novomodelo_hydro_bus_generation,
     read_novomodelo_hydro_bus_labels,
     read_novomodelo_hydro_means,
@@ -48,6 +49,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_hydro_total_flows,
     read_novomodelo_hydro_withdrawal,
     read_novomodelo_hydros,
+    read_novomodelo_inflow_non_negativity_method,
     read_novomodelo_line_bounds,
     read_novomodelo_line_means,
     read_novomodelo_lines,
@@ -1976,6 +1978,107 @@ class TestReadNovomodeloFphaFitConfig:
 
         assert result["stage_id"].to_list() == [0, 1, 2]
         assert result["turbined_fit_max_m3s"].to_list() == [400.0, 420.0, 400.0]
+
+
+class TestReadNovomodeloHydroBlockOperation:
+    def test_carries_the_inflow_non_negativity_slack(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        _write_stages_json(tmp_path, {0: [(0, 2.0)]})
+        _write_sim_entity_partition(
+            out,
+            "hydros",
+            0,
+            [
+                {
+                    "stage_id": 0,
+                    "block_id": 0,
+                    "hydro_id": hydro_id,
+                    "turbined_m3s": 10.0,
+                    "spillage_m3s": 0.0,
+                    "outflow_m3s": 10.0,
+                    "incremental_inflow_m3s": incremental,
+                    "inflow_nonnegativity_slack_m3s": slack,
+                    "storage_initial_hm3": 100.0,
+                    "storage_final_hm3": 90.0,
+                    "generation_mw": 5.0,
+                    "water_value_per_hm3": 1.0,
+                    "accumulated_productivity_mw_per_m3s": 0.5,
+                }
+                for hydro_id, incremental, slack in ((1, -5.0, 5.0), (2, 7.0, 0.0))
+            ],
+        )
+
+        frame = read_novomodelo_hydro_block_operation(out).sort("hydro_id")
+
+        assert frame.schema["inflow_nonnegativity_slack_m3s"] == pl.Float64
+        assert frame["inflow_nonnegativity_slack_m3s"].to_list() == [5.0, 0.0]
+        assert frame["incremental_inflow_m3s"].to_list() == [-5.0, 7.0]
+
+
+class TestReadNovomodeloInflowNonNegativityMethod:
+    @staticmethod
+    def _write_config(directory: Path, text: str) -> None:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "config.json").write_text(text, encoding="utf-8")
+
+    def test_absent_config_has_no_method(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        out.mkdir()
+
+        assert read_novomodelo_inflow_non_negativity_method(out) is None
+
+    def test_config_without_the_key_has_the_default_method(
+        self, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "output"
+        self._write_config(out, json.dumps({"modeling": {}}))
+
+        assert (
+            read_novomodelo_inflow_non_negativity_method(out)
+            == "truncation_with_penalty"
+        )
+
+    def test_returns_the_configured_method(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        config = {"modeling": {"inflow_non_negativity": {"method": "penalty"}}}
+        self._write_config(out, json.dumps(config))
+
+        assert read_novomodelo_inflow_non_negativity_method(out) == "penalty"
+
+    def test_reads_the_case_directory_config(self, tmp_path: Path) -> None:
+        out = tmp_path / "output"
+        out.mkdir()
+        config = {"modeling": {"inflow_non_negativity": {"method": "none"}}}
+        self._write_config(tmp_path, json.dumps(config))
+
+        assert read_novomodelo_inflow_non_negativity_method(out) == "none"
+
+    def test_case_directory_config_wins_over_the_output_directory(
+        self, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "output"
+        for directory, method in ((tmp_path, "none"), (out, "penalty")):
+            config = {"modeling": {"inflow_non_negativity": {"method": method}}}
+            self._write_config(directory, json.dumps(config))
+
+        assert read_novomodelo_inflow_non_negativity_method(out) == "none"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "{",
+            "[]",
+            '{"modeling": []}',
+            '{"modeling": {"inflow_non_negativity": {"method": 3}}}',
+        ],
+    )
+    def test_unusable_config_raises(self, tmp_path: Path, text: str) -> None:
+        out = tmp_path / "output"
+        out.mkdir()
+        self._write_config(tmp_path, text)
+
+        with pytest.raises(NovomodeloReadError, match="config.json"):
+            read_novomodelo_inflow_non_negativity_method(out)
 
 
 class TestReadNovomodeloLineBounds:

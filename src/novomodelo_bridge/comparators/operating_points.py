@@ -179,6 +179,10 @@ LINK_SCHEMA: dict[str, type[pl.DataType]] = {
     "factor": pl.Float64,
 }
 
+#: The ``modeling.inflow_non_negativity.method`` values under which the LP
+#: sees an incremental inflow plus its non-negativity slack.
+TRUNCATING_METHODS = frozenset({"truncation", "truncation_with_penalty"})
+
 _MASKED_FLOWS = {
     "generation_mw": "gh_mw",
     "turbined_m3s": "q_m3s",
@@ -350,12 +354,22 @@ def novomodelo_points(
     novomodelo_output_dir: Path, novomodelo_to_code: Mapping[int, int]
 ) -> pl.DataFrame:
     """Novomodelo's per-block operating points, every hydro *novomodelo_to_code* maps to
-    a source plant code; empty without per-block hydro operation."""
+    a source plant code; empty without per-block hydro operation.
+
+    ``incremental_m3s`` is the incremental inflow the LP saw: the simulated
+    one plus its non-negativity slack under a truncating method, else the
+    simulated one."""
     hydro = novomodelo_readers.read_novomodelo_hydro_block_operation(
         novomodelo_output_dir
     )
     if hydro.is_empty():
         return pl.DataFrame()
+    incremental = pl.col("incremental_inflow_m3s").fill_null(0.0)
+    method = novomodelo_readers.read_novomodelo_inflow_non_negativity_method(
+        novomodelo_output_dir
+    )
+    if method in TRUNCATING_METHODS:
+        incremental += pl.col("inflow_nonnegativity_slack_m3s").fill_null(0.0)
     points = hydro.select(
         pl.col("hydro_id")
         .replace_strict(dict(novomodelo_to_code), default=None, return_dtype=pl.Int64)
@@ -374,7 +388,7 @@ def novomodelo_points(
         pl.col("spillage_m3s").fill_null(0.0).alias("s_m3s"),
         "outflow_m3s",
         pl.col("generation_mw").fill_null(0.0).alias("gh_mw"),
-        pl.col("incremental_inflow_m3s").fill_null(0.0).alias("incremental_m3s"),
+        incremental.alias("incremental_m3s"),
         pl.when(pl.col("accumulated_productivity_mw_per_m3s") > 0.0)
         .then(
             (
