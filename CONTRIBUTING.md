@@ -153,9 +153,12 @@ A bridge release `X.Y.Z` pairs with novomodelo `X.Y.Z`.
    exact `novomodelo-python` pin and `MIN_NOVOMODELO_VERSION`
    (`src/novomodelo_bridge/novomodelo/compat.py`) together and refresh `uv.lock`;
    `tests/test_packaging.py` fails if they differ.
-2. Move the `Unreleased` entries in `CHANGELOG.md` under the new version.
+2. Move the `Unreleased` entries in `CHANGELOG.md` under a `## [X.Y.Z] - date`
+   heading. That section becomes the GitHub Release's notes as written, so
+   trim it to the shape `.claude/rules/doc-integrity.md` gives entries.
 3. Tag `vX.Y.Z` and push the tag; it must equal `version` in `pyproject.toml`.
-   `.github/workflows/release.yml` builds the wheel and sdist, runs the suite
-   against the built wheel, installs the wheel clean on Linux, Windows and macOS
-   and converts the mini decks, and publishes to PyPI through trusted
-   publishing. Only the canonical repository publishes.
+   `.github/workflows/release.yml` stops on a tag whose version has no
+   `CHANGELOG.md` section, builds the wheel and sdist, runs the suite against
+   the built wheel, installs the wheel clean on Linux, Windows and macOS and
+   converts the mini decks, publishes to PyPI through trusted publishing, and
+   creates the GitHub Release. Only the canonical repository publishes.

@@ -20,7 +20,7 @@ counterpart is `.claude/rules/comments.md`.
   Durability and anti-drift dominate; a stale claim here is executed, not read.
 - **CHANGELOG.md** — release history for a CLI user. Provenance is *inverted*
   (history is the job); plan-leakage still applies (no epic/ticket tokens in
-  released entries). Admission and entry shape are governed by §6.
+  released entries). Admission, layout and entry shape are governed by §6.
 - **README.md / docs/** — newcomers and users, most with **no repo checkout**
   (pip install). Teaching voice is the job; promotional voice is not (§4).
   README.md doubles as the PyPI description, so it links to `docs/` by
@@ -112,15 +112,43 @@ packaging internals (sdist contents, metadata, dependency groups), speed-ups
 that leave the results unchanged, a fix to something not yet released, and
 cosmetic fixes such as a reworded message.
 
-### Shape — short and action-first
+### Layout — the section is also the GitHub Release notes
 
-- One or two sentences per entry: a bold lead naming the command and what
-  changed, then what the user must do (reconvert, rerun novomodelo, install a
-  newer dependency).
-- Keep the names the user meets: commands, flags, diagnostic ids, deck files
-  and records, and a converted-case file with its path
+- Sections follow Keep a Changelog, as `###` headings in this order: Added,
+  Changed, Removed, Fixed. A removal goes under Removed even when it is
+  breaking.
+- A section with more than five entries splits into `####` groups, named in
+  English and kept in this order: Both tracks, NEWAVE, DECOMP, Check, Compare
+  and dashboard, DESSEM export, All commands. An entry goes in the group of
+  the command it changes: Both tracks when it changes `convert newave` and
+  `convert decomp` alike, All commands when every command shares it. Leave
+  out a group with no entries.
+- Within a group, `**BREAKING:**` entries come first, then the entries whose
+  results change, then the rest.
+- A release intro is one line: the novomodelo pairing and any action the user
+  must take.
+- A version's section is its GitHub Release notes as written:
+  `.github/workflows/release.yml` copies it and stops on a tag whose version
+  has none. Write it to read on its own.
+- Released sections stay as published; trim `[Unreleased]` before a release,
+  not history after it.
+
+### Entry — short and action-first
+
+- A bullet at column 0 with continuation lines indented two spaces, wrapped
+  at 80 columns, at most four lines.
+- A bold lead names the command, file or key and then what changed, and the
+  first sentence stays within 200 characters: it is what a reader scanning
+  the release reads. Then what the user must do (reconvert, rerun
+  novomodelo, update a script, install a newer dependency).
+- Keep the names the user meets: commands, flags, deck files and records,
+  and a converted-case file with its path
   (`constraints/hydro_bounds.parquet`). Leave out parquet columns, JSON field
   paths, formulas, internal modules and functions.
+- Name a diagnostic id only where the user acts on it: one that is removed or
+  renamed (a script filters on it), the error that now stops a command, and
+  one whose severity change flips `check` between exit 0 and 1. Describe any
+  other finding in words.
 - Keep the new default, the refusal condition, the remedy ("merge each plant
   into one block to keep them", "reconvert NEWAVE cases") and a "results
   change" note when converted values move.
@@ -137,9 +165,3 @@ cosmetic fixes such as a reworded message.
 - Merge related changes into one entry: a fix and the warning added with it,
   several refusals of one record. Before appending to `[Unreleased]`, check
   whether an entry serving the same goal should absorb the new change instead.
-- Sections follow Keep a Changelog: Added, Changed, Removed, Fixed. A removal
-  goes under Removed even when it is breaking.
-- A release intro is one line: the novomodelo pairing and any action the user
-  must take.
-- Released sections stay as published; trim `[Unreleased]` before a release,
-  not history after it.

@@ -50,7 +50,7 @@ is read and are the authoritative statements; do not restate them here:
 - `.claude/rules/comments.md` (`**/*.py`) — comment and docstring discipline.
 - `.claude/rules/doc-integrity.md` (`*.md`) — prose docs: no hand-frozen
   counts or versions, every cited path resolves, sober voice, and the
-  CHANGELOG admission test and entry shape.
+  CHANGELOG convention: admission test, section layout and entry shape.
 - `.claude/rules/testing.md` (`tests/`) — the three test tiers, deck guards,
   mock discipline, golden files.
 - `.claude/rules/bridge.md` (`src/`) — twin-track symmetry, the tracked
@@ -80,6 +80,10 @@ Hard rules that are fixed before any commit:
   in the novomodelo repository. Those comments are protected in cleanup passes.
 - Comments are default-off: a comment ships only if it survives the Deletion
   Test; never delete or weaken a load-bearing unit or direction contract.
+- A change a CLI user can observe adds or updates its `CHANGELOG.md`
+  `[Unreleased]` entry in the same change, following the convention in
+  `.claude/rules/doc-integrity.md` §6. A version's section is published as
+  its GitHub Release notes as written.
 
 ## Local decks
 
