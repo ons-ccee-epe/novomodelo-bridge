@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, NoReturn
 import typer
 
 from novomodelo_bridge.cli.args import ConvertArgs
-from novomodelo_bridge.cli.conversion_manifest import _write_conversion_manifest
+from novomodelo_bridge.cli.conversion_manifest import (
+    MANIFEST_FILE,
+    _write_conversion_manifest,
+)
 from novomodelo_bridge.cli.failure import _emit_convert_json, _fail
 from novomodelo_bridge.cli.validate import _run_novomodelo_validation
 from novomodelo_bridge.cli.verdict import (
@@ -201,6 +204,7 @@ def _run_newave_conversion(args: ConvertArgs) -> None:
             json_output=args.json_output,
             err_console=err_console,
             whitelist_substrings=(),
+            verbose=args.verbose > 0,
         )
 
     # Emit the --json verdict now (after validation has populated ``summary``).
@@ -234,6 +238,7 @@ def _render_conversion_result(
         console=err_console,
         quiet=args.quiet,
         verbose=args.verbose > 0,
+        details_file=MANIFEST_FILE,
     )
     if not args.quiet:
         render_conversion_summary(report, console=out_console)
@@ -369,6 +374,7 @@ def _handle_boundary_fcf_failure(
             console=err_console,
             quiet=args.quiet,
             verbose=args.verbose > 0,
+            details_file=MANIFEST_FILE,
         )
     raise typer.Exit(code=1)
 
@@ -482,6 +488,7 @@ def _conclude_decomp_conversion(
             json_output=args.json_output,
             err_console=err_console,
             whitelist_substrings=_DECOMP_VALIDATION_WHITELIST,
+            verbose=args.verbose > 0,
         )
 
     status = _convert_status(combined_diagnostics, success="ok")

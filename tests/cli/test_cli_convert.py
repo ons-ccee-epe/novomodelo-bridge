@@ -2780,11 +2780,11 @@ class TestConversionDiagnosticsRendering:
             code="thermal-gtmin-above-capacity",
             severity=Severity.WARNING,
             category="Thermal bounds",
-            title="GTMIN exceeds available capacity (1 plant(s))",
-            summary="one plant affected",
+            title="GTMIN exceeds available capacity (1)",
+            summary="One plant affected.",
             table=DiagnosticTable(
-                columns=["Plant", "Code", "Stages", "GTMIN MW", "Cap MW"],
-                rows=[["ANGRA 2", 13, "2-3", 481.3, 423.4]],
+                columns=["Code", "Name", "Stages", "GTMIN MW", "Cap MW"],
+                rows=[[13, "ANGRA 2", "2-3", 481.3, 423.4]],
             ),
             remediation="Check EXPT FCMAX/GTMIN and MANUTT for these plants.",
         )
@@ -2800,15 +2800,32 @@ class TestConversionDiagnosticsRendering:
             return_value=self._report_with_gtmin(),
         ):
             code, stdout, stderr = self._invoke_main(
-                ["convert", "newave", str(src), str(dst)], monkeypatch
+                ["convert", "newave", str(src), str(dst), "-v"], monkeypatch
             )
         assert code == 0
         assert "1 hydros" in stdout  # summary on stdout
-        # The named pain: plant name, the stages, and the values are all surfaced.
         assert "ANGRA 2" in stderr
         assert "2-3" in stderr
         assert "481.3" in stderr
         assert "423.4" in stderr
+
+    def test_warning_prints_as_one_line_naming_the_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        src = _make_fake_newave_dir(tmp_path)
+        dst = tmp_path / "dst"
+        with patch(
+            "novomodelo_bridge.newave.pipeline.convert_newave_case",
+            return_value=self._report_with_gtmin(),
+        ):
+            code, _stdout, stderr = self._invoke_main(
+                ["convert", "newave", str(src), str(dst)], monkeypatch
+            )
+        assert code == 0
+        assert "⚠ GTMIN exceeds available capacity (1): ANGRA 2" in stderr
+        assert "481.3" not in stderr
+        assert "Details: -v, or conversion_manifest.json" in stderr
+        assert (dst / "conversion_manifest.json").is_file()
 
     def test_quiet_suppresses_summary_but_keeps_warnings(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

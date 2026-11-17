@@ -201,8 +201,10 @@ links are cobre-bridge's.
   NEWAVE's or DECOMP's**, and give notes elsewhere. `check` exits 0 on a deck
   whose only warnings were `libs-unindexed-file` or
   `decomp-ac-out-of-horizon`.
-- **Every command prints a note on one line and keeps the full panel for
-  warnings and errors**; `-v` prints the notes in full.
+- **Every command prints a warning as one line, with the first plants it
+  names, and the notes as one count**; `--validate` prints repeated Novomodelo
+  warnings once with a count. `-v` prints all of it and the `compare` legend;
+  `conversion_manifest.json` and `comparison.json` keep every finding.
 
 ### Removed
 

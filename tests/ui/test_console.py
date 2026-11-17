@@ -16,6 +16,7 @@ from novomodelo_bridge.core.preflight import (
 from novomodelo_bridge.ui.console import (
     _SUCCESS_STYLE,
     BAND_STYLE,
+    MAX_LINE_NAMES,
     MAX_TABLE_ROWS,
     _progress_enabled,
     conversion_progress,
@@ -76,9 +77,11 @@ class TestRenderDiagnostics:
         render_diagnostics([], heading="Conversion notes", console=console)
         assert buf.getvalue() == ""
 
-    def test_renders_title_table_cells_and_remediation(self) -> None:
+    def test_verbose_renders_title_table_cells_and_remediation(self) -> None:
         console, buf = _console()
-        render_diagnostics([self._gtmin()], heading="Conversion notes", console=console)
+        render_diagnostics(
+            [self._gtmin()], heading="Conversion notes", console=console, verbose=True
+        )
         text = buf.getvalue()
         assert "GTMIN exceeds capacity" in text
         assert "ANGRA 2" in text  # resolved plant name, not just the code
@@ -88,6 +91,89 @@ class TestRenderDiagnostics:
         assert "Check EXPT FCMAX/GTMIN" in text  # remediation hint
         assert "→ Check EXPT" in text and "→ →" not in text  # one arrow
         assert "Thermal bounds" in text  # category header
+
+    def _named_warning(self, names: list[str]) -> Diagnostic:
+        return Diagnostic(
+            code="negative-inflow",
+            severity=Severity.WARNING,
+            category="Inflows",
+            title=f"Negative incremental inflows kept ({len(names)})",
+            summary="The listed plants keep their negative inflows.",
+            table=DiagnosticTable(
+                columns=["Code", "Name", "Stages"],
+                rows=[[i, name, "0"] for i, name in enumerate(names)],
+            ),
+            remediation="Edit vazoes.dat.",
+        )
+
+    def test_warning_prints_as_one_line_with_the_first_names(self) -> None:
+        console, buf = _console()
+        names = ["FURNAS", "FURNAS", "—", "EMBORCACAO", "ITUMBIARA", "SOBRADINHO"]
+        render_diagnostics(
+            [self._named_warning(names)], heading="Conversion notes", console=console
+        )
+        text = buf.getvalue()
+        assert MAX_LINE_NAMES == 3
+        assert (
+            "  ⚠ Negative incremental inflows kept (6): "
+            "FURNAS, EMBORCACAO, ITUMBIARA, +1\n"
+        ) in text
+        assert "listed plants" not in text
+        assert "vazoes.dat" not in text
+        assert "╭" not in text
+
+    def test_a_long_warning_wraps_under_its_title_without_padding(self) -> None:
+        buf = io.StringIO()
+        console = Console(file=buf, width=40, no_color=True, highlight=False)
+        names = ["BARRA BONITA", "SEGREDO", "SLT.SANTIAGO", "FURNAS"]
+        render_diagnostics(
+            [self._named_warning(names)], heading="Conversion notes", console=console
+        )
+        lines = buf.getvalue().splitlines()
+        start = next(i for i, line in enumerate(lines) if "Negative" in line)
+        wrapped = lines[start : start + 3]
+        assert wrapped[0].startswith("  ⚠ Negative incremental inflows")
+        assert all(line.startswith("    ") for line in wrapped[1:])
+        assert all(line == line.rstrip() for line in lines)
+
+    def test_warning_without_a_name_column_prints_its_title_only(self) -> None:
+        console, buf = _console()
+        render_diagnostics([self._gtmin()], heading="Conversion notes", console=console)
+        lines = buf.getvalue().splitlines()
+        assert "  ⚠ GTMIN exceeds capacity (1 plant)" in lines
+        assert "ANGRA 2" not in buf.getvalue()
+
+    def test_details_line_names_the_details_file(self) -> None:
+        console, buf = _console()
+        render_diagnostics(
+            [self._gtmin()],
+            heading="Conversion notes",
+            console=console,
+            details_file="conversion_manifest.json",
+        )
+        assert "  Details: -v, or conversion_manifest.json" in buf.getvalue()
+
+    def test_details_line_points_to_json_without_a_details_file(self) -> None:
+        console, buf = _console()
+        render_diagnostics([self._gtmin()], heading="Conversion notes", console=console)
+        assert "  Details: -v, or --json" in buf.getvalue()
+
+    def test_errors_keep_their_panel(self) -> None:
+        console, buf = _console()
+        error = Diagnostic(
+            code="output-exists",
+            severity=Severity.ERROR,
+            category="Conversion failure",
+            title="Conversion failed",
+            summary="The output directory already holds files.",
+            remediation="Pass --force to overwrite it.",
+        )
+        render_diagnostics([error], heading="Conversion notes", console=console)
+        text = buf.getvalue()
+        assert "╭" in text
+        assert "already holds files" in text
+        assert "Pass --force" in text
+        assert "Details:" not in text
 
     def test_rollup_counts_warnings_and_notes(self) -> None:
         console, buf = _console()
@@ -136,14 +222,17 @@ class TestRenderDiagnostics:
             notes=["a detail line"],
         )
 
-    def test_notes_show_one_line_each_without_their_detail(self) -> None:
+    def test_notes_show_as_one_count_line(self) -> None:
         console, buf = _console()
         render_diagnostics(
-            [self._plants_note()], heading="Conversion notes", console=console
+            [self._plants_note(), self._plants_note()],
+            heading="Conversion notes",
+            console=console,
         )
         text = buf.getvalue()
-        assert "ℹ Fictitious plants left out (2)" in text
-        assert "-v" in text  # says how to see the detail
+        assert "  ℹ 2 notes\n" in text
+        assert "Details: -v" in text
+        assert "Fictitious plants left out" not in text
         assert "accounting nodes" not in text
         assert "FICT.SERRA M" not in text
         assert "a detail line" not in text
@@ -171,10 +260,18 @@ class TestRenderDiagnostics:
             console=console,
         )
         text = buf.getvalue()
-        assert text.index("GTMIN exceeds capacity") < text.index(
-            "Fictitious plants left out"
+        assert text.index("GTMIN exceeds capacity") < text.index("ℹ 1 note")
+
+    def test_verbose_warning_panels_come_before_the_note_panels(self) -> None:
+        console, buf = _console()
+        render_diagnostics(
+            [self._plants_note(), self._gtmin()],
+            heading="Conversion notes",
+            console=console,
+            verbose=True,
         )
-        assert "one plant affected" in text  # the warning keeps its panel
+        text = buf.getvalue()
+        assert text.index("one plant affected") < text.index("accounting nodes")
 
     def test_quiet_wins_over_verbose_for_notes(self) -> None:
         console, buf = _console()
@@ -200,7 +297,9 @@ class TestRenderDiagnostics:
             summary="lots",
             table=DiagnosticTable(columns=["Plant", "Code"], rows=rows),
         )
-        render_diagnostics([diag], heading="Conversion notes", console=console)
+        render_diagnostics(
+            [diag], heading="Conversion notes", console=console, verbose=True
+        )
         text = buf.getvalue()
         assert "… and 5 more (see --json)" in text
         assert "P0" in text
@@ -290,8 +389,12 @@ class TestRenderChecklist:
         render_checklist(result, console=console)
         text = buf.getvalue()
         assert "⚠ Ready with warnings" in text  # warning headline
-        assert "Optional input absent" in text  # delegated diagnostics panel
-        assert "modif" in text
+        assert "  ⚠ Optional input absent" in text  # delegated diagnostics line
+        assert "modif" not in text
+
+        console, buf = _console()
+        render_checklist(result, console=console, verbose=True)
+        assert "modif" in buf.getvalue()
 
     def test_render_checklist_diagnostics_console_routes_separately(self) -> None:
         """``diagnostics_console`` sends diagnostics to a console DIFFERENT from

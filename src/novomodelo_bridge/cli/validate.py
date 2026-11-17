@@ -9,6 +9,7 @@ reaches the same object this module looks up at call time.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from novomodelo_bridge.core.diagnostics import counted
@@ -20,6 +21,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rich.console import Console
+
+#: The numbers (ids, stages, values) a validation message varies in.
+_MESSAGE_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 
 
 def _validation_message(item: object) -> str:
@@ -59,6 +63,43 @@ def _partition_validation_warnings(
     return rendered, whitelisted
 
 
+def _group_validation_messages(warnings: Sequence[object]) -> list[tuple[str, int]]:
+    """``(first message, count)`` per message that differs only in its numbers.
+
+    Most frequent first; equal counts keep the order the warnings came in.
+    """
+    groups: dict[str, tuple[str, int]] = {}
+    for warning in warnings:
+        message = _validation_message(warning)
+        key = _MESSAGE_NUMBER.sub("#", message)
+        first, count = groups.get(key, (message, 0))
+        groups[key] = (first, count + 1)
+    return sorted(groups.values(), key=lambda group: -group[1])
+
+
+def _print_validation_warnings(
+    warnings: Sequence[object], *, verbose: bool, err_console: Console
+) -> None:
+    """Print each warning with *verbose*, else one line per group of alike ones."""
+    if verbose:
+        lines = [f"Validation warning: {_validation_message(w)}" for w in warnings]
+    else:
+        lines = [
+            f"Validation warning ({count}×): {message}"
+            if count > 1
+            else f"Validation warning: {message}"
+            for message, count in _group_validation_messages(warnings)
+        ]
+    for line in lines:
+        print_status(line, console=err_console, style="#F5A623")
+    if len(lines) < len(warnings):
+        print_status(
+            f"  -v lists all {counted(len(warnings), 'validation warning')}.",
+            console=err_console,
+            style="dim",
+        )
+
+
 def _run_novomodelo_validation(
     dst: Path,
     *,
@@ -67,6 +108,7 @@ def _run_novomodelo_validation(
     json_output: bool,
     err_console: Console,
     whitelist_substrings: Sequence[str] = (),
+    verbose: bool = False,
 ) -> bool:
     """Validate *dst* with the installed novomodelo-python and render the outcome.
 
@@ -77,7 +119,8 @@ def _run_novomodelo_validation(
     *whitelist_substrings* — ``convert newave`` passes an empty tuple, the
     identity case, so its rendering stays byte-identical), and the
     machine-readable ``summary["validation"]`` sub-object, populated only
-    when *json_output* is set. *command* names the caller in the
+    when *json_output* is set. Warnings that differ only in their numbers
+    print as one line unless *verbose*. *command* names the caller in the
     whitelisted-note message; *summary* is mutated in place.
 
     Returns whether validation FAILED (``valid`` came back ``False``, or
@@ -154,12 +197,9 @@ def _run_novomodelo_validation(
         raw_warnings, whitelist_substrings
     )
 
-    for warning in rendered_warnings:
-        print_status(
-            f"Validation warning: {_validation_message(warning)}",
-            console=err_console,
-            style="#F5A623",
-        )
+    _print_validation_warnings(
+        rendered_warnings, verbose=verbose, err_console=err_console
+    )
     if whitelisted_warnings:
         # Whitelisted-but-present is worth one INFO note, never a WARNING —
         # this is what tells the whitelist apart from a real suppression.

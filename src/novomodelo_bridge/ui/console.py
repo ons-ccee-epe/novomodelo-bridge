@@ -61,6 +61,9 @@ DEFAULT_WIDTH = 100
 #: set is always available via ``--json``, which every command accepts.
 MAX_TABLE_ROWS = 20
 
+#: Names a warning's one-line form lists from its table's ``Name`` column.
+MAX_LINE_NAMES = 3
+
 #: Severity → Rich style. Amber/red track the dashboard palette; INFO is muted.
 _SEVERITY_STYLE: dict[Severity, str] = {
     Severity.INFO: "dim",
@@ -312,14 +315,18 @@ def render_diagnostics(
     console: Console | None = None,
     quiet: bool = False,
     verbose: bool = False,
+    details_file: str | None = None,
 ) -> None:
-    """Render a roll-up line, the warning and error panels, then the notes.
+    """Render a roll-up line, then the errors, warnings and notes.
 
     The roll-up under *heading* (``⚠ Conversion notes: 2 warnings · 1
-    note``) counts every diagnostic. Warnings and errors follow as panels,
-    grouped by category; INFO notes come last, one title line each, or as
-    full panels with *verbose*. *quiet* suppresses the notes entirely. Does
-    nothing when there are no diagnostics.
+    note``) counts every diagnostic. Errors print as full panels. Each
+    warning prints as one line, its title and the first names of its table,
+    and the notes as one count line, followed by where the full text is:
+    ``-v``, or *details_file* when the command writes the diagnostics to
+    one. With *verbose*, warnings and notes print as full panels grouped by
+    category. *quiet* suppresses the notes. Does nothing when there are no
+    diagnostics.
     """
     if not diagnostics:
         return
@@ -327,23 +334,71 @@ def render_diagnostics(
     target = console or get_console(stderr=True)
     target.print(_rollup_line(diagnostics, heading))
 
-    problems = [d for d in diagnostics if d.severity is not Severity.INFO]
-    _print_panels(target, sorted(problems, key=lambda d: (d.severity.rank, d.category)))
-
-    notes = [] if quiet else [d for d in diagnostics if d.severity is Severity.INFO]
-    if not notes:
-        return
-    notes.sort(key=lambda d: d.category)
+    errors = [d for d in diagnostics if d.severity is Severity.ERROR]
+    warnings = sorted(
+        (d for d in diagnostics if d.severity is Severity.WARNING),
+        key=lambda d: d.category,
+    )
+    notes = sorted(
+        () if quiet else (d for d in diagnostics if d.severity is Severity.INFO),
+        key=lambda d: d.category,
+    )
     if verbose:
+        problems = [*errors, *warnings]
+        _print_panels(
+            target, sorted(problems, key=lambda d: (d.severity.rank, d.category))
+        )
         _print_panels(target, notes)
         return
-    target.print()
-    target.print(Text("Notes (details with -v)", style="bold underline"))
-    glyph = _SEVERITY_GLYPH[Severity.INFO]
-    for diag in notes:
+    _print_panels(target, sorted(errors, key=lambda d: d.category))
+    if not warnings and not notes:
+        return
+
+    for diag in warnings:
+        _print_hanging(target, Severity.WARNING, _warning_line(diag))
+    if notes:
+        count = Text(counted(len(notes), "note"), style=_SEVERITY_STYLE[Severity.INFO])
+        _print_hanging(target, Severity.INFO, count)
+    target.print(Text(f"  Details: -v, or {details_file or '--json'}", style="dim"))
+
+
+def _print_hanging(target: Console, severity: Severity, text: Text) -> None:
+    """Print *text* after an indented severity glyph, wrapping under its own start.
+
+    Wrapped by hand rather than in a grid, which pads every line to its width.
+    """
+    glyph = Text(f"  {_SEVERITY_GLYPH[severity]} ", style=_SEVERITY_STYLE[severity])
+    indent = glyph.cell_len
+    for index, line in enumerate(text.wrap(target, max(target.width - indent, 1))):
+        line.rstrip()
         target.print(
-            Text(f"  {glyph} {diag.title}", style=_SEVERITY_STYLE[Severity.INFO])
+            Text.assemble(glyph if index == 0 else " " * indent, line), soft_wrap=True
         )
+
+
+def _warning_line(diag: Diagnostic) -> Text:
+    """A warning's title, then the first names of its table and how many more."""
+    line = Text(diag.title, style=_SEVERITY_STYLE[diag.severity])
+    names = _table_names(diag)
+    if names:
+        shown = ", ".join(names[:MAX_LINE_NAMES])
+        more = len(names) - MAX_LINE_NAMES
+        line.append(f": {shown}" + (f", +{more}" if more > 0 else ""))
+    return line
+
+
+def _table_names(diag: Diagnostic) -> list[str]:
+    """The distinct values of the table's ``Name`` column, in row order."""
+    if diag.table is None or "Name" not in diag.table.columns:
+        return []
+    index = diag.table.columns.index("Name")
+    names: dict[str, None] = {}
+    for row in diag.table.rows:
+        value = row[index] if index < len(row) else None
+        text = (value.plain if isinstance(value, Text) else str(value)).strip()
+        if value is not None and text and text != "—":
+            names[text] = None
+    return list(names)
 
 
 def _print_panels(target: Console, diagnostics: Sequence[Diagnostic]) -> None:

@@ -106,6 +106,7 @@ def print_results_summary_from_dataset(
     training: Sequence[PairedCost] = (),
     reference_label: str = "NEWAVE",
     console: Console | None = None,
+    verbose: bool = False,
 ) -> None:
     """Print the results comparison summary (Rich table) from the canonical dataset.
 
@@ -138,6 +139,8 @@ def print_results_summary_from_dataset(
         The stdout console to render through. Defaults to :func:`get_console`
         so direct callers (tests) keep working unchanged; the CLI passes its
         ``--no-color``-aware console so this summary honours the flag.
+    verbose:
+        Also print the legend below the agreement table (``-v``).
     """
     target = console or get_console()
 
@@ -170,47 +173,9 @@ def print_results_summary_from_dataset(
                 row_styles=row_styles,
             )
         )
-        target.print(
-            f"Gap = Σ|Novomodelo − {reference_label}| / Σ|{reference_label}| over "
-            f"every stage and entity: close up to {format_gap(verdict.tolerance)}, "
-            f"far beyond {format_gap(FAR_FACTOR * verdict.tolerance)}.",
-            style="dim",
-            soft_wrap=True,
-            markup=False,
-        )
-        if excl_ties:
-            target.print(
-                "Excl. ties is the gap without the points where a plant's "
-                "energy or water is worth nothing in either model, so either "
-                "may turbine or spill at no cost. The agreement judges the "
-                "gap over every point.",
-                style="dim",
-                soft_wrap=True,
-                markup=False,
-            )
-        if (dataset.summary["variable"] == TIED_NET_FLOW).any():
-            target.print(
-                "Net flow on tied routes is not in the headline: the two "
-                "models can split the same exchanges between those lines "
-                "differently at the same cost. Net import judges the buses "
-                "instead.",
-                style="dim",
-                soft_wrap=True,
-                markup=False,
-            )
-        if (
-            dataset.summary["variable"].is_in(
-                [SHARED_PLANT_NET_IMPORT, SHARED_PLANT_NET_FLOW]
-            )
-        ).any():
-            target.print(
-                "Net import of a bus sharing a plant and net flow between "
-                "such buses are not in the headline: the two models can place "
-                "the plant's output on either bus. Net import judges those "
-                "buses as one group instead.",
-                style="dim",
-                soft_wrap=True,
-                markup=False,
+        if verbose:
+            _print_legend(
+                target, dataset, verdict, reference_label, excl_ties=excl_ties
             )
 
     if training:
@@ -246,3 +211,56 @@ def print_results_summary_from_dataset(
         markup=False,
     )
     target.print()
+
+
+def _print_legend(
+    target: Console,
+    dataset: ComparisonDataset,
+    verdict: CompareVerdict,
+    reference_label: str,
+    *,
+    excl_ties: bool,
+) -> None:
+    """Explain the agreement table's gap columns and the rows left out of it."""
+    target.print(
+        f"Gap = Σ|Novomodelo − {reference_label}| / Σ|{reference_label}| over "
+        f"every stage and entity: close up to {format_gap(verdict.tolerance)}, "
+        f"far beyond {format_gap(FAR_FACTOR * verdict.tolerance)}.",
+        style="dim",
+        soft_wrap=True,
+        markup=False,
+    )
+    if excl_ties:
+        target.print(
+            "Excl. ties is the gap without the points where a plant's "
+            "energy or water is worth nothing in either model, so either "
+            "may turbine or spill at no cost. The agreement judges the "
+            "gap over every point.",
+            style="dim",
+            soft_wrap=True,
+            markup=False,
+        )
+    if (dataset.summary["variable"] == TIED_NET_FLOW).any():
+        target.print(
+            "Net flow on tied routes is not in the headline: the two "
+            "models can split the same exchanges between those lines "
+            "differently at the same cost. Net import judges the buses "
+            "instead.",
+            style="dim",
+            soft_wrap=True,
+            markup=False,
+        )
+    if (
+        dataset.summary["variable"].is_in(
+            [SHARED_PLANT_NET_IMPORT, SHARED_PLANT_NET_FLOW]
+        )
+    ).any():
+        target.print(
+            "Net import of a bus sharing a plant and net flow between "
+            "such buses are not in the headline: the two models can place "
+            "the plant's output on either bus. Net import judges those "
+            "buses as one group instead.",
+            style="dim",
+            soft_wrap=True,
+            markup=False,
+        )

@@ -237,6 +237,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
     """
     args = _resolve_compare_settings(args)
 
+    from novomodelo_bridge.comparators.export import MANIFEST_FILE
     from novomodelo_bridge.comparators.newave.results import compare_results
     from novomodelo_bridge.comparators.verdict import (
         build_compare_verdict,
@@ -294,6 +295,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
                 novomodelo_output_dir,
                 verdict=verdict,
                 training=_training_costs(dataset),
+                verbose=args.verbose > 0,
                 console=args.out_console(),
             )
         render_diagnostics(
@@ -302,6 +304,7 @@ def _run_newave_comparison(args: CompareArgs) -> None:
             console=args.err_console(),
             quiet=args.quiet,
             verbose=args.verbose > 0,
+            details_file=MANIFEST_FILE,
         )
 
     out_dir = _export_compare_artifacts(
@@ -347,6 +350,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
     deck's plants, would be worse than stopping.
     """
     from novomodelo_bridge.comparators.decomp.results import build_decomp_dataset
+    from novomodelo_bridge.comparators.export import MANIFEST_FILE
     from novomodelo_bridge.comparators.verdict import (
         build_compare_verdict,
         compare_status,
@@ -421,6 +425,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
                 args.novomodelo_output_dir,
                 verdict=verdict,
                 training=_training_costs(dataset),
+                verbose=args.verbose > 0,
                 reference_label="DECOMP",
                 console=args.out_console(),
             )
@@ -430,6 +435,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
             console=args.err_console(),
             quiet=args.quiet,
             verbose=args.verbose > 0,
+            details_file=MANIFEST_FILE,
         )
 
     out_dir = _export_compare_artifacts(
