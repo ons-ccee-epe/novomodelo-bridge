@@ -14,6 +14,15 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+#### DECOMP
+
+- **`convert decomp` writes `VL`, `VU` and `VA` as `tailrace_flow` in
+  `system/hydros.json`**, and `check decomp` reports them, with `tailrace-*`
+  warnings for records it drops or merges. Results change for decks with
+  these records; reconvert them.
+
 ## [0.21.0] - 2026-11-16
 
 Pairs the bridge with the **novomodelo 0.21.0** release and pins
