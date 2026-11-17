@@ -518,4 +518,5 @@ class TestDashboardReadFailure:
         assert document["status"] == "error"
         [error] = [d for d in document["diagnostics"] if d["severity"] == "error"]
         assert error["code"] == "unexpected-error"
-        assert str(corrupt) in error["summary"]
+        # pyarrow prints the path with forward slashes on every OS.
+        assert corrupt.as_posix() in error["summary"]

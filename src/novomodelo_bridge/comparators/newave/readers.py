@@ -1235,15 +1235,20 @@ def _read_numbered_tables(
     pattern = re.compile(rf"^{prefix}(\d{{3}})\.out$", re.IGNORECASE)
     read = _nwlistop_readers()[prefix]
     tables: list[pl.DataFrame] = []
-    for path in sorted(newave_dir.iterdir()):
-        m = pattern.match(path.name)
-        if m is None:
-            continue
+    # Ordered by table number, never by path: path order is case-sensitive on
+    # POSIX and case-insensitive on Windows, so the unreadable-table rows
+    # would come out in a different order per OS.
+    numbered = sorted(
+        (int(m.group(1)), path)
+        for path in newave_dir.iterdir()
+        if (m := pattern.match(path.name)) is not None
+    )
+    for code, path in numbered:
         table = _read_nwlistop_table(path, read, start_year, start_month, failures)
         if table is not None:
             tables.append(
                 table.rename({"valor": value_column}).with_columns(
-                    pl.lit(int(m.group(1))).alias(code_column)
+                    pl.lit(code).alias(code_column)
                 )
             )
     _emit_unreadable_tables(failures, kind, effect)

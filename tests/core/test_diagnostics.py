@@ -243,8 +243,9 @@ class TestUnreadableFileDiagnostic:
 
 class TestReportFileDiagnostics:
     def test_a_missing_file_is_a_note_naming_what_the_report_leaves_out(self) -> None:
+        path = Path("/deck/pmo.dat")
         diagnostic = report_file_missing_diagnostic(
-            "pmo.dat", Path("/deck/pmo.dat"), "the report has no convergence."
+            "pmo.dat", path, "the report has no convergence."
         )
         assert diagnostic.code == "report-file-missing"
         assert diagnostic.severity is Severity.INFO
@@ -253,12 +254,13 @@ class TestReportFileDiagnostics:
         assert diagnostic.summary == (
             "pmo.dat was not found, so the report has no convergence."
         )
-        assert diagnostic.notes == ["Path: /deck/pmo.dat"]
+        assert diagnostic.notes == [f"Path: {path}"]
 
     def test_an_unreadable_file_is_a_warning_with_its_reason(self) -> None:
+        path = Path("/case/system/hydros.json")
         diagnostic = report_file_unreadable_diagnostic(
             "system/hydros.json",
-            Path("/case/system/hydros.json"),
+            path,
             "the report names no plant.",
             ValueError("Expecting value"),
         )
@@ -269,22 +271,22 @@ class TestReportFileDiagnostics:
             "system/hydros.json could not be read, so the report names no plant."
         )
         assert diagnostic.notes == [
-            "Path: /case/system/hydros.json",
+            f"Path: {path}",
             "Reason: ValueError: Expecting value",
         ]
 
     def test_an_empty_reason_adds_no_reason_note(self) -> None:
-        diagnostic = report_file_unreadable_diagnostic(
-            "a.json", Path("/a.json"), "nothing.", ""
-        )
-        assert diagnostic.notes == ["Path: /a.json"]
+        path = Path("/a.json")
+        diagnostic = report_file_unreadable_diagnostic("a.json", path, "nothing.", "")
+        assert diagnostic.notes == [f"Path: {path}"]
 
     def test_a_stated_reason_is_kept_as_written(self) -> None:
+        path = Path("/a.json")
         diagnostic = report_file_unreadable_diagnostic(
-            "a.json", Path("/a.json"), "nothing.", "no stage with block hours"
+            "a.json", path, "nothing.", "no stage with block hours"
         )
         assert diagnostic.notes == [
-            "Path: /a.json",
+            f"Path: {path}",
             "Reason: no stage with block hours",
         ]
 
