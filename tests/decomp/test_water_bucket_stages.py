@@ -50,10 +50,12 @@ def test_decomp_mini_deck_water_only_post_study_file_validates(
     dst = tmp_path / "converted"
     convert_decomp_case(decomp_mini_deck, dst, force=True)
 
-    horizon_end = json.loads((dst / "stages.json").read_text())["stages"][-1][
-        "end_date"
-    ]
-    post_study = json.loads((dst / "post_study_stages.json").read_text())
+    horizon_end = json.loads((dst / "stages.json").read_text(encoding="utf-8"))[
+        "stages"
+    ][-1]["end_date"]
+    post_study = json.loads(
+        (dst / "post_study_stages.json").read_text(encoding="utf-8")
+    )
     assert set(post_study) == {"water_bucket_stages"}
     assert [stage["start_date"] for stage in post_study["water_bucket_stages"]] == [
         horizon_end

@@ -154,7 +154,7 @@ def test_fe_contract_term_reaches_the_re_generic_constraint(
     assert result["valid"] is True
     assert result["errors"] == []
     document = json.loads(
-        (dst / "constraints" / "generic_constraints.json").read_text()
+        (dst / "constraints" / "generic_constraints.json").read_text(encoding="utf-8")
     )
     (re_21,) = [c for c in document["constraints"] if c["name"] == "RE_21"]
     assert re_21["expression"].endswith("- 0.5 * contract_import(0)")
@@ -184,10 +184,12 @@ def test_rhv_volume_tipos_write_stage_level_generic_rows(
     dst = tmp_path / "converted"
     convert_decomp_case(deck, dst, force=True)
 
-    hydros = json.loads((dst / "system" / "hydros.json").read_text())["hydros"]
+    hydros = json.loads((dst / "system" / "hydros.json").read_text(encoding="utf-8"))[
+        "hydros"
+    ]
     (vermelha,) = [h for h in hydros if h["name"] == "A. VERMELHA"]
     document = json.loads(
-        (dst / "constraints" / "generic_constraints.json").read_text()
+        (dst / "constraints" / "generic_constraints.json").read_text(encoding="utf-8")
     )
     by_name = {c["name"]: c for c in document["constraints"]}
     hv_118, hv_119 = by_name["HV_118"], by_name["HV_119"]
@@ -235,7 +237,9 @@ def test_differing_ct_cvus_write_exact_block_cost_rows(
     convert_decomp_case(decomp_mini_deck, base_dst, force=True)
     convert_decomp_case(deck, dst, force=True)
 
-    thermals = json.loads((dst / "system" / "thermals.json").read_text())["thermals"]
+    thermals = json.loads(
+        (dst / "system" / "thermals.json").read_text(encoding="utf-8")
+    )["thermals"]
     ids = {t["name"]: t["id"] for t in thermals}
     angra_1, angra_2 = ids["ANGRA 1"], ids["ANGRA 2"]
 
@@ -285,8 +289,10 @@ def test_decomp_mini_micro_tier_keeps_its_order(
     dst = tmp_path / "converted"
     convert_decomp_case(decomp_mini_deck, dst, force=True)
 
-    penalties = json.loads((dst / "penalties.json").read_text())
-    lines = json.loads((dst / "system" / "lines.json").read_text())["lines"]
+    penalties = json.loads((dst / "penalties.json").read_text(encoding="utf-8"))
+    lines = json.loads((dst / "system" / "lines.json").read_text(encoding="utf-8"))[
+        "lines"
+    ]
     h = penalties["hydro"]
     assert h["turbined_cost"] > h["spillage_cost"] > 0
     assert h["diversion_cost"] == h["spillage_cost"] > 0
@@ -319,8 +325,12 @@ def test_decomp_mini_halves_exchange_only_on_lines_touching_marketless_buses(
     dst = tmp_path / "converted"
     convert_decomp_case(decomp_mini_deck, dst, force=True)
 
-    buses = json.loads((dst / "system" / "buses.json").read_text())["buses"]
-    lines = json.loads((dst / "system" / "lines.json").read_text())["lines"]
+    buses = json.loads((dst / "system" / "buses.json").read_text(encoding="utf-8"))[
+        "buses"
+    ]
+    lines = json.loads((dst / "system" / "lines.json").read_text(encoding="utf-8"))[
+        "lines"
+    ]
     marketless = {b["id"] for b in buses if "deficit_segments" not in b}
     assert all(
         ("exchange_cost" in line)
@@ -339,7 +349,9 @@ _NW_CASE_DIRS = ("system", "scenarios", "constraints")
 
 
 def _hydros(case_dir: Path) -> list[dict]:
-    return json.loads((case_dir / "system" / "hydros.json").read_text())["hydros"]
+    return json.loads(
+        (case_dir / "system" / "hydros.json").read_text(encoding="utf-8")
+    )["hydros"]
 
 
 def _hydro_named(hydros: list[dict], name: str) -> dict:
@@ -365,7 +377,7 @@ def test_decomp_mini_converts_estrela_as_a_dormant_hydro(
     assert estrela["downstream_id"] == salto["id"]
     assert "entry_stage_id" not in salto
 
-    initial = json.loads((dst / "initial_conditions.json").read_text())
+    initial = json.loads((dst / "initial_conditions.json").read_text(encoding="utf-8"))
     storage = {e["hydro_id"]: e["value_hm3"] for e in initial["storage"]}
     reference = float(decomp_mini_case.hidr.loc[_ESTRELA, "volume_referencia"])
     assert storage[estrela["id"]] == pytest.approx(reference)
@@ -383,9 +395,9 @@ def test_decomp_mini_writes_no_operation_bounds_for_estrela(
         table = pq.read_table(dst / "constraints" / f"{name}.parquet")
         assert estrela not in table.column("hydro_id").to_pylist()
 
-    models = json.loads((dst / "system" / "hydro_production_models.json").read_text())[
-        "production_models"
-    ]
+    models = json.loads(
+        (dst / "system" / "hydro_production_models.json").read_text(encoding="utf-8")
+    )["production_models"]
     (model,) = [m for m in models if m["hydro_id"] == estrela]
     assert [r["model"] for r in model["stage_ranges"]] == ["constant_productivity"]
     productivity = pq.read_table(
@@ -508,8 +520,10 @@ def test_boundary_cuts_bind_the_dormant_nw_plant_and_the_case_runs(
     (cut,) = terminal["cuts"]
     assert cut["coefficients"][position] != 0.0
 
-    config = json.loads((case_dir / "config.json").read_text())
-    initial_conditions = json.loads((case_dir / "initial_conditions.json").read_text())
+    config = json.loads((case_dir / "config.json").read_text(encoding="utf-8"))
+    initial_conditions = json.loads(
+        (case_dir / "initial_conditions.json").read_text(encoding="utf-8")
+    )
     writer = CaseWriter(case_dir)
     _patch_policy_boundary(writer, config)
     _seed_recent_observations(
