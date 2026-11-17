@@ -562,6 +562,23 @@ class TestCompareReportDiagnosticsReachTheRun:
         )
 
         assert code == 0
+        assert "⚠ Report note" in stderr
+        assert _REPORT_NOTE not in stderr
+        assert "Details: -v, or comparison.json" in stderr
+
+    @pytest.mark.parametrize("track", ["newave", "decomp"])
+    def test_verbose_notes_show_it_in_full(
+        self,
+        track: str,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        code, _stdout, stderr, _out_dir = self._invoke(
+            track, tmp_path, monkeypatch, decomp_mini_deck, "-v"
+        )
+
+        assert code == 0
         assert _REPORT_NOTE in stderr
 
 

@@ -334,6 +334,7 @@ class TestAgreementTable:
         dataset, spy = self._print(
             [_hydro_result("ITAIPU", "generation_mw", 100.0, 150.0), thermal],
             PercentileData(hydro_masked=masked),
+            verbose=True,
         )
 
         record = spy.records[0]
@@ -365,6 +366,21 @@ class TestAgreementTable:
         out = " ".join(capsys.readouterr().out.split())
         assert "Excl. ties is the gap without the points" in out
 
+    def test_the_legend_prints_only_with_verbose(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.core.agreement import TIED_NET_FLOW
+
+        line = dataclasses.replace(
+            _hydro_result("SE-NE", TIED_NET_FLOW, 100.0, 10.0), entity_type="line"
+        )
+        self._print([_hydro_result("ITAIPU", "generation_mw", 100.0, 150.0), line])
+        out = " ".join(capsys.readouterr().out.split())
+
+        assert "Generation (MW)" in out
+        assert "Gap = " not in out
+        assert "not in the headline:" not in out
+
     def test_policy_rows_stay_out_of_the_table(self) -> None:
         dataset, spy = self._print(
             [
@@ -388,7 +404,9 @@ class TestAgreementTable:
                 entity_type="line",
             )
 
-        _, spy = self._print([line("net_flow_mw", 100.0), line(TIED_NET_FLOW, 10.0)])
+        _, spy = self._print(
+            [line("net_flow_mw", 100.0), line(TIED_NET_FLOW, 10.0)], verbose=True
+        )
 
         rows = spy.records[0]["rows"]
         cells = [(str(row[0]).strip(), str(row[4])) for row in rows[1:]]
@@ -416,7 +434,8 @@ class TestAgreementTable:
             [
                 bus("SE+IV", "net_import_mw", 100.0),
                 bus("SE", SHARED_PLANT_NET_IMPORT, 10.0),
-            ]
+            ],
+            verbose=True,
         )
 
         rows = spy.records[0]["rows"]

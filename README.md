@@ -104,11 +104,15 @@ version and git commit, the source directory, a hash of every input file read,
 the entity counts, and every diagnostic raised during the run.
 
 Diagnostics go to stderr. A warning means the converted case will not give
-the source model's results on this deck, and it says where and how, with the
-affected plants and stages; an error stops the conversion. A note records a
-translation that leaves the results unchanged and shows as a single line;
-`-v` prints the notes in full. `--diagnostics-json` saves every diagnostic to
-a file once the conversion completes; a conversion that stops reports its
+the source model's results on this deck; an error stops the conversion; a
+note records a translation that leaves the results unchanged. An error prints
+in full, with its fix. Each warning prints as one line, its title and the
+first plants it lists, and the notes as one count; `-v` prints both in full,
+with the affected plants and stages and how the results differ, and
+`conversion_manifest.json` keeps them all. With `--validate`, Novomodelo
+warnings that differ only in their numbers print as one line with a count,
+and `-v` lists each one. `--diagnostics-json` saves every diagnostic to a
+file once the conversion completes; a conversion that stops reports its
 findings on stderr and in `--json`. `--dry-run` runs the whole conversion in
 memory and lists what would be written.
 
@@ -121,7 +125,9 @@ the set: `parquet` and `json` (the tidy comparison dataset) by default, `csv`,
 balance, network, convergence, performance, and per-plant detail, or `all`.
 The console summary gives each variable's gap, its summed absolute difference
 over the summed reference values, and labels it close up to `--tolerance` (5%
-by default), far beyond four times it, and moderate in between.
+by default), far beyond four times it, and moderate in between. `-v` adds a
+legend under the table and the comparison notes in full; `comparison.json`
+keeps every note.
 `compare` is informational: differences between the two models never change the
 exit code, and the report is where you judge them.
 

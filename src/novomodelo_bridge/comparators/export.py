@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 _VALID_FORMATS: frozenset[str] = frozenset({"parquet", "json", "csv"})
 
 #: Always-written manifest filename (basename).
-_MANIFEST_FILE: str = "comparison.json"
+MANIFEST_FILE: str = "comparison.json"
 
 #: Per-format artifact basenames.
 _TIDY_PARQUET: str = "comparison.parquet"
@@ -147,7 +147,7 @@ def write_artifacts(
         written.append(_SUMMARY_CSV)
 
     # The manifest always lists itself.
-    written.append(_MANIFEST_FILE)
+    written.append(MANIFEST_FILE)
 
     top_divergences = _coerce_top_divergences(dataset.metadata.get("top_divergences"))
     diagnostics_summary = dict(
@@ -165,7 +165,7 @@ def write_artifacts(
     )
     manifest.artifacts = sorted(written)
     manifest.top_divergences = top_divergences
-    manifest.to_json(out_dir / _MANIFEST_FILE)
+    manifest.to_json(out_dir / MANIFEST_FILE)
 
     return manifest
 

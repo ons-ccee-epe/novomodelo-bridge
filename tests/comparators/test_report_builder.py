@@ -364,6 +364,7 @@ def test_compare_newave_no_color_summary_has_no_ansi_escapes(
         training: Sequence[PairedCost] = (),
         reference_label: str = "NEWAVE",
         console: Console | None = None,
+        verbose: bool = False,
     ) -> None:
         assert isinstance(console, Console)
         captured.append(console)
@@ -375,6 +376,7 @@ def test_compare_newave_no_color_summary_has_no_ansi_escapes(
             training=training,
             reference_label=reference_label,
             console=console,
+            verbose=verbose,
         )
 
     monkeypatch.setattr(

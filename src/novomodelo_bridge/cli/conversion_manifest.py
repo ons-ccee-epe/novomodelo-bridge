@@ -36,6 +36,10 @@ if TYPE_CHECKING:
     from novomodelo_bridge.newave.files import NewaveFiles
 
 
+#: Basename of the manifest every successful conversion writes into the case.
+MANIFEST_FILE = "conversion_manifest.json"
+
+
 @dataclass
 class ConversionManifest(ProvenanceManifest):
     """Provenance record for a conversion run.
@@ -166,7 +170,7 @@ def _write_conversion_manifest(
         min_novomodelo_version=MIN_NOVOMODELO_VERSION,
     )
 
-    path = dst / "conversion_manifest.json"
+    path = dst / MANIFEST_FILE
     try:
         manifest.to_json(path)
     except OSError as exc:

@@ -26,7 +26,7 @@ tailrace curves, no electrical constraints from the CSV, and no plane
 reduction, which Novomodelo then leaves off. A key listed without a file name,
 or whose file is not in the directory, makes the case fail to convert. A file
 with a usual LIBS name, such as `polinjus.csv`, that the index does not list is
-ignored, and `check newave` and `convert newave` list it in a
+ignored, and `check newave` and `convert newave` report it in a
 `libs-unindexed-file` note (`-v` prints it in full). `indices.csv`,
 the plane-reduction file and the electrical-constraint file are each read as
 UTF-8 when they are valid UTF-8 and as Latin-1 otherwise.
@@ -198,9 +198,10 @@ the same output.
   `max_generation_mw` stays the rated power the fit is capped at.
 
 Anything the converter cannot carry over faithfully is reported rather than
-dropped silently: `convert newave` prints each warning with the plants and
-stages it affects and lists the notes (`-v` prints them in full),
-`--diagnostics-json` saves them, and `--json` includes them in the verdict.
+dropped silently: `convert newave` prints one line per warning, naming the
+first plants it affects, and counts the notes. `-v` prints both in full with
+the plants and stages they affect, `conversion_manifest.json` and
+`--diagnostics-json` save them, and `--json` includes them in the verdict.
 
 ## Pumping stations
 

@@ -171,5 +171,5 @@ def test_fail_non_json_renders_what_was_found_before_the_failure(
         )
 
     err = capsys.readouterr().err
-    assert "earlier happened." in err
+    assert "⚠ A warning" in err
     assert "no output" in err
