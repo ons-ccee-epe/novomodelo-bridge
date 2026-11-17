@@ -189,6 +189,40 @@ class TestIdMapReconcile:
         assert id_map_check.passed is False
 
 
+class TestDiversionTermCheck:
+    def test_a_qdes_term_on_a_plant_without_a_diversion_fails_as_convert_refuses_it(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        """An HQ restriction on the diverted flow of plant 1, which has no
+        ``desvio`` in ``hidr.dat`` and no ``AC DESVIO`` record."""
+        deck = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, deck)
+        dadger = deck / "dadger.rv2"
+        anchor = "UH    1  10        96.13               1\n"
+        limits = (" " * 10 + f"{50.0:>10.2f}") * 3
+        records = (
+            "HQ  901   1    1\n"
+            f"LQ  901   1   {limits}\n"
+            f"CQ  901   1     1  {1.0:>10.7f}     QDES\n"
+        )
+        text = dadger.read_text(encoding="latin-1")
+        assert text.count(anchor) == 1
+        dadger.write_text(text.replace(anchor, anchor + records), encoding="latin-1")
+
+        with pytest.raises(FieldParseError) as raised:
+            convert_decomp_case(deck, tmp_path / "out")
+        result = run_decomp_preflight(deck)
+
+        assert raised.value.field == "HQ 901"
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
+        coverage = next(
+            c for c in result.checks if c.label == "Special-constraint coverage"
+        )
+        assert coverage.passed is False
+        [diagnostic] = [d for d in result.diagnostics if d.code == "source-field-parse"]
+        assert diagnostic.summary == str(raised.value)
+
+
 class TestTreeShapeCheck:
     def test_a_trunk_that_branches_fails_as_convert_decomp_refuses_it(
         self, decomp_mini_deck: Path, tmp_path: Path
@@ -473,6 +507,7 @@ def _coverage(
     ct_submarkets: dict[int, frozenset[int]] | None = None,
     libs_long_form: bool | None = False,
     plant_names: dict[int, str] | None = None,
+    diversion_codes: frozenset[int] | None = None,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """``_special_constraint_coverage`` with the deck's file names filled in
     and every GNL plant in subsystem 1."""
@@ -488,6 +523,7 @@ def _coverage(
         dadgnl_path="dadgnl.rv0",
         libs_long_form=libs_long_form,
         plant_names=plant_names,
+        diversion_codes=diversion_codes,
     )
 
 
@@ -554,6 +590,22 @@ class TestSpecialConstraintCoverage:
             f"{len(census.to_generic)} emitted as generic constraints, "
             f"{len(present_families)} families present in the deck"
         )
+
+    def test_a_qdes_term_on_a_plant_without_a_diversion_fails_as_convert_stops(
+        self,
+    ) -> None:
+        checks, diagnostics = _coverage(
+            self._synthetic_dadger(),
+            None,
+            _SC_ID_MAP,
+            {},
+            diversion_codes=frozenset(),
+        )
+
+        assert [check.passed for check in checks] == [False]
+        [diagnostic] = diagnostics
+        assert diagnostic.code == "source-field-parse"
+        assert "HQ 6" in diagnostic.summary
 
     def test_converted_counts_match_the_census_probe(self) -> None:
         dadger = self._synthetic_dadger()

@@ -41,6 +41,7 @@ unit-testable against hand-built artifacts.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple
@@ -56,7 +57,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
-from novomodelo_bridge.core.errors import EmissionCheckError
+from novomodelo_bridge.core.errors import EmissionCheckError, FieldParseError
 from novomodelo_bridge.core.tolerances import (
     beyond_written_precision,
     relative_tolerance,
@@ -85,16 +86,25 @@ _CLAMP_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("max_turbined_m3s", "generation", "min_turbined_m3s"),
     ("max_generation_mw", "generation", "min_generation_mw"),
     ("max_outflow_m3s", "outflow", "min_outflow_m3s"),
+    ("max_storage_hm3", "reservoir", "min_storage_hm3"),
 )
 
 _CLAMP_LIMIT_LABELS: dict[str, str] = {
     "max_turbined_m3s": "Max turbined flow (m³/s)",
     "max_generation_mw": "Max generation (MW)",
     "max_outflow_m3s": "Max outflow (m³/s)",
+    "max_storage_hm3": "Max storage (hm³)",
     "min_turbined_m3s": "Min turbined flow (m³/s)",
     "min_generation_mw": "Min generation (MW)",
     "min_outflow_m3s": "Min outflow (m³/s)",
+    "min_storage_hm3": "Min storage (hm³)",
 }
+
+#: Floors novomodelo holds as a bound on the plant's state, never priced
+#: (``hard_storage_floor`` in novomodelo-core): one outside the plant's range,
+#: or above the stage's ceiling, leaves the stage with no solution, so the
+#: clamp refuses it where it writes any other floor with a warning.
+_ENFORCED_FLOORS: frozenset[str] = frozenset({"min_storage_hm3"})
 
 #: One column of a ``hydro_bounds`` row: ``(hydro_id, stage_id, block_id,
 #: column)``. A ``None`` block_id covers every block of the stage.
@@ -336,6 +346,22 @@ class _ClampFindings:
     capped: _Findings = field(default_factory=dict)
     raised: _Findings = field(default_factory=dict)
     floors: _Findings = field(default_factory=dict)
+    lifted: _Findings = field(default_factory=dict)
+    refusals: list[_Refusal] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _Refusal:
+    """An enforced floor above what the stage allows: the cell, both limits,
+    the deck constraints behind each, and whether the ceiling is the plant's
+    declared maximum rather than the stage's."""
+
+    cell: _Cell
+    floor: float
+    ceiling: float
+    floor_by: tuple[str, ...]
+    ceiling_by: tuple[str, ...]
+    ceiling_is_declared: bool
 
 
 def clamp_hydro_bounds_to_declared(
@@ -346,17 +372,18 @@ def clamp_hydro_bounds_to_declared(
     raise_to_minimum: bool,
     labels: BoundLabels | None = None,
     reported_floors: Collection[BoundKey] = (),
+    deck_file: str | os.PathLike[str] | None = None,
 ) -> pa.Table | None:
-    """Hold every per-stage ``hydro_bounds`` turbined, generation and outflow
-    limit to the owning plant's declared ``[min, max]`` envelope from
+    """Hold every per-stage ``hydro_bounds`` turbined, generation, outflow and
+    storage limit to the owning plant's declared ``[min, max]`` envelope from
     ``hydros.json``, returning the clamped table.
 
     Per cell and limit, in order:
 
     1. A ceiling above the declared max is capped at it. novomodelo rejects a
        turbined or generation ceiling above the declared value on load, and
-       the plant cannot exceed its capacity anyway, so an INFO note reports
-       the cap.
+       takes a storage ceiling above the reservoir as written; the plant
+       cannot exceed its capacity anyway, so an INFO note reports the cap.
     2. With *raise_to_minimum*, a ceiling below the cell's floor (the cell's
        own floor where it sets one, else the declared min) is raised to that
        floor, or to the declared max when the floor is above it. That loosens
@@ -369,6 +396,12 @@ def clamp_hydro_bounds_to_declared(
        reports it unless *reported_floors* names it. A floor above a lower
        ceiling is step 2's, or the caller's.
 
+    A storage floor is a bound novomodelo enforces (:data:`_ENFORCED_FLOORS`),
+    so storage departs from steps 2 and 3: a floor below the declared min is
+    raised to it, with an INFO note since storage cannot fall below it; and a
+    floor above the declared max or above the stage's ceiling, after step 2,
+    stops the conversion.
+
     Each finding is reported only past the deck's written precision
     (:func:`~novomodelo_bridge.core.tolerances.beyond_written_precision`);
     nearer, steps 1 and 2 move the ceiling silently and step 3 lowers the
@@ -379,8 +412,15 @@ def clamp_hydro_bounds_to_declared(
     each cell, and each report then lists, under "Set by", those that put the
     cell outside its envelope. *reported_floors* names the floors the caller
     has already reported, so one cause gets one diagnostic.
+    *deck_file* is the deck file a refusal names.
     Returns *hydro_bounds* unchanged (same object) when it is ``None``, carries
     no clamped column, or nothing fell outside its envelope.
+
+    Raises
+    ------
+    FieldParseError
+        When a storage floor sits above the declared max or the stage's
+        ceiling past the deck's written precision.
     """
     if hydro_bounds is None:
         return None
@@ -422,11 +462,19 @@ def clamp_hydro_bounds_to_declared(
                 )
 
     names = _hydro_names(hydros)
+    if found.refusals:
+        raise _refusal_error(
+            min(found.refusals, key=lambda r: (source_codes[r.cell[0]], r.cell[1])),
+            names,
+            source_codes,
+            deck_file,
+        )
     labelled = labels is not None
     for findings, build in (
         (found.capped, _capped_to_capacity_diagnostic),
         (found.raised, _raised_to_floor_diagnostic),
         (found.floors, _floor_above_capacity_diagnostic),
+        (found.lifted, _floor_below_minimum_diagnostic),
     ):
         if findings:
             emit(build(findings, names, source_codes, labelled), logger=_LOG)
@@ -521,11 +569,27 @@ def _clamp_axis(
     limit's *ceilings* and *floors* in place, keyed by its ``(ceiling column,
     floor column)``, recording what it reports in *found*."""
     ceiling_column, floor_column = columns
+    enforced = floor_column in _ENFORCED_FLOORS
     for row, cell in enumerate(cells):
         declared_min, declared_max = declared.get(cell[0], {}).get(
             ceiling_column, (None, None)
         )
         ceiling, floor = ceilings[row], floors[row]
+        if (
+            enforced
+            and floor is not None
+            and declared_min is not None
+            and floor < declared_min - _tolerance(declared_min)
+        ):
+            _record(
+                found.lifted,
+                cell,
+                floor_column,
+                floor,
+                declared_min,
+                _labels_past(labels, cell, floor_column, declared_min, above=False),
+            )
+            floor = declared_min
         if (
             ceiling is not None
             and declared_max is not None
@@ -565,26 +629,151 @@ def _clamp_axis(
                     ],
                 )
                 ceiling = target
-        ceilings[row] = ceiling
-        if (
-            floor is None
-            or declared_max is None
-            or floor <= declared_max + _tolerance(declared_max)
-        ):
-            continue
-        if beyond_written_precision(floor, declared_max):
-            if (*cell, floor_column) in reported_floors:
-                continue
-            _record(
-                found.floors,
-                cell,
-                floor_column,
-                floor,
-                declared_max,
-                _labels_past(labels, cell, floor_column, declared_max, above=True),
+        if enforced:
+            ceiling, floor = _hold_enforced_floor(
+                columns, cell, ceiling, floor, declared_min, declared_max, labels, found
             )
         else:
-            floors[row] = declared_max
+            floor = _floor_above_declared(
+                floor_column,
+                cell,
+                floor,
+                declared_max,
+                labels,
+                found,
+                report=(*cell, floor_column) not in reported_floors,
+            )
+        ceilings[row], floors[row] = ceiling, floor
+
+
+def _floor_above_declared(
+    floor_column: str,
+    cell: _Cell,
+    floor: float | None,
+    declared_max: float | None,
+    labels: BoundLabels | None,
+    found: _ClampFindings,
+    *,
+    report: bool,
+) -> float | None:
+    """Step 3 of :func:`clamp_hydro_bounds_to_declared`: *floor*, lowered to
+    *declared_max* within the written precision and else kept, and recorded
+    when *report*."""
+    if (
+        floor is None
+        or declared_max is None
+        or floor <= declared_max + _tolerance(declared_max)
+    ):
+        return floor
+    if not beyond_written_precision(floor, declared_max):
+        return declared_max
+    if not report:
+        return floor
+    _record(
+        found.floors,
+        cell,
+        floor_column,
+        floor,
+        declared_max,
+        _labels_past(labels, cell, floor_column, declared_max, above=True),
+    )
+    return floor
+
+
+def _hold_enforced_floor(
+    columns: tuple[str, str],
+    cell: _Cell,
+    ceiling: float | None,
+    floor: float | None,
+    declared_min: float | None,
+    declared_max: float | None,
+    labels: BoundLabels | None,
+    found: _ClampFindings,
+) -> tuple[float | None, float | None]:
+    """``(ceiling, floor)`` of an enforced-floor cell with its floor at or
+    below the declared max and the stage's ceiling, recording a refusal in
+    *found* where that takes more than the written precision.
+
+    Any crossing within the precision is closed, never left for novomodelo,
+    which checks the stage's pair with no tolerance.
+    """
+    ceiling_column, floor_column = columns
+    if (
+        floor is not None
+        and declared_max is not None
+        and floor > declared_max + _tolerance(declared_max)
+    ):
+        if beyond_written_precision(floor, declared_max):
+            found.refusals.append(
+                _Refusal(
+                    cell,
+                    floor,
+                    declared_max,
+                    tuple(
+                        _labels_past(
+                            labels, cell, floor_column, declared_max, above=True
+                        )
+                    ),
+                    (),
+                    ceiling_is_declared=True,
+                )
+            )
+            return ceiling, floor
+        floor = declared_max
+    stage_floor = floor if floor is not None else declared_min
+    if ceiling is None or stage_floor is None or ceiling >= stage_floor:
+        return ceiling, floor
+    if beyond_written_precision(ceiling, stage_floor):
+        found.refusals.append(
+            _Refusal(
+                cell,
+                stage_floor,
+                ceiling,
+                tuple(_labels_past(labels, cell, floor_column, ceiling, above=True)),
+                tuple(
+                    _labels_past(labels, cell, ceiling_column, stage_floor, above=False)
+                ),
+                ceiling_is_declared=False,
+            )
+        )
+        return ceiling, floor
+    if declared_min is not None and ceiling < declared_min:
+        ceiling = declared_min
+    if floor is not None and floor > ceiling:
+        floor = ceiling
+    return ceiling, floor
+
+
+def _refusal_error(
+    refusal: _Refusal,
+    names: Mapping[int, str],
+    source_codes: Mapping[int, int],
+    deck_file: str | os.PathLike[str] | None,
+) -> FieldParseError:
+    """The error that stops the conversion on *refusal*."""
+    hydro_id, stage_id, _ = refusal.cell
+    plant = f"{source_codes[hydro_id]} {names.get(hydro_id, '')}".rstrip()
+    floor_by = f" ({', '.join(refusal.floor_by)})" if refusal.floor_by else ""
+    if refusal.ceiling_is_declared:
+        detail = (
+            f"the storage floor of {plant} in its stage {stage_id + 1} at "
+            f"{round(refusal.floor, 6)} hm³{floor_by}, above the plant's "
+            f"maximum storage of {round(refusal.ceiling, 6)} hm³"
+        )
+    else:
+        ceiling_by = f" ({', '.join(refusal.ceiling_by)})" if refusal.ceiling_by else ""
+        detail = (
+            f"the storage of {plant} in its stage {stage_id + 1} a floor of "
+            f"{round(refusal.floor, 6)} hm³{floor_by} above its ceiling of "
+            f"{round(refusal.ceiling, 6)} hm³{ceiling_by}"
+        )
+    constraints = (*refusal.floor_by, *refusal.ceiling_by)
+    return FieldParseError(
+        f"The deck sets {detail}. novomodelo holds a plant's storage within "
+        "both limits, so the case would have no solution.",
+        path=None if deck_file is None else os.fspath(deck_file),
+        field=", ".join(constraints) if constraints else None,
+    )
 
 
 def _hydro_names(hydros: Mapping[str, object]) -> dict[int, str]:
@@ -728,6 +917,34 @@ def _floor_above_capacity_diagnostic(
             "the deck has them: novomodelo holds the plant to its capacity "
             "and charges the shortfall below the floor at the violation "
             "penalty, which raises the cost of those stages."
+        ),
+        table=table,
+    )
+
+
+def _floor_below_minimum_diagnostic(
+    found: _Findings,
+    names: Mapping[int, str],
+    source_codes: Mapping[int, int],
+    labelled: bool,
+) -> Diagnostic:
+    table = _clamp_table(
+        found,
+        names,
+        source_codes,
+        labelled,
+        headers=("Deck value", "Minimum"),
+        caption="Stage ids are 0-based; the deck value shown is the lowest.",
+    )
+    return Diagnostic(
+        code="hydro-bounds-storage-floor-below-minimum",
+        severity=Severity.INFO,
+        category="Hydro capacity",
+        title=f"Stage storage floors below the plant minimum raised ({len(table.rows)})",
+        summary=(
+            "The listed per-stage storage floors in the deck sit below the "
+            "plant's minimum storage and were raised to it. The storage cannot "
+            "fall below that minimum, so the raise cannot bind."
         ),
         table=table,
     )

@@ -938,7 +938,9 @@ def test_screen_constraints_reports_unknown_entities_then_conflicts() -> None:
         coupling_only_codes=(),
         thermal_codes=(),
         pumping_codes=(),
+        diversion_codes=(),
         plant_names={118: "BILLINGS"},
+        dadger_path="dadger.rv0",
     )
 
     assert {r.constraint_id for r in (*census.to_bounds, *census.to_generic)} == {
@@ -1154,3 +1156,217 @@ def test_a_constraint_left_out_reports_only_the_term_that_left_it_out() -> None:
     assert [(d.code, d.table.rows if d.table else None) for d in diagnostics] == [
         ("decomp-re-thermal-not-normal", [[1, 30]])
     ]
+
+
+# ---------------------------------------------------------------------------
+# Zero terms, blank tipos and diversion terms on plants without a channel
+# ---------------------------------------------------------------------------
+
+
+def test_a_term_zero_at_every_stage_is_left_out_and_the_rest_lowers_anew() -> None:
+    """``0·QVER`` adds nothing, so constraint 12 is a single ``QDEF`` term and
+    lowers to an outflow bound, as a one-term restriction does."""
+    dadger = _FakeDadger(
+        hq=_decl((12, 1, 1)),
+        cq=_coeff((12, 118, 1.0, 1, "QDEF"), (12, 118, 0.0, 1, "QVER"), tipo=True),
+        lq=_lu((12, 1, _NAN, 100.0, _NAN, 100.0, _NAN, 100.0)),
+    )
+
+    census = read_constraints(dadger)
+
+    record = _only(census.to_bounds, 12)
+    assert [term.variable for term in record.terms] == ["QDEF"]
+    assert [
+        (z.family, z.constraint_id, z.code, z.variable, z.others)
+        for z in census.zero_terms
+    ] == [("HQ", 12, 118, "QVER", 1)]
+
+
+def test_a_term_zero_at_some_stages_only_is_kept() -> None:
+    dadger = _FakeDadger(
+        hv=_decl((7, 1, 2)),
+        cv=_coeff(
+            (7, 40, 1.0, 1, "VARM"),
+            (7, 41, 0.0, 1, "VARM"),
+            (7, 41, 0.5, 2, "VARM"),
+            tipo=True,
+        ),
+        lv=_lv((7, 1, _NAN, 900.0)),
+    )
+
+    census = read_constraints(dadger)
+
+    assert [term.code for term in _only(census.to_generic, 7).terms] == [40, 41]
+    assert census.zero_terms == ()
+
+
+def test_a_constraint_with_only_zero_terms_is_left_out() -> None:
+    dadger = _FakeDadger(
+        hv=_decl((7, 1, 2)),
+        cv=_coeff((7, 40, 0.0, 1, "VARM"), tipo=True),
+        lv=_lv((7, 1, _NAN, 900.0)),
+    )
+
+    census = read_constraints(dadger)
+
+    assert (*census.to_bounds, *census.to_generic) == ()
+    assert census.by_family["HV"] == ()
+    assert [(z.constraint_id, z.others) for z in census.zero_terms] == [(7, 0)]
+
+
+def test_a_constraint_with_only_zero_terms_and_limits_excluding_zero_is_refused() -> (
+    None
+):
+    """No operation meets ``0 >= 100``, so the reader stops, naming the record."""
+    dadger = _FakeDadger(
+        hv=_decl((7, 1, 2)),
+        cv=_coeff((7, 40, 0.0, 1, "VARM"), tipo=True),
+        lv=_lv((7, 1, _NAN, 900.0), (7, 2, 100.0, 900.0)),
+    )
+
+    with pytest.raises(FieldParseError, match=r"HV 7.*stage 2") as err:
+        read_constraints(dadger)
+    assert err.value.field == "HV 7"
+
+
+def test_screen_constraints_notes_the_zero_terms_left_out() -> None:
+    dadger = _FakeDadger(
+        hq=_decl((12, 1, 1)),
+        cq=_coeff((12, 118, 1.0, 1, "QDEF"), (12, 118, 0.0, 1, "QVER"), tipo=True),
+        lq=_lu((12, 1, _NAN, 100.0, _NAN, 100.0, _NAN, 100.0)),
+        hv=_decl((7, 1, 1)),
+        cv=_coeff((7, 40, 0.0, 1, "VARM"), tipo=True),
+        lv=_lv((7, 1, _NAN, 900.0)),
+    )
+
+    _, diagnostics = screen_constraints(
+        read_constraints(dadger),
+        hydro_codes=(40, 118),
+        coupling_only_codes=(),
+        thermal_codes=(),
+        pumping_codes=(),
+        diversion_codes=(),
+        plant_names={},
+        dadger_path="dadger.rv0",
+    )
+
+    [note] = diagnostics
+    assert note.code == "decomp-constraint-zero-terms-left-out"
+    assert note.severity is Severity.INFO
+    assert note.table is not None
+    assert note.table.columns == ["Constraint", "Plant code", "Variable", "Other terms"]
+    assert note.table.rows == [["HQ 12", 118, "QVER", 1], ["HV 7", 40, "VARM", 0]]
+
+
+def test_screen_constraints_leaves_out_the_zero_terms_of_a_constraint_it_drops() -> (
+    None
+):
+    """Constraint 12 is left out for its term on plant 99, which the case
+    lacks; its zero term is not reported a second time."""
+    dadger = _FakeDadger(
+        hq=_decl((12, 1, 1)),
+        cq=_coeff(
+            (12, 99, 1.0, 1, "QDEF"),
+            (12, 118, 1.0, 1, "QDEF"),
+            (12, 118, 0.0, 1, "QVER"),
+            tipo=True,
+        ),
+        lq=_lu((12, 1, _NAN, 100.0, _NAN, 100.0, _NAN, 100.0)),
+    )
+
+    _, diagnostics = screen_constraints(
+        read_constraints(dadger),
+        hydro_codes=(118,),
+        coupling_only_codes=(),
+        thermal_codes=(),
+        pumping_codes=(),
+        diversion_codes=(),
+        plant_names={},
+        dadger_path="dadger.rv0",
+    )
+
+    assert [d.code for d in diagnostics] == ["decomp-rhq-plant-not-operated"]
+
+
+@pytest.mark.parametrize(
+    "blank", ["", "  ", _NAN, None], ids=["empty", "spaces", "nan", "none"]
+)
+@pytest.mark.parametrize(
+    ("family", "register"),
+    [("HQ", "cq"), ("HV", "cv")],
+)
+def test_a_blank_tipo_is_refused_naming_the_record(
+    family: str, register: str, blank: object
+) -> None:
+    decl, limit = (_decl((7, 1, 1)), _lv((7, 1, _NAN, 900.0)))
+    if family == "HQ":
+        limit = _lu((7, 1, _NAN, 90.0, _NAN, 90.0, _NAN, 90.0))
+    dadger = _FakeDadger(
+        **{
+            family.lower(): decl,
+            register: _coeff((7, 40, 1.0, 1, blank), tipo=True),
+            {"HQ": "lq", "HV": "lv"}[family]: limit,
+        }
+    )
+
+    with pytest.raises(FieldParseError, match=rf"{family} 7.*no tipo") as err:
+        read_constraints(dadger)
+    assert err.value.field == f"{register.upper()} tipo"
+
+
+def _diversion_screen(
+    *, diversion_codes: tuple[int, ...] | None
+) -> tuple[ConstraintCensus, list]:
+    dadger = _FakeDadger(
+        hq=_decl((12, 1, 1)),
+        cq=_coeff((12, 66, 1.0, 1, "QDES"), tipo=True),
+        lq=_lu((12, 1, _NAN, 100.0, _NAN, 100.0, _NAN, 100.0)),
+        hv=_decl((7, 1, 1), (8, 1, 1)),
+        cv=_coeff(
+            (7, 66, 1.0, 1, "VDES"),
+            (7, 40, 1.0, 1, "VARM"),
+            (8, 66, 0.0, 1, "VDES"),
+            (8, 40, 1.0, 1, "VARM"),
+            tipo=True,
+        ),
+        lv=_lv((7, 1, _NAN, 900.0), (8, 1, _NAN, 900.0)),
+    )
+    return screen_constraints(
+        read_constraints(dadger),
+        hydro_codes=(40, 66),
+        coupling_only_codes=(),
+        thermal_codes=(),
+        pumping_codes=(),
+        diversion_codes=diversion_codes,
+        plant_names={66: "SALTO GRANDE"},
+        dadger_path="dadger.rv0",
+    )
+
+
+def test_a_diversion_term_on_a_plant_without_a_channel_is_refused() -> None:
+    """Plant 66 has no ``desvio`` in ``hidr.dat`` and no ``AC DESVIO``; the
+    zero ``VDES`` term of HV 8 adds nothing and does not count."""
+    with pytest.raises(FieldParseError, match=r"66 \(SALTO GRANDE\)") as err:
+        _diversion_screen(diversion_codes=())
+    assert err.value.path == "dadger.rv0"
+    assert err.value.field == "HQ 12, HV 7"
+
+
+def test_a_diversion_term_on_a_plant_with_a_channel_is_kept() -> None:
+    census, _ = _diversion_screen(diversion_codes=(66,))
+
+    assert {
+        (r.family, r.constraint_id) for r in (*census.to_bounds, *census.to_generic)
+    } == {
+        ("HQ", 12),
+        ("HV", 7),
+        ("HV", 8),
+    }
+
+
+def test_the_diversion_check_is_skipped_without_the_plants_channels() -> None:
+    """``check decomp`` passes ``None`` when ``hidr.dat`` or the ``AC``
+    records did not resolve, a failure its own check reports."""
+    census, _ = _diversion_screen(diversion_codes=None)
+
+    assert len((*census.to_bounds, *census.to_generic)) == 3

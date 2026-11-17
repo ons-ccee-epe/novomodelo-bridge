@@ -671,8 +671,9 @@ def _diversion_channels(
     to a receiving plant only through the ``diversion`` channel, so a positive
     ``min_diversion_m3s`` or ``max_diversion_m3s`` needs one. The source model
     sends ``QDES`` to the plant's ``desvio`` target (``AC DESVIO``, else
-    ``hidr.dat``) and rejects a ``QDES`` restriction on a plant without one, so
-    the target comes from ``effective.diversions``. The channel carries the
+    ``hidr.dat``), and the conversion refuses a ``QDES`` term on a plant
+    without one (``screen_constraints``), so the target comes from
+    ``effective.diversions``. The channel carries the
     ``AC DESVIO`` limit, or none when the deck gives none or its "no limit"
     value; the resolved bounds still cap each stage. A target outside the case
     leaves the hydro without a channel.
@@ -1492,7 +1493,7 @@ def _read_constraint_census(
     bounds and the GNL generations folded that differ by patamar as
     diagnostics."""
     census, gnl_only = constraints_conv.fold_commanded_gnl_terms(
-        constraint_registers.read_constraints(dadger),
+        constraint_registers.read_constraints(dadger, dadger_path=dadger_path),
         gnl_generation,
         gnl_submarkets=gnl_submarkets,
         ct_submarkets=ct_submarkets,
@@ -1505,10 +1506,12 @@ def _read_constraint_census(
         coupling_only_codes=id_map.idle_hydro_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
+        diversion_codes=effective.diversions.keys(),
         plant_names={
             int(code): str(name).strip()
             for code, name in effective.base["nome_usina"].items()
         },
+        dadger_path=dadger_path,
     )
     patamar_values = constraints_conv.re_gnl_patamar_diagnostic(census, gnl_generation)
     for diagnostic in (*gnl_only, *screened):
@@ -1791,13 +1794,15 @@ def _resolve_or_refuse(
         ) from exc
 
 
-#: Soft bound axes the merge can keep a floor above the ceiling on -> the
-#: limit a report names.
+#: Soft bound axes whose shortfall novomodelo prices, which the merge keeps a
+#: floor above the ceiling on and reports -> the limit a report names. A storage
+#: pair kept past the written precision is refused by
+#: :func:`~novomodelo_bridge.core.emission_checks.clamp_hydro_bounds_to_declared`
+#: instead.
 _SOFT_LIMIT_LABELS: dict[tuple[str, str], str] = {
     ("hydro", "turbined"): "Turbined flow (m³/s)",
     ("hydro", "generation"): "Generation (MW)",
     ("hydro", "outflow"): "Outflow (m³/s)",
-    ("hydro", "storage"): "Storage (hm³)",
     ("hydro_unit_group", "turbined"): "turbined flow (m³/s)",
     ("hydro_unit_group", "generation"): "generation (MW)",
 }
@@ -1821,17 +1826,21 @@ def _keep_soft_conflicts(
     kept: list[_KeptConflict],
 ) -> list[bounds_accumulator.ResolvedRow]:
     """*rows* with each floor above its ceiling settled: lowered to the ceiling
-    within the deck's written precision, else kept and recorded in *kept*
-    under the ``(code, name, limit prefix)`` *plant* gives its row."""
+    within the deck's written precision, else kept and, on an axis of
+    :data:`_SOFT_LIMIT_LABELS`, recorded in *kept* under the ``(code, name,
+    limit prefix)`` *plant* gives its row."""
     settled: list[bounds_accumulator.ResolvedRow] = []
     for row in rows:
         conflict = row.conflict
         if conflict is None:
             settled.append(row)
         elif beyond_written_precision(conflict.lower, conflict.upper):
-            code, name, prefix = plant(row)
-            limit = prefix + _SOFT_LIMIT_LABELS[(row.family, row.axis)]
-            kept.append(_KeptConflict(code, name, limit, row.stage_id, conflict))
+            limit = _SOFT_LIMIT_LABELS.get((row.family, row.axis))
+            if limit is not None:
+                code, name, prefix = plant(row)
+                kept.append(
+                    _KeptConflict(code, name, prefix + limit, row.stage_id, conflict)
+                )
             settled.append(row)
         else:
             settled.append(replace(row, lower=row.upper, conflict=None))
@@ -2038,9 +2047,11 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     bound_tables = bounds_accumulator.build_bound_tables(rows)
     # An RE or RHQ QTUR ceiling can sit above the plant's declared capacity
     # (BELO MONTE's RE does on both real decks); novomodelo rule 43 rejects it.
-    # A ceiling below the stage's floor is not raised: the source model treats
-    # both limits as soft and violates whichever is cheaper, so the case keeps
-    # both and novomodelo prices the shortfall.
+    # An RHV VARM ceiling can sit above the reservoir, which novomodelo takes
+    # as written. A ceiling below the stage's floor is not raised: the source
+    # model treats both limits as soft and violates whichever is cheaper, so the
+    # case keeps both and novomodelo prices the shortfall, except on storage,
+    # whose floor novomodelo enforces, so the clamp refuses the pair.
     hydro_bounds = emission_checks.clamp_hydro_bounds_to_declared(
         hydros_dict,
         bound_tables.hydro.sort_by([("hydro_id", "ascending"), *_BOUND_SORT_KEYS]),
@@ -2048,6 +2059,7 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
         raise_to_minimum=False,
         labels=_hydro_bound_labels(contribs),
         reported_floors=_kept_hydro_floors(rows),
+        deck_file=case.files.dadger,
     )
     assert hydro_bounds is not None
     # Fold in the TI irrigation withdrawal (a consumptive water use novomodelo reads

@@ -452,12 +452,16 @@ def _convert_constraints(
 
 
 def _resolve_hydro_bounds(
-    hydros_dict: dict, temporal: _TemporalStochasticArtifacts, id_map: NewaveIdMap
+    hydros_dict: dict,
+    temporal: _TemporalStochasticArtifacts,
+    id_map: NewaveIdMap,
+    modif: Path | None,
 ) -> pa.Table | None:
     """Merge the per-stage hydro bound sources into ``hydro_bounds.parquet``.
 
     Resolved before the write phase so the post-emission self-checks see the
-    exact table that will be written.
+    exact table that will be written. *modif* is the ``modif.dat`` whose
+    ``VMINT``/``VMAXT`` a refused storage limit comes from.
     """
     hydro_bounds_table = _merge_hydro_bounds(
         temporal.water_withdrawal, temporal.storage_bounds
@@ -473,6 +477,7 @@ def _resolve_hydro_bounds(
         hydro_bounds_table,
         source_codes={id_map.hydro_id(code): code for code in id_map.all_hydro_codes},
         raise_to_minimum=True,
+        deck_file=modif,
     )
 
 
@@ -801,7 +806,9 @@ def _convert_newave_case_impl(
 
     step("Converting constraints")
     constraints = _convert_constraints(case, id_map, entities.load_stats)
-    hydro_bounds_table = _resolve_hydro_bounds(entities.hydros, temporal, id_map)
+    hydro_bounds_table = _resolve_hydro_bounds(
+        entities.hydros, temporal, id_map, case.files.modif
+    )
     _run_emission_checks(entities, temporal, constraints, hydro_bounds_table)
 
     # Every output path is routed through one ``CaseWriter`` so the

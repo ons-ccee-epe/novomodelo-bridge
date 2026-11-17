@@ -2347,7 +2347,7 @@ reads = [
   { file = "ghmin" },
   { file = "exph" },
 ]
-summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`, resultado da junção externa de três tabelas: retirada de água (`dsvagua.dat`), limites temporais (`modif.dat`, `ghmin.dat`, rampa de máquinas de enchimento de `exph.dat`) e limites de capacidade por estágio (a potência disponível de toda usina e, com `CFUGA`/`CMONT` ou entrada de máquinas, o engolimento do estágio). Colunas de máximo acima do valor declarado em `hydros.json` são limitadas ao declarado, com nota; um máximo abaixo do piso do estágio (o mínimo da própria linha ou, na falta, o declarado) é elevado a esse piso, no máximo até o máximo declarado, com aviso; um mínimo acima do máximo declarado fica como no deck, com aviso."
+summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`, resultado da junção externa de três tabelas: retirada de água (`dsvagua.dat`), limites temporais (`modif.dat`, `ghmin.dat`, rampa de máquinas de enchimento de `exph.dat`) e limites de capacidade por estágio (a potência disponível de toda usina e, com `CFUGA`/`CMONT` ou entrada de máquinas, o engolimento do estágio). Colunas de máximo acima do valor declarado em `hydros.json` são limitadas ao declarado, com nota; um máximo abaixo do piso do estágio (o mínimo da própria linha ou, na falta, o declarado) é elevado a esse piso, no máximo até o máximo declarado, com aviso; um mínimo acima do máximo declarado fica como no deck, com aviso, exceto no armazenamento, cujo piso o Novomodelo impõe como limite do volume da usina: ali a conversão para com `source-field-parse`, e um piso abaixo do mínimo declarado é elevado a ele, com nota."
 
   [[output.field]]
   path = "hydro_id"
@@ -2394,7 +2394,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
     { file = "modif", item = "VOLMAX · volume" },
     { file = "dger", item = "sazonaliza_vmint" },
   ]
-  how = "Armazenamento mínimo (hm³) de `VMINT`: o `volume` em hm³ quando `unidade` = h ou, com `%`, `volume_minimo + (volume / 100) · volume útil`; função degrau a partir de `data_inicio` até o próximo registro; valor maior ou igual a 99990 restaura o padrão (linha sem valor). No pós-estudo repete o padrão mensal do último ano de estudo se `sazonaliza_vmint = 1`, senão congela o último estágio. Ignorado para usina sem volume útil."
+  how = "Armazenamento mínimo (hm³) de `VMINT`: o `volume` em hm³ quando `unidade` = h ou, com `%`, `volume_minimo + (volume / 100) · volume útil`; função degrau a partir de `data_inicio` até o próximo registro; valor maior ou igual a 99990 restaura o padrão (linha sem valor). No pós-estudo repete o padrão mensal do último ano de estudo se `sazonaliza_vmint = 1`, senão congela o último estágio. Ignorado para usina sem volume útil. Abaixo do `reservoir.min_storage_hm3` declarado da usina, é elevado a ele, com a nota `hydro-bounds-storage-floor-below-minimum`: o volume não fica abaixo desse mínimo, então a elevação não restringe. O Novomodelo impõe o piso como limite do volume da usina, sem cobrar violação; acima do `reservoir.max_storage_hm3` declarado, além da precisão escrita do deck (1e-6 relativo), a conversão para com `source-field-parse`, nomeando `modif.dat`, e dentro dela o piso é reduzido ao declarado sem diagnóstico."
 
   [[output.field]]
   path = "max_storage_hm3"
@@ -2408,7 +2408,7 @@ summary = "Limites por (usina, estágio) que apertam o envelope de `hydros.json`
     { file = "modif", item = "VOLMAX · volume" },
     { file = "dger", item = "sazonaliza_vmaxt" },
   ]
-  how = "Armazenamento máximo (hm³) de `VMAXT` (volume de espera): o `volume` em hm³ quando `unidade` = h ou, com `%`, `volume_minimo + (volume / 100) · volume útil`; função degrau a partir de `data_inicio`; valor maior ou igual a 99990 restaura o padrão. No pós-estudo repete o padrão mensal do último ano de estudo se `sazonaliza_vmaxt = 1`, senão congela o último estágio."
+  how = "Armazenamento máximo (hm³) de `VMAXT` (volume de espera): o `volume` em hm³ quando `unidade` = h ou, com `%`, `volume_minimo + (volume / 100) · volume útil`; função degrau a partir de `data_inicio`; valor maior ou igual a 99990 restaura o padrão. No pós-estudo repete o padrão mensal do último ano de estudo se `sazonaliza_vmaxt = 1`, senão congela o último estágio. Acima do `reservoir.max_storage_hm3` declarado da usina, é reduzido ao declarado (a usina não armazena além do reservatório), com o diagnóstico `hydro-bounds-clamped-to-declared-capacity` quando a diferença passa da precisão escrita do deck; abaixo do piso do estágio (o `VMINT` da própria linha ou, na falta, o mínimo declarado), é elevado a ele, com o aviso `hydro-bounds-raised-to-declared-minimum`."
 
   [[output.field]]
   path = "min_turbined_m3s"

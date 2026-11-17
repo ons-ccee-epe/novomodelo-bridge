@@ -365,6 +365,7 @@ def _special_constraint_coverage(
     dadgnl_path: str | None,
     libs_long_form: bool | None = False,
     plant_names: Mapping[int, str] | None = None,
+    diversion_codes: Collection[int] | None = None,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify the deck's special constraints into converted (RE/HQ/HV/HE,
     split into bounds-lowered vs generic-emitted), left out (a term on an
@@ -378,9 +379,10 @@ def _special_constraint_coverage(
     under *gnl_submarkets* and *ct_submarkets*,
     screened by
     :func:`~novomodelo_bridge.decomp.constraint_registers.screen_constraints`
-    against *id_map* and the ``UE`` codes of *pumping_ids*. Returns one
-    summary :class:`CheckItem`, failed only when the fold stops the
-    conversion, an ``INFO`` for the converted split when any constraint
+    against *id_map*, the ``UE`` codes of *pumping_ids* and the plants with a
+    diversion, *diversion_codes* (``None`` when the cadastro did not
+    resolve). Returns one summary :class:`CheckItem`, failed only when the
+    read, the fold or the screen stops the conversion, an ``INFO`` for the converted split when any constraint
     converts, and, verbatim as ``convert decomp`` raises them, the fold's and
     the screen's diagnostics (conflicting restrictions under *plant_names*),
     the one of
@@ -398,29 +400,30 @@ def _special_constraint_coverage(
         re_gnl_patamar_diagnostic,
     )
 
-    census = constraint_registers.read_constraints(dadger)
     try:
         census, gnl_only = fold_commanded_gnl_terms(
-            census,
+            constraint_registers.read_constraints(dadger, dadger_path=dadger_path),
             gnl_generation or {},
             gnl_submarkets=gnl_submarkets or {},
             ct_submarkets=ct_submarkets,
             dadger_path=dadger_path,
             dadgnl_path=dadgnl_path,
         )
+        census, screened = constraint_registers.screen_constraints(
+            census,
+            hydro_codes=id_map.operated_hydro_codes,
+            coupling_only_codes=id_map.idle_hydro_codes,
+            thermal_codes=id_map.thermal_codes,
+            pumping_codes=pumping_ids.keys(),
+            diversion_codes=diversion_codes,
+            plant_names={} if plant_names is None else plant_names,
+            dadger_path=dadger_path,
+        )
     except (FieldParseError, UnsupportedSourceError) as exc:
         failed = CheckItem(
             label="Special-constraint coverage", passed=False, detail=str(exc)
         )
         return [failed], [diagnostic_from_exception(exc, context=_CONTEXT)]
-    census, screened = constraint_registers.screen_constraints(
-        census,
-        hydro_codes=id_map.operated_hydro_codes,
-        coupling_only_codes=id_map.idle_hydro_codes,
-        thermal_codes=id_map.thermal_codes,
-        pumping_codes=pumping_ids.keys(),
-        plant_names={} if plant_names is None else plant_names,
-    )
 
     bounds_by_family: dict[str, int] = {}
     generic_by_family: dict[str, int] = {}
@@ -685,6 +688,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
         from novomodelo_bridge.decomp.converters.thermal import ct_submarkets
 
         plant_names: dict[int, str] = {}
+        diversion_codes: frozenset[int] | None = None
         try:
             hidr = read_hidr(files.hidr)
             effective, cadastro_report = build_effective_cadastro(
@@ -703,6 +707,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
                 int(code): str(name).strip()
                 for code, name in effective.base["nome_usina"].items()
             }
+            diversion_codes = frozenset(effective.diversions)
             cov_checks, cov_diags = _ac_coverage(dadger, effective, cadastro_report)
             checks.extend(cov_checks)
             diagnostics.extend(cov_diags)
@@ -731,6 +736,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             dadgnl_path=str(files.dadgnl) if files.dadgnl is not None else None,
             libs_long_form=libs_long_form,
             plant_names=plant_names,
+            diversion_codes=diversion_codes,
         )
         checks.extend(sc_checks)
         diagnostics.extend(sc_diags)

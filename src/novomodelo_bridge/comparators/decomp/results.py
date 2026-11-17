@@ -101,6 +101,10 @@ from novomodelo_bridge.core.diagnostics import (
 )
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.units import HM3_PER_M3S_HOUR, MEAN_MONTH_HOURS
+from novomodelo_bridge.decomp.converters.cadastro import (
+    EffectiveCadastro,
+    effective_storage_range,
+)
 from novomodelo_bridge.decomp.converters.libs_electrical import ande_load
 from novomodelo_bridge.decomp.temporal import hours_weighted
 from novomodelo_bridge.novomodelo import readers as novomodelo_readers
@@ -110,6 +114,7 @@ if TYPE_CHECKING:
     from novomodelo_bridge.comparators.dataset import ComparisonDataset
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.constraint_registers import (
+        ConstraintCensus,
         ConstraintRecord,
         ConstraintTerm,
     )
@@ -2675,35 +2680,41 @@ def _stage_frame_to_lookup(
 def _storage_lookup(
     hydro_frame: pl.DataFrame,
     id_map: DecompIdMap,
-    min_storage_by_novomodelo_id: dict[int, float],
+    effective: EffectiveCadastro,
 ) -> dict[tuple[int, int], float]:
-    """``{(source code, stage_0based): absolute storage hm3}`` = useful + Vmin.
+    """``{(source code, stage_0based): absolute storage hm3}`` = useful + the
+    stage's effective floor.
 
-    The source model's own operation export (``volume_util_final_hm3``)
-    reports *useful* volume (above the plant's minimum operative storage);
-    novomodelo's ``hydro_storage(id)`` -- what an ``HV``/``VARM`` generic
-    constraint's expression is built from -- is absolute. This reuses the
-    ``min_storage_hm3`` the converter already wrote to the case's own
-    ``system/hydros.json`` (via `novomodelo_readers.read_novomodelo_hydro_metadata`) --
-    the same floor `_novomodelo_hydro` subtracts in the other direction for the
-    Hydro Operation tab's own storage row -- rather than rebuilding
-    ``EffectiveCadastro`` from the deck a second time. A single static value
-    per plant, not per-stage: the same simplification the shared generic
-    constraint view (`novomodelo.constraint_expr.resolve_generic_constraints`)
-    accepts for its useful-volume terms.
+    The source model's ``volume_util_final_hm3`` is measured from the stage's
+    effective floor (``effective_storage_range`` of *effective*), the floor
+    the conversion shifts an HV's ``VARM`` bounds by onto novomodelo's
+    absolute ``hydro_storage``. The static ``min_storage_hm3`` of
+    ``system/hydros.json`` is the lowest floor over the stages and
+    understates storage on a stage an ``AC VOLMIN`` raises.
     """
     useful = _stage_frame_to_lookup(hydro_frame, "volume_util_final_hm3")
-    out: dict[tuple[int, int], float] = {}
-    for (code, stage), value in useful.items():
-        try:
-            novomodelo_id = id_map.hydro_id(code)
-        except KeyError:
-            continue
-        vmin = min_storage_by_novomodelo_id.get(novomodelo_id)
-        if vmin is None:
-            continue
-        out[(code, stage)] = value + vmin
-    return out
+    return {
+        (code, stage): value + effective_storage_range(effective, code, stage)[0]
+        for (code, stage), value in useful.items()
+        if code in id_map.hydro_codes
+    }
+
+
+def _hv_storage_lookup(
+    case: DecompCase, census: ConstraintCensus, hydro_frame: pl.DataFrame
+) -> dict[tuple[int, int], float]:
+    """`_storage_lookup` over *case*'s effective cadastro; empty, with no
+    cadastro built, when *census* holds no HV ``VARM`` term."""
+    if not any(
+        term.variable == "VARM"
+        for record in census.by_family.get("HV", ())
+        for term in record.terms
+    ):
+        return {}
+    from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
+
+    effective, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
+    return _storage_lookup(hydro_frame, case.id_map, effective)
 
 
 @dataclass(frozen=True)
@@ -2801,7 +2812,6 @@ _GC_LHS_SCHEMA = {
 
 def _generic_constraint_lhs_decomp(
     case: DecompCase,
-    novomodelo_output_dir: Path,
     gc_constraints: list[dict],
     *,
     probabilities: pl.DataFrame | None = None,
@@ -2810,12 +2820,13 @@ def _generic_constraint_lhs_decomp(
     operation output.
 
     *case* is the shared, once-parsed deck :func:`build_decomp_dataset`
-    builds: its ``id_map`` resolves a plant code to its Novomodelo hydro id (the
-    HV storage floor), and ``dadger`` feeds the special-constraint census
-    (:func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`) --
-    neither is re-parsed here. The ``dec_oper_*`` tables are read directly
-    off *case*'s own directory. *probabilities* is forwarded unchanged to
-    every underlying :func:`_scenario_mean` fold this derivation relies on
+    builds: its ``dadger`` feeds the special-constraint census
+    (:func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`),
+    and its ``dadger``/``hidr``/``calendar`` give an HV's effective stage
+    floor (see `_hv_storage_lookup`) -- none is re-parsed here. The
+    ``dec_oper_*`` tables are read directly off *case*'s own directory.
+    *probabilities* is forwarded unchanged to every underlying
+    :func:`_scenario_mean` fold this derivation relies on
     (:func:`_dec_oper_hydro_stage_frame`/:func:`_dec_oper_thermal_stage_frame`/
     :func:`_rhe_lhs_lookup`) -- see :func:`_hydro_side` for its
     scenario-weighting contract.
@@ -2834,8 +2845,8 @@ def _generic_constraint_lhs_decomp(
     - **HQ** (flow): ``QDEF``/``QTUR``/``QDES``/``QVER`` register terms
       resolve against the matching ``dec_oper_usih`` flow column.
     - **HV** (storage): ``VARM`` register terms resolve against
-      ``dec_oper_usih``'s *useful* stage-final volume, floor-adjusted to
-      novomodelo's absolute basis (see `_storage_lookup`).
+      ``dec_oper_usih``'s *useful* stage-final volume plus the stage's
+      effective floor, novomodelo's absolute basis (see `_storage_lookup`).
     - **RHE** (soft stored-energy): read directly from ``DecOperRheSoft``
       (see `_rhe_lhs_lookup`) -- no register/census lookup needed -- and
       converted from MWmês to MWh with the mean month's hours, the unit of
@@ -2854,20 +2865,13 @@ def _generic_constraint_lhs_decomp(
     from novomodelo_bridge.decomp.constraint_registers import read_constraints
 
     decomp_dir = case.files.dadger.parent
-    census = read_constraints(case.dadger)
+    census = read_constraints(case.dadger, dadger_path=str(case.files.dadger))
     census_by_key: dict[tuple[str, int], ConstraintRecord] = {}
     for records in census.by_family.values():
         for record in records:
             census_by_key[(record.family, record.constraint_id)] = record
 
     hydro_frame = _dec_oper_hydro_stage_frame(decomp_dir, probabilities=probabilities)
-    min_storage = {
-        i: float(m.get("min_storage_hm3") or 0.0)
-        for i, m in novomodelo_readers.read_novomodelo_hydro_metadata(
-            novomodelo_output_dir
-        ).items()
-    }
-    storage_lookup = _storage_lookup(hydro_frame, case.id_map, min_storage)
 
     thermal_frame = _dec_oper_thermal_stage_frame(
         decomp_dir, probabilities=probabilities
@@ -2881,7 +2885,7 @@ def _generic_constraint_lhs_decomp(
             "QDES": _stage_frame_to_lookup(hydro_frame, "vazao_desviada_m3s"),
             "QVER": _stage_frame_to_lookup(hydro_frame, "vazao_vertida_m3s"),
         },
-        storage=storage_lookup,
+        storage=_hv_storage_lookup(case, census, hydro_frame),
     )
     rhe_lhs = _rhe_lhs_lookup(
         _dec_oper_rhesoft_frame(decomp_dir), probabilities=probabilities
@@ -3144,7 +3148,7 @@ def _generic_constraint_fields(
     if gc_constraints:
         gc_lhs_cb = evaluate_lhs_novomodelo(gc_resolved, novomodelo_output_dir)
         gc_lhs_nw = _generic_constraint_lhs_decomp(
-            case, novomodelo_output_dir, gc_constraints, probabilities=probabilities
+            case, gc_constraints, probabilities=probabilities
         )
     else:
         gc_lhs_cb = pl.DataFrame()

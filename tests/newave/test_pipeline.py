@@ -421,6 +421,74 @@ class TestEmissionCheckWiring:
         # Load-bearing: the clamp does not flip the verdict.
         assert _convert_status(report.diagnostics, success="ok") == "ok"
 
+    def test_storage_floor_above_the_reservoir_stops_the_conversion_naming_modif(
+        self, tmp_path: Path
+    ) -> None:
+        """novomodelo holds a non-filling plant's storage floor as a bound, so a
+        VMINT above the reservoir would leave the stage with no solution: the
+        conversion stops before writing, naming modif.dat."""
+        import contextlib
+
+        from novomodelo_bridge.core.errors import FieldParseError
+        from novomodelo_bridge.newave.pipeline import convert_newave_case
+
+        src = _make_fake_newave_dir(tmp_path)
+        dst = tmp_path / "novomodelo_case"
+        modif = src / "modif.dat"
+
+        hydros = {
+            "$schema": "http://example",
+            "hydros": [
+                {
+                    "id": 0,
+                    "name": "Test Plant",
+                    "reservoir": {"min_storage_hm3": 10.0, "max_storage_hm3": 500.0},
+                }
+            ],
+        }
+        floor_above_the_reservoir = pa.table(
+            {
+                "hydro_id": pa.array([0], type=pa.int32()),
+                "stage_id": pa.array([2], type=pa.int32()),
+                "min_storage_hm3": pa.array([600.0], type=pa.float64()),
+            }
+        )
+
+        fake_id_map = MagicMock()
+        fake_id_map.all_hydro_codes = [6]
+        fake_id_map.hydro_id.side_effect = {6: 0}.__getitem__
+        fake_case = MagicMock()
+        fake_case.id_map = fake_id_map
+        fake_case.files.modif = modif
+        with contextlib.ExitStack() as stack:
+            for p in _all_converter_patches(fake_id_map):
+                stack.enter_context(p)
+            stack.enter_context(
+                patch(
+                    "novomodelo_bridge.newave.pipeline.NewaveCase.from_directory",
+                    return_value=fake_case,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "novomodelo_bridge.newave.pipeline.hydro_conv.convert_hydros",
+                    return_value=hydros,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "novomodelo_bridge.newave.pipeline.hydro_conv.convert_storage_bounds",
+                    return_value=floor_above_the_reservoir,
+                )
+            )
+            with pytest.raises(
+                FieldParseError, match="above the plant's maximum"
+            ) as err:
+                convert_newave_case(src, dst)
+
+        assert err.value.path == str(modif)
+        assert not (dst / "constraints").exists()
+
 
 # ---------------------------------------------------------------------------
 # Pipeline integration tests for inflow_history.parquet

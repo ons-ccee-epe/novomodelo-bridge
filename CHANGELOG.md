@@ -18,9 +18,10 @@ links are cobre-bridge's.
 
 #### Both tracks
 
-- **`convert newave` and `convert decomp` warn about per-stage floors above a
-  plant's capacity.** The floors are written as the deck has them, and
-  novomodelo charges the shortfall as a violation.
+- **`convert newave` and `convert decomp` warn about per-stage turbined-flow,
+  generation and outflow floors above a plant's capacity.** The floors are
+  written as the deck has them, and novomodelo charges the shortfall as a
+  violation.
 - **`convert newave` and `convert decomp` warn about electric constraints
   written with `demanda` or `demanda_sin`**, whose multiplier the case's CMO
   leaves out where they bind. Write the term as `val_demanda` or
@@ -93,8 +94,8 @@ links are cobre-bridge's.
   `restricao-eletrica.csv` term multiplied or divided by a constant written
   after it** (`ger_usih(1) * 2`). Write the factor before the term
   (`2 * ger_usih(1)`); `convert decomp` refuses such a LIBS formula too.
-- **`convert newave` raises a per-stage turbined-flow, generation or outflow
-  ceiling below the stage's floor up to that floor.** It reports this as
+- **`convert newave` raises a per-stage turbined-flow, generation, outflow or
+  storage ceiling below the stage's floor up to that floor.** It reports this as
   `hydro-bounds-raised-to-declared-minimum`, not
   `hydro-bounds-clamped-to-declared-capacity`. Results change; reconvert.
 - **`convert newave` lists electric constraints with no limit on any stage in
@@ -110,6 +111,10 @@ links are cobre-bridge's.
   term on a GNL thermal whose number a `CT` record gives in another
   subsystem**, which it converted as a normal thermal. Renumber one of the two
   plants or remove the term.
+- **BREAKING: `convert decomp` and `check decomp` stop with
+  `source-field-parse` on a `QDES` or `VDES` term on a plant with no
+  diversion**, which it wrote on a diversion the case lacks or stopped on
+  later. Add an `AC DESVIO` record for the plant, or remove the term.
 - **`convert decomp` converts an `RE` constraint with an `FT` term on a GNL
   thermal of `dadgnl.rvN`**, moving the `GL` commitment onto the limits, where
   it left the constraint out. Results change; reconvert such decks. A GNL term
@@ -129,6 +134,10 @@ links are cobre-bridge's.
   convert, and with `source-field-parse` on a malformed record**, naming the
   file, field and fix, where it failed with `unexpected-error`. `compare
   decomp` and `export dessem` report them the same way.
+- **`convert decomp` leaves out, with a note, `HQ` and `HV` terms whose
+  coefficient is zero at every stage**, and a constraint left with no term.
+  Such a constraint whose limits exclude zero stops it with
+  `source-field-parse`.
 - **`convert decomp` warns about the `AC` registers it does not read.**
 
 #### Check
@@ -213,6 +222,10 @@ links are cobre-bridge's.
 
 #### Both tracks
 
+- **`convert newave` and `convert decomp` let per-stage storage limits
+  (`VMAXT`, `VMINT`, `HV`) leave the reservoir.** Limits outside it now move
+  to its edge with a note, but a floor above it, or above the stage's ceiling,
+  stops with `source-field-parse`. Results change; reconvert such decks.
 - **A failed `convert newave` or `convert decomp` left an empty case
   directory behind.** It now removes the directories it created; one it
   cannot remove adds an `output-rollback-incomplete` error. Delete that
@@ -277,6 +290,9 @@ links are cobre-bridge's.
 - **`compare decomp` counted diverted flow in DECOMP's outflow, left out the
   lines to the `IV` node, and drew storage bands on total volume.** Outflow
   is turbined plus spilled flow and the bands are on useful volume. Run
+  `compare decomp` again.
+- **`compare decomp` read DECOMP's side of an `HV` storage constraint too
+  low on the stages where an `AC VOLMIN` raises the storage floor.** Run
   `compare decomp` again.
 - **`compare newave` and `compare decomp` drew the source model's stored
   energy 0.07% low**, at 730 hours a month instead of the 730.5-hour mean
