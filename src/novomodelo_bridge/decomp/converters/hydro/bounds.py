@@ -435,7 +435,7 @@ def stage_availability_factors(
     *,
     effective: EffectiveCadastro,
 ) -> dict[tuple[int, int, int], float]:
-    """``{(code, unit_group_id, stage_index): MP × FD}`` for every operated
+    """``{(code, unit_group_id, stage_index): MP × FD}`` for every converted
     plant.
 
     A single-group plant (group 0) defaults a missing ``MP`` or ``FD``
@@ -506,7 +506,7 @@ def convert_hydro_group_availability(
     """
     factors = stage_availability_factors(case, id_map, effective=effective)
     values: dict[tuple[int, int, int], GroupBoundEntry] = {}
-    for code in id_map.hydro_codes:
+    for code in id_map.operated_hydro_codes:
         hreg = case.hidr.loc[code]
         hydro_id = id_map.hydro_id(code)
         for group_id in range(turbine_limits.group_count(code)):
@@ -686,7 +686,7 @@ def _itaipu_ri_frequency_limits(
         half but no estágio-1 row for it (no forward-fill base) -- the same
         fail-loud contract as ``read_carga_ande``.
     """
-    if _ITAIPU_CODE not in id_map.hydro_codes:
+    if _ITAIPU_CODE not in id_map.operated_hydro_codes:
         return {}
     calendar = case.calendar
     ri = as_frame(case.dadger.ri(df=True))

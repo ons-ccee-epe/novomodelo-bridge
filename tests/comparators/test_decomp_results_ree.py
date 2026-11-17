@@ -248,6 +248,27 @@ class TestReeResultComparisons:
         by_variable = {r.variable: r for r in results}
         assert by_variable["ena_mwmes"].novomodelo_value == pytest.approx(150.0)
 
+    def test_a_dormant_plant_is_left_out_without_a_diagnostic(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        id_map = DecompIdMap(
+            bus_codes=(1,),
+            bus_names=("SE",),
+            hydro_codes=(10, 20, 30),
+            dormant_hydro_codes=(30,),
+        )
+        _patch_ree_sources(monkeypatch)
+
+        with dx.collect() as collected:
+            results, unmapped = _ree_result_comparisons(
+                tmp_path, _ree_novomodelo_hydro_fixture(), id_map
+            )
+
+        assert unmapped == []
+        assert collected == []
+        by_variable = {r.variable: r for r in results}
+        assert by_variable["ena_mwmes"].novomodelo_value == pytest.approx(150.0)
+
     def test_no_membership_table_degrades_to_no_rows_and_notes_the_missing_relato(
         self, tmp_path: Path
     ) -> None:

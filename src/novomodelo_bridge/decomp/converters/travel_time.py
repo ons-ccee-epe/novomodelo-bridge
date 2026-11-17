@@ -15,9 +15,9 @@ config-time validator (``travel_time.rs`` rule 5) requires those windows to
 gap and none future-dated (rule 5b), so this module tiles exactly that span
 with the ``VI`` weekly flows, most-recent window first.
 
-Only operated plants with a downstream cascade arc get a travel-time arc; a
-``VI`` row for a plant that is unoperated or has no downstream is dropped and
-reported (there is no arc to delay).
+Only converted plants with a downstream cascade arc get a travel-time arc; a
+``VI`` row for a plant the case leaves out or that has no downstream is dropped
+and reported (there is no arc to delay).
 """
 
 from __future__ import annotations
@@ -143,7 +143,7 @@ def convert_travel_time(
     the ``{plant code: travel_time_hours}`` map :func:`~novomodelo_bridge.decomp.
     hydro.convert_hydros` stamps onto each arc plant's ``hydros.json`` entry,
     and the second is the ``initial_conditions.past_defluences`` list seeding
-    the in-transit water. Both cover the same set of plants — those operated
+    the in-transit water. Both cover the same set of plants — those converted
     **and** carrying a downstream cascade arc — so novomodelo's coverage rule sees a
     seed for every declared arc.
     """
@@ -151,16 +151,16 @@ def convert_travel_time(
     if not travel_times:
         return {}, []
 
-    operated = set(id_map.hydro_codes)
+    converted = set(id_map.hydro_codes)
     hours_by_code: dict[int, float] = {}
     past_defluences: list[dict] = []
     unused: list[list[object]] = []
     for code in sorted(travel_times):
         travel_time = travel_times[code]
-        if code not in operated:
+        if code not in converted:
             unused.append([code, _plant_name(effective, code), "not in the case"])
             continue
-        if _downstream_operated(effective, code, operated) is None:
+        if _downstream_operated(effective, code, converted) is None:
             unused.append([code, _plant_name(effective, code), "no plant downstream"])
             continue
         hours_by_code[code] = travel_time.travel_time_hours

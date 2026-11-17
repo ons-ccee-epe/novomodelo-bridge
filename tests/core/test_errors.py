@@ -5,6 +5,7 @@ from __future__ import annotations
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import (
     BridgeError,
+    CaseIdentityError,
     EmissionCheckError,
     FieldParseError,
     NovomodeloOutputError,
@@ -111,6 +112,13 @@ class TestDiagnosticFromException:
         assert isinstance(exc, ValueError)
         assert diag.code == "case-self-check-failed"
         assert diag.remediation is None
+
+    def test_case_identity_error_has_its_own_code(self) -> None:
+        exc = CaseIdentityError("the deck operates 3 hydro plants but the case holds 2")
+        diag = diagnostic_from_exception(exc, context="Comparison")
+        assert isinstance(exc, ValueError)
+        assert diag.code == "case-deck-mismatch"
+        assert diag.remediation
 
     def test_novomodelo_partition_missing_error_category(self) -> None:
         exc = NovomodeloPartitionMissingError(

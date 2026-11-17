@@ -127,9 +127,13 @@ def compare_operating_points(
     if sist is None:
         return None
     eff, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
-    source = _source_points(usih, sist, case, eff, probabilities)
+    code_to_novomodelo = {
+        code: case.id_map.hydro_id(code) for code in case.id_map.operated_hydro_codes
+    }
+    source = _source_points(usih, sist, code_to_novomodelo, eff, probabilities)
     novomodelo = novomodelo_points(
-        novomodelo_output_dir, dict(enumerate(case.id_map.hydro_codes))
+        novomodelo_output_dir,
+        {hydro_id: code for code, hydro_id in code_to_novomodelo.items()},
     )
     if source.is_empty() or novomodelo.is_empty():
         return None
@@ -138,6 +142,7 @@ def compare_operating_points(
         **_fpha_frames(
             decomp_dir,
             case,
+            code_to_novomodelo,
             eff,
             novomodelo_output_dir,
             source,
@@ -153,12 +158,11 @@ def compare_operating_points(
 def _source_points(
     usih: pl.DataFrame,
     sist: pl.DataFrame,
-    case: DecompCase,
+    code_to_novomodelo: dict[int, int],
     eff: EffectiveCadastro,
     probabilities: pl.DataFrame,
 ) -> pl.DataFrame:
     """The source model's per-block operating points, every operated plant."""
-    code_to_novomodelo = {c: case.id_map.hydro_id(c) for c in case.id_map.hydro_codes}
     points = (
         usih.filter(pl.col("patamar").is_not_null())
         .with_columns(
@@ -255,6 +259,7 @@ def _first_stage_incremental(usih: pl.DataFrame) -> dict[int, float]:
 def _fpha_frames(
     decomp_dir: Path,
     case: DecompCase,
+    code_to_novomodelo: dict[int, int],
     eff: EffectiveCadastro,
     novomodelo_output_dir: Path,
     source: pl.DataFrame,
@@ -286,7 +291,6 @@ def _fpha_frames(
         read_eco_fpha, "eco_fpha_.rvN", decomp_dir, _ECO_FPHA_EFFECT, note_missing=False
     )
 
-    code_to_novomodelo = {c: case.id_map.hydro_id(c) for c in case.id_map.hydro_codes}
     source_planes = source_planes.rename(_PLANE_COLUMNS).with_columns(
         pl.col("codigo_usina").alias("code"),
         (pl.col("estagio") - 1).alias("stage"),
@@ -429,7 +433,7 @@ def _plant_hydraulics(
         schema=LINK_SCHEMA,
         orient="row",
     )
-    operated = set(case.id_map.hydro_codes)
+    operated = set(case.id_map.operated_hydro_codes)
     plant_of_gauge = {
         int(p): int(c) for c, p in hidr["posto"].items() if int(c) in operated
     }

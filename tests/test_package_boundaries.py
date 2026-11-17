@@ -298,6 +298,7 @@ _TYPE_CHECKING_EDGES: frozenset[tuple[str, str]] = frozenset(
         ("core.provenance", "decomp.files"),
         ("core.provenance", "newave.files"),
         ("decomp.converters.constraints", "core.generic_constraint_builder"),
+        ("dessem.exporters.fcf.core.travel_time", "decomp.case_identity"),
         ("ui.compare_summary", "comparators.charts.costs"),
         ("ui.compare_summary", "comparators.dataset"),
         ("ui.compare_summary", "comparators.verdict"),

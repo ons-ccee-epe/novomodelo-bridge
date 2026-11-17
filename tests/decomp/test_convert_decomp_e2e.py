@@ -15,15 +15,35 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
-from idecomp.decomp import Dadger
+from idecomp.decomp import Dadger, Vazoes
 
+from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.decomp.case import DecompCase
+from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
 from novomodelo_bridge.decomp.converters.penalties import FICTITIOUS_EXCHANGE_FACTOR
+from novomodelo_bridge.decomp.fcf.bootstrap import bootstrap_terminal_manifest
+from novomodelo_bridge.decomp.fcf.coupling import resolve_couplings
+from novomodelo_bridge.decomp.fcf.importer import (
+    _complexo_map,
+    _patch_policy_boundary,
+    _seed_recent_observations,
+)
+from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
+from novomodelo_bridge.novomodelo.case_writer import CaseWriter
+from novomodelo_bridge.novomodelo.readers import read_novomodelo_hydro_block_operation
+from tests._fcf_fixtures import (
+    make_boundary_cuts,
+    make_cut_record,
+    synthetic_roundtrip,
+)
 from tests.conftest import (
     FloatDigitsKwargs,
     case_json_floats,
     requires_block_thermal_cost,
     requires_novomodelo_python,
+    requires_writer_binding,
 )
 
 #: A ``CI`` import contract 7 in submarket 1, and an ``FE`` line putting it into
@@ -311,3 +331,203 @@ def test_decomp_mini_halves_exchange_only_on_lines_touching_marketless_buses(
     )
     assert any("exchange_cost" in line for line in lines)
     assert any("exchange_cost" not in line for line in lines)
+
+
+#: decomp_mini's one ``NW`` plant: no initial volume, run-of-river, draining
+#: into SALTO.
+_ESTRELA = 260
+_NW_CASE_FILES = ("initial_conditions.json",)
+_NW_CASE_DIRS = ("system", "scenarios", "constraints")
+
+
+def _hydros(case_dir: Path) -> list[dict]:
+    return json.loads((case_dir / "system" / "hydros.json").read_text())["hydros"]
+
+
+def _hydro_named(hydros: list[dict], name: str) -> dict:
+    (hydro,) = [h for h in hydros if h["name"] == name]
+    return hydro
+
+
+def test_decomp_mini_converts_estrela_as_a_dormant_hydro(
+    decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    hydros = _hydros(dst)
+    estrela = _hydro_named(hydros, "ESTRELA")
+    salto = _hydro_named(hydros, "SALTO")
+    id_map = DecompIdMap.from_dadger(decomp_mini_case.dadger)
+    assert id_map.dormant_hydro_codes == (_ESTRELA,)
+    assert [h["id"] for h in hydros] == list(range(len(id_map.hydro_codes)))
+    assert estrela["id"] == id_map.hydro_id(_ESTRELA)
+    assert estrela["entry_stage_id"] == len(decomp_mini_case.calendar)
+    assert estrela["operational_start_date"] == "2026-05-01"
+    assert estrela["downstream_id"] == salto["id"]
+    assert "entry_stage_id" not in salto
+
+    initial = json.loads((dst / "initial_conditions.json").read_text())
+    storage = {e["hydro_id"]: e["value_hm3"] for e in initial["storage"]}
+    reference = float(decomp_mini_case.hidr.loc[_ESTRELA, "volume_referencia"])
+    assert storage[estrela["id"]] == pytest.approx(reference)
+
+
+def test_decomp_mini_writes_no_operation_bounds_for_estrela(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+    with dx.collect() as collected:
+        convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    estrela = _hydro_named(_hydros(dst), "ESTRELA")["id"]
+    for name in ("hydro_bounds", "hydro_unit_group_bounds"):
+        table = pq.read_table(dst / "constraints" / f"{name}.parquet")
+        assert estrela not in table.column("hydro_id").to_pylist()
+
+    models = json.loads((dst / "system" / "hydro_production_models.json").read_text())[
+        "production_models"
+    ]
+    (model,) = [m for m in models if m["hydro_id"] == estrela]
+    assert [r["model"] for r in model["stage_ranges"]] == ["constant_productivity"]
+    productivity = pq.read_table(
+        dst / "system" / "hydro_energy_productivity.parquet"
+    ).to_pylist()
+    assert estrela in {row["hydro_id"] for row in productivity}
+
+    listing = {
+        "decomp-coupling-only-plants-excluded",
+        "boundary-fcf-source-only-plants-dropped",
+        "decomp-runofriver-outflow-relaxed",
+    }
+    for diagnostic in collected:
+        if diagnostic.code in listing and diagnostic.table is not None:
+            assert _ESTRELA not in [row[0] for row in diagnostic.table.rows]
+
+
+def _with_reversed_uh_lines(deck: Path, tmp_path: Path) -> Path:
+    copy = tmp_path / "reversed"
+    shutil.copytree(deck, copy)
+    dadger = copy / "dadger.rv2"
+    lines = dadger.read_text(encoding="latin-1").splitlines(keepends=True)
+    slots = [i for i, line in enumerate(lines) if line.startswith("UH ")]
+    uh_lines = [lines[i] for i in slots]
+    for slot, line in zip(slots, reversed(uh_lines), strict=True):
+        lines[slot] = line
+    assert uh_lines != [lines[i] for i in slots]
+    dadger.write_text("".join(lines), encoding="latin-1")
+    return copy
+
+
+def test_uh_row_order_does_not_change_the_converted_case(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    reversed_deck = _with_reversed_uh_lines(decomp_mini_deck, tmp_path)
+    base_dst = tmp_path / "base"
+    reversed_dst = tmp_path / "reversed_case"
+    convert_decomp_case(decomp_mini_deck, base_dst, force=True)
+    convert_decomp_case(reversed_deck, reversed_dst, force=True)
+
+    files = [Path(name) for name in _NW_CASE_FILES] + [
+        path.relative_to(base_dst)
+        for directory in _NW_CASE_DIRS
+        for path in sorted((base_dst / directory).rglob("*"))
+        if path.is_file()
+    ]
+    assert len(files) > len(_NW_CASE_FILES)
+    for relative in files:
+        assert (reversed_dst / relative).read_bytes() == (
+            base_dst / relative
+        ).read_bytes(), relative
+
+
+_HYDRO_INFLOW_LAG = 1
+#: The writer numbers the inflow-lag slots it reserves by lag order from 1.
+_LAG_DEPTH_1_SUBINDEX = 1
+_SALTO = 262
+
+
+@requires_novomodelo_python
+@requires_writer_binding
+def test_boundary_cuts_bind_the_dormant_nw_plant_and_the_case_runs(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    import novomodelo.io  # tier-2: guarded import inside the body, never module scope
+
+    case_dir = tmp_path / "case"
+    convert_decomp_case(decomp_mini_deck, case_dir, force=True)
+    case = DecompCase.from_directory(decomp_mini_deck)
+    assert _ESTRELA in case.id_map.dormant_hydro_codes
+    estrela = case.id_map.hydro_id(_ESTRELA)
+
+    manifest = bootstrap_terminal_manifest(case_dir, work_dir=tmp_path / "work")
+
+    lag_estrela = (-0.5,) + (0.0,) * 11
+    cuts = make_boundary_cuts(
+        (_ESTRELA, _SALTO),
+        (
+            make_cut_record(
+                pi_varm=(0.0, 0.0), pi_qafl=(lag_estrela, (0.0,) * 12), rhs=1.0e6
+            ),
+        ),
+    )
+
+    effective, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
+    couplings = resolve_couplings(
+        (_ESTRELA, _SALTO), case.id_map, effective, _complexo_map(case.dadger)
+    ).couplings
+    assert [c.plant_index for c in couplings if c.hydro_id == estrela] == [0]
+
+    policy = synthetic_roundtrip(
+        case_dir / "boundary",
+        cuts,
+        manifest,
+        case.id_map,
+        stage_id=cuts.boundary_stage,
+        couplings=couplings,
+        inflow_lag_depth=1,
+    )
+    (terminal,) = policy["stage_cuts"]
+    slots = [
+        (slot["entity_type"], slot["entity_id"], slot["subindex"])
+        for slot in terminal["entity_manifest"]
+    ]
+    position = slots.index((_HYDRO_INFLOW_LAG, estrela, _LAG_DEPTH_1_SUBINDEX))
+    (cut,) = terminal["cuts"]
+    assert cut["coefficients"][position] != 0.0
+
+    config = json.loads((case_dir / "config.json").read_text())
+    initial_conditions = json.loads((case_dir / "initial_conditions.json").read_text())
+    writer = CaseWriter(case_dir)
+    _patch_policy_boundary(writer, config)
+    _seed_recent_observations(
+        writer,
+        convert_recent_observation_windows(
+            Vazoes.read(str(case.files.vazoes)), effective, case.id_map, case.calendar
+        ),
+        initial_conditions,
+    )
+
+    result = novomodelo.io.validate(str(case_dir))
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+    output_dir = case_dir / "output"
+    novomodelo.run.run(
+        str(case_dir),
+        output_dir=str(output_dir),
+        config_overrides={
+            "training.stopping_rules": [{"type": "iteration_limit", "limit": 1}],
+            "simulation.enabled": True,
+        },
+    )
+
+    operation = read_novomodelo_hydro_block_operation(output_dir)
+    rows = operation.filter(operation["hydro_id"] == estrela).to_dicts()
+    assert rows
+    stored = {e["hydro_id"]: e["value_hm3"] for e in initial_conditions["storage"]}
+    for row in rows:
+        assert row["turbined_m3s"] == 0.0
+        assert row["generation_mw"] == 0.0
+        assert row["storage_initial_hm3"] == pytest.approx(stored[estrela], abs=1e-6)
+        assert row["storage_final_hm3"] == pytest.approx(stored[estrela], abs=1e-6)

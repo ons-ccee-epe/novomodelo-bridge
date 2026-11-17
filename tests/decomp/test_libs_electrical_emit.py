@@ -304,6 +304,34 @@ def test_novomodelo_token_on_a_coupling_only_plant_leaves_the_term_out(
     assert not token.drops_constraint
 
 
+@pytest.mark.parametrize(
+    "term",
+    [
+        ParsedTerm(coefficient=1.0, token="ger_usih", args=(46,)),
+        ParsedTerm(coefficient=1.0, token="ger_conjh", args=(46, 1)),
+    ],
+)
+def test_novomodelo_token_on_an_nw_plant_leaves_the_term_out(
+    term: ParsedTerm,
+) -> None:
+    id_map = DecompIdMap(
+        bus_codes=(1,),
+        bus_names=("SE",),
+        hydro_codes=(46, 66),
+        dormant_hydro_codes=(46,),
+    )
+
+    token = _novomodelo_token(term, id_map, {}, {}, {})
+
+    assert token == Unresolved(
+        "decomp-electrical-term-coupling-only-plant",
+        (term_text(term),),
+        OutsideTerm.NOT_GENERATING,
+    )
+    assert isinstance(token, Unresolved)
+    assert not token.drops_constraint
+
+
 def test_build_electrical_expression_leaves_a_coupling_only_plant_out() -> None:
     """Plant 46's UH record gives no initial volume, so DECOMP does not
     operate it and its term adds nothing: the rest of the sum is kept."""

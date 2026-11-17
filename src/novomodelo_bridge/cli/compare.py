@@ -340,10 +340,11 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
     """Execute the compare decomp subcommand.
 
     Informational like ``compare newave``: divergences never change the exit
-    code (0) -- the command describes them rather than judging them. Two
-    failures stop it: a source deck that is missing or refused (exit 1) and an
-    unreadable *existing* output file (exit 2) -- reporting a zero-vs-zero
-    match on data we could not read would be worse than stopping.
+    code (0) -- the command describes them rather than judging them. Three
+    failures stop it: a source deck that is missing or refused (exit 1), and a
+    case converted from another deck or an unreadable *existing* output file
+    (exit 2) -- reporting a match on data we could not read, or on a different
+    deck's plants, would be worse than stopping.
     """
     from novomodelo_bridge.comparators.decomp.results import build_decomp_dataset
     from novomodelo_bridge.comparators.verdict import (
@@ -353,16 +354,20 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
     from novomodelo_bridge.core import diagnostics as dx
     from novomodelo_bridge.core.errors import (
         BridgeError,
+        CaseIdentityError,
         NovomodeloOutputError,
         NovomodeloPartitionMissingError,
     )
     from novomodelo_bridge.decomp.case import DecompCase
-    from novomodelo_bridge.novomodelo.readers import NovomodeloReadError
+    from novomodelo_bridge.decomp.case_identity import deck_hydros, match_case_hydros
+    from novomodelo_bridge.novomodelo.readers import (
+        NovomodeloReadError,
+        read_novomodelo_hydros,
+    )
     from novomodelo_bridge.ui.compare_summary import print_results_summary_from_dataset
 
-    # Resolved before the read (unlike the pre-dataset ordering) so
-    # ``build_decomp_dataset`` below gets a concrete tolerance rather than the
-    # raw, possibly-``None`` CLI value — mirrors ``_run_newave_comparison``.
+    # Resolved first so ``build_decomp_dataset`` gets a concrete tolerance, not
+    # the raw, possibly-``None`` CLI value.
     args = _resolve_compare_settings(args)
     formats = _resolve_compare_formats("compare decomp", args)
 
@@ -373,6 +378,12 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
 
     with dx.collect() as compare_diagnostics:
         try:
+            hydros = read_novomodelo_hydros(args.novomodelo_output_dir)
+            if hydros:
+                match_case_hydros(
+                    {hydro["id"]: str(hydro.get("name", "")) for hydro in hydros},
+                    deck_hydros(decomp_case),
+                )
             with spinner(
                 "Comparing results…",
                 verbose=args.verbose > 0,
@@ -385,6 +396,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
                     tolerance=args.tolerance,
                 )
         except (
+            CaseIdentityError,
             NovomodeloReadError,
             NovomodeloOutputError,
             NovomodeloPartitionMissingError,

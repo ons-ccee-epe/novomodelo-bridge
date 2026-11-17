@@ -50,6 +50,7 @@ from novomodelo_bridge.core.tolerances import beyond_written_precision
 from novomodelo_bridge.decomp import (
     bounds_accumulator,
     constraint_registers,
+    plants,
 )
 from novomodelo_bridge.decomp import group_bounds as group_bounds_conv
 from novomodelo_bridge.decomp import load as load_conv
@@ -476,8 +477,8 @@ def _topology_relink_diagnostic(
     """The ``cadastro-topology-relinked`` INFO, or ``None`` when no operated
     plant's first-stage cascade differs from ``hidr.dat``.
 
-    Lists each operated plant whose own ``AC NUMJUS`` or ``NUMPOS`` changes
-    its downstream plant or gauge, and each whose next operated plant
+    Lists each converted plant whose own ``AC NUMJUS`` or ``NUMPOS`` changes
+    its downstream plant or gauge, and each whose next converted plant
     downstream changes only through an ``AC NUMJUS`` on a plant left out of
     the case, which the per-plant comparison cannot see.
     """
@@ -696,7 +697,7 @@ def _diversion_channels(
         if upper is not None and upper > 0.0:
             opened.add(int(hydro_id))
     code_by_id = {id_map.hydro_id(code): code for code in id_map.hydro_codes}
-    operated_codes = set(id_map.hydro_codes)
+    converted_codes = set(id_map.hydro_codes)
     channels: dict[int, dict] = {}
     dropped: list[int] = []
     for hydro_id in sorted(floored | opened):
@@ -706,7 +707,7 @@ def _diversion_channels(
         )
         if (
             channel is None
-            or channel.downstream not in operated_codes
+            or channel.downstream not in converted_codes
             or (channel.limit is not None and channel.limit <= 0.0)
         ):
             if hydro_id not in floored:
@@ -809,16 +810,16 @@ def _base_diversion_channels(
     :func:`_diversion_channels` resolves). Returns the ``{downstream_id,
     max_flow_m3s}`` channel per source novomodelo id.
     """
-    operated = set(id_map.hydro_codes)
+    converted = set(id_map.hydro_codes)
     channels: dict[int, dict] = {}
-    for code in sorted(id_map.hydro_codes):
+    for code in id_map.hydro_codes:
         if not effective.has_diversion(code):
             continue
         source_id = id_map.hydro_id(code)
         if source_id in already_bounded_ids:
             continue
         channel = _first_diversion_channel(effective, code)
-        if channel is None or channel.downstream not in operated:
+        if channel is None or channel.downstream not in converted:
             continue
         if channel.limit is not None and channel.limit <= 0.0:
             continue
@@ -953,7 +954,7 @@ def _discover(src: Path) -> DecompCaseArtifacts:
     # the ANDE load on the IV bus -- both driven by this single
     # Itaipu(66)-operated check, computed once and reused by both wiring
     # sites below.
-    itaipu_operated = hydro_conv._ITAIPU_CODE in id_map.hydro_codes
+    itaipu_operated = hydro_conv._ITAIPU_CODE in id_map.operated_hydro_codes
     # Cadastro overrides: the per-stage-effective view of
     # the registry, folding in any temporal AC VOLMIN/VOLMAX/VAZMIN override —
     # read once and threaded to every consumer below (initial storage, the
@@ -1279,7 +1280,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     # Both the FPHA reference volume and the constant-productivity ρ_eq are
     # anchored at the initial volume, not the full-range mean — see
     # hydro._equivalent_productivity_mw_per_m3s.
-    initial_volumes = hydro_conv._operated_initial_volumes(case, effective=effective)
+    initial_volumes = hydro_conv._converted_initial_volumes(case, effective=effective)
     turbine_limits = hydro_conv.compute_turbine_limits(
         effective,
         id_map,
@@ -1498,8 +1499,8 @@ def _read_constraint_census(
     )
     census, screened = constraint_registers.screen_constraints(
         census,
-        hydro_codes=id_map.hydro_codes,
-        coupling_only_codes=id_map.coupling_only_codes,
+        hydro_codes=id_map.operated_hydro_codes,
+        coupling_only_codes=id_map.idle_hydro_codes,
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
         plant_names={
@@ -1527,7 +1528,7 @@ def _released_runofriver_codes(
     # window (single_term_bound_contributions) is a user-declared constraint
     # and is kept.
     unregulated_codes = cadastro_conv.unregulated_runofriver_codes(
-        effective, id_map.hydro_codes
+        effective, id_map.operated_hydro_codes
     )
     if unregulated_codes:
         dx.emit(
@@ -2344,7 +2345,7 @@ def _shared_emitter_inputs(
     uh = as_frame(dadger.uh(df=True))
     if uh is None:
         raise ValueError("the deck has no UH records; cannot map hydros to REEs")
-    operated_uh = uh[uh["volume_inicial"].notna()]
+    operated_uh = plants.operated_uh(uh)
     hydro_to_ree = {
         int(row["codigo_usina"]): int(row["codigo_ree"])
         for _, row in operated_uh.iterrows()

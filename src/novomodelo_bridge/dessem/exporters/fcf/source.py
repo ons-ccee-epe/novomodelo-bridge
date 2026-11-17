@@ -6,11 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from novomodelo_bridge.core.errors import FieldParseError
-from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
-    SourceGnlThermal,
-    SourceHydro,
-)
+from novomodelo_bridge.decomp.case_identity import SourceHydro, deck_hydros
+from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceGnlThermal
 
 
 @dataclass(frozen=True)
@@ -20,6 +17,7 @@ class SourceDeck:
     *gnl_thermals* ascend by deck code and are empty when the deck commits no
     GNL dispatch. *travel_time_codes* are the plant codes of the deck's `VI`
     records, in record order, the order DECOMP numbers travel-time plants in.
+    *dormant_codes* ascend and are the codes of the `UH` records marked `NW`.
     """
 
     directory: Path
@@ -27,6 +25,7 @@ class SourceDeck:
     hydros: Mapping[int, SourceHydro]
     gnl_thermals: tuple[SourceGnlThermal, ...]
     travel_time_codes: tuple[int, ...] = ()
+    dormant_codes: tuple[int, ...] = ()
 
 
 def read_source_deck(directory: Path) -> SourceDeck:
@@ -40,21 +39,14 @@ def read_source_deck(directory: Path) -> SourceDeck:
         FieldParseError: `hidr.dat` holds no plant or misses an operated one,
             or `dadgnl` has a malformed record.
     """
+    from novomodelo_bridge.core.pandas_utils import as_frame
+    from novomodelo_bridge.decomp import plants
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import read_gnl_model
     from novomodelo_bridge.decomp.converters.travel_time import read_travel_times
 
     case = DecompCase.from_directory(directory)
-    hidr = case.hidr
-    hydros: dict[int, SourceHydro] = {}
-    for code in case.id_map.hydro_codes:
-        if code not in hidr.index:
-            raise FieldParseError(
-                f"operated plant {code} is not in the hydro registry",
-                field="UH register",
-            )
-        name = str(hidr.loc[code, "nome_usina"]).strip()
-        hydros[case.id_map.hydro_id(code)] = SourceHydro(code=code, name=name)
+    hydros = deck_hydros(case)
     dadgnl = case.dadgnl
     gnl_model = None if dadgnl is None else read_gnl_model(dadgnl)
     gnl_thermals = (
@@ -69,10 +61,12 @@ def read_source_deck(directory: Path) -> SourceDeck:
             for thermal in gnl_model.thermals
         )
     )
+    uh = as_frame(case.dadger.uh(df=True))
     return SourceDeck(
         directory=directory,
         revision=case.files.revision,
         hydros=hydros,
         gnl_thermals=gnl_thermals,
         travel_time_codes=tuple(read_travel_times(case.dadger)),
+        dormant_codes=() if uh is None else plants.dormant_codes(uh),
     )

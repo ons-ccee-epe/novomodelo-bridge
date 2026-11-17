@@ -164,7 +164,8 @@ def _has_rated_capacity(effective: EffectiveCadastro, code: int) -> bool:
 
 
 def fpha_eligible_codes(effective: EffectiveCadastro, id_map: DecompIdMap) -> set[int]:
-    """The operated plant codes emitted as ``model: "fpha"``.
+    """The operated plant codes emitted as ``model: "fpha"``; DECOMP fits no
+    FPHA for a plant it does not operate.
 
     Single source of truth shared by the ``hydros.json`` generation model, the
     production-model doc, and the energy-productivity parquet exclusion, so the
@@ -174,7 +175,7 @@ def fpha_eligible_codes(effective: EffectiveCadastro, id_map: DecompIdMap) -> se
     """
     eligible: set[int] = set()
     zero_capacity: list[tuple[str, int, float, float]] = []
-    for code in id_map.hydro_codes:
+    for code in id_map.operated_hydro_codes:
         if code not in effective.base.index:
             continue
         if not _has_fpha_curve_inputs(effective, code):
@@ -481,7 +482,7 @@ def convert_hydro_geometry(
     reads the **effective** (post-``AC COTVOL``) volume→cota polynomial and the
     base ``a*_cota_area`` height→area polynomial, sampling
     :data:`_GEOMETRY_N_POINTS` uniform volume points over the plant's storage
-    envelope. Emitted for every operated plant with a
+    envelope. Emitted for every converted plant with a
     non-degenerate cota polynomial (so any plant is a valid backwater reference
     for its upstream FPHA neighbour); a run-of-river plant (``vmin == vmax``)
     contributes a single point; heights/areas are clamped to ``>= 0``.

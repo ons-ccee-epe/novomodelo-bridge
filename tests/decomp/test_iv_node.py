@@ -524,3 +524,14 @@ class TestAndeLoad:
         dadger = _StubDadger(ri=_ri_frame())
 
         assert ande_load(self._case(dadger, _ID_MAP_NO_ITAIPU)) is None
+
+    def test_none_when_itaipu_is_dormant(self) -> None:
+        dadger = _StubDadger(ri=_ri_frame())
+        id_map = DecompIdMap(
+            bus_codes=(1, 2),
+            bus_names=("SE", "S"),
+            hydro_codes=(_ITAIPU_CODE,),
+            dormant_hydro_codes=(_ITAIPU_CODE,),
+        )
+
+        assert ande_load(self._case(dadger, id_map)) is None

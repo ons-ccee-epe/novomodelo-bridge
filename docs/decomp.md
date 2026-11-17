@@ -59,6 +59,18 @@ non-controllable generation per node), pumping stations, energy contracts,
 generic constraints from the deck's restriction registers, and head-dependent
 production planes where the deck uses them.
 
+A `UH` row with an initial volume is an operated plant. A row marked `NW`
+(`configuracao_newave`) is a plant that enters after the study: the case holds
+it as a hydro that enters after the last stage, with its minimum volume as its
+initial storage. It does not operate over the study, and its inflow passes to
+the plants below it. The hydro ids number the operated and the `NW` plants
+together, in ascending plant code order. The conversion refuses an `NW`
+reservoir whose `UH` row gives a volume above its minimum, an `NW` plant that
+`hidr.dat` lacks, an `NW` plant that a `VI` record names, and an operated plant
+whose `VI` travel time drains into an `NW` plant. An operated plant with no
+travel time that drains into an `NW` plant converts, its water passing through
+the `NW` plant; `export dessem` refuses such a case.
+
 The committed weeks of a fuel-constrained thermal (the `GL` register) belong
 to the study or to a month after it by their position in the `GS` register, not
 by their dates. From the second revision of a month on, the first committed
@@ -254,6 +266,14 @@ DECOMP. The import couples them plant by plant, as DECOMP does:
   term, as are the lag terms of cut plants that no converted plant takes.
   The pre-study observations that seed Novomodelo's lag state are read on the
   coupling gauges too.
+- An `NW` plant takes its own row, and its inflow series is split from the first
+  operated plant downstream as NEWAVE splits it: the `NW` plant carries its
+  coupling-gauge inflow and that operated plant carries the rest of its
+  operation inflow. The split applies to a group only when, on every row, the
+  operation inflow matches the sum of the group's coupling inflows within
+  1 m³/s and each `NW` plant's own operation inflow is within 1 m³/s of zero.
+  Otherwise the group keeps the deck's operation inflows and the conversion
+  warns with `decomp-nw-inflow-split-fallback`, naming the plants.
 - The cut values are scaled by the mean month of the DECOMP manual
   (365.25 days × 24 h / 12), whatever the length of the last stage.
 - For a deck with fuel-constrained thermals, each anticipated delivery is
@@ -273,7 +293,7 @@ Two parts of the coupling cannot be represented yet, and the import warns
 about each. In the last stage, the coupling inflow's difference from the
 operated inflow, and the inflow of cut plants outside the case, vary by
 scenario and are not folded; the warning names the plants and the largest
-gap. When the cut's month begins before the last
+gap. A split group has no such difference. When the cut's month begins before the last
 stage, Novomodelo evaluates the first inflow lag on the last stage's inflow
 alone; the warning states the share of the month this affects. Novomodelo also
 holds one GNL commitment per delivery window rather than one per patamar, so
@@ -311,6 +331,11 @@ the deck again.
 `output/` directory. Percentile bands are omitted, or labelled low-N, when the
 deterministic tree has too few scenarios to report a spread without
 synthesizing it.
+
+The case must have been converted from `DECOMP_DIR`: when its hydro plants or
+their names differ from the deck's, the command exits 2 and says how they
+differ. Plants marked `NW` are not compared, since DECOMP does not operate
+them.
 
 Each variable is judged by its gap as `compare newave` judges it, and the
 console ends with each model's final lower bound and simulated mean cost. The

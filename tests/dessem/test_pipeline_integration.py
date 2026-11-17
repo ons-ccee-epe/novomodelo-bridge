@@ -16,6 +16,7 @@ import pytest
 from numpy.typing import NDArray
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.decomp.case_identity import SourceHydro
 from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
     node_and_iteration,
 )
@@ -34,7 +35,6 @@ from novomodelo_bridge.dessem.exporters.fcf.core.layout import (
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     ENTITY_TYPE_ANTICIPATED_THERMAL,
     InflowLagAudit,
-    SourceHydro,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     UNDATED,
@@ -379,7 +379,7 @@ class TestPipelineIntegration:
         assert manifest["revision"] == "rv0"
         assert manifest["source_path"] == str(synthetic_source.directory.resolve())
         assert "premises" in manifest
-        assert len(manifest["premises"]) == 15
+        assert len(manifest["premises"]) == 16
         assert "outputs" in manifest
         assert "mapcut" in manifest["outputs"]
         assert "cortdeco" in manifest["outputs"]
@@ -1811,3 +1811,188 @@ class TestExportFindings:
         [unwritten] = _with_code(diagnostics, "dessem-fcf-failure-manifest-unwritten")
         assert unwritten.title == "export_manifest.json could not be written"
         assert unwritten.notes == ["Reason: OSError: disk full"]
+
+
+def _write_initial_storage(case_dir: Path, storage_hm3: dict[int, float]) -> None:
+    path = case_dir / "initial_conditions.json"
+    conditions = json.loads(path.read_text(encoding="utf-8"))
+    conditions["storage"] = [
+        {"hydro_id": hydro_id, "value_hm3": value_hm3}
+        for hydro_id, value_hm3 in storage_hm3.items()
+    ]
+    path.write_text(json.dumps(conditions), encoding="utf-8")
+
+
+def _add_nw_hydro(
+    case_dir: Path, *, entry_stage_id: int | None = 3, uhe_b_downstream: int = 1
+) -> None:
+    """Add hydro 4, UHE_NW, which drains into hydro 1 and holds 50 hm3."""
+    path = case_dir / "system" / "hydros.json"
+    hydros = json.loads(path.read_text(encoding="utf-8"))
+    hydros["hydros"][1]["downstream_id"] = uhe_b_downstream
+    hydros["hydros"].append(
+        {
+            "id": 4,
+            "name": "UHE_NW",
+            "downstream_id": 1,
+            "entry_stage_id": entry_stage_id,
+            "reservoir": {"min_storage_hm3": 0.0, "max_storage_hm3": 80.0},
+        }
+    )
+    path.write_text(json.dumps(hydros), encoding="utf-8")
+    _write_initial_storage(case_dir, {4: 50.0})
+
+
+def _nw_source(
+    source: SourceDeck, dormant_codes: tuple[int, ...] = (104,)
+) -> SourceDeck:
+    return replace(
+        source,
+        hydros={**source.hydros, 4: SourceHydro(code=104, name="UHE_NW")},
+        dormant_codes=dormant_codes,
+    )
+
+
+def _without_fourth_axis(pool: StageCutPool, frozen_storage_hm3: float) -> StageCutPool:
+    return replace(
+        pool,
+        state_dimension=3,
+        slots=pool.slots[:3],
+        pieces=tuple(
+            replace(
+                piece,
+                intercept=piece.intercept
+                + float(piece.coefficients[3]) * frozen_storage_hm3,
+                coefficients=piece.coefficients[:3].copy(),
+            )
+            for piece in pool.pieces
+        ),
+    )
+
+
+def _export_pair(
+    case_dir: Path,
+    source: SourceDeck,
+    pools: dict[int, StageCutPool],
+    output_dir: Path,
+) -> tuple[bytes, bytes]:
+    result, _ = _run_export_on_policy(
+        case_dir, source, output_dir, pools, _make_manifest()
+    )
+    assert result == 0
+    return (output_dir / "mapcut.rv0").read_bytes(), (
+        output_dir / "cortdeco.rv0"
+    ).read_bytes()
+
+
+class TestNeverActiveHydroExport:
+    """Premise P16: a hydro that never enters the horizon leaves the pair, frozen."""
+
+    def test_export_equals_the_export_of_the_case_without_the_hydro(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        wide_pools = {
+            i: _make_pool(i, i, i, _make_slots(4), n_pieces=5) for i in range(3)
+        }
+        twin_pools = {i: _without_fourth_axis(p, 50.0) for i, p in wide_pools.items()}
+        twin = _export_pair(
+            synthetic_case_dir, synthetic_source, twin_pools, tmp_path / "twin"
+        )
+
+        _add_nw_hydro(synthetic_case_dir)
+        wide = _export_pair(
+            synthetic_case_dir,
+            _nw_source(synthetic_source),
+            wide_pools,
+            tmp_path / "wide",
+        )
+
+        assert wide == twin
+
+    def test_case_without_never_active_hydros_exports_unchanged(
+        self, synthetic_case_dir: Path, synthetic_source: SourceDeck, tmp_path: Path
+    ) -> None:
+        pools = _make_pools_dict()
+        plain = _export_pair(
+            synthetic_case_dir, synthetic_source, pools, tmp_path / "plain"
+        )
+
+        path = synthetic_case_dir / "system" / "hydros.json"
+        hydros = json.loads(path.read_text(encoding="utf-8"))
+        for entry, stage in zip(hydros["hydros"], (None, 1, 2), strict=True):
+            entry["entry_stage_id"] = stage
+        path.write_text(json.dumps(hydros), encoding="utf-8")
+        _write_initial_storage(synthetic_case_dir, {1: 10.0, 2: 20.0, 3: 30.0})
+        declared = _export_pair(
+            synthetic_case_dir, synthetic_source, pools, tmp_path / "declared"
+        )
+
+        assert declared == plain
+
+    @pytest.mark.parametrize(
+        (
+            "dormant_codes",
+            "entry_stage_id",
+            "uhe_b_downstream",
+            "priced_bucket",
+            "named",
+        ),
+        [
+            pytest.param(
+                (), 3, 1, False, "hydro 4 (UHE_NW, plant 104)", id="outside-the-nw-set"
+            ),
+            pytest.param(
+                (104,), None, 1, False, "hydro 4 (UHE_NW, plant 104)", id="nw-kept"
+            ),
+            pytest.param(
+                (104,), 3, 4, False, "hydro 2 (UHE_B, plant 102)", id="drained-into"
+            ),
+            pytest.param(
+                (104,),
+                3,
+                1,
+                True,
+                "pool 0 prices a transit bucket of hydro 4",
+                id="priced-transit-bucket",
+            ),
+        ],
+    )
+    def test_a_refused_shape_fails_the_export_before_any_file_is_written(
+        self,
+        synthetic_case_dir: Path,
+        synthetic_source: SourceDeck,
+        tmp_path: Path,
+        dormant_codes: tuple[int, ...],
+        entry_stage_id: int | None,
+        uhe_b_downstream: int,
+        priced_bucket: bool,
+        named: str,
+    ) -> None:
+        _add_nw_hydro(
+            synthetic_case_dir,
+            entry_stage_id=entry_stage_id,
+            uhe_b_downstream=uhe_b_downstream,
+        )
+        bucket = (_bucket(20260108, 20260115),) if priced_bucket else ()
+        slots = _make_slots(4) + tuple(replace(b, entity_id=4) for b in bucket)
+        pools = {i: _make_pool(i, i, i, slots, n_pieces=5) for i in range(3)}
+        output_dir = tmp_path / "dessem_fcf"
+
+        with (
+            patch(
+                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+            ) as read,
+            dx.collect() as diagnostics,
+        ):
+            read.return_value = PolicyCheckpoint(_make_manifest(), pools)
+            result = run_export(
+                case_dir=synthetic_case_dir,
+                source=_nw_source(synthetic_source, dormant_codes),
+                output_dir=output_dir,
+                settings=ExportSettings(emit_audit_csv=True),
+            )
+
+        assert result == 1
+        assert {p.name for p in output_dir.iterdir()} == {"export_manifest.json"}
+        [failed] = _with_code(list(diagnostics), "dessem-fcf-export-failed")
+        assert named in failed.summary

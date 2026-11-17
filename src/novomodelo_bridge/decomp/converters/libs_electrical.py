@@ -817,7 +817,7 @@ def ande_load(case: DecompCase) -> tuple[int, dict[int, list[float]]] | None:
     ``None`` when the deck does not operate Itaipu or carries no ``RI``
     register.
     """
-    if _ITAIPU_CODE not in case.id_map.hydro_codes:
+    if _ITAIPU_CODE not in case.id_map.operated_hydro_codes:
         return None
     carga_ande = read_carga_ande(case.dadger, case.calendar)
     if not carga_ande:

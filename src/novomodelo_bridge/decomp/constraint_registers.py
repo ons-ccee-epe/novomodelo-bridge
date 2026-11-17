@@ -1062,10 +1062,11 @@ def drop_unknown_entities(
     pumping_codes: Collection[int],
 ) -> tuple[ConstraintCensus, list[Diagnostic]]:
     """Leave out every constraint with a term on an entity the case lacks,
-    and every ``RE`` ``FU`` term on a coupling-only plant.
+    and every ``RE`` ``FU`` term on a plant DECOMP does not operate.
 
     An ``FU`` term on a plant in *coupling_only_codes* (a ``UH`` record with
-    no initial volume, which DECOMP does not operate) generates nothing, so
+    no initial volume, or one marked ``NW``, which DECOMP does not operate;
+    ``DecompIdMap.idle_hydro_codes``) generates nothing, so
     it is left out of its ``RE`` constraint and the rest is kept, lowered
     anew: left with one term, the constraint can become an entity bound.
     Those terms are reported in one INFO; a constraint with no other term
@@ -1186,10 +1187,10 @@ def _coupling_only_terms_diagnostic(rows: list[list[object]]) -> Diagnostic:
         title=f"RE terms on plants DECOMP does not operate left out ({len(rows)})",
         summary=(
             "The listed RE constraints have an FU term on a plant whose UH "
-            "record in dadger.rvN gives no initial volume: DECOMP does not "
-            "operate the plant, so the term adds nothing there either. The "
-            "conversion leaves the term out and keeps the rest of the "
-            "constraint."
+            "record in dadger.rvN gives no initial volume or is marked NW: "
+            "DECOMP does not operate the plant, so the term adds nothing "
+            "there either. The conversion leaves the term out and keeps the "
+            "rest of the constraint."
         ),
         table=DiagnosticTable(
             columns=["Constraint", "Plant code"],

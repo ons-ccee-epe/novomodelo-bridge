@@ -36,7 +36,7 @@ class TestBuildExportManifest:
         )
 
         assert manifest.premises == PREMISES
-        assert len(manifest.premises) == 15
+        assert len(manifest.premises) == 16
 
     def test_failure_manifest(self, tmp_path: Path) -> None:
         manifest = build_export_manifest(

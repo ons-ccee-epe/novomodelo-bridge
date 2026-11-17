@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -71,21 +71,31 @@ def storage_coefficients(
     piece: AffinePieceRecord,
     slots: Sequence[EntitySlotRecord],
     plant_ids: Sequence[int],
+    dropped: Collection[int] = frozenset(),
 ) -> NDArray[np.float64]:
     """One piece's `pi_varm` sub-array, ordered like *plant_ids*.
 
+    The *dropped* hydros' storage axes are the only ones left out.
+
     Raises:
-        MappingError: the pool's storage axes are not *plant_ids* in order.
+        MappingError: the pool's storage axes, less *dropped*, are not
+            *plant_ids* in order.
     """
     pool_plant_ids = storage_plant_ids(slots)
-    if pool_plant_ids != tuple(plant_ids):
+    kept = [
+        position
+        for position, hydro_id in enumerate(pool_plant_ids)
+        if hydro_id not in dropped
+    ]
+    kept_ids = tuple(pool_plant_ids[position] for position in kept)
+    if kept_ids != tuple(plant_ids):
         raise MappingError(
-            f"a pool's storage axes name hydros {pool_plant_ids[:4]}... "
-            f"({len(pool_plant_ids)} slots) but the plant-code record holds "
+            f"a pool's storage axes name hydros {kept_ids[:4]}... "
+            f"({len(kept_ids)} slots) but the plant-code record holds "
             f"{tuple(plant_ids)[:4]}... ({len(plant_ids)} plants)"
         )
     coefficients = np.asarray(piece.coefficients, dtype=np.float64)
-    return coefficients[: len(plant_ids)].copy()
+    return coefficients[kept]
 
 
 def _validate_lengths(cut: CutInput, offsets: CutBlockOffsets) -> None:

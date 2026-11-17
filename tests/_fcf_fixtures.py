@@ -281,6 +281,7 @@ def synthetic_roundtrip(
     cost_scale_factor: float = 1.0,
     couplings: Sequence[HydroCoupling] | None = None,
     gnl_plan: GnlRingPlan | None = None,
+    inflow_lag_depth: int = 0,
 ) -> dict[str, Any]:
     """Map, write, and reload a synthetic boundary checkpoint; no deck, no
     novomodelo binary.
@@ -288,8 +289,10 @@ def synthetic_roundtrip(
     Runs `map_boundary_cuts -> build_stage_cuts_payload -> build_metadata ->
     write_boundary_checkpoint -> novomodelo.results.load_policy` against
     `boundary_dir` and returns the reloaded policy dict verbatim. `couplings`
-    defaults to :func:`make_couplings`. `novomodelo` is imported inside the body,
-    so only call this from a `@requires_novomodelo_python`-guarded test.
+    defaults to :func:`make_couplings`. `inflow_lag_depth` is forwarded to the
+    mapper and the writer, which reserves that many ``HydroInflowLag`` slots a
+    manifest lacks. `novomodelo` is imported inside the body, so only call this
+    from a `@requires_novomodelo_python`-guarded test.
     """
     import novomodelo
 
@@ -297,6 +300,7 @@ def synthetic_roundtrip(
         cuts,
         manifest,
         make_couplings(cuts, id_map) if couplings is None else couplings,
+        inflow_lag_depth=inflow_lag_depth,
         gnl_plan=gnl_plan,
     )
     stage_cuts_payload = build_stage_cuts_payload(
@@ -321,7 +325,9 @@ def synthetic_roundtrip(
         created_at=_CREATED_AT,
         season_manifest=manifest.season_manifest,
     )
-    write_boundary_checkpoint(boundary_dir, stage_cuts_payload, metadata)
+    write_boundary_checkpoint(
+        boundary_dir, stage_cuts_payload, metadata, inflow_lag_depth=inflow_lag_depth
+    )
 
     return novomodelo.results.load_policy(
         boundary_dir.parent, policy_subdir=boundary_dir.name

@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from novomodelo_bridge.decomp.case_identity import SourceHydro
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     BlockInfo,
     BusInfo,
@@ -27,7 +28,6 @@ from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
 from novomodelo_bridge.dessem.exporters.fcf.core.layout import CutBlockOffsets
 from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
     SourceGnlThermal,
-    SourceHydro,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     AffinePieceRecord,

@@ -651,7 +651,7 @@ class TestCompareDiagnosticsWiring:
         assert result.exit_code == 0
         payload = json.loads(result.stdout)
         assert payload["diagnostics"]
-        assert payload["diagnostics"][0]["code"] == diagnostic.code
+        assert diagnostic.code in [d["code"] for d in payload["diagnostics"]]
 
     def test_compare_newave_non_json_renders_diagnostic_title_on_stderr(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

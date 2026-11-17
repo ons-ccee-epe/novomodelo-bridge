@@ -49,6 +49,9 @@ links are cobre-bridge's.
   because the case's CMO leaves out its multiplier wherever it binds. Write
   the term as `val_demanda` or `val_demanda_sin` where the multiplier should
   not count.
+- **`convert decomp` warns with `decomp-nw-inflow-split-fallback`** when an
+  `NW` plant's inflow cannot be split from its downstream plant's within
+  1 m³/s; that group keeps the deck's operation inflows.
 
 ### Changed
 
@@ -56,9 +59,9 @@ links are cobre-bridge's.
   note, when a constraint term is zero in the source model too**: a term on
   an interchange between submarkets no line joins, or on a plant that
   generates nothing (fictitious, `NC`, `NE` with no `exph.dat` row, or a
-  DECOMP plant whose `UH` record gives no initial volume). The rest of the
-  constraint is kept, where `convert decomp` left the whole constraint out
-  with a warning or stopped, and `convert newave` warned with
+  DECOMP plant whose `UH` record gives no initial volume or is marked `NW`).
+  The rest of the constraint is kept, where `convert decomp` left the whole
+  constraint out with a warning or stopped, and `convert newave` warned with
   `electric-constraint-hydro-unmapped`. The notes are
   `electric-constraint-term-idle-plant`, `decomp-re-term-coupling-only-plant`,
   `decomp-electrical-term-coupling-only-plant`,
@@ -288,6 +291,13 @@ links are cobre-bridge's.
   leaves a year blank. Give the converted plants one window in `confhd.dat`.
   Results change; convert NEWAVE cases again and run them with the paired
   novomodelo revision.
+- **BREAKING: `convert decomp` converts `UH` plants marked `NW` as hydros that
+  enter after the horizon**, each taking its own coupling inflow from the
+  downstream plant's, so boundary cuts price them; hydro ids above each
+  shift, so reconvert such decks. `export dessem` leaves them out of the cuts.
+- **`compare decomp` refuses a case converted from another deck** (exit 2),
+  as `export dessem` does: the case's hydro ids and names must match the
+  deck's.
 
 ### Removed
 

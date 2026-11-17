@@ -363,8 +363,8 @@ def _compare_decomp(
     """Compare a DECOMP run's published operation against Novomodelo's simulation.
 
     Informational: divergences never change the exit code. Exits 1 if the source
-    case is not found or is refused, and 2 if the Novomodelo output cannot be
-    read.
+    case is not found or is refused, and 2 if the case was converted from another
+    deck or the Novomodelo output cannot be read.
 
     The Overview tab's cost breakdown is at present value on both sides:
     each stage's DECOMP parcels are discounted by that stage's ratio of

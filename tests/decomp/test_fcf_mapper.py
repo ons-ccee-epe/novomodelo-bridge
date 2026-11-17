@@ -297,7 +297,7 @@ def test_map_drops_untaken_cut_plant_and_folds_its_inflow() -> None:
     id_map = make_id_map((10,))
     manifest = make_manifest([make_slot(_HYDRO_STORAGE, 0, 0)])
     cuts = make_boundary_cuts(
-        (10, 260),
+        (10, 901),
         (
             make_cut_record(
                 pi_varm=(1.0, 8.0),
@@ -314,7 +314,7 @@ def test_map_drops_untaken_cut_plant_and_folds_its_inflow() -> None:
         source_only_inflows={1: _lags(40.0, 20.0)},
     )
 
-    assert result.dropped == (DroppedTerm(260, 8.0, inflow_folded=True),)
+    assert result.dropped == (DroppedTerm(901, 8.0, inflow_folded=True),)
     mapped = result.cuts[0]
     assert mapped.coefficients == pytest.approx((1.0 * MEAN_MONTH_HOURS,))
     assert mapped.intercept == pytest.approx(
@@ -326,20 +326,20 @@ def test_map_untaken_cut_plant_without_inflow_is_not_folded() -> None:
     id_map = make_id_map((10,))
     manifest = make_manifest([make_slot(_HYDRO_STORAGE, 0, 0)])
     cuts = make_boundary_cuts(
-        (10, 260),
+        (10, 901),
         (make_cut_record(pi_varm=(1.0, 8.0), pi_qafl=(_lags(), _lags(0.5))),),
     )
 
     result = map_boundary_cuts(cuts, manifest, make_couplings(cuts, id_map))
 
-    assert result.dropped == (DroppedTerm(260, 8.0, inflow_folded=False),)
+    assert result.dropped == (DroppedTerm(901, 8.0, inflow_folded=False),)
     assert result.cuts[0].intercept == 0.0
 
 
 def test_map_source_only_inflows_need_all_twelve_depths() -> None:
     id_map = make_id_map((10,))
     manifest = make_manifest([make_slot(_HYDRO_STORAGE, 0, 0)])
-    cuts = make_boundary_cuts((10, 260), (make_cut_record(pi_varm=(1.0, 8.0)),))
+    cuts = make_boundary_cuts((10, 901), (make_cut_record(pi_varm=(1.0, 8.0)),))
 
     with pytest.raises(ValueError, match="zip"):
         map_boundary_cuts(

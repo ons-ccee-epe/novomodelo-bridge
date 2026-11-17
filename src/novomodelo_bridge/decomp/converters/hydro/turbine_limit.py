@@ -25,8 +25,9 @@ frequency halves (:attr:`TurbineLimits.plant_caps`); each unit group is capped
 at ``min(T, Pdisp_g / ρ_eq)``, its own generator limit within the plant's.
 
 The unregulated inflow is the plant's incremental inflow plus that of every
-run-of-river plant upstream of it short of a reservoir; on the terminal stage
-it is the fan's probability-weighted mean.
+plant upstream of it short of an operated reservoir: a run-of-river plant, or a
+plant marked ``NW``, whose inflow the source model counts in the plant below.
+On the terminal stage it is the fan's probability-weighted mean.
 
 The source model fits each plant's FPHA over the turbined flows up to the same
 limit with ``MP`` × ``FD`` left out, ``min(qmaxT, P_inst / ρ_eq)``, and
@@ -132,7 +133,7 @@ class TurbineLimits:
 def tailrace_families(
     case: DecompCase, id_map: DecompIdMap
 ) -> dict[int, tuple[TailraceFamily, ...]]:
-    """``{plant code: tailrace families}`` for every operated plant: its
+    """``{plant code: tailrace families}`` for every converted plant: its
     ``polinjus`` families, else its ``hidr.dat`` downstream polynomials."""
     polinjus = case.polinjus
     from_polinjus = (
@@ -162,7 +163,11 @@ def compute_turbine_limits(
     tailrace: Mapping[int, Sequence[TailraceFamily]],
     availability_factors: Mapping[tuple[int, int, int], float],
 ) -> TurbineLimits:
-    """Every operated plant's per-stage turbined-flow caps.
+    """Every converted plant's per-stage turbined-flow caps.
+
+    A plant marked ``NW`` is seen through: it neither regulates nor sets a
+    tailrace level, so each operated plant keeps the downstream it has without
+    it.
 
     Args:
         initial_volumes: hm³ per plant code, the study's initial storage.
@@ -174,7 +179,7 @@ def compute_turbine_limits(
             (:func:`~novomodelo_bridge.decomp.converters.hydro.bounds.
             stage_availability_factors`).
     """
-    operated = set(id_map.hydro_codes)
+    operated = set(id_map.operated_hydro_codes)
     downstream = {
         code: _downstream_operated(effective, code, operated)
         for code in id_map.hydro_codes
@@ -183,6 +188,9 @@ def compute_turbine_limits(
     for code, below in downstream.items():
         if below is not None:
             upstream[below].append(code)
+    regulating = frozenset(
+        code for code in id_map.operated_hydro_codes if is_reservoir(effective, code)
+    )
 
     caps: dict[tuple[int, int], list[float]] = {}
     plant_caps: dict[int, list[float]] = {}
@@ -197,7 +205,7 @@ def compute_turbine_limits(
                 stage,
                 initial_volume_hm3=initial_volumes[code],
                 unregulated_inflow_m3s=_unregulated_inflow(
-                    effective, code, stage.index, upstream, incremental_inflows
+                    code, stage.index, upstream, incremental_inflows, regulating
                 ),
                 families=tailrace[code],
                 downstream_code=downstream[code],
@@ -263,18 +271,18 @@ def plant_turbine_limit_contributions(
 
 
 def _unregulated_inflow(
-    effective: EffectiveCadastro,
     code: int,
     stage_index: int,
     upstream: Mapping[int, Sequence[int]],
     incremental_inflows: Mapping[tuple[int, int], float],
+    regulating: frozenset[int],
 ) -> float:
     return incremental_inflows[(code, stage_index)] + sum(
         _unregulated_inflow(
-            effective, above, stage_index, upstream, incremental_inflows
+            above, stage_index, upstream, incremental_inflows, regulating
         )
         for above in upstream[code]
-        if not is_reservoir(effective, above)
+        if above not in regulating
     )
 
 

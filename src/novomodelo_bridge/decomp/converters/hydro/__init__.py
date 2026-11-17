@@ -50,6 +50,9 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
     stage_availability_factors as stage_availability_factors,
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
+    _converted_initial_volumes as _converted_initial_volumes,
+)
+from novomodelo_bridge.decomp.converters.hydro.entity import (
     _downstream_operated as _downstream_operated,
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
@@ -57,9 +60,6 @@ from novomodelo_bridge.decomp.converters.hydro.entity import (
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
     _evaporation_flag_codes as _evaporation_flag_codes,
-)
-from novomodelo_bridge.decomp.converters.hydro.entity import (
-    _operated_initial_volumes as _operated_initial_volumes,
 )
 from novomodelo_bridge.decomp.converters.hydro.entity import (
     convert_hydros as convert_hydros,

@@ -850,3 +850,38 @@ class TestTies:
             for stage, source, novomodelo in result.tie_share.iter_rows()
         }
         assert shares[1] == (pytest.approx(1.0), pytest.approx(0.0))
+
+
+class TestConvertedOnlyHydros:
+    def test_blocks_of_a_hydro_the_source_does_not_operate_change_nothing(
+        self,
+        decomp_mini_case: DecompCase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dormant = 260
+        assert dormant in decomp_mini_case.id_map.dormant_hydro_codes
+        runs = _camargos_runs(decomp_mini_case)
+        idle = decomp_mini_case.id_map.hydro_id(dormant)
+        idle_blocks = [
+            {
+                **_novomodelo_block(
+                    idle, block=b, storage=(100.0, 100.0), q=0.0, gh=0.0
+                ),
+                "water_value_per_hm3": 0.0,
+            }
+            for b in range(3)
+        ]
+        with_dormant = dataclasses.replace(
+            runs, novomodelo=pl.concat([runs.novomodelo, pl.DataFrame(idle_blocks)])
+        )
+
+        base = _compare(monkeypatch, tmp_path, decomp_mini_case, runs)
+        other = _compare(monkeypatch, tmp_path, decomp_mini_case, with_dormant)
+
+        assert base is not None
+        assert other is not None
+        for field in dataclasses.fields(base):
+            assert getattr(base, field.name).equals(getattr(other, field.name)), (
+                field.name
+            )
