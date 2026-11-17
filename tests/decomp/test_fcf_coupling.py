@@ -22,7 +22,6 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 )
 from novomodelo_bridge.decomp.fcf.coupling import (
     BorrowedOwner,
-    carried_lag_share,
     coupling_lag_offsets,
     lag_months,
     resolve_couplings,
@@ -144,7 +143,7 @@ def test_resolve_couplings_ignores_a_complex_absent_from_the_cut() -> None:
 
 
 def test_an_nw_plant_binds_to_its_own_cut_row(decomp_mini_case: DecompCase) -> None:
-    id_map = DecompIdMap.from_dadger(decomp_mini_case.dadger)
+    id_map = decomp_mini_case.id_map
     effective, _ = build_effective_cadastro(
         decomp_mini_case.dadger, decomp_mini_case.hidr, decomp_mini_case.calendar
     )
@@ -369,7 +368,7 @@ def test_a_fallback_group_keeps_its_terminal_share() -> None:
 def test_decomp_mini_couples_estrela_and_salto_without_offset_or_share(
     decomp_mini_case: DecompCase,
 ) -> None:
-    id_map = DecompIdMap.from_dadger(decomp_mini_case.dadger)
+    id_map = decomp_mini_case.id_map
     effective, _ = build_effective_cadastro(
         decomp_mini_case.dadger, decomp_mini_case.hidr, decomp_mini_case.calendar
     )
@@ -444,9 +443,3 @@ def test_terminal_shares_skip_a_monthly_trunk_stage() -> None:
     )
 
     assert shares == ()
-
-
-def test_carried_lag_share_is_the_cut_month_before_the_last_stage() -> None:
-    assert carried_lag_share(_CALENDAR, 2026, 4) == pytest.approx(3 / 30)
-    month_only = (_stage(0, date(2026, 4, 1), date(2026, 5, 1)),)
-    assert carried_lag_share(month_only, 2026, 4) == 0.0

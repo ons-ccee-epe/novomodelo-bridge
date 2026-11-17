@@ -131,13 +131,13 @@ With `--json`, a command prints exactly one JSON document to stdout,
 `{schema_version, command, status, summary, diagnostics}`, and nothing else on
 stdout, including when it fails. Human-readable rendering is suppressed.
 
-| Command     | Exit codes                                                                     |
-| ----------- | ------------------------------------------------------------------------------ |
-| `check`     | 0 ready, 1 ready with warnings, 2 will not convert                             |
-| `convert`   | 0 converted, 1 conversion error, 2 `--validate` reported a load failure        |
-| `compare`   | 0 compared, 1 source case not found or refused, 2 Novomodelo output unreadable |
-| `dashboard` | 0 written, 1 error                                                             |
-| `export`    | 0 exported, 1 export failed                                                    |
+| Command     | Exit codes                                                                                               |
+| ----------- | -------------------------------------------------------------------------------------------------------- |
+| `check`     | 0 ready, 1 ready with warnings, 2 will not convert                                                       |
+| `convert`   | 0 converted, 1 conversion error, 2 `--validate` reported a load failure                                  |
+| `compare`   | 0 compared, 1 source case not found or refused, 2 case from another deck or Novomodelo output unreadable |
+| `dashboard` | 0 written, 1 error                                                                                       |
+| `export`    | 0 exported, 1 export failed, including a case from another deck                                          |
 
 A command line the parser rejects (unknown option or command, missing argument,
 invalid value) exits 2 on every command. Under `--json` it prints the same

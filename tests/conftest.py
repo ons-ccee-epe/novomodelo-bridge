@@ -21,7 +21,6 @@ make_case``.
 
 from __future__ import annotations
 
-import functools
 import importlib.util
 import json
 import logging
@@ -49,12 +48,11 @@ from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.files import NewaveFiles
 
 # Shared skip marker for tier-2 tests that need `novomodelo-python` (`import
-# novomodelo`). CI installs the bridge without `novomodelo-python`, and this
-# marker skips the tests that need it there. A test that imports `novomodelo`
-# (directly or through a bridge function that does) carries it. Use
-# ``find_spec`` (import-free) so this module stays importable without it.
-# ``condition`` is passed by keyword (rather than positionally) so
-# ``.kwargs["condition"]`` is introspectable.
+# novomodelo`). It skips them in an environment installed without
+# `novomodelo-python`. A test that imports `novomodelo` (directly or through a
+# bridge function that does) carries it. Use ``find_spec`` (import-free) so
+# this module stays importable without it. ``condition`` is passed by keyword
+# (rather than positionally) so ``.kwargs["condition"]`` is introspectable.
 # Import via ``from tests.conftest import requires_novomodelo_python``.
 requires_novomodelo_python = pytest.mark.skipif(
     condition=importlib.util.find_spec("novomodelo") is None,
@@ -96,32 +94,6 @@ requires_writer_binding = pytest.mark.skipif(
         "requires a novomodelo-python wheel exposing the write_policy_checkpoint "
         "writer binding"
     ),
-)
-
-_BLOCK_THERMAL_COST_CASE = Path(__file__).parent / "fixtures" / "novomodelo_d61"
-
-
-@functools.cache
-def has_block_thermal_cost() -> bool:
-    """Whether the installed novomodelo wheel accepts a ``cost_per_mwh`` on a block row.
-
-    Probes by validating ``tests/fixtures/novomodelo_d61``, a copy of novomodelo's
-    ``d61-per-block-thermal-cost`` example on ``feat/thermal-block-cost``; a version
-    check cannot gate this because the wheel that refuses it and the build that
-    accepts it report the same version. The change that pairs the bridge with an
-    accepting novomodelo release deletes this probe, its marker and the fixture.
-    """
-    if importlib.util.find_spec("novomodelo") is None:
-        return False
-    import novomodelo.io
-
-    return bool(novomodelo.io.validate(str(_BLOCK_THERMAL_COST_CASE))["valid"])
-
-
-# Stack on ``requires_novomodelo_python`` so a missing wheel reports its own reason.
-requires_block_thermal_cost = pytest.mark.skipif(
-    condition=not has_block_thermal_cost(),
-    reason="requires a novomodelo-python wheel that accepts a per-block thermal cost",
 )
 
 

@@ -25,6 +25,21 @@ class SourceHydro:
     name: str
 
 
+def require_registered_hydros(case: DecompCase) -> None:
+    """Refuse a deck whose `UH` records give a converted plant `hidr.dat` lacks.
+
+    Raises:
+        FieldParseError: `hidr.dat` misses a converted plant.
+    """
+    hidr = case.hidr
+    for code in case.id_map.hydro_codes:
+        if code not in hidr.index:
+            raise FieldParseError(
+                f"converted plant {code} is not in the hydro registry",
+                field="UH register",
+            )
+
+
 def deck_hydros(case: DecompCase) -> dict[int, SourceHydro]:
     """The deck's converted hydros keyed by novomodelo hydro id, in ascending code order.
 
@@ -34,14 +49,10 @@ def deck_hydros(case: DecompCase) -> dict[int, SourceHydro]:
     Raises:
         FieldParseError: `hidr.dat` misses a converted plant.
     """
+    require_registered_hydros(case)
     hidr = case.hidr
     hydros: dict[int, SourceHydro] = {}
     for code in case.id_map.hydro_codes:
-        if code not in hidr.index:
-            raise FieldParseError(
-                f"operated plant {code} is not in the hydro registry",
-                field="UH register",
-            )
         name = str(hidr.loc[code, "nome_usina"]).strip()
         hydros[case.id_map.hydro_id(code)] = SourceHydro(code=code, name=name)
     return hydros
@@ -53,7 +64,7 @@ def match_case_hydros(
     """Refuse a deck other than the one the case was converted from.
 
     *case_names* maps each of the case's hydro ids to its name; *deck* is keyed by
-    novomodelo hydro id. The deck must operate exactly the case's hydros, each
+    novomodelo hydro id. The deck must convert exactly the case's hydros, each
     under the name the case gives it.
 
     Raises:
@@ -61,7 +72,7 @@ def match_case_hydros(
     """
     if case_names.keys() != deck.keys():
         raise CaseIdentityError(
-            f"the deck operates {len(deck)} hydro plants but the case holds "
+            f"the deck converts {len(deck)} hydro plants but the case holds "
             f"{len(case_names)}"
         )
     renamed = [

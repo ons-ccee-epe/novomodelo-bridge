@@ -20,7 +20,6 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     exception_reason,
 )
-from novomodelo_bridge.core.errors import CaseIdentityError
 from novomodelo_bridge.decomp.case_identity import match_case_hydros
 from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
     content_csv_path,
@@ -858,14 +857,9 @@ def _plan_export(
     """Read the case and its policy, check the premises, and lay out the pair."""
     with progress.step("read settings-derived inputs", 0):
         inputs = read_case_inputs(case_dir)
-        try:
-            match_case_hydros(
-                {hydro.id: hydro.name for hydro in inputs.hydros}, source.hydros
-            )
-        except CaseIdentityError as exc:
-            raise MappingError(
-                f"{exc}; export from the deck the case was converted from"
-            ) from exc
+        match_case_hydros(
+            {hydro.id: hydro.name for hydro in inputs.hydros}, source.hydros
+        )
         dropped = never_active_hydro_ids(inputs.hydros, len(inputs.stages))
         check_never_active_hydros(
             inputs.hydros, source.hydros, source.dormant_codes, dropped
@@ -1126,6 +1120,9 @@ def run_export(
     revision and the plant codes.
 
     Returns exit code: 0 success, non-zero failure.
+
+    Raises:
+        CaseIdentityError: *case_dir* was not converted from *source*'s deck.
     """
     paths = _resolve_output_paths(output_dir, source.revision, settings)
     progress = _ExportProgress(on_phase)

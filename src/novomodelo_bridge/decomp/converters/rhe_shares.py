@@ -48,7 +48,7 @@ from novomodelo_bridge.core.stored_energy import (
 from novomodelo_bridge.core.units import HM3_TO_MWH_PER_RHO
 from novomodelo_bridge.decomp.converters.cadastro import is_reservoir, storage_envelope
 from novomodelo_bridge.decomp.converters.hydro import (
-    _downstream_operated,
+    _downstream_in,
     _stored_energy_productivity_mw_per_m3s,
 )
 from novomodelo_bridge.novomodelo.scalar_parameters import (
@@ -203,9 +203,7 @@ class _EnergyCascade:
     def water_next(self, code: int) -> int | None:
         """The next operated plant on *code*'s ``hydros.json`` water route."""
         if code not in self._water:
-            self._water[code] = _downstream_operated(
-                self._effective, code, self._operated
-            )
+            self._water[code] = _downstream_in(self._effective, code, self._operated)
         return self._water[code]
 
     def _energy_next(self, code: int) -> int | None:

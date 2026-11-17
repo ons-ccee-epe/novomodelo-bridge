@@ -12,7 +12,7 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
 from novomodelo_bridge.decomp.converters.hydro import (
@@ -507,9 +507,7 @@ class TestConvertHydros:
 _NW_CODE = 20
 
 
-def _nw_hidr_frame(
-    *, nw_regulation: str = "M", omit: tuple[int, ...] = ()
-) -> pd.DataFrame:
+def _nw_hidr_frame(*, nw_regulation: str = "M") -> pd.DataFrame:
     """Operated plant 10 drains into plant 20 (the ``NW`` plant), which drains
     into operated plant 30."""
     rows = {
@@ -522,7 +520,6 @@ def _nw_hidr_frame(
         {
             code: {**row, "tipo_regulacao": regulation[code]}
             for code, row in rows.items()
-            if code not in omit
         }
     ).T
     df.index.name = "codigo_usina"
@@ -638,26 +635,27 @@ class TestNwPlants:
         assert {e["hydro_id"]: e["value_hm3"] for e in storage}[nw_id] == 120.0
         assert doc["hydros"][nw_id]["entry_stage_id"] == len(case.calendar)
 
-    def test_nw_reservoir_with_a_deck_volume_above_vmin_raises(self) -> None:
+    def test_nw_reservoir_with_a_deck_volume_above_vmin_is_unsupported(self) -> None:
         hidr = _nw_hidr_frame()
 
-        with pytest.raises(ValueError, match=r"plant 20 \(NWPLANT\)"):
+        with pytest.raises(
+            UnsupportedSourceError, match=r"plant 20 \(NWPLANT\)"
+        ) as raised:
             _convert_nw_hydros(hidr, nw_volume=40.0)
 
+        assert raised.value.path == "dadger.rvN"
+        assert raised.value.field == "UH volume_inicial"
         doc = _convert_nw_hydros(hidr, nw_volume=0.0)
         assert doc["hydros"][_nw_id_map().hydro_id(_NW_CODE)]["entry_stage_id"] == 3
 
-    def test_nw_plant_missing_from_hidr_raises(self) -> None:
-        hidr = _nw_hidr_frame(omit=(_NW_CODE,))
-
+    def test_nw_plant_named_by_a_vi_record_is_not_converted_yet(self) -> None:
         with pytest.raises(
-            ValueError, match="UH plant 20 is not in the hydro registry"
-        ):
-            _convert_nw_hydros(hidr, nw_volume=40.0)
-
-    def test_nw_plant_named_by_a_vi_record_raises(self) -> None:
-        with pytest.raises(ValueError, match=r"plant 20 \(NWPLANT\).*VI"):
+            UnsupportedSourceError, match=r"plant 20 \(NWPLANT\).*VI.*not converted yet"
+        ) as raised:
             _convert_nw_hydros(_nw_hidr_frame(), vi=_vi_frame(_NW_CODE))
+
+        assert raised.value.path == "dadger.rvN"
+        assert raised.value.field == "VI codigo_usina"
 
     def test_operated_plant_draining_into_an_nw_plant_converts_and_passes_its_water_downstream(
         self,
@@ -670,9 +668,16 @@ class TestNwPlants:
         assert by_name["NWPLANT"]["entry_stage_id"] == 3
         assert "travel_time_hours" not in by_name["UP"]
 
-    def test_operated_plant_with_a_travel_time_into_an_nw_plant_raises(self) -> None:
-        with pytest.raises(ValueError, match=r"plant 10 \(UP\).*VI"):
+    def test_operated_plant_with_a_travel_time_into_an_nw_plant_is_unsupported(
+        self,
+    ) -> None:
+        with pytest.raises(
+            UnsupportedSourceError, match=r"plant 10 \(UP\).*VI.*novomodelo refuses"
+        ) as raised:
             _convert_nw_hydros(_nw_hidr_frame(), vi=_vi_frame(10))
+
+        assert raised.value.path == "dadger.rvN"
+        assert raised.value.field == "VI codigo_usina"
 
     def test_energy_productivity_lists_only_operated_plants(self) -> None:
         id_map = DecompIdMap(

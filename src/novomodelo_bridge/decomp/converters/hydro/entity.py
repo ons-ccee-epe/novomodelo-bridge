@@ -6,7 +6,7 @@ Imports the capacity-cap helpers from ``.bounds`` and the
 storage-envelope helpers from ``decomp.converters.cadastro``; within the package
 only ``.turbine_limit`` imports from here, for the cascade walk.
 
-The cascade walk (:func:`_downstream_operated`, shared by this module's own
+The cascade walk (:func:`_downstream_in`, shared by this module's own
 ``downstream_id`` entity field and ``scenarios.py``'s incremental-inflow
 attribution) and ``scenarios.py``'s inflow-gauge attribution both read
 :class:`~novomodelo_bridge.decomp.converters.cadastro.effective.EffectiveCadastro`'s
@@ -33,7 +33,7 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
     format_stage_ranges,
 )
-from novomodelo_bridge.core.errors import FieldParseError
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.productivity import (
@@ -68,6 +68,8 @@ if TYPE_CHECKING:
     from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
+
+_DADGER = "dadger.rvN"
 
 
 def read_hidr(path: Path) -> pd.DataFrame:
@@ -170,11 +172,11 @@ class CascadeLinks(Protocol):
 
 
 def _cascade_walk(
-    effective: CascadeLinks, code: int, operated: set[int], stage_index: int
+    effective: CascadeLinks, code: int, stops: set[int], stage_index: int
 ) -> tuple[int | None, int | None]:
-    """``(next plant of *operated*, invalid link)`` below *code* at *stage_index*.
+    """``(next plant of *stops*, invalid link)`` below *code* at *stage_index*.
 
-    *operated* is the set of plants the walk may stop at: the converted plants,
+    *stops* is the set of plants the walk may stop at: the converted plants,
     or the operated ones when a dormant plant must be seen through. Plants
     outside it are skipped through and code 0 is the sink. A link that loops
     back or names a plant missing from ``hidr.dat`` ends the walk as a sink and
@@ -182,7 +184,7 @@ def _cascade_walk(
     """
     visited = {code}
     current = effective.downstream_plant(code, stage_index)
-    while current != 0 and current not in operated:
+    while current != 0 and current not in stops:
         if current in visited or current not in effective.base.index:
             return None, current
         visited.add(current)
@@ -190,14 +192,14 @@ def _cascade_walk(
     return (current if current != 0 else None), None
 
 
-def _downstream_operated(
+def _downstream_in(
     effective: CascadeLinks,
     code: int,
-    operated: set[int],
+    stops: set[int],
     *,
     stage_index: int = 0,
 ) -> int | None:
-    """The next plant of *operated* below *code* on the effective (post-``AC
+    """The next plant of *stops* below *code* on the effective (post-``AC
     NUMJUS``) cascade at *stage_index*, or ``None`` at the sink.
 
     Every caller reads the first stage: the case has one cascade for the
@@ -205,7 +207,7 @@ def _downstream_operated(
     stages are reported
     (:func:`novomodelo_bridge.decomp.converters.cadastro.topology_varies_diagnostic`).
     """
-    return _cascade_walk(effective, code, operated, stage_index)[0]
+    return _cascade_walk(effective, code, stops, stage_index)[0]
 
 
 def _cascade_link_invalid_diagnostic(rows: list[list[object]]) -> Diagnostic:
@@ -521,38 +523,46 @@ def _refuse_unsupported_dormant_plants(
 ) -> None:
     """Refuse the plants marked ``NW`` whose conversion would misstate the case.
 
-    Each refusal names the plant: one missing from ``hidr.dat``; a reservoir
-    whose ``UH`` record gives an initial volume above its stage-0 minimum
-    (novomodelo's storage semantics for it are not settled); one named by a
-    ``VI`` record; and an operated plant whose ``VI`` record delays an arc that
-    ends at a dormant plant, which ``novomodelo validate`` refuses.
+    Each refusal names the plant: one named by a ``VI`` record; an operated
+    plant whose ``VI`` record delays an arc that ends at a dormant plant, which
+    ``novomodelo validate`` refuses; and a reservoir whose ``UH`` record gives an
+    initial volume above its stage-0 minimum.
+
+    Raises:
+        UnsupportedSourceError: any of the three.
     """
     dormant = set(id_map.dormant_hydro_codes)
     if not dormant:
         return
     hidr = case.hidr
-    for code in id_map.dormant_hydro_codes:
-        if code not in hidr.index:
-            raise ValueError(f"UH plant {code} is not in the hydro registry")
 
     vi = as_frame(case.dadger.vi(df=True))
     vi_codes = set() if vi is None or vi.empty else {int(c) for c in vi["codigo_usina"]}
     for code in sorted(vi_codes):
         if code in dormant:
-            raise ValueError(
+            raise UnsupportedSourceError(
                 f"UH plant {code} ({_registry_name(hidr, code)}) is marked NW "
-                "and has a VI record: a travel time cannot delay the arc of a "
-                "plant that never operates"
+                "and has a VI record: a water travel time on a plant DECOMP "
+                "does not operate is not converted yet, so remove the VI "
+                "record or the NW mark.",
+                path=_DADGER,
+                field="VI codigo_usina",
             )
         if code in id_map.operated_hydro_codes and code in hidr.index:
             below, _ = _cascade_walk(effective, code, set(id_map.hydro_codes), 0)
             if below in dormant:
-                raise ValueError(
+                # TRACKED NOVOMODELO-GAP (C41): novomodelo refuses a water travel
+                # time into a hydro that has not entered yet. Remove when
+                # novomodelo accepts such an arc.
+                raise UnsupportedSourceError(
                     f"UH plant {code} ({_registry_name(hidr, code)}) has a VI "
                     f"record whose arc ends at plant {below} "
                     f"({_registry_name(hidr, below)}), marked NW and never "
-                    "operated: its VI record is the cause, since novomodelo "
-                    "refuses a travel time into a plant that does not operate"
+                    "operated: novomodelo refuses a travel time into a plant "
+                    "that enters after the horizon, so remove the VI record or "
+                    "the NW mark.",
+                    path=_DADGER,
+                    field="VI codigo_usina",
                 )
 
     for _, row in _converted_uh(case.dadger).iterrows():
@@ -562,13 +572,19 @@ def _refuse_unsupported_dormant_plants(
         if not is_reservoir(effective, code):
             continue
         v_min, _ = effective_storage_range(effective, code, 0)
-        if _initial_volume_hm3(effective, code, _deck_volume_pct(row)) > v_min:
-            raise ValueError(
+        volume_pct = _deck_volume_pct(row)
+        if _initial_volume_hm3(effective, code, volume_pct) > v_min:
+            # TRACKED NOVOMODELO-GAP (C42): novomodelo has no settled initial
+            # storage for a reservoir that enters after the horizon. Remove when
+            # novomodelo defines it.
+            raise UnsupportedSourceError(
                 f"UH plant {code} ({_registry_name(hidr, code)}) is a reservoir "
-                f"marked NW whose UH record gives an initial volume of "
-                f"{_deck_volume_pct(row):g}% above its minimum storage: "
-                "novomodelo's storage semantics for it are not settled, so "
-                "clear the volume or the NW mark"
+                "marked NW whose UH record gives an initial volume of "
+                f"{volume_pct:g}% above its minimum storage: novomodelo has no "
+                "settled initial storage for a reservoir that enters after the "
+                "horizon, so clear the volume or the NW mark.",
+                path=_DADGER,
+                field="UH volume_inicial",
             )
 
 
@@ -616,10 +632,11 @@ def convert_hydros(
     A dormant plant carries ``entry_stage_id`` = the stage count and
     ``operational_start_date`` = the horizon end, so novomodelo keeps it filling
     at every stage and passes its inflow to the first operating plant below. A
-    plant marked ``NW`` that is missing from ``hidr.dat``, a reservoir with a
-    deck volume above its minimum storage, or one named by a ``VI`` record, and an
-    operated plant whose ``VI`` arc ends at a dormant plant, raise
-    :class:`ValueError` before any entry is built.
+    plant marked ``NW`` that is a reservoir with a deck volume above its minimum
+    storage, or is named by a ``VI`` record, and an operated plant whose ``VI``
+    arc ends at a dormant plant, raise
+    :class:`~novomodelo_bridge.core.errors.UnsupportedSourceError` before any
+    entry is built.
 
     *fpha_codes* (from :func:`novomodelo_bridge.decomp.converters.fpha.fpha_eligible_codes`)
     selects the plants emitted with novomodelo's computed-FPHA generation model:

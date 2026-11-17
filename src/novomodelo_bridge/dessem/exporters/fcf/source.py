@@ -12,7 +12,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import SourceGnlThermal
 
 @dataclass(frozen=True)
 class SourceDeck:
-    """A deck revision, its operated hydros keyed by novomodelo hydro id, and its GNL plants.
+    """A deck revision, its converted hydros keyed by novomodelo hydro id, and its GNL plants.
 
     *gnl_thermals* ascend by deck code and are empty when the deck commits no
     GNL dispatch. *travel_time_codes* are the plant codes of the deck's `VI`
@@ -36,11 +36,9 @@ def read_source_deck(directory: Path) -> SourceDeck:
 
     Raises:
         SourceFileError: *directory* is not a deck directory.
-        FieldParseError: `hidr.dat` holds no plant or misses an operated one,
+        FieldParseError: `hidr.dat` holds no plant or misses a converted one,
             or `dadgnl` has a malformed record.
     """
-    from novomodelo_bridge.core.pandas_utils import as_frame
-    from novomodelo_bridge.decomp import plants
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import read_gnl_model
     from novomodelo_bridge.decomp.converters.travel_time import read_travel_times
@@ -61,12 +59,11 @@ def read_source_deck(directory: Path) -> SourceDeck:
             for thermal in gnl_model.thermals
         )
     )
-    uh = as_frame(case.dadger.uh(df=True))
     return SourceDeck(
         directory=directory,
         revision=case.files.revision,
         hydros=hydros,
         gnl_thermals=gnl_thermals,
         travel_time_codes=tuple(read_travel_times(case.dadger)),
-        dormant_codes=() if uh is None else plants.dormant_codes(uh),
+        dormant_codes=case.id_map.dormant_hydro_codes,
     )

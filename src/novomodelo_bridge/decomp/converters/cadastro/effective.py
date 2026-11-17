@@ -151,7 +151,7 @@ class EffectiveCadastro:
         :attr:`downstream_links`) — the same "absent means base" convention
         every other accessor here follows. ``0`` is a valid return (the
         sink); the cascade walk (:func:`~novomodelo_bridge.decomp.converters.
-        hydro.entity._downstream_operated`) treats it as such.
+        hydro.entity._downstream_in`) treats it as such.
         """
         if code not in self.downstream_links:
             return int(self.base.loc[code, "codigo_usina_jusante"])
@@ -625,7 +625,7 @@ def build_effective_cadastro(
     and densified the same way as every other per-stage series. Consumed by
     :meth:`EffectiveCadastro.downstream_plant`/``inflow_gauge`` — the
     cascade walk (:func:`~novomodelo_bridge.decomp.converters.hydro.entity.
-    _downstream_operated`) and the incremental-inflow gauge attribution
+    _downstream_in`) and the incremental-inflow gauge attribution
     (:func:`~novomodelo_bridge.decomp.scenarios._incremental_context`) read one
     stage-representative (stage 0) value off these, never per-stage, so a
     temporal ``NUMJUS``/``NUMPOS`` is a tracked gap

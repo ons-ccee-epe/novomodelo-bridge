@@ -293,13 +293,10 @@ Two parts of the coupling cannot be represented yet, and the import warns
 about each. In the last stage, the coupling inflow's difference from the
 operated inflow, and the inflow of cut plants outside the case, vary by
 scenario and are not folded; the warning names the plants and the largest
-gap. A split group has no such difference. When the cut's month begins before the last
-stage, Novomodelo evaluates the first inflow lag on the last stage's inflow
-alone; the warning states the share of the month this affects. Novomodelo also
-holds one GNL commitment per delivery window rather than one per patamar, so
-the boundary cost differs from DECOMP's when the commitment would differ by
-patamar; the import warns and reports how far the per-patamar GNL prices
-spread.
+gap. A split group has no such difference. Novomodelo also holds one GNL
+commitment per delivery window rather than one per patamar, so the boundary
+cost differs from DECOMP's when the commitment would differ by patamar; the
+import warns and reports how far the per-patamar GNL prices spread.
 
 The [DECOMP data map](decomp-data-map.md) traces each term to the deck
 record it is read from.

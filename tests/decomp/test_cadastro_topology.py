@@ -7,7 +7,7 @@ stored-energy downstream plant),
 flowing through the shared
 :func:`~novomodelo_bridge.decomp.converters.cadastro.overrides._read_keyed_overrides`
 reader (with ``_plant_code_key``), and their effect on the re-sourced
-cascade walk (``_downstream_operated``), the incremental-inflow cascade
+cascade walk (``_downstream_in``), the incremental-inflow cascade
 (``_incremental_context``/``convert_external_inflows``), the entity
 ``downstream_id``, and the pipeline's ``cadastro-topology-relinked``
 diagnostic. Tier-1 only: a synthetic ``_FakeDadger``/``_StubVazoes`` double

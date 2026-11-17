@@ -18,6 +18,7 @@ import pytest
 from idecomp.decomp import Dadger, Vazoes
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
 from novomodelo_bridge.decomp.converters.penalties import FICTITIOUS_EXCHANGE_FACTOR
@@ -28,7 +29,6 @@ from novomodelo_bridge.decomp.fcf.importer import (
     _patch_policy_boundary,
     _seed_recent_observations,
 )
-from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.pipeline import convert_decomp_case
 from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
@@ -41,7 +41,6 @@ from tests._fcf_fixtures import (
 from tests.conftest import (
     FloatDigitsKwargs,
     case_json_floats,
-    requires_block_thermal_cost,
     requires_novomodelo_python,
     requires_writer_binding,
 )
@@ -125,7 +124,6 @@ def test_decomp_mini_deck_converts_and_validates(
 
 
 @requires_novomodelo_python
-@requires_block_thermal_cost
 def test_differing_ct_cvus_case_validates(
     decomp_mini_deck: Path, tmp_path: Path
 ) -> None:
@@ -358,7 +356,7 @@ def test_decomp_mini_converts_estrela_as_a_dormant_hydro(
     hydros = _hydros(dst)
     estrela = _hydro_named(hydros, "ESTRELA")
     salto = _hydro_named(hydros, "SALTO")
-    id_map = DecompIdMap.from_dadger(decomp_mini_case.dadger)
+    id_map = decomp_mini_case.id_map
     assert id_map.dormant_hydro_codes == (_ESTRELA,)
     assert [h["id"] for h in hydros] == list(range(len(id_map.hydro_codes)))
     assert estrela["id"] == id_map.hydro_id(_ESTRELA)
@@ -397,12 +395,26 @@ def test_decomp_mini_writes_no_operation_bounds_for_estrela(
 
     listing = {
         "decomp-coupling-only-plants-excluded",
-        "boundary-fcf-source-only-plants-dropped",
         "decomp-runofriver-outflow-relaxed",
     }
     for diagnostic in collected:
         if diagnostic.code in listing and diagnostic.table is not None:
             assert _ESTRELA not in [row[0] for row in diagnostic.table.rows]
+
+
+def test_an_nw_plant_missing_from_hidr_stops_the_conversion_naming_it(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    deck = tmp_path / "deck"
+    shutil.copytree(decomp_mini_deck, deck)
+    dadger = deck / "dadger.rv2"
+    text = dadger.read_text(encoding="latin-1")
+    marked = f"UH  {_ESTRELA}  10 "
+    assert text.count(marked) == 1
+    dadger.write_text(text.replace(marked, "UH  321  10 "), encoding="latin-1")
+
+    with pytest.raises(FieldParseError, match="plant 321 is not in the hydro registry"):
+        convert_decomp_case(deck, tmp_path / "converted", force=True)
 
 
 def _with_reversed_uh_lines(deck: Path, tmp_path: Path) -> Path:

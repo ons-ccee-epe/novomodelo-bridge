@@ -16,6 +16,7 @@ import pytest
 from numpy.typing import NDArray
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.errors import CaseIdentityError
 from novomodelo_bridge.decomp.case_identity import SourceHydro
 from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
     node_and_iteration,
@@ -294,7 +295,7 @@ class TestPipelineIntegration:
                     1: SourceHydro(code=101, name="UHE_A"),
                     2: SourceHydro(code=102, name="UHE_B"),
                 },
-                "the deck operates 2 hydro plants but the case holds 3",
+                "the deck converts 2 hydro plants but the case holds 3",
                 id="plant-set",
             ),
             pytest.param(
@@ -321,25 +322,23 @@ class TestPipelineIntegration:
         output_dir = tmp_path / "dessem_fcf"
         wrong_deck = replace(synthetic_source, hydros=hydros)
 
-        with (
-            dx.collect() as diagnostics,
-            patch(
-                "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
-            ) as read,
-        ):
+        with patch(
+            "novomodelo_bridge.dessem.exporters.fcf.pipeline.read_policy"
+        ) as read:
             read.return_value = PolicyCheckpoint(mock_manifest, mock_pools)
-            result = run_export(
-                case_dir=synthetic_case_dir,
-                source=wrong_deck,
-                output_dir=output_dir,
-                settings=ExportSettings(),
-            )
+            with pytest.raises(CaseIdentityError, match=match):
+                run_export(
+                    case_dir=synthetic_case_dir,
+                    source=wrong_deck,
+                    output_dir=output_dir,
+                    settings=ExportSettings(),
+                )
 
-        assert result == 1
         assert not (output_dir / "mapcut.rv0").exists()
-        errors = [d for d in diagnostics if d.code == "dessem-fcf-export-failed"]
-        assert len(errors) == 1
-        assert match in errors[0].summary
+        manifest = json.loads(
+            (output_dir / "export_manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest["status"] == "failed"
 
     def test_manifest_contains_metadata(
         self,

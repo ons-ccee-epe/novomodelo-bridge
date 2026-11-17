@@ -114,7 +114,7 @@ class TestDiagnosticFromException:
         assert diag.remediation is None
 
     def test_case_identity_error_has_its_own_code(self) -> None:
-        exc = CaseIdentityError("the deck operates 3 hydro plants but the case holds 2")
+        exc = CaseIdentityError("the deck converts 3 hydro plants but the case holds 2")
         diag = diagnostic_from_exception(exc, context="Comparison")
         assert isinstance(exc, ValueError)
         assert diag.code == "case-deck-mismatch"
