@@ -1342,6 +1342,19 @@ summary = "Uma entrada por usina hidráulica convertida (registro `UH` com `volu
   how = "Sempre nulo: o DECOMP não declara defluência máxima cadastral. Um teto de `QDEF` (RHQ de termo único) vai para `constraints/hydro_bounds.parquet`."
 
   [[output.field]]
+  path = "hydros[].spillage.max_spillage_m3s"
+  when = "somente quando o `UH` da usina declara um teto de vertimento finito (campo 9)"
+  from = [ { file = "dadger", register = "UH", item = "limite_superior_vertimento" } ]
+  how = "Teto estático de vertimento do `UH` (campo 9, em m³/s), aplicado pelo Novomodelo a todos os patamares; o default 1.0e+21 e o campo em branco não geram o objeto `spillage`."
+
+  [[output.field]]
+  path = "hydros[].spillage.min_spillage_m3s"
+  when = "somente quando o `UH` da usina declara um teto de vertimento finito (campo 9)"
+  from = []
+  status = "null"
+  how = "Sempre nulo: o DECOMP não declara piso de vertimento cadastral."
+
+  [[output.field]]
   path = "hydros[].generation.model"
   from = [
     { file = "hidr", item = "a0_volume_cota..a4_volume_cota" },
@@ -2270,7 +2283,7 @@ summary = "Sobrescritas por (usina, estágio, patamar) dos limites declarados em
     { file = "dadger", register = "CQ", item = "coeficiente" },
     { file = "dadger", register = "UH", item = "limite_superior_vertimento" },
   ]
-  how = "Teto de vertimento de uma RHQ de termo único sobre `QVER` (`limite_superior` do `LQ` por patamar, herdado entre estágios) e/ou o teto estático do `UH` (campo 9, `limite_superior_vertimento`, em m³/s), um teto por estágio constante no horizonte. O default 1.0e+21 é tratado como ilimitado. O menor teto prevalece."
+  how = "Teto de vertimento de uma RHQ de termo único sobre `QVER` (`limite_superior` do `LQ` por patamar, herdado entre estágios). O teto estático do `UH` (campo 9, `limite_superior_vertimento`, em m³/s) entra neste arquivo só nas células (usina, estágio) em que uma RHQ de termo único sobre `QVER` também limita o vertimento, e é intersectado com ela: o menor teto prevalece. Nas demais células o teto do `UH` vive em `hydros.json`."
 
   [[output.field]]
   path = "water_withdrawal_m3s"

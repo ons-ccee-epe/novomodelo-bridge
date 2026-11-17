@@ -34,6 +34,7 @@ from novomodelo_bridge.core.diagnostics import (
     format_stage_ranges,
 )
 from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
+from novomodelo_bridge.core.generic_constraint_builder import is_bounded
 from novomodelo_bridge.core.hydro_units import build_mirror_unit_group
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.core.productivity import (
@@ -397,6 +398,7 @@ class _HydroContext:
     n_stages: int
     horizon_end: str
     min_outflow_by_code: dict[int, float]
+    max_spillage_by_code: dict[int, float]
     mp: pd.DataFrame | None
     fd: pd.DataFrame | None
     op_date: str
@@ -416,9 +418,9 @@ def _hydro_context(
     travel_time_hours: dict[int, float] | None,
     fpha_codes: set[int] | None,
 ) -> _HydroContext:
-    """Read the operated plants' ``UH`` minimum outflows and every converted
-    plant's evaporation flag (and, for Itaipu, the ``MP``/``FD`` registers),
-    noting every coupling-only ``UH`` registration."""
+    """Read the operated plants' ``UH`` minimum outflows and spill ceilings,
+    and every converted plant's evaporation flag (and, for Itaipu, the
+    ``MP``/``FD`` registers), noting every coupling-only ``UH`` registration."""
     dadger = case.dadger
     hidr = case.hidr
     start_date = case.start_date
@@ -428,10 +430,14 @@ def _hydro_context(
         emit(_coupling_only_diagnostic(hidr, coupling_only), logger=_LOG)
     converted_codes = set(id_map.hydro_codes)
     min_outflow_by_code: dict[int, float] = {}
+    max_spillage_by_code: dict[int, float] = {}
     for _, row in operated.iterrows():
         value = row.get("vazao_defluente_minima")
         if not pd.isna(value):
             min_outflow_by_code[int(row["codigo_usina"])] = float(value)
+        ceiling = row.get("limite_superior_vertimento")
+        if not pd.isna(ceiling) and is_bounded(float(ceiling)):
+            max_spillage_by_code[int(row["codigo_usina"])] = float(ceiling)
 
     # Read the MP/FD registers only if the split plant is actually present —
     # keeps every other (hand-built or real, non-Itaipu) caller from needing
@@ -454,6 +460,7 @@ def _hydro_context(
         n_stages=len(case.calendar),
         horizon_end=case.calendar[-1].end_date.isoformat(),
         min_outflow_by_code=min_outflow_by_code,
+        max_spillage_by_code=max_spillage_by_code,
         mp=mp,
         fd=fd,
         op_date=start_date.isoformat(),
@@ -626,6 +633,11 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
             if references is not None and code in references:
                 evaporation["reference_volumes_hm3"] = [references[code]] * 12
             entry["evaporation"] = evaporation
+    if code in context.max_spillage_by_code:
+        entry["spillage"] = {
+            "min_spillage_m3s": None,
+            "max_spillage_m3s": context.max_spillage_by_code[code],
+        }
     invalid_link_row: list[object] | None = (
         None if invalid_link is None else [code, name, invalid_link]
     )

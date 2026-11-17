@@ -14,6 +14,15 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+#### DECOMP
+
+- **`convert decomp` writes each plant's `UH` spill ceiling to
+  `system/hydros.json`** (`spillage.max_spillage_m3s`) and keeps it in
+  `constraints/hydro_bounds.parquet` only where an RHQ `QVER` bound also
+  applies. Results are unchanged.
+
 ## [0.21.0] - 2026-11-16
 
 Pairs the bridge with the **novomodelo 0.21.0** release and pins

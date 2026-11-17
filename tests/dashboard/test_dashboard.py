@@ -461,6 +461,28 @@ def test_load_hydro_metadata_extracts_fields(tmp_path: Path) -> None:
     assert result[0]["productivity"] == pytest.approx(0.08)
 
 
+def test_load_hydro_metadata_carries_entity_spillage(tmp_path: Path) -> None:
+    hydros_json = {
+        "hydros": [
+            hydro_with_group(
+                0,
+                1,
+                spillage={"min_spillage_m3s": None, "max_spillage_m3s": 250.0},
+            ),
+            hydro_with_group(1, 1),
+        ]
+    }
+    _write_json(tmp_path / "system" / "hydros.json", hydros_json)
+
+    result = load_hydro_metadata(tmp_path)
+
+    spillage = {
+        hid: (meta["min_spillage_m3s"], meta["max_spillage_m3s"])
+        for hid, meta in result.items()
+    }
+    assert spillage == {0: (None, 250.0), 1: (None, None)}
+
+
 def test_load_hydro_metadata_missing_file_returns_empty(tmp_path: Path) -> None:
     result = load_hydro_metadata(tmp_path)
 

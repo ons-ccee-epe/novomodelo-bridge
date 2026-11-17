@@ -322,7 +322,9 @@ class _StubDadger:
         return pd.DataFrame()
 
 
-def _uh_frame() -> pd.DataFrame:
+def _uh_frame(ceilings: dict[int, float | None] | None = None) -> pd.DataFrame:
+    """The ``UH`` stub; *ceilings* (code -> field 9) adds the
+    ``limite_superior_vertimento`` column, blank for any code it omits."""
     rows = [
         {
             "codigo_usina": 1,
@@ -350,7 +352,21 @@ def _uh_frame() -> pd.DataFrame:
             "volume_morto_inicial": None,
         },
     ]
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    if ceilings is not None:
+        frame["limite_superior_vertimento"] = frame["codigo_usina"].map(ceilings)
+    return frame
+
+
+def _hydros_by_name(uh: pd.DataFrame) -> dict[str, dict]:
+    hidr = _hidr_frame()
+    doc = convert_hydros(
+        _case(_StubDadger(uh=uh), hidr),
+        _ID_MAP,
+        effective=_no_override_effective(hidr),
+        turbine_limits=flat_turbine_limits(_ID_MAP, 3),
+    )
+    return {h["name"]: h for h in doc["hydros"]}
 
 
 #: A minimal per-frequency split-plant (Itaipu-shaped) fixture —
@@ -549,6 +565,25 @@ class TestConvertHydros:
             "model": "constant_productivity",
             "productivity_mw_per_m3s": 0.0,
         }
+
+    def test_finite_uh_ceiling_writes_spillage_object(self) -> None:
+        hydros = _hydros_by_name(_uh_frame({1: 55.0}))
+
+        assert hydros["UP_RES"]["spillage"] == {
+            "min_spillage_m3s": None,
+            "max_spillage_m3s": 55.0,
+        }
+        assert "spillage" not in hydros["MID_RES"]
+
+    def test_zero_uh_ceiling_is_kept(self) -> None:
+        hydros = _hydros_by_name(_uh_frame({2: 0.0}))
+
+        assert hydros["MID_RES"]["spillage"]["max_spillage_m3s"] == 0.0
+
+    def test_unbounded_uh_ceiling_writes_no_spillage_key(self) -> None:
+        blank_and_sentinel = _uh_frame({1: 1.0e21, 2: None})
+        for uh in (blank_and_sentinel, _uh_frame()):
+            assert all("spillage" not in h for h in _hydros_by_name(uh).values())
 
 
 _NW_CODE = 20

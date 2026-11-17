@@ -1997,14 +1997,15 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     # exactly ONE resolve() + build_bound_tables() pass, so a new special
     # constraint colliding with a legacy bound on the same (entity, stage,
     # block) cell correctly intersects instead of producing the
-    # two-rows-same-column parquet novomodelo rejects.
+    # two-rows-same-column parquet novomodelo rejects. The UH spillage
+    # ceiling is the exception: hydros.json carries it, so it is added below
+    # only on cells another contribution already bounds.
     contribs = [
         *bounds_conv.convert_hydro_bounds(
             case, id_map, effective=effective, unregulated_codes=unregulated_codes
         ),
         *bounds_conv.convert_storage_bounds(case, id_map, effective=effective),
         *bounds_conv.convert_volume_espera_bounds(case, id_map, effective=effective),
-        *bounds_conv.convert_spillage_upper_bounds(case, id_map),
         *hydro_conv.plant_turbine_limit_contributions(turbine_limits, id_map),
         *hydro_conv.split_plant_generation_contributions(availability_values),
         *thermal_generation_contribs,
@@ -2016,6 +2017,14 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
             effective=effective,
         ),
     ]
+    declared_ceilings = {
+        hydro["id"]: hydro["spillage"]["max_spillage_m3s"]
+        for hydro in hydros_dict["hydros"]
+        if "spillage" in hydro
+    }
+    contribs.extend(
+        bounds_conv.convert_spillage_upper_bounds(declared_ceilings, contribs)
+    )
     base_diversion_channels = _base_diversion_channels(
         effective,
         id_map,

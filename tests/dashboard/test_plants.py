@@ -100,8 +100,14 @@ def _make_block_hours(
     }
 
 
-def _make_hydro_meta(hydro_ids: list[int] | None = None) -> dict[int, dict]:
-    """Return a minimal hydro_meta dict."""
+def _make_hydro_meta(
+    hydro_ids: list[int] | None = None,
+    *,
+    min_spillage_m3s: float | None = None,
+    max_spillage_m3s: float | None = None,
+) -> dict[int, dict]:
+    """Return a minimal hydro_meta dict; the spillage limits are the entity
+    values of ``hydros.json``, ``None`` when the plant carries none."""
     if hydro_ids is None:
         hydro_ids = [0, 1]
     names = {0: "Agua Vermelha", 1: "Barra Grande"}
@@ -116,6 +122,8 @@ def _make_hydro_meta(hydro_ids: list[int] | None = None) -> dict[int, dict]:
             "max_turbined": 40.0,
             "productivity": 0.9,
             "downstream_id": None,
+            "min_spillage_m3s": min_spillage_m3s,
+            "max_spillage_m3s": max_spillage_m3s,
         }
         for hid in hydro_ids
     }
@@ -305,6 +313,93 @@ def test_build_hydro_json_with_bounds_has_stor_keys() -> None:
     entry_1 = hydro_data["1"]
     assert entry_1["stor_min"] == []
     assert entry_1["stor_max"] == []
+
+
+def _spill_lines(
+    hydro_meta: dict[int, dict], hydro_bounds: pd.DataFrame, n_stages: int
+) -> tuple[list[float], list[float]]:
+    """Build plant 0's ``(spill_min, spill_max)`` arrays."""
+    hydros_lf = _make_hydros_lf(n_scenarios=2, n_stages=n_stages, hydro_ids=[0])
+    percentiles = _compute_hydro_percentiles(
+        hydros_lf, _make_bh_df(n_stages=n_stages), weights=UNIFORM
+    )
+    hydro_data, _ = _build_hydro_json(
+        hydro_meta=hydro_meta,
+        percentiles=percentiles,
+        stages=sorted(percentiles["stage_id"].unique().to_list()),
+        stage_dates={},
+        bus_names={0: "Bus-A"},
+        hydro_bounds=hydro_bounds,
+        lp_bounds=pd.DataFrame(),
+        block_hours=_make_block_hours(n_stages=n_stages),
+    )
+    return hydro_data["0"]["spill_min"], hydro_data["0"]["spill_max"]
+
+
+def test_build_hydro_json_spill_lines_uh_only_plant_match_pre_trim() -> None:
+    """A plant whose only spillage bound is the entity ceiling draws the same
+    lines as when a stage row carried that ceiling at every stage."""
+    pre_trim_bounds = pd.DataFrame(
+        [
+            {
+                "hydro_id": 0,
+                "stage_id": stage_id,
+                "min_spillage_m3s": float("nan"),
+                "max_spillage_m3s": 500.0,
+            }
+            for stage_id in range(2)
+        ]
+    )
+
+    pre_trim = _spill_lines(_make_hydro_meta([0]), pre_trim_bounds, n_stages=2)
+    post_trim = _spill_lines(
+        _make_hydro_meta([0], max_spillage_m3s=500.0), pd.DataFrame(), n_stages=2
+    )
+
+    assert pre_trim == ([0.0, 0.0], [500.0, 500.0])
+    assert post_trim == pre_trim
+
+
+def test_build_hydro_json_spill_lines_partly_shared_plant_match_pre_trim() -> None:
+    """A stage row replaces the entity ceiling where it is non-null, and a
+    row kept for another bound (null spillage) leaves the ceiling in place."""
+    pre_trim_bounds = pd.DataFrame(
+        [
+            {
+                "hydro_id": 0,
+                "stage_id": stage_id,
+                "min_spillage_m3s": float("nan"),
+                "max_spillage_m3s": ceiling,
+            }
+            for stage_id, ceiling in enumerate([500.0, 300.0, 500.0])
+        ]
+    )
+    post_trim_bounds = pd.DataFrame(
+        [
+            {
+                "hydro_id": 0,
+                "stage_id": 1,
+                "min_spillage_m3s": float("nan"),
+                "max_spillage_m3s": 300.0,
+            },
+            {
+                "hydro_id": 0,
+                "stage_id": 2,
+                "min_outflow_m3s": 5.0,
+                "min_spillage_m3s": float("nan"),
+                "max_spillage_m3s": float("nan"),
+            },
+        ]
+    )
+
+    pre_trim = _spill_lines(_make_hydro_meta([0]), pre_trim_bounds, n_stages=3)
+    post_trim = _spill_lines(
+        _make_hydro_meta([0], max_spillage_m3s=500.0), post_trim_bounds, n_stages=3
+    )
+
+    assert pre_trim[1] == [500.0, 300.0, 500.0]
+    assert post_trim == pre_trim
+    assert not any(pd.isna(v) for line in post_trim for v in line)
 
 
 def test_build_hydro_json_with_lp_bounds_has_gen_keys() -> None:

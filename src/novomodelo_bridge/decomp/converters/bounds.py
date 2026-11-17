@@ -65,6 +65,8 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -303,40 +305,42 @@ def convert_volume_espera_bounds(
 
 
 def convert_spillage_upper_bounds(
-    case: DecompCase,
-    id_map: DecompIdMap,
+    declared_ceilings: Mapping[int, float],
+    other_contributions: Sequence[BoundContribution],
 ) -> list[BoundContribution]:
-    """One-sided, stage-level ``spillage`` ceiling (m³/s) from ``UH`` field 9.
+    """One-sided, stage-level ``spillage`` ceiling (m³/s) from ``UH`` field 9,
+    emitted only where it must intersect another spillage contributor.
 
-    One contribution per operated plant and stage, constant across the horizon.
+    The finite ceiling already lives on the hydro entity in ``hydros.json``,
+    but a ``hydro_bounds`` spillage row replaces that entity value on its
+    cell. One base ``UH_vert`` contribution is therefore emitted for each
+    ``(hydro, stage)`` that *other_contributions* already bound on the
+    ``spillage`` axis (at any block), so the resolved row keeps the tighter of
+    the two. A cell the ``UH`` ceiling alone bounds emits nothing.
+
+    *declared_ceilings* maps a novomodelo hydro id to its ``hydros.json``
+    ``max_spillage_m3s``.
     """
-    uh = as_frame(case.dadger.uh(df=True))
-    if uh is None or uh.empty or "limite_superior_vertimento" not in uh.columns:
-        return []
-
-    operated = plants.operated_uh(uh)
-    calendar = case.calendar
-    contributions: list[BoundContribution] = []
-    for _, row in operated.iterrows():
-        ceiling = row["limite_superior_vertimento"]
-        if pd.isna(ceiling):
-            continue
-        hydro_id = id_map.hydro_id(int(row["codigo_usina"]))
-        for stage in calendar:
-            contributions.append(
-                BoundContribution(
-                    family="hydro",
-                    entity_id=hydro_id,
-                    stage_id=stage.index,
-                    block_id=None,
-                    axis="spillage",
-                    lower=None,
-                    upper=float(ceiling),
-                    contributor="UH_vert",
-                )
-            )
-
-    return contributions
+    shared = {
+        (c.entity_id, c.stage_id)
+        for c in other_contributions
+        if c.family == "hydro"
+        and c.axis == "spillage"
+        and c.entity_id in declared_ceilings
+    }
+    return [
+        BoundContribution(
+            family="hydro",
+            entity_id=entity_id,
+            stage_id=stage_id,
+            block_id=None,
+            axis="spillage",
+            lower=None,
+            upper=declared_ceilings[entity_id],
+            contributor="UH_vert",
+        )
+        for entity_id, stage_id in sorted(shared)
+    ]
 
 
 #: novomodelo ``hydro_bounds`` column for a consumptive water withdrawal, in m³/s
