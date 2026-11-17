@@ -16,6 +16,12 @@ source plant code), ``novomodelo_id``, ``weight`` (probability × hours), ``v_hm
 are each model's own; the source model's FPHA storage is its stage mean, and
 Novomodelo's is the mean of its initial and final storage.
 
+Novomodelo's planes read the effective spill ``case_s_eff_m3s``
+(:func:`with_case_lateral`): the plant's own spill scaled by its declared own
+outflow factor, plus each declared influencer's turbined and spilled flow and
+incremental inflow at the same point. A case without declarations reads the
+own spill.
+
 The exact production function is ``min(ρ_esp · Q · h_net, G_max)``
 (:func:`head`). The forebay comes from the cota polynomial at the point's
 storage. The tailrace is read at ``outflow_factor · (Q + S) + Q_lat + Q_gauge``,
@@ -126,8 +132,9 @@ FPHA_FIT_INPUTS_SCHEMA: dict[str, type[pl.DataType]] = {
 
 #: GH along a turbined-flow sweep per (plant, stage). ``source_planes``,
 #: ``novomodelo_planes`` and ``exact`` are taken at the source model's mean
-#: storage, spill and lateral flow; ``novomodelo_planes_own`` at Novomodelo's own mean
-#: storage and spill.
+#: storage, spill and lateral flow (``novomodelo_planes`` at the effective
+#: spill); ``novomodelo_planes_own`` at Novomodelo's own mean storage and
+#: effective spill.
 FPHA_SLICE_SCHEMA: dict[str, type[pl.DataType]] = {
     "novomodelo_id": pl.Int64,
     "stage": pl.Int64,
@@ -176,6 +183,12 @@ PLANE_SCHEMA: dict[str, type[pl.DataType]] = {
 LINK_SCHEMA: dict[str, type[pl.DataType]] = {
     "code": pl.Int64,
     "influencer": pl.Int64,
+    "factor": pl.Float64,
+}
+
+INFLUENCE_SCHEMA: dict[str, type[pl.DataType]] = {
+    "novomodelo_id": pl.Int64,
+    "influencer_id": pl.Int64,
     "factor": pl.Float64,
 }
 
@@ -293,6 +306,24 @@ class SourceProductionModel:
     )
     gauge_links: pl.DataFrame = field(
         default_factory=lambda: pl.DataFrame(schema=LINK_SCHEMA)
+    )
+
+
+@dataclass(frozen=True)
+class CaseTailraceFlows:
+    """The tailrace flow declarations of the converted case, by novomodelo id.
+
+    ``own_factor`` holds the ``own_outflow_factor`` of each declaring plant;
+    ``outflow`` and ``incremental`` (:data:`INFLUENCE_SCHEMA`) hold one row per
+    ``outflow_influences`` and ``incremental_inflow_influences`` entry.
+    """
+
+    own_factor: Mapping[int, float] = field(default_factory=dict)
+    outflow: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema=INFLUENCE_SCHEMA)
+    )
+    incremental: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema=INFLUENCE_SCHEMA)
     )
 
 
@@ -761,6 +792,119 @@ def _with_context(
     )
 
 
+def case_tailrace_flows(novomodelo_output_dir: Path) -> CaseTailraceFlows:
+    """The ``tailrace_flow`` declarations in ``system/hydros.json``; a plant
+    that omits ``own_outflow_factor`` has 1.0."""
+    own: dict[int, float] = {}
+    outflow: list[tuple[int, int, float]] = []
+    incremental: list[tuple[int, int, float]] = []
+    for hydro in novomodelo_readers.read_novomodelo_hydros(novomodelo_output_dir):
+        declaration = hydro.get("tailrace_flow")
+        if not declaration:
+            continue
+        plant = int(hydro["id"])
+        own[plant] = float(declaration.get("own_outflow_factor", 1.0))
+        for target, key in (
+            (outflow, "outflow_influences"),
+            (incremental, "incremental_inflow_influences"),
+        ):
+            target.extend(
+                (plant, int(influence["hydro_id"]), float(influence["factor"]))
+                for influence in declaration.get(key, ())
+            )
+    return CaseTailraceFlows(
+        own,
+        pl.DataFrame(outflow, schema=INFLUENCE_SCHEMA, orient="row"),
+        pl.DataFrame(incremental, schema=INFLUENCE_SCHEMA, orient="row"),
+    )
+
+
+def with_case_lateral(points: pl.DataFrame, flows: CaseTailraceFlows) -> pl.DataFrame:
+    """*points* with ``case_s_eff_m3s``, the spill Novomodelo's planes read:
+    ``own_factor · s + Σ factor · (q + s) + Σ factor · incremental`` over the
+    plant's declared influencers at the same :data:`POINT_KEYS`; an influencer
+    without a point contributes 0.0. Without declarations it is ``s_m3s``.
+
+    Apply it to the full point frame, before :func:`evaluate_points` drops the
+    plants the production model does not cover.
+
+    Raises:
+        ValueError: *points* lack ``incremental_m3s`` and *flows* declare an
+            incremental-inflow influence on a plant they hold.
+    """
+    if (
+        not flows.own_factor
+        and flows.outflow.is_empty()
+        and flows.incremental.is_empty()
+    ):
+        return points.with_columns(pl.col("s_m3s").alias("case_s_eff_m3s"))
+    has_incremental = "incremental_m3s" in points.columns
+    if not has_incremental:
+        refused = sorted(
+            set(flows.incremental.get_column("novomodelo_id"))
+            & set(points.get_column("novomodelo_id"))
+        )
+        if refused:
+            raise ValueError(
+                "Incremental-inflow influences are declared for novomodelo "
+                f"plants {refused}, but their operating points carry no "
+                "incremental_m3s."
+            )
+
+    def _influence_sum(
+        influences: pl.DataFrame, value: pl.Expr, name: str
+    ) -> pl.DataFrame:
+        influencer = points.select(
+            *POINT_KEYS, pl.col("novomodelo_id").alias("influencer_id"), value
+        )
+        return (
+            influences.join(influencer, on="influencer_id")
+            .group_by("novomodelo_id", *POINT_KEYS)
+            .agg((pl.col("factor") * pl.col("_value")).sum().alias(name))
+        )
+
+    keys = ["novomodelo_id", *POINT_KEYS]
+    own = pl.DataFrame(
+        {
+            "novomodelo_id": list(flows.own_factor),
+            "_own": list(flows.own_factor.values()),
+        },
+        schema={"novomodelo_id": pl.Int64, "_own": pl.Float64},
+    )
+    incremental = (
+        pl.col("incremental_m3s") if has_incremental else pl.lit(None, dtype=pl.Float64)
+    )
+    return (
+        points.join(own, on="novomodelo_id", how="left", maintain_order="left")
+        .join(
+            _influence_sum(
+                flows.outflow,
+                (pl.col("q_m3s") + pl.col("s_m3s")).alias("_value"),
+                "_outflow",
+            ),
+            on=keys,
+            how="left",
+            maintain_order="left",
+        )
+        .join(
+            _influence_sum(
+                flows.incremental, incremental.alias("_value"), "_incremental"
+            ),
+            on=keys,
+            how="left",
+            maintain_order="left",
+        )
+        .with_columns(
+            (
+                pl.col("_own").fill_null(1.0) * pl.col("s_m3s")
+                + pl.col("_outflow").fill_null(0.0)
+                + pl.col("_incremental").fill_null(0.0)
+            ).alias("case_s_eff_m3s")
+        )
+        .drop("_own", "_outflow", "_incremental")
+    )
+
+
 def source_envelope(
     planes: pl.DataFrame,
     v_useful: np.ndarray,
@@ -789,8 +933,9 @@ def with_envelopes(
     model: SourceProductionModel,
     novomodelo_planes: Mapping[tuple[int, int], pl.DataFrame],
 ) -> pl.DataFrame:
-    """Both models' envelopes at the evaluated source points;
-    *novomodelo_planes* is keyed by ``(novomodelo_id, stage)``."""
+    """Both models' envelopes at the evaluated source points, which carry
+    ``case_s_eff_m3s`` (:func:`with_case_lateral`), where Novomodelo's planes
+    are read; *novomodelo_planes* is keyed by ``(novomodelo_id, stage)``."""
     parts: list[pl.DataFrame] = []
     for (code, novomodelo_id, stage), group in points.partition_by(
         ["code", "novomodelo_id", "stage"], as_dict=True
@@ -798,6 +943,7 @@ def with_envelopes(
         v = group.get_column("v_hm3").to_numpy()
         q = group.get_column("q_m3s").to_numpy()
         s = group.get_column("s_m3s").to_numpy()
+        s_eff = group.get_column("case_s_eff_m3s").to_numpy()
         lateral = group.get_column("lateral_m3s").to_numpy()
         source_mw = source_envelope(
             model.planes[(code, stage)],
@@ -807,7 +953,10 @@ def with_envelopes(
             lateral,
         )
         novomodelo_mw = dense_grid(
-            *novomodelo_plane_arrays(novomodelo_planes[(novomodelo_id, stage)]), v, q, s
+            *novomodelo_plane_arrays(novomodelo_planes[(novomodelo_id, stage)]),
+            v,
+            q,
+            s_eff,
         )
         parts.append(
             group.with_columns(
@@ -858,7 +1007,15 @@ def _mean_points(points: pl.DataFrame, prefix: str) -> pl.DataFrame:
         pl.col("code").first(),
         *[
             weighted_mean(c).alias(f"{prefix}_{c}")
-            for c in ("v_hm3", "q_m3s", "s_m3s", "gh_mw", "lateral_m3s", "gauge_m3s")
+            for c in (
+                "v_hm3",
+                "q_m3s",
+                "s_m3s",
+                "case_s_eff_m3s",
+                "gh_mw",
+                "lateral_m3s",
+                "gauge_m3s",
+            )
         ],
         (
             (pl.col("weight") * pl.col("downstream_level_m")).sum()
@@ -990,6 +1147,7 @@ def _fit_inputs_and_slices(
         q_axis = np.linspace(0.0, q_top, _SLICE_POINTS)
         v_src = np.full_like(q_axis, m["source_v_hm3"])
         s_src = np.full_like(q_axis, m["source_s_m3s"])
+        s_eff_src = np.full_like(q_axis, m["source_case_s_eff_m3s"])
         sweeps = {
             "source_planes": source_envelope(
                 source_planes,
@@ -999,7 +1157,7 @@ def _fit_inputs_and_slices(
                 np.full_like(q_axis, m["source_lateral_m3s"]),
             ),
             "novomodelo_planes": dense_grid(
-                *novomodelo_plane_arrays(novomodelo_planes), v_src, q_axis, s_src
+                *novomodelo_plane_arrays(novomodelo_planes), v_src, q_axis, s_eff_src
             ),
             "exact": np.array(
                 [_at_mean("source", float(q)).generation_mw for q in q_axis]
@@ -1010,7 +1168,7 @@ def _fit_inputs_and_slices(
                 *novomodelo_plane_arrays(novomodelo_planes),
                 np.full_like(q_axis, m["novomodelo_v_hm3"]),
                 q_axis,
-                np.full_like(q_axis, m["novomodelo_s_m3s"]),
+                np.full_like(q_axis, m["novomodelo_case_s_eff_m3s"]),
             )
         for curve, gh in sweeps.items():
             curves.extend(

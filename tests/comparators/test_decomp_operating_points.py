@@ -259,6 +259,7 @@ def _compare(
         "read_novomodelo_bus_block_prices": runs.prices,
         "read_novomodelo_hydro_bus_labels": {h: frozenset({0}) for h in runs.hydro_ids},
         "read_novomodelo_fpha_planes": runs.novomodelo_planes,
+        "read_novomodelo_hydros": [],
         "read_novomodelo_fpha_fit_config": pl.DataFrame(
             {
                 "hydro_id": [runs.hydro_ids[0]],
