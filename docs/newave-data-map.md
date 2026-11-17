@@ -202,6 +202,7 @@ Penalidades globais: custo de déficit de `sistema.dat`, micropenalidades intern
 | `hydro.outflow_violation_below_cost` | `penalid.dat` › `VAZMIN · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica` | VAZMIN (sem registro, 10 × maior custo de déficit) × PROD_MEDIA_SIN. |
 | `hydro.outflow_violation_above_cost` | `penalid.dat` › `TURBMX · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica` | TURBMX (sem registro, 10 × maior custo de déficit) × PROD_MEDIA_SIN. |
 | `hydro.generation_violation_below_cost` | `penalid.dat` › `GHMIN · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo` | GHMIN (sem registro, 10 × maior custo de déficit), em R$/MWh sem fator de produtibilidade: a folga é no domínio de energia. |
+| `hydro.fpha_violation_cost` | `sistema.dat` › `custo_deficit · custo`, `penalid.dat` › `GHMIN · valor_R$_MWh` | Sem variável em `penalid.dat`: a folga da FPHA do manual (p.87, 10 × maior custo de déficit), elevada a 1,01 × (maior custo de déficit + GHMIN) quando esse valor é maior, para que gerar acima de um plano nunca alivie um déficit e uma violação de GHMIN por menos do que custa. Sem registro GHMIN dá 11,11 × maior custo de déficit. Em R$/MWh, sem fator de produtibilidade. |
 | `hydro.water_withdrawal_violation_cost` | `penalid.dat` › `DESVIO · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica`, `confhd.dat` › `usinas · codigo_usina_jusante` | DESVIO (sem registro, 10 × maior custo de déficit) × MAX_PRODTACUM_SIN, a maior produtibilidade acumulada de cascata avaliada na altura máxima (volume útil integral), com a topologia de `codigo_usina_jusante`. |
 | `hydro.evaporation_violation_cost` | `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica`, `confhd.dat` › `usinas · codigo_usina_jusante` | Sem variável em `penalid.dat`: 10 × maior custo de déficit × MAX_PRODTACUM_SIN (manual p.87, sem a divisão por C_M3S2HM3 porque a folga do Novomodelo é em m³/s). |
 | `hydro.inflow_nonnegativity_cost` | `penalid.dat` › `DESVIO · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica` | `water_withdrawal_violation_cost` + 1 R$/(m³/s), para que a folga de afluência nunca seja mais barata que a violação de desvio de água. Sem contrapartida no NEWAVE. |
@@ -990,6 +991,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `custo_deficit · custo` → `penalties.json` › `hydro.outflow_violation_below_cost`
 - `custo_deficit · custo` → `penalties.json` › `hydro.outflow_violation_above_cost`
 - `custo_deficit · custo` → `penalties.json` › `hydro.generation_violation_below_cost`
+- `custo_deficit · custo` → `penalties.json` › `hydro.fpha_violation_cost`
 - `custo_deficit · custo` → `penalties.json` › `hydro.water_withdrawal_violation_cost`
 - `custo_deficit · custo` → `penalties.json` › `hydro.evaporation_violation_cost`
 - `custo_deficit · custo` → `penalties.json` › `hydro.inflow_nonnegativity_cost`
@@ -1451,6 +1453,7 @@ O bridge toma, por variável, o primeiro valor `R$/MWh` não nulo do primeiro pa
 - `VAZMIN · valor_R$_MWh` → `penalties.json` › `hydro.outflow_violation_below_cost`
 - `TURBMX · valor_R$_MWh` → `penalties.json` › `hydro.outflow_violation_above_cost`
 - `GHMIN · valor_R$_MWh` → `penalties.json` › `hydro.generation_violation_below_cost`
+- `GHMIN · valor_R$_MWh` → `penalties.json` › `hydro.fpha_violation_cost`
 - `DESVIO · valor_R$_MWh` → `penalties.json` › `hydro.water_withdrawal_violation_cost`
 - `DESVIO · valor_R$_MWh` → `penalties.json` › `hydro.inflow_nonnegativity_cost`
 - `VOLMIN · valor_R$_MWh` → `penalties.json` › `hydro.storage_violation_below_cost`

@@ -237,6 +237,7 @@ Custo de déficit de `CD`, micro-penalidades fixas do DECOMP (vertimento, turbin
 | `hydro.outflow_violation_below_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_avg` (folga de vazão defluente mínima). |
 | `hydro.outflow_violation_above_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_avg` (folga de vazão defluente máxima). |
 | `hydro.generation_violation_below_cost` | `dadger.rvN` › `CD` › `custo` *(derivado)* | `10 × custo_déficit`, em R$/MWh (folga de geração mínima; domínio de energia, sem fator de produtibilidade). |
+| `hydro.fpha_violation_cost` | `dadger.rvN` › `CD` › `custo` *(derivado)* | `1,01 × (custo_déficit + 10 × custo_déficit)`, em R$/MWh, sem fator de produtibilidade: a folga da FPHA custa mais que um déficit somado à folga de geração mínima que gerar acima de um plano aliviaria. O manual do DECOMP não traz penalidade para essa folga; o valor segue a regra do NEWAVE (10 × custo_déficit), elevada acima desse piso. |
 | `hydro.evaporation_violation_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_max` (folga de evaporação, patamar mais alto da ordem de mérito). |
 | `hydro.water_withdrawal_violation_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `10 × custo_déficit × ρ_max` (folga de retirada de água para irrigação `TI`). |
 | `hydro.inflow_nonnegativity_cost` | `dadger.rvN` › `CD` › `custo`, `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota … a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas, tipo_perda`, `dadger.rvN` › `UH` › `volume_inicial` *(derivado)* | `water_withdrawal_violation_cost + 1` R$/(m³/s): a folga de vazão natural negativa nunca pode ser mais barata que a folga de retirada de água. |
@@ -970,6 +971,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `custo` → `penalties.json` › `hydro.outflow_violation_below_cost`
 - `custo` → `penalties.json` › `hydro.outflow_violation_above_cost`
 - `custo` → `penalties.json` › `hydro.generation_violation_below_cost`
+- `custo` → `penalties.json` › `hydro.fpha_violation_cost`
 - `custo` → `penalties.json` › `hydro.evaporation_violation_cost`
 - `custo` → `penalties.json` › `hydro.water_withdrawal_violation_cost`
 - `custo` → `penalties.json` › `hydro.inflow_nonnegativity_cost`

@@ -284,6 +284,11 @@ links are cobre-bridge's.
   to the end of that month. A travel time longer than that stage stops the
   conversion with `source-unsupported`, naming the plant. The converted cases
   need the paired novomodelo revision; convert a deck again to update it.
+- **`convert newave` and `convert decomp` price generation above a plant's
+  FPHA planes in `penalties.json`**, as the paired novomodelo revision
+  requires; convert cases again and run them with that revision. `compare
+  newave` sets the new violation cost against NEWAVE's `VIOLACAO FPHA`
+  parcel, and `dashboard` shows it with the other violation costs.
 - **BREAKING: `convert newave` fits the inflow model on the years `confhd.dat`
   gives the plants** instead of on the whole inflow history. It refuses plants
   with different windows (`source-unsupported`) or a window outside the full

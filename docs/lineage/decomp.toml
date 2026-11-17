@@ -350,6 +350,12 @@ summary = "Custo de déficit de `CD`, micro-penalidades fixas do DECOMP (vertime
   how = "`10 × custo_déficit`, em R$/MWh (folga de geração mínima; domínio de energia, sem fator de produtibilidade)."
 
   [[output.field]]
+  path = "hydro.fpha_violation_cost"
+  from = [ { file = "dadger", register = "CD", item = "custo" } ]
+  status = "derived"
+  how = "`1,01 × (custo_déficit + 10 × custo_déficit)`, em R$/MWh, sem fator de produtibilidade: a folga da FPHA custa mais que um déficit somado à folga de geração mínima que gerar acima de um plano aliviaria. O manual do DECOMP não traz penalidade para essa folga; o valor segue a regra do NEWAVE (10 × custo_déficit), elevada acima desse piso."
+
+  [[output.field]]
   path = "hydro.evaporation_violation_cost"
   from = [ { file = "dadger", register = "CD", item = "custo" }, { file = "hidr", item = "produtibilidade_especifica" }, { file = "hidr", item = "a0_volume_cota … a4_volume_cota" }, { file = "hidr", item = "canal_fuga_medio" }, { file = "hidr", item = "perdas, tipo_perda" }, { file = "dadger", register = "UH", item = "volume_inicial" } ]
   status = "derived"

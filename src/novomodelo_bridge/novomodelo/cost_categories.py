@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 #: Aggregate columns in the ``costs`` parquet that are NOT cost components.
-#: ``hydro_violation_cost`` is the sum of six hydro-violation components and
+#: ``hydro_violation_cost`` is the sum of the hydro-violation components and
 #: ``total/immediate/future_cost`` are roll-ups — summing any of these alongside
 #: the components would double-count. ``discount_factor`` is the
 #: per-(scenario, stage) NPV weight, not a cost.
@@ -58,8 +58,8 @@ class CostCategory:
 
 #: The categories of Novomodelo's own per-scenario cost breakdown (resource,
 #: recourse, violation, regularization and imputed costs). The violation
-#: category lists the six components of ``hydro_violation_cost`` instead of
-#: that sum.
+#: category lists the components of ``hydro_violation_cost`` instead of that
+#: sum.
 COST_CATEGORIES: tuple[CostCategory, ...] = (
     CostCategory(
         "Thermal & Contracts",
@@ -90,6 +90,7 @@ COST_CATEGORIES: tuple[CostCategory, ...] = (
             CostComponent("Filling Target", ("filling_target_cost",)),
             CostComponent("Evaporation", ("evaporation_violation_cost",)),
             CostComponent("Water Withdrawal", ("withdrawal_violation_cost",)),
+            CostComponent("FPHA Planes", ("fpha_violation_cost",)),
             CostComponent("Inflow Penalty", ("inflow_penalty_cost",)),
             CostComponent("Generic Constraints", ("generic_violation_cost",)),
         ),
