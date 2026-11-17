@@ -30,9 +30,20 @@ from novomodelo_bridge.ui.console import (
 
 
 def _console() -> tuple[Console, io.StringIO]:
-    """A deterministic, colourless, fixed-width console writing to a buffer."""
+    """A colourless, fixed-width console writing to a buffer, alike on every OS.
+
+    ``legacy_windows=False``: on a non-VT Windows console Rich otherwise draws
+    panels with square corners, and the panel assertions look for rounded ones.
+    """
     buf = io.StringIO()
-    console = Console(file=buf, width=100, no_color=True, highlight=False, emoji=False)
+    console = Console(
+        file=buf,
+        width=100,
+        no_color=True,
+        highlight=False,
+        emoji=False,
+        legacy_windows=False,
+    )
     return console, buf
 
 
