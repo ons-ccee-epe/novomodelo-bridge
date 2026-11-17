@@ -1244,9 +1244,9 @@ def _gnl_model() -> GnlCommitmentModel:
                         1,
                         date(2026, 7, 4),
                         450.0,
-                        48.0,
+                        168.0,
                         block_mw=(500.0, 400.0),
-                        block_hours=(24.0, 24.0),
+                        block_hours=(84.0, 84.0),
                     ),
                 ),
             )
@@ -1276,7 +1276,7 @@ def _gnl_factory():
             start_date=date(2026, 7, 4 + 7 * i),
             end_date=date(2026, 7, 11 + 7 * i),
             season_id=6,
-            block_hours=(24.0, 24.0),
+            block_hours=(84.0, 84.0),
         )
         for i in range(2)
     ]

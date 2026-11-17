@@ -151,7 +151,10 @@ def tidy_results_dataset(
 
     Vertically concatenates :func:`tidy_from_results` and
     :func:`tidy_percentiles_from_percentile_data` into a single frame conforming
-    exactly to :data:`TIDY_SCHEMA`.
+    exactly to :data:`TIDY_SCHEMA`. The percentile rows of an entity whose
+    variable *results* carry under one of
+    :data:`~novomodelo_bridge.core.agreement.UNJUDGED_VARIANTS` take that
+    variant too.
 
     Args:
         results: The result comparisons (``newave``/``novomodelo`` rows).
@@ -162,12 +165,35 @@ def tidy_results_dataset(
     """
     result_rows = tidy_from_results(results)
     pct_rows = tidy_percentiles_from_percentile_data(pct)
+    for judged, variants in agreement.UNJUDGED_VARIANTS.items():
+        for variant in variants:
+            moved = sorted(
+                {
+                    (r.entity_type, r.novomodelo_id)
+                    for r in results
+                    if r.variable == variant
+                }
+            )
+            if not moved:
+                continue
+            pct_rows = pct_rows.with_columns(
+                pl.when(
+                    (pl.col("variable") == judged)
+                    & pl.struct("entity_type", "entity_id").is_in(
+                        [{"entity_type": t, "entity_id": i} for t, i in moved]
+                    )
+                )
+                .then(pl.lit(variant))
+                .otherwise(pl.col("variable"))
+                .alias("variable")
+            )
     return _conform(pl.concat([result_rows, pct_rows], how="vertical"))
 
 
 def summary_frame_from_results(
     results: Sequence[ResultComparison],
     tolerance: float,
+    masked_hydro: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Project the existing summary into a ``SUMMARY_SCHEMA`` frame.
 
@@ -181,6 +207,10 @@ def summary_frame_from_results(
         results: The result comparisons to summarize; consumed verbatim.
         tolerance: Relative tolerance forwarded to ``build_results_summary``
             for the within-tolerance match rate and the gap band.
+        masked_hydro: The hydro rows averaged over the points that are not
+            ties (:func:`with_masked_hydro_rows`). Each hydro variable they
+            carry takes, as ``gap_excl_ties``, the gap of the same summary
+            built with them in place of its rows.
 
     Returns:
         A frame conforming exactly (columns, order, dtypes) to
@@ -190,11 +220,23 @@ def summary_frame_from_results(
         return pl.DataFrame(schema=SUMMARY_SCHEMA)
 
     summary = build_results_summary(list(results), tolerance)
+    excl_ties: dict[tuple[str, str], float | None] = {}
+    if masked_hydro is not None and not masked_hydro.is_empty():
+        covered = set(masked_hydro["variable"].unique().to_list())
+        masked_summary = build_results_summary(
+            with_masked_hydro_rows(results, masked_hydro), tolerance
+        )
+        excl_ties = {
+            key: stats.gap
+            for key, stats in masked_summary.by_variable.items()
+            if key[0] == "hydro" and key[1] in covered
+        }
 
     entity_types: list[str] = []
     variables: list[str] = []
     counts: list[int] = []
     gaps: list[float | None] = []
+    gaps_excl_ties: list[float | None] = []
     bands: list[str] = []
     mean_abs_diff: list[float] = []
     max_abs_diff: list[float] = []
@@ -208,6 +250,7 @@ def summary_frame_from_results(
         variables.append(variable)
         counts.append(stats.count)
         gaps.append(stats.gap)
+        gaps_excl_ties.append(excl_ties.get((entity_type, variable)))
         bands.append(stats.band.value)
         mean_abs_diff.append(stats.mean_abs_diff)
         max_abs_diff.append(stats.max_abs_diff)
@@ -222,6 +265,7 @@ def summary_frame_from_results(
             "variable": variables,
             "count": counts,
             "gap": gaps,
+            "gap_excl_ties": gaps_excl_ties,
             "band": bands,
             "mean_abs_diff": mean_abs_diff,
             "max_abs_diff": max_abs_diff,
@@ -349,7 +393,7 @@ def build_results_dataset(
         SchemaError: If the assembled dataset fails :meth:`validate`.
     """
     tidy = tidy_results_dataset(results, pct)
-    summary = summary_frame_from_results(results, tolerance)
+    summary = summary_frame_from_results(results, tolerance, pct.hydro_masked)
     metadata: dict[str, object] = {
         "top_divergences": top_divergences_from_results(results),
         "footer_counts": results_footer_counts(results),
@@ -362,6 +406,7 @@ def build_results_dataset(
         results=list(results),
         nw_costs=pct.nw_costs,
         novomodelo_costs=pct.novomodelo_costs,
+        gnl_delivered=pct.gnl_delivered,
         nw_bus_names=pct.nw_bus_names,
         # --- Overview/System/Energy-Balance/Network tab inputs ---
         nw_sin=pct.nw_sin,
@@ -1032,7 +1077,8 @@ def bus_groups_and_pct(
     """Group ``bus`` rows by name and build the per-entity percentile lookup.
 
     Pure numeric core of ``charts.system_per_bus_chart``.
-    Rows are filtered to ``entity_type == "bus"`` and ``variable`` and bucketed by
+    Rows are filtered to ``entity_type == "bus"`` and ``variable`` or one of its
+    :data:`~novomodelo_bridge.core.agreement.UNJUDGED_VARIANTS`, and bucketed by
     upper-cased ``entity_name`` (insertion order preserved). The percentile lookup
     maps ``entity_id -> {stage_id -> row}`` over ``pct_df`` when both the
     ``{var}_p10`` and ``{var}_p90`` columns are present; otherwise it is empty.
@@ -1051,7 +1097,8 @@ def bus_groups_and_pct(
         ``bus`` row matches; ``pct_by_eid`` is empty when ``pct_df`` is
         ``None``/empty or the percentile columns are absent.
     """
-    bus_data = [r for r in results if r.entity_type == "bus" and r.variable == variable]
+    shown = {variable, *agreement.UNJUDGED_VARIANTS.get(variable, ())}
+    bus_data = [r for r in results if r.entity_type == "bus" and r.variable in shown]
 
     buses: dict[str, list[ResultComparison]] = {}
     for r in bus_data:

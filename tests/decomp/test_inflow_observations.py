@@ -59,24 +59,42 @@ class TestRecentObservationWindows:
         monthly = pd.DataFrame({"mes": [1, 2, 3], "1": [50.0, 60.0, 70.0]})
         weekly = pd.DataFrame({"semana": [1, 2], "1": [80.0, 90.0]})
         out = _run(monthly, weekly)
-        # 3 monthly (Dec/Jan/Feb 2026, Feb clipped to Feb-28) + 2 weekly.
         windows = [(o["start_date"], o["end_date"], o["value_m3s"]) for o in out]
         assert windows == [
             ("2025-12-01", "2026-01-01", 50.0),  # mes=1 -> Dec 2025 (oldest)
             ("2026-01-01", "2026-02-01", 60.0),  # mes=2 -> Jan 2026
-            ("2026-02-01", "2026-02-28", 70.0),  # mes=3 -> Feb 2026, clipped
-            ("2026-02-28", "2026-03-07", 80.0),  # semana=1 (oldest)
+            ("2026-02-01", "2026-03-01", 70.0),  # mes=3 -> Feb 2026, whole month
+            ("2026-03-01", "2026-03-07", 80.0),  # semana=1, from the operative month
             ("2026-03-07", "2026-03-14", 90.0),  # semana=2, ends at study start
         ]
-        # non-overlapping, adjacent (each start == previous end)
         for prev, nxt in zip(windows, windows[1:]):
             assert prev[1] == nxt[0]
+
+    def test_week_straddling_the_month_drops_its_previous_month_days(self) -> None:
+        # January 2026 RV3: the first observed week is 2025-12-27..2026-01-03.
+        # December keeps its observed value over all 31 days and the week
+        # covers only its January days.
+        calendar = build_operative_calendar(
+            date(2026, 1, 17), [[168.0]] * 3 + [[528.0]]
+        )
+        monthly = pd.DataFrame({"mes": [1, 2], "1": [60.0, 70.0]})
+        weekly = pd.DataFrame({"semana": [1, 2, 3], "1": [65.0, 75.0, 85.0]})
+        out = convert_recent_observation_windows(
+            _vazoes(monthly, weekly), _CoupledOn(1), _id_map(), calendar
+        )
+        assert [(o["start_date"], o["end_date"], o["value_m3s"]) for o in out] == [
+            ("2025-11-01", "2025-12-01", 60.0),
+            ("2025-12-01", "2026-01-01", 70.0),
+            ("2026-01-01", "2026-01-03", 65.0),
+            ("2026-01-03", "2026-01-10", 75.0),
+            ("2026-01-10", "2026-01-17", 85.0),
+        ]
 
     def test_weekly_only_ends_at_study_start(self) -> None:
         weekly = pd.DataFrame({"semana": [1, 2], "1": [80.0, 90.0]})
         out = _run(None, weekly)
         assert [(o["start_date"], o["end_date"]) for o in out] == [
-            ("2026-02-28", "2026-03-07"),
+            ("2026-03-01", "2026-03-07"),
             ("2026-03-07", "2026-03-14"),
         ]
 
@@ -92,6 +110,26 @@ class TestRecentObservationWindows:
     def test_no_observations_returns_empty(self) -> None:
         assert _run(None, None) == []
         assert _run(pd.DataFrame(), pd.DataFrame()) == []
+
+    def test_rv0_starting_in_the_previous_month_dates_from_the_operative_month(
+        self,
+    ) -> None:
+        # January 2026 RV0: the first week starts on 2025-12-27, so mes = 11 is
+        # December 2025, clipped where the study begins.
+        calendar = build_operative_calendar(
+            date(2025, 12, 27), [[168.0]] * 6 + [[528.0]]
+        )
+        monthly = pd.DataFrame(
+            {"mes": list(range(1, 12)), "1": [float(m) for m in range(1, 12)]}
+        )
+        out = convert_recent_observation_windows(
+            _vazoes(monthly, None), _CoupledOn(1), _id_map(), calendar
+        )
+        windows = [(o["start_date"], o["end_date"], o["value_m3s"]) for o in out]
+        assert windows[0] == ("2025-02-01", "2025-03-01", 1.0)
+        assert windows[-2] == ("2025-11-01", "2025-12-01", 10.0)
+        assert windows[-1] == ("2025-12-01", "2025-12-27", 11.0)
+        assert len(windows) == 11
 
     def test_windows_are_read_on_the_coupling_gauge(self) -> None:
         monthly = pd.DataFrame({"mes": [1], "1": [50.0], "7": [5.0]})

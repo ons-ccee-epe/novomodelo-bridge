@@ -31,6 +31,7 @@ from novomodelo_bridge.comparators.decomp.results import (
     _energy_balance_frames,
     _hydro_side,
     _map_entities,
+    _novomodelo_hydro_percentiles,
     _result_comparisons,
     _scenario_mean,
     _stage_rows,
@@ -49,7 +50,6 @@ from tests.comparators.conftest import (
     _patch_aligned_frames,
     _patch_ree_sources,
     _patch_shared_case,
-    _ree_aligned_fixture,
     _ree_id_map,
     _usih_frame,
     _write_generic_constraints_case,
@@ -377,12 +377,35 @@ class TestResultComparisons:
         )
         assert _result_comparisons(source, novomodelo, _HYDRO_VARIABLES, names={}) == []
 
-    def test_canonical_variable_covers_all_eight_today_variables(self) -> None:
-        """D-SOURCE-TOKEN-adjacent guard: every ``_Variable`` spec this module
-        ships must resolve to a canonical chart name -- a spec with no entry
-        would raise a ``KeyError`` deep inside ``_result_comparisons``."""
+    def test_a_bus_without_load_gets_no_net_import_row(self) -> None:
+        # Novomodelo has no net import on the fictitious subsystem FC, which
+        # carries no load; DECOMP reports one there all the same.
+        source = pl.DataFrame(
+            {
+                "entity_id": [0, 3],
+                "newave_code": [1, 11],
+                "stage_id": [0, 0],
+                "intercambio_liquido_MW": [-1500.0, 0.0],
+            }
+        )
+        novomodelo = pl.DataFrame(
+            {"entity_id": [0, 3], "stage_id": [0, 0], "net_import_mw": [-1400.0, None]}
+        )
+
+        results = _result_comparisons(
+            source, novomodelo, _BUS_VARIABLES, names={0: "SE", 3: "FC"}
+        )
+
+        assert [(r.entity_name, r.variable, r.newave_value) for r in results] == [
+            ("SE", "net_import_mw", -1500.0)
+        ]
+
+    def test_canonical_variable_covers_every_variable_spec(self) -> None:
+        """Every ``_Variable`` spec this module ships must resolve to a
+        canonical chart name -- a spec with no entry would raise a
+        ``KeyError`` deep inside ``_result_comparisons``."""
         all_vars = _HYDRO_VARIABLES + _THERMAL_VARIABLES + _BUS_VARIABLES
-        assert len(all_vars) == 8
+        assert len(all_vars) == 9
         canonical_names = {_CANONICAL_VARIABLE[(v.level, v.name)] for v in all_vars}
         assert canonical_names == {
             "generation_mw",
@@ -392,12 +415,13 @@ class TestResultComparisons:
             "storage_final_hm3",
             "deficit_mw",
             "spot_price",
+            "net_import_mw",
         }
 
 
 class TestBuildDecompDataset:
     """``build_decomp_dataset`` assembles the canonical dataset for the
-    current 8 DECOMP variables via the shared ``_read_aligned_frames`` seam."""
+    DECOMP variables via the shared ``_read_aligned_frames`` seam."""
 
     def test_dataset_validates_with_the_canonical_variables(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -729,7 +753,7 @@ class TestBuildDecompDatasetSingleParse:
         ``TestBuildDecompDatasetRee``, ``TestBuildDecompDatasetConstraints``)
         independently verifies in isolation. A behaviour-preserving
         consolidation of the three parse sites cannot change any of these."""
-        _patch_aligned_frames(monkeypatch, _ree_aligned_fixture())
+        _patch_aligned_frames(monkeypatch, _aligned_fixture())
         _patch_shared_case(monkeypatch, id_map=_ree_id_map())
         _patch_ree_sources(monkeypatch)
         case_dir = tmp_path / "case"
@@ -822,6 +846,70 @@ class TestBuildDecompDatasetSingleParse:
         assert nw_row["lhs_value"] == pytest.approx(2951.58 * MEAN_MONTH_HOURS)
         cb_row = dataset.render.gc_lhs_novomodelo.row(0, named=True)
         assert cb_row == {"constraint_id": 0, "stage_id": 0, "lhs_value": 3000.0}
+
+
+class TestHydroDefinitions:
+    """The DECOMP-side hydro values follow novomodelo's definitions."""
+
+    def test_outflow_leaves_out_the_diversion(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # dec_oper_usih's defluent flow 18 = turbined 10 + spilled 5 + diverted 3.
+        usih = pl.DataFrame(
+            {
+                "codigo_usina": [314],
+                "estagio": [1],
+                "cenario": [1],
+                "patamar": [None],
+                "geracao_MW": [100.0],
+                "vazao_turbinada_m3s": [10.0],
+                "vazao_vertida_m3s": [5.0],
+                "vazao_desviada_m3s": [3.0],
+                "vazao_defluente_m3s": [18.0],
+                "volume_util_final_hm3": [1.0],
+            }
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_usih",
+            lambda *_args, **_kwargs: usih,
+        )
+
+        frame, unmapped = _hydro_side(tmp_path, {314: 0})
+
+        outflow = next(v for v in _HYDRO_VARIABLES if v.name == "outflow")
+        assert unmapped == []
+        assert frame[outflow.source_column].to_list() == [15.0]
+
+    def test_storage_bands_are_on_useful_volume(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        bands = pl.DataFrame(
+            {
+                "entity_id": [0],
+                "stage_id": [0],
+                "storage_final_hm3_p10": [150.0],
+                "storage_final_hm3_p50": [200.0],
+                "storage_final_hm3_p90": [250.0],
+                "turbined_m3s_p50": [7.0],
+            }
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_hydro_percentiles",
+            lambda _dir: bands,
+        )
+        monkeypatch.setattr(
+            "novomodelo_bridge.novomodelo.readers.read_novomodelo_hydro_metadata",
+            lambda _dir: {0: {"min_storage_hm3": 100.0}},
+        )
+
+        assert _novomodelo_hydro_percentiles(tmp_path).row(0, named=True) == {
+            "entity_id": 0,
+            "stage_id": 0,
+            "storage_final_hm3_p10": 50.0,
+            "storage_final_hm3_p50": 100.0,
+            "storage_final_hm3_p90": 150.0,
+            "turbined_m3s_p50": 7.0,
+        }
 
 
 _OPERATION_SIDES = [

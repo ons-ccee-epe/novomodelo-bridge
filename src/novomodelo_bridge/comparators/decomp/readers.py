@@ -34,6 +34,7 @@ from idecomp.decomp import (
     DecEstatFpha,
     Decomptim,
     DecOperEvap,
+    DecOperGnl,
     DecOperInterc,
     DecOperRee,
     DecOperRheSoft,
@@ -42,6 +43,7 @@ from idecomp.decomp import (
     DecOperUsit,
     EcoFpha,
     Relato,
+    Relgnl,
 )
 
 from novomodelo_bridge.core.diagnostics import (
@@ -261,6 +263,13 @@ def read_dec_oper_rhesoft(case_dir: Path) -> pl.DataFrame:
     return _read_dec_oper(case_dir, "dec_oper_rhesoft.csv", DecOperRheSoft)
 
 
+def read_dec_oper_gnl(case_dir: Path) -> pl.DataFrame:
+    """Per-anticipated-thermal (GNL) operation: dispatch bounds, incremental
+    cost, and the fuel cost (``custo_geracao``, native k$). Resolved via the
+    same root-only lookup shared with every other ``dec_oper_*`` table."""
+    return _read_dec_oper(case_dir, "dec_oper_gnl.csv", DecOperGnl)
+
+
 def read_dec_oper_evap(case_dir: Path) -> pl.DataFrame:
     """Per-hydro/stage/node/scenario reservoir evaporation.
 
@@ -288,8 +297,8 @@ def read_dec_oper_ree(case_dir: Path) -> pl.DataFrame:
     absolute ``_MWmes`` and ``_percentual``, plus ``earm_maximo_MWmes``), one
     row per (stage, node, scenario, REE). The DECOMP-side source
     for the REE energy rollup -- Novomodelo has no REE entity, so its counterpart
-    is a membership-weighted sum of plant output (see
-    `results._ree_result_comparisons`)."""
+    values Novomodelo's plant storage and inflow with DECOMP's own definition
+    (see `ree_energy`)."""
     return _read_dec_oper(case_dir, "dec_oper_ree.csv", DecOperRee)
 
 
@@ -409,6 +418,28 @@ def read_relato2_costs(case_dir: Path) -> pl.DataFrame:
     return pl.from_pandas(table)
 
 
+def read_relgnl_operation(case_dir: Path) -> pl.DataFrame:
+    """Read the per-(stage, scenario) GNL operation table of the GNL report
+    (``relgnl.rvN``).
+
+    One row per GNL plant and delivery period it signals: ``semana`` names the
+    week or month, with a trailing ``*`` on a period committed before the
+    study and ``MENSAL`` on the monthly summary line, and ``custo`` is the
+    cost of the generation signalled for it. Durations of 100 h or more are
+    not parsed (idecomp reads them into a 7-character field); ``custo`` is.
+
+    Costs are **native k$**, unconverted -- converted once in the analysis
+    layer, see `results.reconcile_kdollars_to_reais`.
+    """
+    path = _resolve_revisioned_file(case_dir, "relgnl")
+    if path is None:
+        raise FileNotFoundError(f"no relgnl.rvN found in {case_dir}")
+    table = Relgnl.read(str(path)).relatorio_operacao_termica
+    if table is None or table.empty:
+        raise ValueError(f"{path} has no relatorio_operacao_termica table")
+    return pl.from_pandas(table)
+
+
 def read_relato_membership(case_dir: Path) -> pl.DataFrame:
     """Read the hydro-plant -> REE -> submarket membership table
     (``codigo_usina``, ``nome_usina``, ``codigo_ree``, ``nome_ree``,
@@ -417,8 +448,8 @@ def read_relato_membership(case_dir: Path) -> pl.DataFrame:
 
     The sole source that attributes a hydro plant to its REE --
     neither `DecompIdMap` nor any ``dec_oper_*`` table carries that
-    membership, so `results._ree_result_comparisons` rolls Novomodelo's
-    per-plant energy up to the REE level through this table instead.
+    membership, so `results._ree_result_comparisons` places Novomodelo's
+    plants in their REE and subsystem through this table instead.
     """
     return _read_relato_table(case_dir, "uhes_rees_submercados")
 

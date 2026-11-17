@@ -50,7 +50,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 import polars as pl
 
@@ -63,6 +63,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     DEC_OPER_USIT_EFFECT,
     read_dec_estatfpha,
     read_dec_oper_evap,
+    read_dec_oper_gnl,
     read_dec_oper_interc,
     read_dec_oper_ree,
     read_dec_oper_rhesoft,
@@ -75,9 +76,20 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_relato_convergence,
     read_relato_costs,
     read_relato_membership,
+    read_relgnl_operation,
 )
-from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.comparators.decomp.ree_energy import (
+    ReeEnergyRule,
+    build_ree_energy_rule,
+)
+from novomodelo_bridge.comparators.line_ties import mark_tied_lines
+from novomodelo_bridge.comparators.model import (
+    PercentileData,
+    ResultComparison,
+    result_diff,
+)
 from novomodelo_bridge.comparators.operating_points import operating_point_fields
+from novomodelo_bridge.comparators.plant_buses import merge_shared_plant_buses
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
@@ -132,6 +144,13 @@ _RELATO2_EFFECT = (
 )
 _DECOMP_TIM_EFFECT = "the report leaves out DECOMP's run times."
 _DEC_OPER_RHESOFT_EFFECT = "the report leaves out DECOMP's side of the RHE constraints."
+#: What the cost comparison loses on a deck with GNL plants without
+#: ``dec_oper_gnl.csv`` or ``relgnl.rvN``, the two that move DECOMP's GNL cost
+#: from delivery to commitment.
+_GNL_COST_EFFECT = (
+    "DECOMP's thermal cost stays one row, with its GNL generation priced when "
+    "it is delivered, while Novomodelo prices GNL when it is committed."
+)
 
 
 def _emit_missing(file_name: str, decomp_dir: Path, effect: str) -> None:
@@ -153,15 +172,6 @@ def _emit_unreadable(
 #: turbining makes generation/turbined an undefined 0/0 on both sides.
 _PRODUCTIVITY_TURBINED_EPS: float = 1.0e-6
 
-#: novomodelo's ``stored_energy_final_mwh`` is MWh; the source model's
-#: own REE ``earm_final_MWmes`` is MWmês (average MW sustained over a month).
-#: 730 h/month is the same implicit hours-per-month convention
-#: `report_builder`'s Energy Balance chart already applies to the SIN-total
-#: EARM overlay (``novomodelo_aggregate_chart(..., nw_factor=730.0, ...)``) --
-#: reused here rather than re-derived so the two EARM reconciliations never
-#: drift apart.
-_EARM_MWH_TO_MWMES: float = 730.0
-
 
 @dataclass(frozen=True)
 class _Variable:
@@ -174,11 +184,15 @@ class _Variable:
     unit: str
 
 
+#: DECOMP's turbined plus spilled flow, novomodelo's outflow definition.
+#: ``dec_oper_usih``'s defluent flow also counts the diversion.
+_DECOMP_OUTFLOW_COLUMN = "vazao_turbinada_vertida_m3s"
+
 _HYDRO_VARIABLES: tuple[_Variable, ...] = (
     _Variable("hydro", "generation", "geracao_MW", "generation_mw", "MW"),
     _Variable("hydro", "turbined", "vazao_turbinada_m3s", "turbined_m3s", "m³/s"),
     _Variable("hydro", "spillage", "vazao_vertida_m3s", "spillage_m3s", "m³/s"),
-    _Variable("hydro", "outflow", "vazao_defluente_m3s", "outflow_m3s", "m³/s"),
+    _Variable("hydro", "outflow", _DECOMP_OUTFLOW_COLUMN, "outflow_m3s", "m³/s"),
     _Variable("hydro", "storage", "volume_util_final_hm3", "useful_storage_hm3", "hm³"),
 )
 
@@ -189,6 +203,7 @@ _THERMAL_VARIABLES: tuple[_Variable, ...] = (
 _BUS_VARIABLES: tuple[_Variable, ...] = (
     _Variable("bus", "deficit", "deficit_MW", "deficit_mw", "MW"),
     _Variable("bus", "spot_price", "cmo", "spot_price", "$/MWh"),
+    _Variable("bus", "net_import", "intercambio_liquido_MW", "net_import_mw", "MW"),
 )
 
 #: (level, ``_Variable.name``) -> the canonical variable name the shared
@@ -205,6 +220,7 @@ _CANONICAL_VARIABLE: dict[tuple[str, str], str] = {
     ("thermal", "generation"): "generation_mw",
     ("bus", "deficit"): "deficit_mw",
     ("bus", "spot_price"): "spot_price",
+    ("bus", "net_import"): "net_import_mw",
 }
 
 
@@ -423,21 +439,6 @@ def _scenario_probabilities(decomp_dir: Path) -> pl.DataFrame:
     )
 
 
-def _result_diff(
-    nw_value: float, novomodelo_value: float
-) -> tuple[float, float | None]:
-    """Absolute and relative difference for one ``ResultComparison`` row.
-
-    Mirrors :func:`novomodelo_bridge.comparators.newave.results._compute_diff` exactly, so
-    the two per-variable stat kernels in play here (this module's own tidy
-    rows and the shared ``ResultComparison`` one) agree on what "the
-    difference" means.
-    """
-    abs_diff = abs(nw_value - novomodelo_value)
-    rel_diff = abs_diff / abs(nw_value) if abs(nw_value) > 1e-10 else None
-    return abs_diff, rel_diff
-
-
 def _result_comparisons(
     source: pl.DataFrame,
     novomodelo: pl.DataFrame,
@@ -481,7 +482,7 @@ def _result_comparisons(
                 continue
             nw_value = float(nw_val)
             novomodelo_value = float(novomodelo_val)
-            abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+            abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
             results.append(
                 ResultComparison(
                     entity_type=var.level,
@@ -555,7 +556,7 @@ def _hydro_productivity_results(
         nw_code, stage = key
         nw_value = nw_gen / nw_turb
         novomodelo_value = cb_gen / cb_turb
-        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+        abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
         productivity.append(
             ResultComparison(
                 entity_type="hydro",
@@ -660,7 +661,12 @@ def _hydro_side(
     )
     if table is None:
         return pl.DataFrame(), []
-    frame = _stage_rows(table)
+    frame = _stage_rows(table).with_columns(
+        (
+            pl.col("vazao_turbinada_m3s").cast(pl.Float64)
+            + pl.col("vazao_vertida_m3s").cast(pl.Float64)
+        ).alias(_DECOMP_OUTFLOW_COLUMN)
+    )
     columns = [v.source_column for v in _HYDRO_VARIABLES]
     aggregated = _scenario_mean(
         frame,
@@ -728,10 +734,9 @@ def _bus_side(
 # DECOMP publishes exchange per submarket-pair corridor (``dec_oper_interc``);
 # the converted case publishes it per directed novomodelo line
 # (``system/lines.json``, read as ``net_flow_mw`` by
-# ``novomodelo_readers.read_novomodelo_line_means``). Usually one corridor -> one line,
-# but the converter-created transhipment bus
-# (``DecompIdMap.transhipment_bus_id``) can realize a corridor as a pair of
-# legs; this block reconciles the two.
+# ``novomodelo_readers.read_novomodelo_line_means``). DECOMP reports one corridor
+# per ``IA`` pair and the conversion writes one line per pair, so each corridor
+# is one line, a corridor to the transhipment bus included.
 #
 # Out-of-file column/direction contracts this alignment depends on:
 # - ``system/lines.json`` keys endpoints ``source_bus_id``/``target_bus_id``,
@@ -741,7 +746,9 @@ def _bus_side(
 # - ``dec_oper_interc`` (``idecomp`` 1.14) names its corridor endpoints
 #   ``codigo_submercado_de``/``codigo_submercado_para`` (not
 #   ``submercado_de``/``submercado_para``), plus ``intercambio_origem_MW``/
-#   ``intercambio_destino_MW``/``perdas_MW``.
+#   ``intercambio_destino_MW``/``perdas_MW``. The transhipment node has no ``SB``
+#   code: its endpoint comes with a null code and only
+#   ``nome_submercado_de``/``nome_submercado_para``.
 
 
 def _read_novomodelo_lines_index(
@@ -757,11 +764,9 @@ def _read_novomodelo_lines_index(
     empty). Built from :func:`novomodelo_readers.read_novomodelo_lines`'s raw ``"lines"``
     list -- this function owns only the bus-pair index transform.
 
-    [ASSUMPTION] (star topology): more than one
-    line declared between the *same ordered* bus pair makes that leg
-    ambiguous -- both are dropped from the index so any corridor that would
-    resolve through it is reported unresolved rather than guessing which
-    line applies.
+    More than one line declared between the *same ordered* bus pair makes
+    that corridor ambiguous: both are dropped from the index, so the corridor
+    is reported unresolved rather than guessing which line carries it.
     """
     index: dict[tuple[int, int], int] = {}
     ambiguous: set[tuple[int, int]] = set()
@@ -797,86 +802,48 @@ def _read_novomodelo_lines_index(
     return index
 
 
-def _resolve_leg(
-    lines_index: dict[tuple[int, int], int], bus_a: int, bus_para: int
-) -> tuple[int, int] | None:
-    """Return the ``(line_id, sign)`` leg realizing flow ``bus_a -> bus_para``.
-
-    ``sign`` orients the novomodelo line's own ``source_bus_id -> target_bus_id``
-    convention onto the requested direction: ``+1`` when a line already runs
-    ``bus_a -> bus_para``, ``-1`` when the matching line runs the reverse.
-    ``None`` when no novomodelo line connects the pair in either direction.
-    """
-    line_id = lines_index.get((bus_a, bus_para))
-    if line_id is not None:
-        return line_id, 1
-    line_id = lines_index.get((bus_para, bus_a))
-    if line_id is not None:
-        return line_id, -1
-    return None
-
-
 def _corridor_line_alignment(
-    novomodelo_output_dir: Path, id_map: DecompIdMap
-) -> dict[tuple[int, int], list[tuple[int, int]]]:
-    """Map every resolvable DECOMP corridor onto its novomodelo line leg(s).
+    novomodelo_output_dir: Path,
+) -> dict[tuple[int, int], tuple[int, int]]:
+    """``{(bus_de, bus_para): (line_id, sign)}`` over every line of the case.
 
-    Keyed by novomodelo bus-id pair ``(bus_de, bus_para)`` -- built over every
-    ordered pair of *declared* subsystem buses (the transhipment bus is
-    never a corridor endpoint in its own right) -- to the ordered
-    list of novomodelo ``(line_id, sign)`` legs realizing it:
-
-    - a single leg when a direct novomodelo line connects the pair, in either
-      direction;
-    - else the two-leg ``bus_de -> transhipment_bus_id -> bus_para`` path,
-      when both legs exist;
-    - else the pair is simply absent from the returned mapping.
-
-    :func:`_corridor_line_alignment` itself never raises and never reports:
-    it is total in the sense of trying every declared bus pair, but a pair
-    with no realizing line(s) is left out of the dict rather than tracked
-    here. :func:`_interc_side` is the layer that turns "absent from this
-    mapping" into a reported, never-silently-dropped unresolved corridor,
-    scoped to the corridors ``dec_oper_interc`` actually carries.
-
-    [ASSUMPTION]: the two-leg
-    reconciliation assumes the converted case's exchange topology is a star
-    through the transhipment bus, with at most one ``de<->IV<->para`` path
-    per corridor -- guaranteed structurally here since ``DecompIdMap`` has
-    exactly one transhipment bus and :func:`_read_novomodelo_lines_index` drops
-    (rather than arbitrarily picks) any bus pair wired by more than one
-    line. Alternatives considered: (a) direct submarket-pair match only --
-    fails on the star topology, rejected; (b) transhipment-aware two-leg
-    reconciliation -- chosen; (c) compare at the bus-injection level instead
-    of per line -- out of scope, not implemented here. A deck whose
-    exchange graph is genuinely non-star (e.g. two different corridors that
-    would need to share one leg) is not guessed at by this function -- each
-    corridor is resolved independently, so a shared leg is assigned the same
-    value by both corridors rather than an aggregate; that residual gap is a
-    known limitation of the star assumption, not something this function
-    reconciles further.
+    ``sign`` orients the line's own ``source_bus_id -> target_bus_id`` flow
+    onto the corridor's ``de -> para`` direction: ``+1`` for a line declared
+    that way, ``-1`` for one declared the other way. A line declared in the
+    corridor's direction wins over one declared the reverse way.
     """
     lines_index = _read_novomodelo_lines_index(novomodelo_output_dir)
-    if not lines_index:
-        return {}
-
-    transhipment = id_map.transhipment_bus_id
-    real_bus_ids = sorted({id_map.bus_id(code) for code in id_map.bus_codes})
-
-    alignment: dict[tuple[int, int], list[tuple[int, int]]] = {}
-    for bus_de in real_bus_ids:
-        for bus_para in real_bus_ids:
-            if bus_de == bus_para:
-                continue
-            direct = _resolve_leg(lines_index, bus_de, bus_para)
-            if direct is not None:
-                alignment[(bus_de, bus_para)] = [direct]
-                continue
-            leg_in = _resolve_leg(lines_index, bus_de, transhipment)
-            leg_out = _resolve_leg(lines_index, transhipment, bus_para)
-            if leg_in is not None and leg_out is not None:
-                alignment[(bus_de, bus_para)] = [leg_in, leg_out]
+    alignment = {pair: (line_id, 1) for pair, line_id in lines_index.items()}
+    for (source, target), line_id in lines_index.items():
+        alignment.setdefault((target, source), (line_id, -1))
     return alignment
+
+
+#: Stand-in code, in the unresolved-corridor report, for an endpoint
+#: ``dec_oper_interc`` names without an ``SB`` code.
+_NO_SB_CODE = -1
+
+_INTERC_ENDPOINTS = [
+    "codigo_submercado_de",
+    "nome_submercado_de",
+    "codigo_submercado_para",
+    "nome_submercado_para",
+]
+
+
+def _corridor_bus(
+    code: float | None, name: str | None, id_map: DecompIdMap
+) -> int | None:
+    """Bus id of a corridor endpoint, by ``SB`` code or else by name; ``None``
+    when neither resolves."""
+    try:
+        if code is not None:
+            return id_map.bus_id(int(code))
+        if name is not None:
+            return id_map.bus_id_by_name(name)
+    except KeyError:
+        return None
+    return None
 
 
 def _interc_side(
@@ -892,13 +859,12 @@ def _interc_side(
     its table -- :func:`_stage_rows`'s patamar-null aggregate, then
     :func:`_scenario_mean` averaged over the source model's nodes (real
     tree-probability-weighted when *probabilities* is given -- see
-    :func:`_hydro_side`), here keyed
-    by the corridor's composite ``(codigo_submercado_de,
-    codigo_submercado_para)`` pair rather than a single entity code -- aligns
-    each corridor onto its novomodelo line leg(s) via
-    :func:`_corridor_line_alignment`, and orients the net-flow value to each
-    leg's ``sign``. ``estagio - 1`` rebases the 1-based DECOMP stage the same
-    way :func:`_map_entities` does for every other level.
+    :func:`_hydro_side`), here keyed by the corridor's endpoints -- and
+    orients each corridor onto its novomodelo line via
+    :func:`_corridor_line_alignment`. An endpoint resolves by its ``SB`` code,
+    or by name where the code is null (the transhipment node). ``estagio - 1``
+    rebases the 1-based DECOMP stage the same way :func:`_map_entities` does
+    for every other level.
 
     The net-flow value is ``intercambio_origem_MW`` -- the flow measured at
     the corridor's origin, already in its own ``de -> para`` direction.
@@ -909,24 +875,20 @@ def _interc_side(
     the post-loss ``intercambio_destino_MW``, is the one quantity comparable
     to it.
 
-    A corridor whose endpoints the id map cannot resolve, or whose resolved
-    bus pair has no entry in :func:`_corridor_line_alignment`'s mapping
-    (including every corridor when ``system/lines.json`` is absent), is
+    A corridor with an endpoint that resolves to no bus, or whose bus pair no
+    line joins (every corridor when ``system/lines.json`` is absent), is
     collected into the returned unresolved list as
-    ``(codigo_submercado_de, codigo_submercado_para)`` code pairs --
-    mirroring :func:`_map_entities`'s ``unmapped`` convention -- and excluded
-    from the returned frame. It is reported, never silently dropped.
+    ``(codigo_submercado_de, codigo_submercado_para)`` code pairs, a code-less
+    endpoint as :data:`_NO_SB_CODE` -- mirroring :func:`_map_entities`'s
+    ``unmapped`` convention -- and excluded from the returned frame. It is
+    reported, never silently dropped.
 
     The source model reports every physical interface as two corridor rows,
     one per direction (e.g. both ``SE -> S`` and ``S -> SE``); both align
-    onto the very same novomodelo line leg with opposite ``sign``. The
-    per-``(entity_id, stage_id)`` rows built above are therefore grouped and
-    summed before being returned, collapsing each pair down to one row equal
-    to ``flow(de -> para) - flow(para -> de)`` -- exactly the net figure a
-    lossless novomodelo line's own ``net_flow_mw`` represents. The same grouping
-    also nets more than one corridor's contribution onto a shared two-leg
-    transhipment leg (the star-topology "shared leg" case) instead of
-    colliding as duplicate ``(entity_id, stage_id)`` keys.
+    onto the same novomodelo line with opposite ``sign``, and the rows are summed
+    per ``(entity_id, stage_id)`` to ``flow(de -> para) - flow(para -> de)``
+    -- exactly the net figure a lossless novomodelo line's own ``net_flow_mw``
+    represents.
     """
     empty = pl.DataFrame(
         schema={
@@ -940,56 +902,42 @@ def _interc_side(
         frame,
         "estagio",
         ["intercambio_origem_MW", "perdas_MW"],
-        entity_column=["codigo_submercado_de", "codigo_submercado_para"],
+        entity_column=_INTERC_ENDPOINTS,
         probabilities=probabilities,
     )
     if aggregated.is_empty():
         return empty, []
 
-    alignment = _corridor_line_alignment(novomodelo_output_dir, id_map)
+    alignment = _corridor_line_alignment(novomodelo_output_dir)
 
     unresolved: set[tuple[int, int]] = set()
     rows: list[dict[str, float | int]] = []
     for row in aggregated.iter_rows(named=True):
         de_raw = row["codigo_submercado_de"]
         para_raw = row["codigo_submercado_para"]
-        if de_raw is None or para_raw is None:
-            # The Itaipu 60 Hz "IV" node -- the transshipment corridor into
-            # Ivaiporã -- reports its corridor by ``nome_submercado_*`` only,
-            # no ``SB``-declared numeric code, so ``codigo_submercado_de``/
-            # ``_para`` comes back null. Report it with the ``-1`` "no SB
-            # code" sentinel rather than crashing on the ``int()`` cast below.
+        bus_de = _corridor_bus(de_raw, row["nome_submercado_de"], id_map)
+        bus_para = _corridor_bus(para_raw, row["nome_submercado_para"], id_map)
+        leg = (
+            alignment.get((bus_de, bus_para))
+            if bus_de is not None and bus_para is not None
+            else None
+        )
+        if leg is None:
             unresolved.add(
                 (
-                    int(de_raw) if de_raw is not None else -1,
-                    int(para_raw) if para_raw is not None else -1,
+                    int(de_raw) if de_raw is not None else _NO_SB_CODE,
+                    int(para_raw) if para_raw is not None else _NO_SB_CODE,
                 )
             )
             continue
-        de_code = int(de_raw)
-        para_code = int(para_raw)
-        try:
-            bus_de = id_map.bus_id(de_code)
-            bus_para = id_map.bus_id(para_code)
-        except KeyError:
-            unresolved.add((de_code, para_code))
-            continue
-
-        legs = alignment.get((bus_de, bus_para))
-        if legs is None:
-            unresolved.add((de_code, para_code))
-            continue
-
-        stage_id = int(row["estagio"]) - 1
-        net_flow = float(row["intercambio_origem_MW"])
-        for line_id, sign in legs:
-            rows.append(
-                {
-                    "entity_id": line_id,
-                    "stage_id": stage_id,
-                    "net_flow_mw": sign * net_flow,
-                }
-            )
+        line_id, sign = leg
+        rows.append(
+            {
+                "entity_id": line_id,
+                "stage_id": int(row["estagio"]) - 1,
+                "net_flow_mw": sign * float(row["intercambio_origem_MW"]),
+            }
+        )
 
     if not rows:
         return empty, sorted(unresolved)
@@ -1046,12 +994,11 @@ def _line_result_comparisons(
     """Join the aligned DECOMP line flow onto Novomodelo's per-line means.
 
     Mirrors :func:`_result_comparisons`'s join shape, but keyed by novomodelo line
-    id rather than a source-model entity code: a single novomodelo line can be the
-    shared leg of more than one corridor under the star topology (the
-    two-leg transhipment path), so ``newave_code`` -- unlike every other
-    level's rows -- carries no single canonical source-model code; it stays
-    at the constant ``0`` placeholder, mirroring the SIN row's own
-    convention (:func:`_energy_balance_frames`) rather than fabricating one.
+    id rather than a source-model entity code: a line joins two subsystems,
+    so ``newave_code`` -- unlike every other level's rows -- carries no single
+    source-model code; it stays at the constant ``0`` placeholder, mirroring
+    the SIN row's own convention (:func:`_energy_balance_frames`) rather than
+    fabricating one.
     *probabilities* is forwarded to :func:`_interc_side` unchanged (see
     :func:`_hydro_side` for its scenario-weighting contract).
 
@@ -1059,7 +1006,9 @@ def _line_result_comparisons(
     ``None``) or the source-model interchange table is unavailable, and
     ``([], unresolved)`` when corridors resolve but the join with Novomodelo's own
     per-line means produces no row -- matching :func:`_interc_side`'s own
-    never-silently-drop convention for unresolved corridors.
+    never-silently-drop convention for unresolved corridors. The rows of a
+    line on a tied loop come back under the tied-route variable
+    (:func:`~novomodelo_bridge.comparators.line_ties.mark_tied_lines`).
     """
     if id_map is None:
         return [], []
@@ -1094,7 +1043,7 @@ def _line_result_comparisons(
         line_id = int(row["entity_id"])
         nw_value = float(row["source_net_flow_mw"])
         novomodelo_value = float(row["net_flow_mw"])
-        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+        abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
         results.append(
             ResultComparison(
                 entity_type="line",
@@ -1109,7 +1058,7 @@ def _line_result_comparisons(
                 rel_diff=rel_diff,
             )
         )
-    return results, unresolved_lists
+    return mark_tied_lines(results, novomodelo_output_dir), unresolved_lists
 
 
 #: ``dec_oper_sist`` columns the Energy Balance tab's reference-model overlay
@@ -1315,7 +1264,7 @@ def _energy_balance_frames(
                 pl.col("ena_MWmes").sum().alias("ENA"),
             )
             .join(hours, on="estagio", how="left")
-            .with_columns(pl.col("ENA") * _EARM_MWH_TO_MWMES / pl.col("_hours"))
+            .with_columns(pl.col("ENA") * MEAN_MONTH_HOURS / pl.col("_hours"))
             .drop("_hours")
         )
         nw_sin = (
@@ -1364,7 +1313,6 @@ _DERIVED_PARCELS: tuple[str, ...] = ("deficit", "folga")
 #: ``(display_label, source_columns...)`` for the ``nw_costs`` NPV dict, keyed
 #: by the ``charts._COST_MAP`` source-model labels.
 _NW_COST_LABELS: tuple[tuple[str, ...], ...] = (
-    ("GERACAO TERMICA", "geracao_termica"),
     ("DEFICIT", "deficit"),
     ("CONTRATOS", "contratos"),
     ("INTERCAMBIO", "penalidade_intercambio"),
@@ -1382,14 +1330,31 @@ _NW_COST_LABELS: tuple[tuple[str, ...], ...] = (
     ("FOLGA RESTRICOES", "folga"),
 )
 
+#: The thermal entry of ``nw_costs`` as the report prints it, GNL at delivery.
+_DELIVERY_THERMAL_LABELS: tuple[tuple[str, ...], ...] = (
+    ("GERACAO TERMICA", "geracao_termica"),
+)
+
+#: The thermal entries on DECOMP's decision basis: the thermal cost without
+#: GNL, and the GNL generation committed within the study, at its decision
+#: stage.
+_DECISION_THERMAL_LABELS: tuple[tuple[str, ...], ...] = (
+    ("TERMICA SEM GNL", "termica_sem_gnl"),
+    ("GNL COMANDADO", "gnl_comandado"),
+)
+
+#: Per-(stage, scenario) GNL costs, nominal k$: delivered within the study
+#: (``dec_oper_gnl``) and committed within it (``relgnl``).
+_GNL_PARCELS: tuple[str, ...] = ("gnl_entregue", "gnl_comandado")
+
 #: ``nw_sin`` variable token -> source column, for the per-stage cost rows
 #: ``charts._extract_stage_cost_series`` reads. Matches MEDIAS-SIN's tokens on
 #: the newave side of ``compare newave``; nominal, like Novomodelo's per-stage
-#: costs.
+#: costs, and with GNL at commitment, as Novomodelo books it.
 _NW_SIN_COST_TOKENS: tuple[tuple[str, str], ...] = (
-    ("COPER", "custo_presente_nominal"),
+    ("COPER", "custo_presente_decisao"),
     ("CUSTO_FUTURO", "custo_futuro"),
-    ("CTERM", "geracao_termica"),
+    ("CTERM", "termica_decisao"),
 )
 
 
@@ -1488,8 +1453,47 @@ def _deficit_cost(
     )
 
 
+def _gnl_costs(decomp_dir: Path) -> pl.DataFrame | None:
+    """Per-(stage, scenario) GNL costs, nominal k$, or ``None`` after the
+    finding for a missing or unreadable report.
+
+    ``gnl_entregue`` is the cost of the GNL generation delivered in the stage,
+    which the report's thermal parcel holds (``dec_oper_gnl``'s stage rows).
+    ``gnl_comandado`` is the cost of the generation the stage commits for
+    later delivery (``relgnl``'s periods, less those committed before the
+    study, marked ``*``, and the monthly summary line).
+    """
+    delivered = read_or_note(
+        read_dec_oper_gnl, "dec_oper_gnl.csv", decomp_dir, _GNL_COST_EFFECT
+    )
+    signalled = read_or_note(
+        read_relgnl_operation, "relgnl.rvN", decomp_dir, _GNL_COST_EFFECT
+    )
+    if delivered is None or signalled is None:
+        return None
+    keys = ["estagio", "cenario"]
+    period = pl.col("semana").str.strip_chars()
+    return (
+        delivered.filter(pl.col("patamar").is_null())
+        .group_by(keys)
+        .agg(pl.col("custo_geracao").sum().alias("gnl_entregue"))
+        .join(
+            signalled.filter((period != "MENSAL") & ~period.str.ends_with("*"))
+            .group_by(keys)
+            .agg(pl.col("custo").sum().alias("gnl_comandado")),
+            on=keys,
+            how="full",
+            coalesce=True,
+        )
+        .with_columns(pl.col(*_GNL_PARCELS).fill_null(0.0))
+    )
+
+
 def _stage_cost_rows(
-    relato: pl.DataFrame, decomp_dir: Path, deficit_costs: dict[int, float]
+    relato: pl.DataFrame,
+    decomp_dir: Path,
+    deficit_costs: dict[int, float],
+    gnl: pl.DataFrame | None,
 ) -> pl.DataFrame:
     """*relato*'s cost rows unioned with ``relato2``'s, with the contract
     balance, the priced deficit, the unitemized slack and the present-value
@@ -1508,6 +1512,14 @@ def _stage_cost_rows(
     deficit: the constraint-slack penalties (RHQ, RHE, RHV, evaporation,
     irrigation) the report does not itemize. It is a sum of non-negative
     penalties, so a negative value is print rounding and reads as zero.
+
+    The report prices GNL generation when it is delivered. *gnl* (from
+    :func:`_gnl_costs`, ``None`` for none) moves it to the stage that commits
+    it, the basis of DECOMP's own operating cost (``*COP``) and of
+    Novomodelo's: ``custo_presente_decisao`` and ``termica_decisao`` are the
+    stage total and the thermal cost less the GNL delivered plus the GNL
+    committed, and ``termica_sem_gnl`` is the thermal cost without GNL.
+    ``folga`` is the same on either basis.
     """
     combined = _union_relato_reports(relato, _relato2_costs(decomp_dir))
     rows = combined.with_columns(
@@ -1524,7 +1536,14 @@ def _stage_cost_rows(
         rows = rows.join(deficit, on=["estagio", "cenario"], how="left").with_columns(
             pl.col("deficit").fill_null(0.0)
         )
+    if gnl is None:
+        rows = rows.with_columns(pl.lit(0.0).alias(c) for c in _GNL_PARCELS)
+    else:
+        rows = rows.join(gnl, on=["estagio", "cenario"], how="left").with_columns(
+            pl.col(*_GNL_PARCELS).fill_null(0.0)
+        )
     nominal = pl.col("custo_presente_nominal")
+    to_decision = pl.col("gnl_comandado") - pl.col("gnl_entregue")
     return rows.with_columns(
         (nominal - pl.sum_horizontal(_ITEMIZED_PARCELS) - pl.col("deficit"))
         .clip(lower_bound=0.0)
@@ -1533,12 +1552,25 @@ def _stage_cost_rows(
         .then(pl.col("custo_presente") / nominal)
         .otherwise(1.0)
         .alias("pv"),
+        (pl.col("geracao_termica") - pl.col("gnl_entregue")).alias("termica_sem_gnl"),
+        (nominal + to_decision).alias("custo_presente_decisao"),
+        (pl.col("geracao_termica") + to_decision).alias("termica_decisao"),
     )
 
 
+class _DecompCostFrames(NamedTuple):
+    """DECOMP's side of the Overview costs (:func:`_cost_frames`)."""
+
+    nw_costs: dict[str, float]
+    nw_sin_rows: pl.DataFrame
+    #: Present value, R$, of the GNL generation delivered in the study, which
+    #: the decision basis leaves out; ``None`` without the GNL reports.
+    gnl_delivered: float | None
+
+
 def _cost_frames(
-    decomp_dir: Path, deficit_costs: dict[int, float]
-) -> tuple[dict[str, float], pl.DataFrame]:
+    decomp_dir: Path, deficit_costs: dict[int, float], *, gnl: bool = False
+) -> _DecompCostFrames:
     """DECOMP-side Overview cost metadata: the NPV dict + ``nw_sin`` rows.
 
     Reads ``relatorio_operacao_custos`` from **both** reports and unions them
@@ -1567,6 +1599,12 @@ def _cost_frames(
       unpivoted to ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows with the 1-based
       ``stage`` column kept as-is (the consuming charts subtract ``nw_offset``).
 
+    On a deck with GNL plants (*gnl*) both are on DECOMP's decision basis
+    (:func:`_stage_cost_rows`): ``nw_costs`` splits the thermal cost into
+    ``TERMICA SEM GNL`` and ``GNL COMANDADO``, and ``COPER``/``CTERM`` move GNL
+    to its commitment stage. Without GNL plants, or without either GNL
+    report, the thermal cost is the report's ``GERACAO TERMICA``.
+
     A ``relato`` that is missing or has no cost table leaves both frames empty
     after its note, so a ``relato2`` alone never yields partial costs; a missing
     or unreadable ``relato2`` only drops the fan stage(s).
@@ -1575,20 +1613,30 @@ def _cost_frames(
         relato = read_relato_costs(decomp_dir)
     except FileNotFoundError:
         _emit_missing("relato.rvN", decomp_dir, _RELATO_MISSING_EFFECT)
-        return {}, pl.DataFrame()
+        return _DecompCostFrames({}, pl.DataFrame(), None)
     except ValueError as exc:
         _emit_unreadable("relato.rvN", decomp_dir, _RELATO_COSTS_UNREADABLE_EFFECT, exc)
-        return {}, pl.DataFrame()
-    rows = _stage_cost_rows(relato, decomp_dir, deficit_costs)
-    parcels = [*_ITEMIZED_PARCELS, *_DERIVED_PARCELS, "contrato_exportacao_minimo"]
+        return _DecompCostFrames({}, pl.DataFrame(), None)
+    gnl_costs = _gnl_costs(decomp_dir) if gnl else None
+    rows = _stage_cost_rows(relato, decomp_dir, deficit_costs, gnl_costs)
+    parcels = [
+        *_ITEMIZED_PARCELS,
+        *_DERIVED_PARCELS,
+        *_GNL_PARCELS,
+        "termica_sem_gnl",
+        "contrato_exportacao_minimo",
+    ]
     discounted = rows.with_columns(pl.col(c) * pl.col("pv") for c in parcels)
     per_stage_pv = _probability_weighted_stage_cost(discounted, parcels)
     totals: dict[str, float] = per_stage_pv.select(
         [pl.col(c).sum().alias(c) for c in parcels]
     ).row(0, named=True)
 
+    thermal_labels = (
+        _DELIVERY_THERMAL_LABELS if gnl_costs is None else _DECISION_THERMAL_LABELS
+    )
     nw_costs: dict[str, float] = {}
-    for label, *columns in _NW_COST_LABELS:
+    for label, *columns in (*thermal_labels, *_NW_COST_LABELS):
         value = reconcile_kdollars_to_reais(sum(totals[c] for c in columns))
         if abs(value) > 0.01:
             nw_costs[label] = value
@@ -1641,7 +1689,12 @@ def _cost_frames(
         .sort("stage", "variable")
     )
 
-    return nw_costs, nw_sin_rows
+    gnl_delivered = (
+        None
+        if gnl_costs is None
+        else reconcile_kdollars_to_reais(totals["gnl_entregue"])
+    )
+    return _DecompCostFrames(nw_costs, nw_sin_rows, gnl_delivered)
 
 
 def _union_cost_rows(nw_sin: pl.DataFrame, cost_rows: pl.DataFrame) -> pl.DataFrame:
@@ -1814,6 +1867,44 @@ def _operated_hydro_ids(id_map: DecompIdMap) -> dict[int, int]:
     return {code: id_map.hydro_id(code) for code in id_map.operated_hydro_codes}
 
 
+def _storage_floors(metadata: Mapping[int, dict]) -> pl.DataFrame:
+    """Each hydro's ``min_storage_hm3``, the volume DECOMP's useful storage
+    leaves out."""
+    return pl.DataFrame(
+        {
+            "entity_id": list(metadata.keys()),
+            "min_storage_hm3": [
+                float(m.get("min_storage_hm3") or 0.0) for m in metadata.values()
+            ],
+        },
+        schema={"entity_id": pl.Int64, "min_storage_hm3": pl.Float64},
+    )
+
+
+def _novomodelo_hydro_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Novomodelo hydro p10/p50/p90 bands, with storage on useful volume like
+    the means :func:`_novomodelo_hydro` compares."""
+    bands = novomodelo_readers.read_novomodelo_hydro_percentiles(novomodelo_output_dir)
+    columns = [
+        column
+        for column in (f"storage_final_hm3_p{q}" for q in (10, 50, 90))
+        if column in bands.columns
+    ]
+    if not columns:
+        return bands
+    floors = _storage_floors(
+        novomodelo_readers.read_novomodelo_hydro_metadata(novomodelo_output_dir)
+    )
+    return (
+        bands.join(floors, on="entity_id", how="left")
+        .with_columns(
+            (pl.col(column) - pl.col("min_storage_hm3").fill_null(0.0)).alias(column)
+            for column in columns
+        )
+        .drop("min_storage_hm3")
+    )
+
+
 def _novomodelo_hydro(
     novomodelo_output_dir: Path,
 ) -> tuple[pl.DataFrame, dict[int, str]]:
@@ -1825,15 +1916,7 @@ def _novomodelo_hydro(
     if means.is_empty():
         return means, names
 
-    floors = pl.DataFrame(
-        {
-            "entity_id": list(metadata.keys()),
-            "min_storage_hm3": [
-                float(m.get("min_storage_hm3") or 0.0) for m in metadata.values()
-            ],
-        },
-        schema={"entity_id": pl.Int64, "min_storage_hm3": pl.Float64},
-    )
+    floors = _storage_floors(metadata)
     if "storage_final_hm3" not in means.columns or floors.is_empty():
         return means, names
     return (
@@ -2029,93 +2112,58 @@ def _log_decomp_fpha_deck_summary(decomp_dir: Path) -> None:
     )
 
 
-# --- REE energy rollup via membership ---
+# --- REE energies under DECOMP's definition ---
 #
 # DECOMP reports energy at REE (reservoir-equivalent-energy) granularity
-# (`read_dec_oper_ree`); Novomodelo has no REE entity, so the counterpart is built
-# by rolling each REE's member plants' energy up through the
-# `relato.uhes_rees_submercados` membership table (`read_relato_membership`).
+# (`read_dec_oper_ree`). Novomodelo has no REE entity, so its per-scenario plant
+# storage and inflow are valued with DECOMP's own definition
+# (:mod:`.ree_energy`) over the REE membership of relato
+# (`read_relato_membership`).
 
 
-def _ree_membership_map(
-    membership: pl.DataFrame, hydro_codes: dict[int, int]
-) -> tuple[dict[int, int], list[int]]:
-    """``{novomodelo_hydro_id: codigo_ree}`` via membership, restricted to the
-    operated hydro codes this module already resolves
-    (``{codigo_usina: novomodelo_id}``, from `DecompIdMap.hydro_id`).
+def _ree_energy_rule(case: DecompCase, membership: pl.DataFrame) -> ReeEnergyRule:
+    """DECOMP's REE energy rule over *case*'s deck."""
+    from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
+    from novomodelo_bridge.decomp.converters.rhe_shares import read_ez_fractions
 
-    A hydro code with no row in *membership* cannot be attributed to any REE
-    -- it is excluded from every REE sum and returned (sorted) as the second
-    element instead of being silently dropped.
-    """
-    code_to_ree: dict[int, int] = {}
-    if not membership.is_empty():
-        for row in membership.iter_rows(named=True):
-            code_to_ree[int(row["codigo_usina"])] = int(row["codigo_ree"])
-
-    ree_by_novomodelo_id: dict[int, int] = {}
-    unmapped: list[int] = []
-    for code, novomodelo_id in hydro_codes.items():
-        ree_code = code_to_ree.get(code)
-        if ree_code is None:
-            unmapped.append(code)
-            continue
-        ree_by_novomodelo_id[novomodelo_id] = ree_code
-    return ree_by_novomodelo_id, sorted(unmapped)
+    effective, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
+    return build_ree_energy_rule(
+        effective,
+        case.id_map.operated_hydro_codes,
+        membership,
+        read_ez_fractions(case.dadger),
+    )
 
 
-_EMPTY_NOVOMODELO_REE_SUMS_SCHEMA: dict[str, type[pl.DataType]] = {
-    "entity_id": pl.Int64,
-    "stage_id": pl.Int64,
-    "ena_mw": pl.Float64,
-    "earm_mwh": pl.Float64,
-}
-
-#: Columns :func:`_novomodelo_ree_sums` reads off *novomodelo_hydro* besides
-#: ``entity_id``/``stage_id``. A frame missing either -- e.g. a trimmed
-#: test fixture that only carries the base hydro-comparison columns --
-#: degrades to an empty sum instead of a Polars ``ColumnNotFoundError``.
-_REE_NOVOMODELO_ENERGY_COLUMNS: tuple[str, ...] = (
-    "incremental_inflow_energy_mw",
-    "stored_energy_final_mwh",
-)
-
-
-def _novomodelo_ree_sums(
-    novomodelo_hydro: pl.DataFrame, ree_by_novomodelo_id: dict[int, int]
+def _novomodelo_ree_energies(
+    rule: ReeEnergyRule,
+    hydro_codes: Mapping[int, int],
+    novomodelo_output_dir: Path,
+    stage_hours: Mapping[int, float],
 ) -> pl.DataFrame:
-    """Membership-weighted sum of Novomodelo hydro ENA/EARM per (codigo_ree, stage).
+    """Novomodelo's expected REE ``earm_mwmes``/``ena_mwmes`` per
+    (``entity_id`` = REE code, ``stage_id``).
 
-    *novomodelo_hydro* is `_AlignedDecompFrames.novomodelo_hydro` (the aligned
-    Novomodelo hydro means, reused rather than re-read); *ree_by_novomodelo_id* inverts
-    :func:`_ree_membership_map`'s own map, one entry per member plant. A
-    Novomodelo hydro id absent from it -- every plant this rollup could not
-    attribute to a membership row -- contributes to no REE sum. Returned
-    ``entity_id`` is the REE code (``codigo_ree``), matching the join key
-    :func:`_decomp_ree_frame` emits; ``earm_mwh`` is still raw MWh here --
-    the ÷730 MWmês reconciliation happens once, at the
-    :class:`~novomodelo_bridge.comparators.model.ResultComparison` emission site.
+    Each simulated scenario is valued with *rule* and weighted by its
+    probability. *hydro_codes* maps each operated ``codigo_usina`` to its
+    Novomodelo hydro id.
     """
-    empty = pl.DataFrame(schema=_EMPTY_NOVOMODELO_REE_SUMS_SCHEMA)
-    if novomodelo_hydro.is_empty() or not ree_by_novomodelo_id:
-        return empty
-    if not set(_REE_NOVOMODELO_ENERGY_COLUMNS) <= set(novomodelo_hydro.columns):
-        return empty
-    mapped = novomodelo_hydro.with_columns(
-        pl.col("entity_id")
-        .map_elements(lambda i: ree_by_novomodelo_id.get(int(i)), return_dtype=pl.Int64)
-        .alias("codigo_ree")
-    ).filter(pl.col("codigo_ree").is_not_null())
-    if mapped.is_empty():
-        return empty
+    block = novomodelo_readers.read_novomodelo_hydro_block_operation(
+        novomodelo_output_dir
+    )
+    code_of = {hydro_id: code for code, hydro_id in hydro_codes.items()}
+    plants = (
+        block.filter(pl.col("hydro_id").is_in(list(code_of)))
+        .group_by(["scenario_id", "stage_id", "hydro_id"])
+        .agg(pl.col("storage_final_hm3", "incremental_inflow_m3s").first())
+        .with_columns(pl.col("hydro_id").replace_strict(code_of).alias("codigo_usina"))
+    )
+    weights = novomodelo_readers.read_novomodelo_scenario_weights(novomodelo_output_dir)
     return (
-        mapped.group_by(["codigo_ree", "stage_id"])
-        .agg(
-            pl.col("incremental_inflow_energy_mw").sum().alias("ena_mw"),
-            pl.col("stored_energy_final_mwh").sum().alias("earm_mwh"),
-        )
+        weights.attach(rule.energies(plants, stage_hours))
+        .group_by(["codigo_ree", "stage_id"])
+        .agg(weights.mean("earm_mwmes"), weights.mean("ena_mwmes"))
         .rename({"codigo_ree": "entity_id"})
-        .cast({"entity_id": pl.Int64, "stage_id": pl.Int64})
         .sort(["entity_id", "stage_id"])
     )
 
@@ -2162,9 +2210,9 @@ def _decomp_ree_frame(
 
 
 def _ree_result_comparisons(
+    case: DecompCase,
     decomp_dir: Path,
-    novomodelo_hydro: pl.DataFrame,
-    id_map: DecompIdMap | None,
+    novomodelo_output_dir: Path,
     *,
     probabilities: pl.DataFrame | None = None,
     stage_hours: dict[int, float] | None = None,
@@ -2174,28 +2222,18 @@ def _ree_result_comparisons(
     The source-model side is `_decomp_ree_frame` (`read_dec_oper_ree`,
     scenario-averaged per REE/stage -- *probabilities* is forwarded to it
     unchanged, see :func:`_hydro_side` for its scenario-weighting contract);
-    the Novomodelo side is
-    :func:`_novomodelo_ree_sums`'s membership-weighted plant rollup, with EARM
-    converted MWh -> MWmês (:data:`_EARM_MWH_TO_MWMES`) and ENA converted from
-    a stage-mean MW (average power) to MWmês energy via the stage's own
-    duration (*stage_hours* ÷ 730 months), both at emission -- so each is on
-    DECOMP's MW-month footing. ``newave_code``/``novomodelo_id`` are both the
-    REE's own ``codigo_ree`` -- Novomodelo has no independent REE id to diverge
-    from it.
+    the Novomodelo side is :func:`_novomodelo_ree_energies`, with ENA over
+    each stage's *stage_hours* (one month without them).
+    ``newave_code``/``novomodelo_id`` are both the REE's own ``codigo_ree`` --
+    Novomodelo has no independent REE id to diverge from it.
 
-    Returns ``([], [])`` when *id_map* is ``None`` (deck unreadable -- no
-    hydro code -> Novomodelo id mapping exists to build the membership map with).
-    A missing or unreadable membership table or `dec_oper_ree` table degrades
-    to no REE rows rather than raising -- matching every other optional field
-    this module builds. A hydro code absent from the membership table is
-    excluded from every REE sum and returned (sorted) as the second element,
-    with a WARNING diagnostic recording the codes (never silently dropped).
+    A missing or unreadable membership table, ``dec_oper_ree`` table or deck
+    energy chain degrades to no REE rows rather than raising -- matching every
+    other optional field this module builds. An operated hydro code absent
+    from the membership table is left out of every REE energy and returned
+    (sorted) as the second element, with a WARNING diagnostic recording the
+    codes (never silently dropped).
     """
-    if id_map is None:
-        return [], []
-
-    hydro_codes = _operated_hydro_ids(id_map)
-
     try:
         membership = read_relato_membership(decomp_dir)
     except FileNotFoundError:
@@ -2205,7 +2243,9 @@ def _ree_result_comparisons(
         _emit_unreadable("relato.rvN", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], []
 
-    ree_by_novomodelo_id, unmapped = _ree_membership_map(membership, hydro_codes)
+    hydro_codes = _operated_hydro_ids(case.id_map)
+    members = set(membership["codigo_usina"].to_list()) if membership.height else set()
+    unmapped = sorted(code for code in hydro_codes if code not in members)
     if unmapped:
         emit(
             Diagnostic(
@@ -2218,7 +2258,7 @@ def _ree_result_comparisons(
                 summary=(
                     "The listed DECOMP plants have no row in the table of "
                     "relato.rvN that assigns each plant to its REE, so the "
-                    "comparison leaves them out of every REE energy sum."
+                    "comparison leaves them out of every REE energy."
                 ),
                 table=DiagnosticTable(
                     columns=["Code"], rows=[[code] for code in unmapped]
@@ -2236,49 +2276,35 @@ def _ree_result_comparisons(
         _emit_unreadable("dec_oper_ree.csv", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], unmapped
 
-    novomodelo_sums = _novomodelo_ree_sums(novomodelo_hydro, ree_by_novomodelo_id)
-    if source_ree.is_empty() or novomodelo_sums.is_empty():
+    try:
+        rule = _ree_energy_rule(case, membership)
+    except ValueError as exc:
+        _emit_unreadable("dadger.rvN", decomp_dir, _REE_ENERGY_EFFECT, exc)
         return [], unmapped
-
-    joined = source_ree.join(novomodelo_sums, on=["entity_id", "stage_id"], how="inner")
-    if joined.is_empty():
-        return [], unmapped
+    novomodelo_ree = _novomodelo_ree_energies(
+        rule, hydro_codes, novomodelo_output_dir, stage_hours or {}
+    )
+    joined = source_ree.join(novomodelo_ree, on=["entity_id", "stage_id"], how="inner")
 
     results: list[ResultComparison] = []
     for row in joined.iter_rows(named=True):
         ree_code = int(row["entity_id"])
-        stage = int(row["stage_id"])
-        name = names.get(ree_code, "")
-        novomodelo_earm_mwmes = float(row["earm_mwh"]) / _EARM_MWH_TO_MWMES
-        # novomodelo's ``ena_mw`` is a stage-mean MW (average inflow power); DECOMP's
-        # ``ena_MWmes`` is energy *over the stage* (MW-month), scaling with stage
-        # duration. Multiply the rate by the stage's duration in months
-        # (``stage_hours / 730``, mirroring EARM's ÷730) — else a weekly stage's
-        # mean power is compared to a week's energy, a ~stage_hours/730 mismatch
-        # that inflates the weekly ENA several-fold. Falls back to one month when
-        # hours are unavailable. The residual per-REE offset is the
-        # productivity/FPHA difference vs novomodelo's per-plant model, not a unit error.
-        stage_months = (
-            stage_hours.get(stage, _EARM_MWH_TO_MWMES) / _EARM_MWH_TO_MWMES
-            if stage_hours is not None
-            else 1.0
-        )
-        novomodelo_ena_mwmes = float(row["ena_mw"]) * stage_months
-        for variable, nw_raw, novomodelo_value in (
-            ("ena_mwmes", row["ena_MWmes"], novomodelo_ena_mwmes),
-            ("earm_final_mwmes", row["earm_final_MWmes"], novomodelo_earm_mwmes),
+        for variable, nw_raw, novomodelo_raw in (
+            ("ena_mwmes", row["ena_MWmes"], row["ena_mwmes"]),
+            ("earm_final_mwmes", row["earm_final_MWmes"], row["earm_mwmes"]),
         ):
-            if nw_raw is None:
+            if nw_raw is None or novomodelo_raw is None:
                 continue
             nw_value = float(nw_raw)
-            abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+            novomodelo_value = float(novomodelo_raw)
+            abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
             results.append(
                 ResultComparison(
                     entity_type="ree",
-                    entity_name=name,
+                    entity_name=names.get(ree_code, ""),
                     newave_code=ree_code,
                     novomodelo_id=ree_code,
-                    stage=stage,
+                    stage=int(row["stage_id"]),
                     variable=variable,
                     newave_value=nw_value,
                     novomodelo_value=novomodelo_value,
@@ -2488,7 +2514,7 @@ def _evaporation_result_comparisons(
             continue
         nw_value = _hm3_to_m3s(float(row["evaporacao_calculada_hm3"]), hours)
         novomodelo_value = float(row["evaporation_m3s"])
-        abs_diff, rel_diff = _result_diff(nw_value, novomodelo_value)
+        abs_diff, rel_diff = result_diff(nw_value, novomodelo_value)
         results.append(
             ResultComparison(
                 entity_type="hydro",
@@ -2503,7 +2529,31 @@ def _evaporation_result_comparisons(
                 rel_diff=rel_diff,
             )
         )
+    if results:
+        _emit_evaporation_calendar_convention()
     return results, one_sided
+
+
+def _emit_evaporation_calendar_convention() -> None:
+    """The evaporation rows also differ by each model's calendar for the
+    monthly coefficients, a difference the conversion leaves in place."""
+    emit(
+        Diagnostic(
+            code="decomp-evaporation-calendar-convention",
+            severity=Severity.WARNING,
+            category="Compare data",
+            title="Evaporation computed on different calendars",
+            summary=(
+                "DECOMP applies to each stage the evaporation coefficient of "
+                "the operative month the stage belongs to, over a 730.5-hour "
+                "month. Novomodelo applies the coefficient of the calendar "
+                "month the stage starts in, over that month's hours. The "
+                "evaporation rows differ by this convention even where both "
+                "models hold the same storage."
+            ),
+        ),
+        logger=_LOG,
+    )
 
 
 # --- Constraints tab (gc_* metadata, DECOMP-side LHS) ---
@@ -2986,21 +3036,40 @@ class _OverviewCostFields(TypedDict):
     novomodelo_costs: dict[str, float]
     novomodelo_stage_costs: pl.DataFrame
     nw_sin: pl.DataFrame
+    gnl_delivered: dict[str, float]
 
 
 def _overview_cost_fields(
+    case: DecompCase,
     decomp_dir: Path,
     novomodelo_output_dir: Path,
-    deficit_costs: dict[int, float],
     nw_sin: pl.DataFrame,
 ) -> _OverviewCostFields:
     """Both models' cost breakdowns and Novomodelo's per-stage costs.
 
     The DECOMP per-stage ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows are unioned
-    onto *nw_sin*'s EARM/ENA rows via :func:`_union_cost_rows`.
+    onto *nw_sin*'s EARM/ENA rows via :func:`_union_cost_rows`. On a deck with
+    GNL plants, ``gnl_delivered`` holds each model's GNL delivered in the
+    study, under ``reference`` and ``novomodelo``.
     """
-    nw_costs, nw_cost_rows = _cost_frames(decomp_dir, deficit_costs)
+    from novomodelo_bridge.decomp.converters.anticipated import is_gnl_enabled
+    from novomodelo_bridge.decomp.converters.network import bus_deficit_costs
+
+    gnl = is_gnl_enabled(case.dadgnl)
+    nw_costs, nw_cost_rows, reference_gnl = _cost_frames(
+        decomp_dir, bus_deficit_costs(case.dadger), gnl=gnl
+    )
+    gnl_delivered: dict[str, float] = {}
+    if reference_gnl is not None:
+        gnl_delivered["reference"] = reference_gnl
+    if gnl:
+        novomodelo_gnl = novomodelo_readers.read_novomodelo_gnl_delivered_cost(
+            novomodelo_output_dir
+        )
+        if novomodelo_gnl is not None:
+            gnl_delivered["novomodelo"] = novomodelo_gnl
     return {
+        "gnl_delivered": gnl_delivered,
         "nw_costs": nw_costs,
         "novomodelo_costs": novomodelo_readers.read_novomodelo_cost_breakdown(
             novomodelo_output_dir
@@ -3133,9 +3202,7 @@ def _verbatim_read_fields(
         # percentile output (e.g. the deterministic 2-node tree) --
         # ``read_novomodelo_hydro_percentiles`` already degrades to an empty
         # frame in that case, passed through verbatim.
-        "hydro": novomodelo_readers.read_novomodelo_hydro_percentiles(
-            novomodelo_output_dir
-        ),
+        "hydro": _novomodelo_hydro_percentiles(novomodelo_output_dir),
         "novomodelo_hydro_per_stage_bounds": (
             novomodelo_readers.read_novomodelo_hydro_per_stage_bounds(
                 novomodelo_output_dir
@@ -3172,14 +3239,15 @@ def build_decomp_dataset(
     The returned dataset's ``PercentileData`` carries:
 
     - Entity-name dicts (``nw_bus_names``/``nw_hydro_names``) and the
-      novomodelo-side ``bus``/``hydro``/``thermal``/``line`` percentile bands, read
-      verbatim from the matching ``novomodelo_readers`` percentile functions.
+      novomodelo-side ``bus``/``hydro``/``thermal``/``line`` percentile bands, from
+      the ``novomodelo_readers`` percentile functions (hydro storage useful).
     - The Energy Balance tab's DECOMP-side frames ``nw_market``/
       ``nw_net_load``/``nw_sin`` (`_energy_balance_frames`) plus the novomodelo-side
       ``bus_aggregates``/``novomodelo_bus_meta``/``novomodelo_hydro_means``.
     - The Network tab's ``line_bounds``/``line_meta`` (`read_novomodelo_network_lines`).
     - The Overview tab's ``nw_costs`` (`_cost_frames`), ``novomodelo_costs``/
-      ``novomodelo_stage_costs``, and the Convergence overlay ``nw_convergence``/
+      ``novomodelo_stage_costs``, ``gnl_delivered`` on a deck with GNL plants,
+      and the Convergence overlay ``nw_convergence``/
       ``novomodelo_convergence`` (`_decomp_convergence_frame`). The per-stage
       ``COPER``/``CUSTO_FUTURO``/``CTERM`` rows are unioned onto ``nw_sin``'s
       EARM/ENA rows via `_union_cost_rows`, never overwriting them.
@@ -3209,10 +3277,9 @@ def build_decomp_dataset(
     three have no dedicated ``PercentileData`` field and flow through
     ``results``/``dataset.metadata["unmapped"]``.
 
-    Unit reconciliations: REE EARM MWh -> MWmês via
-    :data:`_EARM_MWH_TO_MWMES`, REE ENA (a stage-mean MW) -> MWmês via the
-    stage's own hours, and evaporation hm³ -> m³/s via the stage's actual
-    hours, comparing Novomodelo's value unchanged (see
+    Unit reconciliations: REE EARM/ENA valued in MWmês with DECOMP's own
+    definition (:mod:`.ree_energy`), and evaporation hm³ -> m³/s via the
+    stage's actual hours, comparing Novomodelo's value unchanged (see
     `_evaporation_result_comparisons`).
     ``nw_offset=1``: DECOMP's ``estagio`` is 1-based from the
     deck's first stage, so the offset is fixed at 1, not derived from the data.
@@ -3251,7 +3318,6 @@ def build_decomp_dataset(
     """
     from novomodelo_bridge.comparators.analyze import build_results_dataset
     from novomodelo_bridge.decomp.case import DecompCase
-    from novomodelo_bridge.decomp.converters.network import bus_deficit_costs
 
     case = DecompCase.from_directory(decomp_dir)
     probabilities = _scenario_probabilities(decomp_dir)
@@ -3274,10 +3340,10 @@ def build_decomp_dataset(
         probabilities=probabilities,
     )
     results.extend(line_results)
+    results = merge_shared_plant_buses(results, novomodelo_output_dir)
 
-    deficit_costs = bus_deficit_costs(case.dadger)
     cost_fields = _overview_cost_fields(
-        decomp_dir, novomodelo_output_dir, deficit_costs, aligned.nw_sin
+        case, decomp_dir, novomodelo_output_dir, aligned.nw_sin
     )
     performance_fields = _performance_fields(decomp_dir, novomodelo_output_dir, aligned)
     novomodelo_hydro_meta = _merge_hydro_bus_ids(
@@ -3291,9 +3357,9 @@ def build_decomp_dataset(
     _log_decomp_fpha_deck_summary(decomp_dir)
 
     ree_results, unmapped_ree = _ree_result_comparisons(
+        case,
         decomp_dir,
-        aligned.novomodelo_hydro,
-        line_id_map,
+        novomodelo_output_dir,
         probabilities=probabilities,
         stage_hours=_novomodelo_stage_hours(novomodelo_output_dir) or None,
     )

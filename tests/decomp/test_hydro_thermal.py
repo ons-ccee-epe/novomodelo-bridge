@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pandas as pd
@@ -38,6 +39,8 @@ from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from idecomp.decomp import Dadger
 
 _EVAPORATION_COLUMNS = (
@@ -56,7 +59,7 @@ _EVAPORATION_COLUMNS = (
 )
 
 
-def _evaporation_hidr(rows: dict[int, list[float]]) -> pd.DataFrame:
+def _evaporation_hidr(rows: Mapping[int, Sequence[float]]) -> pd.DataFrame:
     """A ``hidr``-shaped frame carrying only the 12 monthly evaporation columns."""
     df = pd.DataFrame(
         {
@@ -68,42 +71,84 @@ def _evaporation_hidr(rows: dict[int, list[float]]) -> pd.DataFrame:
     return df
 
 
+def _evaporation_effective(
+    hidr: pd.DataFrame,
+    n_stages: int = 3,
+    overrides: dict[tuple[int, int], tuple[float, ...]] | None = None,
+) -> EffectiveCadastro:
+    return EffectiveCadastro(
+        base=hidr,
+        n_stages=n_stages,
+        stage_varying={},
+        evaporation_coefficients=overrides or {},
+    )
+
+
 class TestEvaporationEmission:
     """Reservoir-evaporation conversion: the per-plant
     UH ``evaporacao`` flag switches it on; the 12 monthly mm rates come from
-    ``hidr.dat`` in calendar order (Jan..Dec)."""
+    ``hidr.dat`` in calendar order (Jan..Dec), with ``AC COFEVA`` applied."""
 
     def test_coefficients_are_hidr_months_jan_to_dec(self) -> None:
-        hidr = _evaporation_hidr({7: [0, 2, 29, 40, 51, 46, 32, 23, 24, 15, 4, 7]})
-        assert _evaporation_coefficients_mm(hidr, 7) == [
-            0.0,
-            2.0,
-            29.0,
-            40.0,
-            51.0,
-            46.0,
-            32.0,
-            23.0,
-            24.0,
-            15.0,
-            4.0,
-            7.0,
-        ]
+        months = [0, 2, 29, 40, 51, 46, 32, 23, 24, 15, 4, 7]
+        hidr = _evaporation_hidr({7: months})
+        coefficients, varies = _evaporation_coefficients_mm(
+            _evaporation_effective(hidr), 7, (7, 7, 8)
+        )
+        assert coefficients == [float(m) for m in months]
+        assert varies == []
+
+    def test_cofeva_replaces_its_month(self) -> None:
+        hidr = _evaporation_hidr({7: [5.0] * 12})
+        effective = _evaporation_effective(hidr, overrides={(7, 10): (0.0, 0.0, 0.0)})
+        coefficients, varies = _evaporation_coefficients_mm(effective, 7, (7, 7, 8))
+        assert coefficients == [5.0] * 9 + [0.0] + [5.0] * 2
+        assert varies == []
+
+    def test_month_takes_the_value_of_its_first_stage(self) -> None:
+        # Stages 0-1 read July, stage 2 August; a COFEVA dated at stage 1
+        # changes July inside the month and August before it is read.
+        hidr = _evaporation_hidr({7: [5.0] * 12})
+        effective = _evaporation_effective(
+            hidr,
+            overrides={(7, 7): (5.0, 9.0, 9.0), (7, 8): (5.0, 3.0, 3.0)},
+        )
+        coefficients, varies = _evaporation_coefficients_mm(effective, 7, (7, 7, 8))
+        assert coefficients is not None
+        assert coefficients[6] == 5.0
+        assert coefficients[7] == 3.0
+        assert varies == [[7, "", "JUL", 5.0, "1"]]
+
+    def test_unread_month_takes_the_last_stage_value(self) -> None:
+        hidr = _evaporation_hidr({7: [5.0] * 12})
+        effective = _evaporation_effective(hidr, overrides={(7, 1): (5.0, 5.0, 8.0)})
+        coefficients, _ = _evaporation_coefficients_mm(effective, 7, (7, 7, 8))
+        assert coefficients is not None
+        assert coefficients[0] == 8.0
 
     def test_all_zero_months_is_none(self) -> None:
         hidr = _evaporation_hidr({7: [0.0] * 12})
-        assert _evaporation_coefficients_mm(hidr, 7) is None
+        assert _evaporation_coefficients_mm(_evaporation_effective(hidr), 7, (7,)) == (
+            None,
+            [],
+        )
 
     def test_absent_plant_is_none(self) -> None:
         hidr = _evaporation_hidr({7: [1.0] * 12})
-        assert _evaporation_coefficients_mm(hidr, 99) is None
+        assert _evaporation_coefficients_mm(_evaporation_effective(hidr), 99, (7,)) == (
+            None,
+            [],
+        )
 
     def test_missing_columns_is_none_not_keyerror(self) -> None:
         # A hidr frame without the evaporation columns (e.g. a partial fixture)
         # yields None rather than raising, so a stray UH flag never crashes.
         hidr = pd.DataFrame({7: {"volume_maximo": 100.0}}).T
         hidr.index.name = "codigo_usina"
-        assert _evaporation_coefficients_mm(hidr, 7) is None
+        assert _evaporation_coefficients_mm(_evaporation_effective(hidr), 7, (7,)) == (
+            None,
+            [],
+        )
 
     def test_flag_codes_reads_uh_evaporacao(self) -> None:
         uh = pd.DataFrame(
@@ -243,9 +288,11 @@ class _StubDadger:
         mp: pd.DataFrame | None = None,
         fd: pd.DataFrame | None = None,
         vi: pd.DataFrame | None = None,
+        ev: object | None = None,
     ) -> None:
         self._uh, self._ct, self._mp, self._fd = uh, ct, mp, fd
         self._vi = vi
+        self.ev = ev
 
     def uh(self, df: bool = False) -> pd.DataFrame | None:
         return self._uh
@@ -580,6 +627,72 @@ def _convert_nw_hydros(
         effective=_no_override_effective(hidr),
         turbine_limits=flat_turbine_limits(id_map, 3),
     )
+
+
+def _evaporating_hidr() -> pd.DataFrame:
+    hidr = _hidr_frame()
+    for column in _EVAPORATION_COLUMNS:
+        hidr[column] = 10.0
+    return hidr
+
+
+def _evaporating_uh(volume_pct: float) -> pd.DataFrame:
+    uh = _uh_frame()
+    uh["evaporacao"] = [1, 0, 0, 0]
+    uh.loc[uh["codigo_usina"] == 1, "volume_inicial"] = volume_pct
+    return uh
+
+
+def _convert_evaporating_hydros(ev: object | None) -> tuple[dict, list]:
+    hidr = _evaporating_hidr()
+    dadger = _StubDadger(uh=_evaporating_uh(25.0), ev=ev)
+    with dx.collect() as collected:
+        doc = convert_hydros(
+            _case(dadger, hidr),
+            _ID_MAP,
+            effective=_no_override_effective(hidr, 3),
+            turbine_limits=flat_turbine_limits(_ID_MAP, 3),
+        )
+    hydros = {h["name"]: h for h in doc["hydros"]}
+    return hydros, collected
+
+
+class TestEvaporationReference:
+    """The ``EV`` record's linear model sets the volume each plant's
+    evaporation is linearized at; without it DECOMP evaporates outside the LP,
+    which the case cannot represent."""
+
+    def test_ini_is_the_initial_storage(self) -> None:
+        hydros, collected = _convert_evaporating_hydros(
+            SimpleNamespace(modelo=1, volume_referencia="INI")
+        )
+        # UP_RES: 100 + 25% of (500 - 100) hm³.
+        assert hydros["UP_RES"]["evaporation"]["reference_volumes_hm3"] == [200.0] * 12
+        assert "evaporation" not in hydros["MID_RES"]
+        assert not [d for d in collected if d.code == "decomp-evaporation-outside-lp"]
+
+    def test_med_is_the_middle_of_the_useful_volume(self) -> None:
+        hydros, _ = _convert_evaporating_hydros(
+            SimpleNamespace(modelo=1, volume_referencia=" MED")
+        )
+        assert hydros["UP_RES"]["evaporation"]["reference_volumes_hm3"] == [300.0] * 12
+
+    @pytest.mark.parametrize(
+        "ev", [None, SimpleNamespace(modelo=0, volume_referencia="")]
+    )
+    def test_outside_the_lp_keeps_the_default_reference_and_warns(
+        self, ev: object | None
+    ) -> None:
+        hydros, collected = _convert_evaporating_hydros(ev)
+        assert hydros["UP_RES"]["evaporation"] == {"coefficients_mm": [10.0] * 12}
+        (finding,) = [d for d in collected if d.code == "decomp-evaporation-outside-lp"]
+        assert finding.severity is Severity.WARNING
+        assert finding.table is not None
+        assert finding.table.rows == [[1, "UP_RES"]]
+
+    def test_linear_model_without_a_reference_is_refused(self) -> None:
+        with pytest.raises(FieldParseError, match="EV record"):
+            _convert_evaporating_hydros(SimpleNamespace(modelo=1, volume_referencia=""))
 
 
 class TestNwPlants:

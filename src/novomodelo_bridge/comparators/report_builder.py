@@ -71,6 +71,7 @@ from novomodelo_bridge.comparators.model import (
 from novomodelo_bridge.core.agreement import DEFAULT_TOLERANCE, Band
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.summary_counts import footer_counts, summary_tolerance
+from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 
 if TYPE_CHECKING:
@@ -715,7 +716,12 @@ def _build_overview_tab(
                     cost_breakdown_chart(nw_costs, novomodelo_costs, reference_label)
                 ),
                 wrap_chart(
-                    cost_breakdown_table(nw_costs, novomodelo_costs, reference_label)
+                    cost_breakdown_table(
+                        nw_costs,
+                        novomodelo_costs,
+                        reference_label,
+                        dataset.render.gnl_delivered,
+                    )
                 ),
             ],
         ),
@@ -782,6 +788,16 @@ def _build_system_tab(dataset: ComparisonDataset, reference_label: str) -> str:
                     results, "deficit_mw", "Deficit", bus_pct, reference_label
                 )
             ),
+            section_title("Net Import by Bus"),
+            _full_width_chart(
+                system_per_bus_chart(
+                    results,
+                    "net_import_mw",
+                    "Net Import by Bus (MW)",
+                    bus_pct,
+                    reference_label,
+                )
+            ),
         ]
     )
 
@@ -794,9 +810,8 @@ def _system_energy_charts(
     reference_label: str,
 ) -> list[str]:
     # System-level EARM and ENA (Novomodelo per-hydro aggregate vs the source model SIN). The
-    # source model EARMF is in MWmes (mean MW over a month); convert to MWh via the
-    # canonical 730 h/month factor used by the source model.  ENA is already in MW (mean
-    # power) on both sides.
+    # source model EARMF is in MWmes over NEWAVE's mean month (MEAN_MONTH_HOURS), which
+    # DECOMP also uses; ENA is already in MW (mean power) on both sides.
     novomodelo_hydro_means = dataset.render.novomodelo_hydro_means
     hydro_pct = dataset.render.hydro
     nw_sin = dataset.render.nw_sin
@@ -811,7 +826,7 @@ def _system_energy_charts(
                 hydro_pct,
                 nw_sin=nw_sin,
                 nw_variable="EARMF",
-                nw_factor=730.0,
+                nw_factor=MEAN_MONTH_HOURS,
                 nw_offset=nw_offset,
                 matched_ids=matched_ids,
                 reference_label=reference_label,

@@ -1201,6 +1201,7 @@ def emit_rhe_generics(
     effective: EffectiveCadastro,
     hydro_to_ree: Mapping[int, int],
     ez_fractions: Mapping[int, float],
+    big_m: float,
     allocator: ConstraintIdAllocator | None = None,
 ) -> DecompGenericResult | None:
     """Emit every generic ``HE`` (RHE stored-energy) constraint.
@@ -1228,11 +1229,14 @@ def emit_rhe_generics(
       converted to MWh with the stage's hours into the parquet bound; any
       other value is treated the same way, with a WARNING.
 
-    The slack penalty is ``record.he_meta.valor_penalidade`` (R$/MWh) when
-    positive, else :data:`_RHE_DEFAULT_PENALTY` with a WARNING (mirroring
-    the source model's ``penalty <= 0 -> 1000.0`` fallback) — RHE is soft
-    per its own penalty, never ``BIG_M``. It is ``per_unit``, a price per MWh
-    of violation on weekly and monthly stages alike.
+    The slack follows the record's violation flag (``HE`` field 9). At ``0``
+    or blank the source model treats a violation as an infeasibility, so the
+    slack is priced at *big_m*, as for every other hard constraint. At ``1``
+    a violation is a priced resource: the penalty is
+    ``record.he_meta.valor_penalidade`` (R$/MWh) when positive, else
+    :data:`_RHE_DEFAULT_PENALTY` with a WARNING (mirroring the source model's
+    ``penalty <= 0 -> 1000.0`` fallback). Either way it is ``per_unit``, a
+    price per MWh of violation on weekly and monthly stages alike.
 
     Reads no ``dadger``; *hydro_to_ree* and *ez_fractions* arrive from the
     caller. *allocator* defaults to a fresh :class:`ConstraintIdAllocator`
@@ -1266,15 +1270,16 @@ def emit_rhe_generics(
             no_storage.append([record.constraint_id, rees])
             continue
 
-        penalty = (
-            record.he_meta.valor_penalidade if record.he_meta is not None else None
-        )
-        if penalty is None or penalty <= 0.0:
-            declared = "missing" if penalty is None else f"{penalty:g}"
-            default_penalty.append(
-                [record.constraint_id, declared, f"{_RHE_DEFAULT_PENALTY:g}"]
-            )
-            penalty = _RHE_DEFAULT_PENALTY
+        if record.he_meta is None or record.he_meta.violation_is_infeasible:
+            penalty = big_m
+        else:
+            penalty = record.he_meta.valor_penalidade
+            if penalty is None or penalty <= 0.0:
+                declared = "missing" if penalty is None else f"{penalty:g}"
+                default_penalty.append(
+                    [record.constraint_id, declared, f"{_RHE_DEFAULT_PENALTY:g}"]
+                )
+                penalty = _RHE_DEFAULT_PENALTY
 
         tipo_limite = record.tipo_limite
         if tipo_limite not in (1, 2):

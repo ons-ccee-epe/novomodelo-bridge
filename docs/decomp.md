@@ -75,8 +75,9 @@ The committed weeks of a fuel-constrained thermal (the `GL` register) belong
 to the study or to a month after it by their position in the `GS` register, not
 by their dates. From the second revision of a month on, the first committed
 week of the month after the study starts a few days before the study ends; it
-is held from the end of the study, and its days before that count in the last
-study stage, weighted by their hours. The weeks after the study declare no patamar durations, so their
+is held from the end of the study. As in DECOMP, its days before that count
+in no study stage: the last week `GS` books to the study covers them, at its own
+MW per patamar. The weeks after the study declare no patamar durations, so their
 patamares are weighted by their month's shares in `cortesh.dat`. When that file
 is absent or does not cover the month, the last study stage's patamar hours are
 used instead, with a warning; a week that commits different MW per patamar is
@@ -198,13 +199,31 @@ inputs follow DECOMP:
 
 The calendars Novomodelo keeps past the study horizon go to
 `post_study_stages.json`. A deck with `GS` deliveries in `dadgnl` gets the
-thermal calendar there (`thermal_stages` and `thermal_bounds`). A deck with
+thermal calendar there (`thermal_stages` and `thermal_bounds`). A GNL plant's
+capacity, minimum and cost in a post-study week come from the `TG` record of
+the month `GS` books the week to, as in DECOMP, even when the week ends in the
+next month or starts after the month it is booked to. DECOMP gives each `GS`
+interval of a month an equal share of a 730.5-hour month, while the case holds
+each post-study stage over its calendar hours; `convert decomp` warns with
+`decomp-gnl-post-study-interval-hours`, listing both per stage. A deck with
 `VI` travel times gets `water_bucket_stages`: one stage from the end of the
 last operative stage to the end of that month, so a horizon that ends on the
 first of a month gives the whole month. A `VI` travel time longer than that
 stage fails the conversion, naming the plant: a water calendar of more than
 one stage is not converted yet. A deck with neither writes no
 `post_study_stages.json`.
+
+Evaporation takes the monthly coefficients of `hidr.dat` with the deck's
+`AC COFEVA` overrides, linearized at the reference volume the `EV` record
+selects: the initial storage for `INI`, the middle of the useful volume for
+`MED`. A deck without the `EV` linear model warns with
+`decomp-evaporation-outside-lp`, since Novomodelo has no evaporation computed
+outside the LP. Novomodelo applies to each stage the coefficient of the
+calendar month the stage starts in, over that month's hours, where DECOMP
+applies the coefficient of the stage's operative month over a 730.5-hour
+month. The conversion leaves this convention difference in place, and
+`compare decomp` reports it with the `decomp-evaporation-calendar-convention`
+warning.
 
 Some deck features have no Novomodelo counterpart yet, or are held back behind a
 novomodelo issue. None is dropped silently: `check decomp` lists them per deck,
@@ -339,6 +358,47 @@ console ends with each model's final lower bound and simulated mean cost. The
 lower bound includes the future cost at the end of the study, which the
 simulated mean cost leaves out, so the two rows are far apart on both models.
 
+Hydro storage is compared on useful volume, as DECOMP prints it: Novomodelo's
+means and P10–P90 bands leave out each plant's minimum storage. Outflow is
+turbined plus spilled flow on both sides. DECOMP's defluent flow in
+`dec_oper_usih` also counts the diverted flow, which leaves the river above the
+plant and which Novomodelo reports apart.
+
+DECOMP prints the same spilled flow in every patamar of a stage. Novomodelo
+spills per block, and the conversion does not tie a stage's blocks together.
+A spilling plant can therefore split its turbined and spilled flow between the
+blocks differently from DECOMP, and the spillage, turbined flow and generation
+gaps include that difference.
+
+Each submarket's net import compares with the net interchange of
+`dec_oper_sist`; the fictitious subsystem has no row. Each line compares with
+the `dec_oper_interc` interchange of its `IA` pair, the pairs with the `IV`
+node included. The lines on a loop whose exchange costs tie, such as a direct
+line and its route through the fictitious subsystem, are left out of the
+headline as on the NEWAVE report
+(see [the NEWAVE guide](newave.md#comparing-results)).
+
+Itaipu has units on its submarket's bus and on the `IV` node, and each model
+can place its output on either one. The submarket's own net import and the
+flow on the line between the two buses follow that placement, so the
+comparison judges the two as one group, named after both buses (`SE+IV`).
+The group's net import is the flow on the lines that leave it. The
+submarket's own net import and the flow between the two buses show outside
+the headline and the `--json` status, and the `buses-share-plant` warning
+names the group.
+
+The REE stored and inflow energies (EARM, ENA) compare with DECOMP's
+`dec_oper_ree`. Novomodelo has no REE, so each plant's simulated storage and
+incremental inflow are valued with DECOMP's own definition. A plant's water
+counts at every plant of its energy chain (the `AC JUSENA` plant, else the next
+plant down the river), each at the head of its current filling. A plant with an
+`EZ` record counts in its own REE until its chain leaves it; the REE below
+counts at most the `EZ` share of the plant's useful range. Inflow energy moves
+to the REE of the first plant past a submarket boundary and, inside a
+submarket, to a plant of another REE until the chain passes a monthly
+reservoir. Both energies are in MWmês of 730.5 hours, the mean month DECOMP
+uses.
+
 Each scenario of the stochastic stage weighs by its probability on both sides:
 DECOMP's by the tree's probabilities, Novomodelo's by the probability of each
 simulated leaf path in `simulation/scenario_summary.parquet`. The `dashboard`
@@ -367,6 +427,20 @@ with an export minimum the two contract costs differ by twice the minimum's
 value; the comparison reports that amount as the
 `decomp-export-contract-cost-convention` warning.
 
+On a deck with GNL plants (`dadgnl.rvN`), Novomodelo books a GNL plant's fuel
+at the stage that commits the generation and charges nothing on delivery.
+DECOMP's cost report books it on delivery, but DECOMP states its own operating
+cost on the commitment basis: the stage total less the GNL delivered in the
+stage (`dec_oper_gnl`) plus the GNL the stage commits for later delivery
+(`relgnl.rvN`, without the weeks committed before the study). The comparison
+puts DECOMP's costs on that basis. The cost breakdown splits the thermal cost
+into Thermal excl. GNL and GNL committed in study, the per-stage immediate and
+thermal costs move GNL to the stage that commits it, and a row under the total
+shows each model's GNL delivered in the study at its price, which neither total
+counts. Without either GNL file, DECOMP's thermal cost stays one row on the
+delivery basis and the comparison notes the missing file. `compare newave`
+compares NEWAVE's thermal cost as NEWAVE reports it.
+
 DECOMP's `Zsup` is the lowest upper bound reached so far, and the relato
 prints no upper bound per iteration, so the convergence chart sets it against
 Novomodelo's running minimum.
@@ -382,7 +456,7 @@ On the Energy Balance tab, the ANDE load of the deck's `RI` register is added
 to the demand of Itaipu's submarket, as the conversion adds it to that bus:
 DECOMP's `dec_oper_sist` demand leaves it out, while its hydro generation
 includes the Itaipu output that serves it. DECOMP prints the system's natural
-inflow energy (ENA) as energy over the stage, in MWmês of 730 hours; the
+inflow energy (ENA) as energy over the stage, in MWmês of 730.5 hours; the
 chart converts it to the stage's mean MW, the unit of Novomodelo's series.
 
 The Productivity tab compares the two models at the operating points each one
@@ -407,5 +481,9 @@ every bus the plant feeds, or Novomodelo's water value is zero, all at DECOMP's
 two-decimal print resolution. Either model may then turbine or spill at no
 cost. Ties are left out of the split and of the per-plant ranking of
 generation, turbined flow, productivity, spillage and outflow on the Hydro
-Plant Details tab, and the tab reports their share per stage. DECOMP prints no
-water value, so on its side a tie is detected through the marginal cost only.
+Plant Details tab, and the tab reports their share per stage. The console
+table gives the same five variables' gaps without the ties in an Excl. ties
+column beside the gap, and the exported summary and the `--json` summary
+carry them too. The agreement band still judges the gap over every point.
+DECOMP prints no water value, so on its side a tie is detected through the
+marginal cost only.

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import pandas as pd
 from idecomp.decomp.modelos.dadger import (
     ACALTEFE,
+    ACCOFEVA,
     ACCOTVOL,
     ACDESVIO,
     ACJUSENA,
@@ -106,6 +107,7 @@ _NON_SCALAR_AC_CLASS_BY_PARAM: dict[str, type] = {
     "posto": ACNUMPOS,
     "posto_acoplamento": ACNPOSNW,
     "jusante_energia": ACJUSENA,
+    "evaporacao": ACCOFEVA,
 }
 
 
@@ -279,6 +281,23 @@ def _plant_code_key(row: Any) -> int:
     """Group-key for the plant-keyed single-value ``AC`` mnemonics —
     ``codigo_usina`` alone (``NUMJUS``/``NUMPOS``)."""
     return int(row["codigo_usina"])
+
+
+def _evaporation_month_key(row: Any) -> tuple[int, int]:
+    """Group-key for ``AC COFEVA`` — ``(codigo_usina, mes_coeficiente)``, the
+    calendar month (1..12) whose coefficient the row replaces.
+
+    Raises
+    ------
+    ValueError
+        If ``mes_coeficiente`` is not a calendar month.
+    """
+    code, month = int(row["codigo_usina"]), int(row["mes_coeficiente"])
+    if not 1 <= month <= 12:
+        raise ValueError(
+            f"AC {code} COFEVA gives month {month}; the month must be 1 to 12"
+        )
+    return code, month
 
 
 def _conjunto_key(row: Any) -> tuple[int, int]:

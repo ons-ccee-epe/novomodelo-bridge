@@ -141,6 +141,18 @@ def test_mean_cota_degenerate_range_equals_evaluate_cota() -> None:
     assert mean_cota(coeffs, 5.0, 5.0) == evaluate_cota(coeffs, 5.0)
 
 
+def test_mean_cota_rounding_wide_range_equals_evaluate_cota() -> None:
+    # A real deck's forebay quartic over a range one ulp wide (a reservoir
+    # simulated at its floor): the antiderivative difference cancels there.
+    coeffs = [594.02, 0.35164, -2.1575e-3, 7.3589e-6, -9.5971e-9]
+    v_lo = 228.27000427246094
+    v_hi = 228.27000427246097
+    assert v_hi > v_lo
+    assert mean_cota(coeffs, v_lo, v_hi) == pytest.approx(
+        evaluate_cota(coeffs, v_lo), abs=1e-9
+    )
+
+
 def test_mean_cota_linear_coeffs_equals_evaluate_cota_at_midpoint() -> None:
     coeffs = [10.0, 0.5, 0.0, 0.0, 0.0]
     v_lo, v_hi = 20.0, 80.0

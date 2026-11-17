@@ -35,6 +35,7 @@ from tests.comparators.conftest import (
     _patch_aligned_frames,
     _ree_id_map,
 )
+from tests.conftest import make_decomp_case
 
 
 def _relato_convergence_frame() -> pl.DataFrame:
@@ -481,7 +482,7 @@ def test_a_missing_relato_is_one_note_across_every_relato_reader(
         _decomp_convergence_frame(tmp_path)
         _decomp_tim_iterations(tmp_path)
         _ree_result_comparisons(
-            tmp_path, _aligned_fixture().novomodelo_hydro, _ree_id_map()
+            make_decomp_case(tmp_path, id_map=_ree_id_map()), tmp_path, tmp_path
         )
 
     assert len(collected) == 3

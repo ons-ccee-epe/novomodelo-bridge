@@ -34,6 +34,9 @@ class PercentileData:
     novomodelo_convergence: pl.DataFrame = field(default_factory=pl.DataFrame)
     nw_costs: dict[str, float] = field(default_factory=dict)
     novomodelo_costs: dict[str, float] = field(default_factory=dict)
+    # GNL delivered in the study, R$ present value, under ``reference`` and
+    # ``novomodelo``: outside both cost totals, which book GNL when committed.
+    gnl_delivered: dict[str, float] = field(default_factory=dict)
     # Per-stage immediate/future cost on the Novomodelo side — mean across
     # scenarios, in R$.  Joined with MEDIAS-SIN's COPER/CUSTO_FUTURO
     # (after the 10⁶ R$ unit conversion) by the overview-tab chart.
@@ -170,6 +173,14 @@ class ResultsSummary:
     by_variable: dict[tuple[str, str], ResultVariableStats] = field(
         default_factory=dict
     )
+
+
+def result_diff(nw_value: float, novomodelo_value: float) -> tuple[float, float | None]:
+    """The absolute and relative difference of one :class:`ResultComparison`
+    pair; the relative one is ``None`` when the reference is zero."""
+    abs_diff = abs(nw_value - novomodelo_value)
+    rel_diff = abs_diff / abs(nw_value) if abs(nw_value) > 1e-10 else None
+    return abs_diff, rel_diff
 
 
 def smape(nw_value: float, novomodelo_value: float) -> float:

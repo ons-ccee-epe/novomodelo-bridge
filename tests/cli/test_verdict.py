@@ -122,7 +122,7 @@ class TestCompareSummary:
             far=2,
             far_variables=(
                 FarVariable("thermal", "generation_mw", None),
-                FarVariable("bus", "spot_price", 0.4),
+                FarVariable("hydro", "spillage_m3s", 0.4, 0.1),
             ),
         )
 
@@ -140,8 +140,18 @@ class TestCompareSummary:
         assert result["total"] == 6
         assert (result["close"], result["moderate"], result["far"]) == (3, 1, 2)
         assert result["far_variables"] == [
-            {"entity_type": "thermal", "variable": "generation_mw", "gap": None},
-            {"entity_type": "bus", "variable": "spot_price", "gap": 0.4},
+            {
+                "entity_type": "thermal",
+                "variable": "generation_mw",
+                "gap": None,
+                "gap_excl_ties": None,
+            },
+            {
+                "entity_type": "hydro",
+                "variable": "spillage_m3s",
+                "gap": 0.4,
+                "gap_excl_ties": 0.1,
+            },
         ]
 
     def test_compare_summary_all_close_lists_no_far_variable(self) -> None:
@@ -200,7 +210,12 @@ class TestDecompDatasetSummary:
         assert summary["total"] == 2
         assert (summary["close"], summary["moderate"], summary["far"]) == (1, 0, 1)
         assert summary["far_variables"] == [
-            {"entity_type": "hydro", "variable": "turbined_m3s", "gap": 0.4}
+            {
+                "entity_type": "hydro",
+                "variable": "turbined_m3s",
+                "gap": 0.4,
+                "gap_excl_ties": 0.2,
+            }
         ]
 
     def test_stages_counts_distinct_tidy_stage_values(self) -> None:

@@ -19,6 +19,7 @@ import pytest
 from novomodelo_bridge.comparators import charts as _cmp_charts
 from novomodelo_bridge.comparators import report_builder
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
+from novomodelo_bridge.core.agreement import SHARED_PLANT_NET_FLOW, TIED_NET_FLOW
 from novomodelo_bridge.dashboard.chart_helpers import (
     COST_GROUPS,
     OTHER_COSTS,
@@ -1880,3 +1881,44 @@ def test_facet_panel_is_frozen() -> None:
     panel = FacetPanel(row=0, col=0, x_domain=[0.0, 1.0], y_domain=[0.0, 1.0])
     with pytest.raises(dataclasses.FrozenInstanceError):
         setattr(panel, "row", 1)
+
+
+def test_line_summary_chart_labels_a_tied_route(
+    line_summary_results: list[ResultComparison],
+    line_summary_pct: pl.DataFrame,
+    line_summary_bounds: pl.DataFrame,
+    line_summary_meta: list[dict],
+) -> None:
+    results = [
+        dataclasses.replace(r, variable=TIED_NET_FLOW) if r.entity_name == "L2" else r
+        for r in line_summary_results
+    ]
+
+    html = _cmp_charts.line_summary_chart(
+        results, line_summary_pct, line_summary_bounds, line_summary_meta
+    )
+
+    assert "L2 (tied route)" in html
+    assert "L1 (tied route)" not in html
+    assert "L3 (tied route)" not in html
+
+
+def test_line_summary_chart_labels_a_line_between_buses_sharing_a_plant(
+    line_summary_results: list[ResultComparison],
+    line_summary_pct: pl.DataFrame,
+    line_summary_bounds: pl.DataFrame,
+    line_summary_meta: list[dict],
+) -> None:
+    results = [
+        dataclasses.replace(r, variable=SHARED_PLANT_NET_FLOW)
+        if r.entity_name == "L2"
+        else r
+        for r in line_summary_results
+    ]
+
+    html = _cmp_charts.line_summary_chart(
+        results, line_summary_pct, line_summary_bounds, line_summary_meta
+    )
+
+    assert "L2 (shares a plant)" in html
+    assert "L1 (shares a plant)" not in html

@@ -58,6 +58,19 @@ class TestBuildOperativeCalendar:
         assert calendar[-1].end_date == date(2026, 9, 1)
         assert [s.season_id for s in calendar] == [6, 6, 7]
 
+    def test_rv4_starts_on_a_week_that_ends_on_the_first(self) -> None:
+        # July 2026 RV4: one operative week, 25/07 to 01/08, then August.
+        hours = [[15.0, 64.0, 89.0], [63.0, 280.0, 401.0]]
+        calendar = build_operative_calendar(date(2026, 7, 25), hours)
+        assert [s.start_date for s in calendar] == [date(2026, 7, 25), date(2026, 8, 1)]
+        assert calendar[-1].end_date == date(2026, 9, 1)
+        assert [s.season_id for s in calendar] == [6, 7]
+
+    def test_rejects_a_final_week_that_ends_on_the_first(self) -> None:
+        hours = [[15.0, 64.0, 89.0]] * 2  # 18/07 and 25/07 → 01/08
+        with pytest.raises(ValueError, match="closes a calendar month"):
+            build_operative_calendar(date(2026, 7, 18), hours)
+
     def test_year_wrap_december_deck(self) -> None:
         # A December rv0: first week 28/11→05/12 (Friday 04/12 ⇒ December),
         # five weekly stages then January aggregated.
@@ -283,20 +296,6 @@ class TestBuildNodeGraph:
         nodes, transitions = build_node_graph(3, [1.0])
         assert [n["id"] for n in nodes] == [0, 1, 2]
         assert transitions[-1] == {"source_id": 1, "target_id": 2, "probability": 1.0}
-
-    def test_monthly_only_calendar_starts_on_day_one(self) -> None:
-        # No operative weeks: a Thursday 01/01 start, January as a monthly
-        # trunk stage and February as the terminal stage.
-        hours = [[126.0, 322.0, 296.0], [114.0, 291.0, 267.0]]
-        calendar = build_operative_calendar(date(2026, 1, 1), hours)
-        assert [s.start_date for s in calendar] == [date(2026, 1, 1), date(2026, 2, 1)]
-        assert calendar[-1].end_date == date(2026, 3, 1)
-        assert [s.season_id for s in calendar] == [0, 1]
-
-    def test_rejects_monthly_first_stage_off_day_one(self) -> None:
-        hours = [[408.0], [672.0]]  # 15/01 → 01/02, then February
-        with pytest.raises(ValueError, match="first of a month"):
-            build_operative_calendar(date(2026, 1, 15), hours)
 
     def test_rejects_single_stage(self) -> None:
         with pytest.raises(ValueError, match="trunk stage and a terminal"):

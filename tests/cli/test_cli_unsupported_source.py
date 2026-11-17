@@ -135,7 +135,6 @@ class _Refusal:
     #: A bridge feature not built yet, rather than a novomodelo limit: the
     #: message says so.
     not_converted_yet: bool
-    check_refuses: bool
 
 
 _REFUSALS: dict[str, _Refusal] = {
@@ -144,42 +143,36 @@ _REFUSALS: dict[str, _Refusal] = {
         "dadger.rvN",
         "CD limite_superior",
         not_converted_yet=True,
-        check_refuses=True,
     ),
     "deficit cost varying by block": _Refusal(
         _block_varying_deficit_cost,
         "dadger.rvN",
         "CD custo",
         not_converted_yet=False,
-        check_refuses=True,
     ),
     "subsystem named IV": _Refusal(
         _reserved_subsystem_name,
         "dadger.rvN",
         "SB nome_submercado",
         not_converted_yet=False,
-        check_refuses=True,
     ),
     "summer-time week": _Refusal(
         _summer_time_week,
         "dadger.rvN",
         "DP duracao",
         not_converted_yet=False,
-        check_refuses=True,
     ),
     "branching trunk": _Refusal(
         _branching_trunk,
         "vazoes.rvN",
         "probabilidades cenario",
         not_converted_yet=True,
-        check_refuses=True,
     ),
     "GNL commitments ending apart": _Refusal(
         _gnl_commitments_ending_apart,
         "dadgnl.rvN",
         "GL data_inicio",
         not_converted_yet=True,
-        check_refuses=False,
     ),
 }
 
@@ -258,13 +251,10 @@ def test_convert_and_check_decomp_refuse_the_deck(
 
     checked = _refusals(check)
     assert all(d["code"] != "unexpected-error" for d in checked)
-    if refusal.check_refuses:
-        assert check.exit_code == 2
-        [unsupported] = [d for d in checked if d["code"] == "source-unsupported"]
-        assert unsupported["notes"] == converted["notes"]
-        assert unsupported["summary"] == converted["summary"]
-    else:
-        assert check.exit_code in (0, 1)
+    assert check.exit_code == 2
+    [unsupported] = [d for d in checked if d["code"] == "source-unsupported"]
+    assert unsupported["notes"] == converted["notes"]
+    assert unsupported["summary"] == converted["summary"]
 
 
 def test_compare_decomp_exits_1_on_a_deck_it_refuses(

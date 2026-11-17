@@ -273,6 +273,19 @@ total of the report's cost breakdown. It also re-evaluates the
 converted generic constraints against both models' operation. With
 `--format html` it writes a multi-tab report.
 
+The exchanges between subsystems are judged by each subsystem's net import,
+the flow its lines carry in less the flow they carry out, against the nwlistop
+interchange tables (`int*.out`) in `NEWAVE_DIR`. A fictitious subsystem has no
+load and no net import row. Each line is also compared by its flow, except on
+a loop of lines whose exchange costs split into two halves of equal cost: both
+models pay the same to carry an exchange along either half, each settles on
+its own split, and the flows on those lines differ where the net imports
+agree. A direct line and its route through a fictitious subsystem form such a
+loop, because NEWAVE halves the exchange penalty on each line that touches a
+fictitious subsystem and the conversion keeps it. Those lines show as Net flow
+on tied routes, outside the headline and the `--json` status, and the
+`line-routes-tied` warning names the loops.
+
 Before treating a difference as a converter defect, confirm the two runs are
 comparable:
 

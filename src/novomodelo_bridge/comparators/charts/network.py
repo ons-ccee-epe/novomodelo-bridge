@@ -13,6 +13,7 @@ from novomodelo_bridge.comparators.html_report import (
     COLOR_NOVOMODELO,
 )
 from novomodelo_bridge.comparators.model import ResultComparison
+from novomodelo_bridge.core.agreement import SHARED_PLANT_NET_FLOW, TIED_NET_FLOW
 from novomodelo_bridge.core.tolerances import is_effectively_infinite
 from novomodelo_bridge.ui.html.plotly import facet_grid
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
@@ -29,7 +30,8 @@ def line_summary_chart(
 
     One panel per aligned line. Each panel shows the Novomodelo P10–P90 band, Novomodelo median,
     and the source model mean, plus dashed upper/lower capacity bounds (direct /
-    −reverse).
+    −reverse). A line on a tied loop is labelled a tied route, and a line
+    between buses that share a hydro plant is labelled as such.
     """
     line_data = [r for r in results if r.entity_type == "line"]
     if not line_data:
@@ -96,11 +98,12 @@ def line_summary_chart(
             "title": "Stage" if row_i == nrows - 1 else "",
             "anchor": ya,
         }
-        layout[ya_key] = {
-            "domain": panel.y_domain,
-            "title": rows_list[0].entity_name if rows_list else f"line {lid}",
-            "anchor": xa,
-        }
+        title = rows_list[0].entity_name if rows_list else f"line {lid}"
+        if rows_list and rows_list[0].variable == TIED_NET_FLOW:
+            title = f"{title} (tied route)"
+        elif rows_list and rows_list[0].variable == SHARED_PLANT_NET_FLOW:
+            title = f"{title} (shares a plant)"
+        layout[ya_key] = {"domain": panel.y_domain, "title": title, "anchor": xa}
 
         stages = [r.stage for r in rows_list]
         nw = [r.newave_value for r in rows_list]

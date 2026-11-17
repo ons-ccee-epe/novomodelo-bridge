@@ -478,7 +478,7 @@ summary = "Volume inicial de cada usina convertida (`UH` operada ou marcada `NW`
   path = "past_anticipated_commitments[].value_mw"
   from = [ { file = "dadgnl", register = "GL", item = "geracao" }, { file = "dadgnl", register = "GL", item = "duracao" }, { file = "dadgnl", register = "TG", item = "inflexibilidade, disponibilidade" }, { file = "cortesh", item = "duracoes_patamares" } ]
   when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
-  how = "MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; uma semana após o horizonte, que vem sem `duracao`, usa as frações de patamar do mês em que o `GS` a coloca, lidas do `cortesh.dat` (com aviso, as horas de patamar do último estágio do estudo quando o arquivo falta ou não cobre o mês; com aviso também quando a `geracao` difere entre patamares). Nas janelas de classe 2, as semanas `GL` que o `GS` atribui ao estudo e que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma); a semana que o `GS` coloca no mês seguinte mas que começa antes do fim do horizonte entra no último estágio com as horas até o fim do horizonte. O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo."
+  how = "MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; uma semana após o horizonte, que vem sem `duracao`, usa as frações de patamar do mês em que o `GS` a coloca, lidas do `cortesh.dat` (com aviso, as horas de patamar do último estágio do estudo quando o arquivo falta ou não cobre o mês; com aviso também quando a `geracao` difere entre patamares). Nas janelas de classe 2, as semanas `GL` que o `GS` atribui ao estudo e que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma); a semana que o `GS` coloca no mês seguinte não entra no último estágio, mesmo quando começa antes do fim do horizonte; como no DECOMP, a última semana do estudo cobre os dias até o fim do horizonte, com o seu MW por patamar e as horas de patamar que restam no estágio. O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo."
 
 # ---------------------------------------------------------------------------
 # system/buses.json
@@ -1078,7 +1078,7 @@ summary = "Calendários pós-estudo. Térmico (`thermal_stages` e `thermal_bound
   from = [ { file = "dadger", register = "DP", item = "duracao" } ]
   status = "derived"
   when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
-  how = "Horas até o próximo sábado no stub; `168` nas semanas, exceto a primeira semana espelhada quando o corte já comandado não é um sábado, que vai só até o sábado seguinte; no espelho do estágio mensal do estudo, as horas até o fim do mês civil do próprio estágio espelhado (o primeiro dia do mês seguinte, exclusivo). Num estudo só de estágios mensais, as horas do mês civil inteiro."
+  how = "Horas até o próximo sábado no stub; `168` nas semanas, exceto a primeira semana espelhada quando o corte já comandado não é um sábado, que vai só até o sábado seguinte; no espelho do estágio mensal do estudo, as horas até o fim do mês civil do próprio estágio espelhado (o primeiro dia do mês seguinte, exclusivo). Num estudo só de estágios mensais, as horas do mês civil inteiro. O DECOMP dá a cada intervalo do `GS` 730,5 h divididas pelo número de intervalos do mês; o caso mantém as horas do calendário, e o aviso `decomp-gnl-post-study-interval-hours` lista os estágios com preço em que as duas diferem."
 
   [[output.field]]
   path = "thermal_bounds[].thermal_id"
@@ -1096,9 +1096,9 @@ summary = "Calendários pós-estudo. Térmico (`thermal_stages` e `thermal_bound
 
   [[output.field]]
   path = "thermal_bounds[].cost_per_mwh"
-  from = [ { file = "dadgnl", register = "TG", item = "cvu" }, { file = "dadger", register = "DP", item = "duracao" } ]
+  from = [ { file = "dadgnl", register = "TG", item = "cvu" }, { file = "dadgnl", register = "GS", item = "mes, semanas" }, { file = "dadger", register = "DP", item = "duracao" } ]
   when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado e um calendário `GS`, ou num estudo só de estágios mensais"
-  how = "`cvu_1..3` dos `TG` dos meses civis que o estágio cobre, ponderados pelas horas do estágio em cada mês (o eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado), e cada `TG` pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além desses meses interrompe a conversão."
+  how = "`cvu_1..3` do `TG` do mês a que o `GS` atribui o intervalo em que o estágio começa, como o DECOMP, mesmo quando o estágio termina no mês civil seguinte ou começa no mês seguinte ao atribuído; um estágio em cujo início não começa intervalo do `GS` usa o mês civil do início. O eixo de estágios do `TG` continua após o estudo, um estágio por mês, herdando o último declarado, e cada `TG` é ponderado pelas horas de patamar do último estágio do estudo. Num estudo só de estágios mensais, o próprio mês pós-estudo. Um `TG` além dos meses que os estágios pós-estudo cobrem interrompe a conversão, assim como um estágio que o `GS` atribui a um mês fora deles."
 
   [[output.field]]
   path = "thermal_bounds[].min_mw"
@@ -1262,6 +1262,7 @@ reads = [
   { file = "dadger", register = "LQ" },
   { file = "dadger", register = "CQ" },
   { file = "dadger", register = "VI" },
+  { file = "dadger", register = "EV" },
   { file = "hidr" },
   { file = "polinjus" },
   { file = "vazoes" },
@@ -1591,12 +1592,25 @@ summary = "Uma entrada por usina hidráulica convertida (registro `UH` com `volu
 
   [[output.field]]
   path = "hydros[].evaporation.coefficients_mm[]"
-  when = "somente quando o `UH` da usina liga o flag `evaporacao` e o `hidr.dat` traz ao menos um coeficiente mensal não nulo"
+  when = "somente quando o `UH` da usina liga o flag `evaporacao` e algum coeficiente mensal efetivo não é nulo"
   from = [
     { file = "dadger", register = "UH", item = "evaporacao" },
     { file = "hidr", item = "evaporacao_JAN..evaporacao_DEZ" },
+    { file = "dadger", register = "AC", item = "COFEVA" },
   ]
-  how = "Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, sem conversão; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês. `AC COFEVA` não é consumido."
+  how = "Os 12 coeficientes mensais de evaporação (mm/mês) do `hidr.dat`, de janeiro (índice 0) a dezembro, com o `AC COFEVA` aplicado; o Novomodelo os combina com a área de `system/hydro_geometry.parquet` e rateia cada estágio pela sua fração de horas do mês civil em que o estágio começa. O caso guarda um coeficiente por usina e mês: um `AC COFEVA` datado entra com o valor em vigor no primeiro estágio que lê aquele mês (no último estágio, se nenhum o lê), e uma mudança dentro do mês é avisada com `decomp-ac-cofeva-varies-within-month`."
+
+  [[output.field]]
+  path = "hydros[].evaporation.reference_volumes_hm3[]"
+  when = "somente quando a usina tem evaporação e o `dadger` traz o registro `EV` com o modelo linear (campo 2 = 1)"
+  from = [
+    { file = "dadger", register = "EV", item = "modelo" },
+    { file = "dadger", register = "EV", item = "volume_referencia" },
+    { file = "dadger", register = "UH", item = "volume_inicial" },
+    { file = "hidr", item = "volume_minimo" },
+    { file = "hidr", item = "volume_maximo" },
+  ]
+  how = "Doze valores iguais (hm³), um por mês civil: com `INI`, o volume inicial da usina (o de `initial_conditions.json`); com `MED`, o meio do volume útil efetivo no estágio 0. O DECOMP lineariza a evaporação de todos os estágios nesse volume. Sem registro `EV`, ou com o modelo 0, o DECOMP calcula a evaporação fora do PL a partir do volume inicial de cada estágio; o Novomodelo não tem esse modelo, o campo fica ausente (linearização no meio da faixa de armazenamento) e a conversão avisa com `decomp-evaporation-outside-lp`. Outro modelo, ou o modelo 1 sem `INI` nem `MED`, interrompe a conversão."
 
   [[output.field]]
   path = "hydros[].travel_time_hours"
@@ -2937,9 +2951,10 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
   from = [
     { file = "dadger", register = "CD", item = "custo" },
     { file = "dadger", register = "HE", item = "valor_penalidade" },
+    { file = "dadger", register = "HE", item = "tipo_penalidade" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO · custo_violacao" },
   ]
-  how = "`RE`/`HQ`/`HV`: 10 × o maior custo de déficit do `CD` entre os submercados. `RHE`: `valor_penalidade` do `HE` (R$/MWh; 1000.0, com aviso, quando ausente ou não positivo), cobrada por MWh de violação. LIBs: `custo_violacao` do `TRATAMENTO-VIOLACAO` quando positivo, senão o mesmo 10 × déficit."
+  how = "`RE`/`HQ`/`HV`: 10 × o maior custo de déficit do `CD` entre os submercados. `RHE`, cobrada por MWh de violação: com `tipo_penalidade` (campo 9) 0 ou em branco, em que o DECOMP trata a violação como inviabilidade, o mesmo 10 × déficit; com 1, `valor_penalidade` do `HE` (R$/MWh; 1000.0, com aviso, quando ausente ou não positivo). Um `tipo_penalidade` diferente de 0, 1 ou branco, ou que muda entre os estágios de uma restrição, interrompe a conversão. LIBs: `custo_violacao` do `TRATAMENTO-VIOLACAO` quando positivo, senão o mesmo 10 × déficit."
 
   [[output.field]]
   path = "constraints[].slack.penalty_basis"
@@ -3155,12 +3170,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
 
   [[source.item]]
   register = "AC"
-  item = "COFEVA"
-  status = "deferred"
-  note = "Alteração do coeficiente de evaporação mensal. Avisado pelo `check decomp` e pelo `convert decomp` (diagnóstico `decomp-ac-overrides-deferred`), sem consumidor no conversor: a evaporação usa os coeficientes mensais de `hidr.dat`. Converter exige sobrepor o coeficiente do mês na tabela efetiva antes de emitir os coeficientes de evaporação."
-
-  [[source.item]]
-  register = "AC"
   item = "COTARE"
   status = "deferred"
   note = "Alteração de um coeficiente do polinômio cota-área. Avisado pelo `check decomp` e pelo `convert decomp`, sem consumidor: a FPHA usa o polinômio de `hidr.dat`. Converter exige sobrepor o coeficiente na tabela efetiva usada pelo ajuste da FPHA."
@@ -3244,12 +3253,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   item = "arquivo_produtibilidades"
   status = "unread"
   note = "Arquivo externo de produtibilidades da restrição; capturado e não consumido, e o arquivo nunca é aberto."
-
-  [[source.item]]
-  register = "HE"
-  item = "tipo_penalidade"
-  status = "unread"
-  note = "Tipo da penalidade da restrição de energia; só `valor_penalidade` é usado como penalidade da folga."
 
   # --- unread registers ------------------------------------------------------
 
@@ -3339,11 +3342,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "CS"
   status = "unread"
   note = "Habilita a consistência de dados do DECOMP. Sem contrapartida."
-
-  [[source.item]]
-  register = "EV"
-  status = "unread"
-  note = "Configuração da evaporação (modelo e volume de referência). Não lido: a evaporação é convertida a partir do sinalizador `evaporacao` do `UH` e dos coeficientes mensais de `hidr.dat`."
 
   [[source.item]]
   register = "FA"

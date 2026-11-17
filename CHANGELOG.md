@@ -49,6 +49,15 @@ links are cobre-bridge's.
   because the case's CMO leaves out its multiplier wherever it binds. Write
   the term as `val_demanda` or `val_demanda_sin` where the multiplier should
   not count.
+- **`compare decomp` warns with `decomp-evaporation-calendar-convention`**
+  that DECOMP and Novomodelo read the monthly evaporation coefficients on
+  different calendars, so the evaporation rows differ even where storage
+  agrees.
+- **`compare newave` and `compare decomp` give the hydro gaps without the
+  ties** in an Excl. ties column beside the gap, leaving out the points where
+  a plant's energy or water is worth nothing in either model; the agreement
+  still judges every point, and the exported summary and `--json` carry the
+  new gap. Run `compare` again to update a report.
 
 ### Changed
 
@@ -223,6 +232,17 @@ links are cobre-bridge's.
   variable close, moderate or far (beyond four times the tolerance), leaves
   out the water values and convergence bounds, and ends with each model's
   final lower bound and simulated mean cost.
+- **`compare newave` and `compare decomp` judge the exchanges by each
+  subsystem's net import**, in a new Net import row and System-tab chart. The
+  flows of lines on a loop whose exchange costs split into two equal halves,
+  such as a direct line and its route through a fictitious subsystem, move to
+  a Net flow on tied routes row left out of the headline and the `--json`
+  status, with a `line-routes-tied` warning naming the loops. Buses that
+  share a hydro plant, such as Itaipu's submarket and the `IV` node in a
+  DECOMP case, are judged as one group (`SE+IV`); each bus's own net import
+  and the flow between them move to rows left out of the headline, with a
+  `buses-share-plant` warning naming the groups. Run the comparison again to
+  update a report.
 - **BREAKING: every command's `--json` envelope has `schema_version` 2, and
   `compare`'s summary counts the variables in each agreement band and lists
   the far ones.** Its status is `ok` only when every variable is close, and
@@ -328,10 +348,73 @@ links are cobre-bridge's.
 
 ### Fixed
 
+- **`convert decomp` gave the boundary cuts the wrong past inflows on decks
+  whose first week starts in the previous month**: an RV0 dated its observed
+  months one month early, and a later revision counted the first observed
+  week's previous-month days into that month. The case's prices moved away
+  from DECOMP's. Results change for those decks, so reconvert them.
+- **`convert decomp` stopped with `unexpected-error`, and `check decomp`
+  failed its operative calendar check, on a deck with an operative week that
+  ends on the first of a month**, reading the study as having no operative
+  weeks. Such a deck now converts.
+- **`convert decomp` evaporated reservoirs differently from DECOMP**: it
+  ignored `AC COFEVA` and the reference volume of the `EV` record. Both are
+  now applied; a deck without the `EV` linear model warns with
+  `decomp-evaporation-outside-lp`, and an `AC COFEVA` dated inside a month
+  with `decomp-ac-cofeva-varies-within-month`. Results change for decks with
+  evaporating plants, so reconvert them.
+- **`convert decomp` let novomodelo violate at their `HE` penalty the `RHE`
+  constraints DECOMP treats as infeasible when violated** (field 9 at 0 or
+  blank). They now carry the same high penalty as `RE`, `HQ` and `HV`; a field
+  9 other than 0, 1 or blank, or one that changes between a constraint's
+  stages, stops the conversion with `source-field-parse`. Results change for
+  decks with `RHE`, so reconvert them.
+- **`compare decomp` counted diverted flow in DECOMP's outflow, and drew
+  Novomodelo's storage P10–P90 bands on total volume beside useful-volume
+  means.** Outflow is now turbined plus spilled flow on both sides, and the
+  bands are on useful volume. Run `compare decomp` again to update a report.
+- **`compare decomp` set DECOMP's thermal cost, with its GNL fuel counted on
+  delivery, against Novomodelo's, which counts GNL when it is committed.** On a
+  deck with GNL plants, DECOMP's costs are now on that basis too, as DECOMP
+  states its own operating cost: the cost breakdown splits the thermal cost
+  into Thermal excl. GNL and GNL committed in study, the per-stage costs move
+  GNL to the stage that commits it, and a row under the total shows each
+  model's GNL delivered in the study. Run `compare decomp` again to update a
+  report.
+- **`compare decomp` put Novomodelo's REE stored and inflow energies far from
+  DECOMP's on every deck.** It added up each plant's own energies, which value
+  the water down the whole river at a fixed head. They are now valued as
+  DECOMP values them: along each plant's energy chain, at the head of the
+  current storage, with the `EZ` cut. Run `compare decomp` again to update a
+  report.
+- **`compare newave` and `compare decomp` drew the source model's stored energy
+  on the system chart 0.07% low**, at 730 hours a month instead of the
+  730.5-hour mean month both models use; `compare decomp`'s Energy Balance tab
+  read DECOMP's inflow energy the same way. Run the comparison again to update
+  a report.
+- **`compare decomp` left out the flow on the lines to the `IV` node**: the
+  Network tab had no panel for them and the line rows missed them. Run
+  `compare decomp` again to update a report.
 - **`convert decomp` holds a LIBS `ger_usit` term on a GNL plant within the
   plant's `TG` minimum and capacity**: a `GL` value outside them was taken off
   the limits as written, where DECOMP uses the `TG` value. `RE` `FT` terms
   are held the same way. Results change for such decks, so reconvert them.
+- **`convert decomp` committed a different GNL dispatch from DECOMP's** in the
+  last study stage of a month's later revisions and across a month's RV0. In
+  the later revisions, the first committed week of the month after the study,
+  which starts a few days before the study ends, counted in that stage for
+  those days; as in DECOMP, the study's last committed week now covers them. In
+  an RV0, the boundary cuts priced the commitments after the study a month
+  early and left the last ones unpriced. Results change for those decks with
+  GNL plants, so reconvert them.
+- **`convert decomp` priced some post-study GNL weeks in
+  `post_study_stages.json` at the wrong month's `TG` record**: a week that
+  ends in the next month, or one `GS` books to the month before its start.
+  Each now takes the month `GS` books it to, as in DECOMP, and a week `GS`
+  books outside the post-study months stops with `source-unsupported`; results
+  change for decks whose `TG` differs between those months, so reconvert them.
+  The new `decomp-gnl-post-study-interval-hours` warning lists the post-study
+  stages DECOMP weighs over other hours than their calendar ones.
 - **`convert decomp` stopped with `unexpected-error` on deck limits that put
   a floor above the ceiling.** On turbined flow, generation, outflow, storage
   and unit groups it now writes both limits as the deck has them, with one

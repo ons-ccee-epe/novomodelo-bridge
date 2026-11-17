@@ -8,6 +8,7 @@ the component colours.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import polars as pl
@@ -30,9 +31,9 @@ from novomodelo_bridge.ui.theme import COST_COMPONENT_COLORS
 #: or the DECOMP cost report) each Novomodelo cost component compares with, keyed
 #: by the component names of :data:`COST_CATEGORIES`.
 _SOURCE_PARCELS: dict[str, list[str]] = {
-    # Novomodelo's thermal component includes the anticipated (GNL forward-committed)
-    # fuel, so it compares with the source model's GERACAO TERMICA / CTERM, which
-    # books GNL fuel at delivery.
+    # The thermal cost as the source model reports it, with any GNL fuel in it.
+    # Novomodelo books GNL fuel on its anticipated column when it is committed,
+    # so its side sums both columns.
     "Thermal": ["GERACAO TERMICA"],
     # DECOMP's import/export contract parcels; NEWAVE reports none.
     "Contract": ["CONTRATOS"],
@@ -99,6 +100,30 @@ _COST_MAP: list[tuple[str, list[str], list[str], str]] = [
     for comp in cat.components
 ] + [(label, parcels, [], color) for label, parcels, color in _SOURCE_ONLY_SLACKS]
 
+#: The rows that replace ``Thermal`` when the source reports its thermal cost
+#: on the decision basis (the DECOMP track on a deck with GNL plants): the
+#: thermal cost without GNL, and the GNL fuel committed within the study at
+#: its decision stage, as Novomodelo books it.
+_DECISION_THERMAL_ROWS: list[tuple[str, list[str], list[str], str]] = [
+    (
+        "Thermal excl. GNL",
+        ["TERMICA SEM GNL"],
+        ["thermal_cost"],
+        COST_COMPONENT_COLORS["Thermal"],
+    ),
+    (
+        "GNL committed in study",
+        ["GNL COMANDADO"],
+        ["anticipated_thermal_cost"],
+        "#5e3c00",
+    ),
+]
+
+#: The rows that price thermal generation, on either basis.
+_THERMAL_LABELS: frozenset[str] = frozenset(
+    {"Thermal", *(label for label, *_ in _DECISION_THERMAL_ROWS)}
+)
+
 #: ``_COST_MAP`` rows that price a constraint violation (a slack), as opposed
 #: to a real cost or a per-unit-flow regularisation charge.
 _VIOLATION_CATEGORIES: frozenset[str] = frozenset(
@@ -114,6 +139,30 @@ _COST_COLOR_DEFAULT = "#6B7280"  # for any unmapped residual category
 _NOVOMODELO_NON_COST_KEYS: frozenset[str] = AGGREGATE_COST_COLUMNS
 
 
+def _cost_map(
+    nw_costs: Mapping[str, float],
+) -> list[tuple[str, list[str], list[str], str]]:
+    """:data:`_COST_MAP`, with :data:`_DECISION_THERMAL_ROWS` in place of
+    ``Thermal`` when *nw_costs* reports the thermal cost on the decision basis.
+
+    Raises:
+        ValueError: *nw_costs* reports the thermal cost on both bases.
+    """
+    decision = {k for _, keys, _, _ in _DECISION_THERMAL_ROWS for k in keys}
+    if decision.isdisjoint(nw_costs):
+        return _COST_MAP
+    if not set(_SOURCE_PARCELS["Thermal"]).isdisjoint(nw_costs):
+        raise ValueError(
+            "the source costs report the thermal cost both as it is delivered "
+            "and on the decision basis"
+        )
+    return [
+        split
+        for row in _COST_MAP
+        for split in (_DECISION_THERMAL_ROWS if row[0] == "Thermal" else [row])
+    ]
+
+
 def _resolve_cost_categories(
     nw_costs: dict[str, float],
     novomodelo_costs: dict[str, float],
@@ -121,24 +170,25 @@ def _resolve_cost_categories(
     """Resolve the source model/Novomodelo cost dicts into a sorted list of categories.
 
     Each entry is ``(display_label, newave_sum, novomodelo_sum, color)``. Categories with
-    both sides ≤ 0.01 R$ are filtered out. Mapped entries from :data:`_COST_MAP` come
+    both sides ≤ 0.01 R$ are filtered out. Mapped entries from :func:`_cost_map` come
     first (preserving its logical ordering); unmapped the source model/Novomodelo keys are
     appended at the end.
     """
+    cost_map = _cost_map(nw_costs)
     categories: list[tuple[str, float, float, str]] = []
-    for display_label, nw_keys, cb_keys, color in _COST_MAP:
+    for display_label, nw_keys, cb_keys, color in cost_map:
         nw_sum = sum(nw_costs.get(k, 0.0) for k in nw_keys)
         cb_sum = sum(novomodelo_costs.get(k, 0.0) for k in cb_keys)
         if abs(nw_sum) < 0.01 and abs(cb_sum) < 0.01:
             continue
         categories.append((display_label, nw_sum, cb_sum, color))
 
-    mapped_nw = {k for _, nw_keys, _, _ in _COST_MAP for k in nw_keys}
+    mapped_nw = {k for _, nw_keys, _, _ in cost_map for k in nw_keys}
     for k, v in sorted(nw_costs.items()):
         if k not in mapped_nw and abs(v) > 0.01:
             categories.append((k.title(), v, 0.0, _COST_COLOR_DEFAULT))
 
-    mapped_cb = {k for _, _, cb_keys, _ in _COST_MAP for k in cb_keys}
+    mapped_cb = {k for _, _, cb_keys, _ in cost_map for k in cb_keys}
     for k, v in sorted(novomodelo_costs.items()):
         if k in _NOVOMODELO_NON_COST_KEYS:
             continue
@@ -215,6 +265,7 @@ def cost_breakdown_table(
     nw_costs: dict[str, float],
     novomodelo_costs: dict[str, float],
     reference_label: str = "NEWAVE",
+    gnl_delivered: Mapping[str, float] | None = None,
 ) -> str:
     """Per-category NPV diff table — the source model, Novomodelo, Δ, Δ% — sorted by |Δ|.
 
@@ -222,6 +273,10 @@ def cost_breakdown_table(
     :func:`cost_breakdown_chart` inside a 2-column ``chart_grid``. Color swatches
     in the first column mirror the colors used in the bar chart so the reader
     can cross-reference at a glance.
+
+    *gnl_delivered* (``reference``/``novomodelo``, R$) adds a row under the
+    total for the GNL fuel delivered in the study, which neither total counts
+    when both book GNL at its commitment.
     """
     if not nw_costs and not novomodelo_costs:
         return "<p>No cost data available.</p>"
@@ -281,8 +336,32 @@ def cost_breakdown_table(
         f'<td class="cb-num">{_fmt_pct(total_pct)}</td>'
         "</tr>"
     )
+    note = ""
+    if gnl_delivered:
+        info = PairedCost(
+            "GNL delivered in the study",
+            gnl_delivered.get("reference"),
+            gnl_delivered.get("novomodelo"),
+        )
+
+        def _cell(v: float | None) -> str:
+            return "—" if v is None else _fmt_money(v)
+
+        body_rows.append(
+            '<tr class="cb-info">'
+            f'<td class="cb-cat">{info.label}</td>'
+            f'<td class="cb-num">{_cell(info.reference)}</td>'
+            f'<td class="cb-num">{_cell(info.novomodelo)}</td>'
+            f'<td class="cb-num">{_cell(info.diff)}</td>'
+            f'<td class="cb-num">{_fmt_pct(info.pct)}</td>'
+            "</tr>"
+        )
+        note = (
+            ' <span class="cb-caption-note">— GNL is counted when it is '
+            "committed; the GNL delivered in the study is not in the total</span>"
+        )
     body = "<tbody>" + "".join(body_rows) + "</tbody>"
-    caption = "<caption>NPV by Component (10⁹ R$)</caption>"
+    caption = f"<caption>NPV by Component (10⁹ R$){note}</caption>"
     return '<table class="cost-breakdown-table">' + caption + head + body + "</table>"
 
 
@@ -348,6 +427,21 @@ def training_costs(
     )
 
 
+def thermal_cost(
+    nw_costs: dict[str, float] | None,
+    novomodelo_costs: dict[str, float] | None,
+) -> PairedCost:
+    """Each model's thermal cost: the sum of its breakdown's thermal rows."""
+    rows = [
+        row
+        for row in _resolve_cost_categories(nw_costs or {}, novomodelo_costs or {})
+        if row[0] in _THERMAL_LABELS
+    ]
+    return PairedCost(
+        "Thermal", sum(row[1] for row in rows), sum(row[2] for row in rows)
+    )
+
+
 def net_of_penalties_table(
     nw_conv: pl.DataFrame | None,
     novomodelo_conv: pl.DataFrame | None,
@@ -370,7 +464,7 @@ def net_of_penalties_table(
 
     categories = _resolve_cost_categories(nw_costs or {}, novomodelo_costs or {})
     counted = [c for c in categories if c[0] in _VIOLATION_CATEGORIES]
-    known = {label for label, *_ in _COST_MAP}
+    known = {label for label, *_ in _cost_map(nw_costs or {})}
     unclassified = [label for label, *_ in categories if label not in known]
     penalties = (
         sum(nw for _, nw, _, _ in counted) if nw_costs else None,
@@ -577,10 +671,10 @@ def thermal_cost_chart(
     anticip.).
 
     The Novomodelo side is ``thermal_cost_total`` = ``thermal_cost`` +
-    ``anticipated_thermal_cost`` (the GNL forward-committed fuel Novomodelo books on the
-    decision column), so it lines up with the source model ``CTERM``, which carries GNL
-    fuel at delivery. Both are the live thermal generation cost, so this is an
-    apples-to-apples comparison even in the post-study (where COPER is frozen — see
+    ``anticipated_thermal_cost``, with GNL fuel at the stage that commits it.
+    The DECOMP track moves its ``CTERM`` to that basis; NEWAVE's ``CTERM`` is
+    as NEWAVE reports it. Both are the live thermal generation cost, so the
+    comparison holds in the post-study too (where COPER is frozen — see
     :func:`other_costs_chart`).
     """
     return _stage_cost_subplot(

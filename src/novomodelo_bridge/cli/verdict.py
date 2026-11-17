@@ -133,8 +133,10 @@ def compare_summary(verdict: CompareVerdict) -> dict[str, object]:
     Returns ``{"tolerance", "total", "close", "moderate", "far",
     "far_variables"}`` in that order: the operation variables counted by
     agreement band, and each far one as ``{"entity_type", "variable",
-    "gap"}``, largest gap first. ``gap`` is a ratio (not a percentage), null
-    when undefined.
+    "gap", "gap_excl_ties"}``, largest gap first. ``gap`` is a ratio (not a
+    percentage), null when undefined; ``gap_excl_ties`` is the gap over the
+    points that are not ties, null when the tie mask does not cover the
+    variable.
     """
     return {
         "tolerance": verdict.tolerance,
@@ -143,7 +145,12 @@ def compare_summary(verdict: CompareVerdict) -> dict[str, object]:
         "moderate": verdict.moderate,
         "far": verdict.far,
         "far_variables": [
-            {"entity_type": v.entity_type, "variable": v.variable, "gap": v.gap}
+            {
+                "entity_type": v.entity_type,
+                "variable": v.variable,
+                "gap": v.gap,
+                "gap_excl_ties": v.gap_excl_ties,
+            }
             for v in verdict.far_variables
         ],
     }

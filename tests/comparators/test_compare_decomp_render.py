@@ -223,7 +223,12 @@ class TestCompareDecompCommand:
         assert summary["total"] == 2
         assert summary["close"] == 1
         assert summary["far_variables"] == [
-            {"entity_type": "hydro", "variable": "turbined_m3s", "gap": 0.4}
+            {
+                "entity_type": "hydro",
+                "variable": "turbined_m3s",
+                "gap": 0.4,
+                "gap_excl_ties": 0.2,
+            }
         ]
         assert summary["stages"] == 2
         assert {row["variable"] for row in summary["variables"]} == {

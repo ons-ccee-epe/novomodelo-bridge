@@ -81,12 +81,15 @@ _INT_KEYED_RENDER_FIELDS: frozenset[str] = frozenset(
 
 #: Ordered schema of the summary frame, one row per ``(entity_type, variable)``.
 #: ``gap`` is null when undefined and ``band`` holds a
-#: :class:`~novomodelo_bridge.core.agreement.Band` value.
+#: :class:`~novomodelo_bridge.core.agreement.Band` value. ``gap_excl_ties`` is
+#: the gap over the points that are not ties, null for a variable the tie mask
+#: does not cover; ``band`` judges ``gap``.
 SUMMARY_SCHEMA: dict[str, type[pl.DataType]] = {
     "entity_type": pl.Utf8,
     "variable": pl.Utf8,
     "count": pl.Int64,
     "gap": pl.Float64,
+    "gap_excl_ties": pl.Float64,
     "band": pl.Utf8,
     "mean_abs_diff": pl.Float64,
     "max_abs_diff": pl.Float64,
@@ -135,6 +138,7 @@ class RenderInputs:
     gc_constraints: list[dict] = field(default_factory=list)
     gc_lhs_novomodelo: pl.DataFrame = field(default_factory=pl.DataFrame)
     gc_lhs_newave: pl.DataFrame = field(default_factory=pl.DataFrame)
+    gnl_delivered: dict[str, float] = field(default_factory=dict)
     hydro: pl.DataFrame = field(default_factory=pl.DataFrame)
     hydro_masked: pl.DataFrame = field(default_factory=pl.DataFrame)
     line: pl.DataFrame = field(default_factory=pl.DataFrame)

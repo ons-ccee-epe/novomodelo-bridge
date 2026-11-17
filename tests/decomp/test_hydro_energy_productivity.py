@@ -9,7 +9,10 @@ import pandas as pd
 import pytest
 
 from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
-from novomodelo_bridge.decomp.converters.hydro import convert_hydro_energy_productivity
+from novomodelo_bridge.decomp.converters.hydro import (
+    convert_hydro_energy_productivity,
+    stored_energy_productivity_at_storage,
+)
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 # h(v) = 200 + 0.2·v over [100, 500]: 220 m at vmin, 300 m at vmax, mean 260 m.
@@ -127,3 +130,32 @@ def test_unread_override_columns_are_null() -> None:
 
     for column in ("reference_outflow_m3s", "specific_productivity_mw_per_m3s_per_m"):
         assert table[column].to_pylist() == [None]
+
+
+def test_stored_energy_productivity_at_storage_averages_the_filled_head() -> None:
+    """A reservoir's head is averaged over [vmin, vmin + useful], the useful
+    volume clipped to the range."""
+    rho = stored_energy_productivity_at_storage(_effective({1: _row("M")}, 1), 1, 0)
+
+    # 200 hm³ useful fills [100, 300]: 220 m to 260 m, mean 240 m.
+    assert rho(200.0) == pytest.approx(_RHO_ESP * (240.0 - _CF))
+    assert rho(0.0) == pytest.approx(_RHO_ESP * (220.0 - _CF))
+    assert rho(-5.0) == rho(0.0)
+    assert rho(1000.0) == pytest.approx(_MEAN_HEAD_RHO)
+
+
+def test_stored_energy_productivity_at_storage_is_constant_off_a_range() -> None:
+    """A run-of-river plant, and a reservoir whose stage range is one volume,
+    keep their stored-energy ρ whatever they hold."""
+    effective = _effective(
+        {1: _row("M"), 3: _row("D", 450.0)},
+        n_stages=1,
+        stage_varying={(1, "volume_maximo"): (100.0,)},
+    )
+    run_of_river = stored_energy_productivity_at_storage(effective, 3, 0)
+    pinned = stored_energy_productivity_at_storage(effective, 1, 0)
+
+    point = _RHO_ESP * (200.0 + 0.2 * 450.0 - _CF)
+    assert run_of_river(0.0) == pytest.approx(point)
+    assert run_of_river(400.0) == pytest.approx(point)
+    assert pinned(0.0) == pinned(400.0) == pytest.approx(_RHO_ESP * (220.0 - _CF))

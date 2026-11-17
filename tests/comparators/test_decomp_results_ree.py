@@ -1,8 +1,9 @@
 """REE energy rollup tests for ``comparators.decomp.results``.
 
-Covers the REE membership map, Novomodelo-side and DECOMP-side per-REE
-ENA/EARM sums, the full REE result-comparison rollup, the Balance tab's REE
-rows in ``build_decomp_dataset``, and the REE energy chart.
+Covers Novomodelo's REE energies under DECOMP's definition, the DECOMP-side
+per-REE ENA/EARM frame, the full REE result-comparison rollup, the Balance
+tab's REE rows in ``build_decomp_dataset``, and the REE energy chart. The
+definition itself is tested in ``test_decomp_ree_energy.py``.
 """
 
 from __future__ import annotations
@@ -14,118 +15,113 @@ import pytest
 
 from novomodelo_bridge.comparators.charts import ree_energy_chart
 from novomodelo_bridge.comparators.decomp.results import (
-    _EARM_MWH_TO_MWMES,
     _decomp_ree_frame,
-    _novomodelo_ree_sums,
-    _ree_membership_map,
+    _novomodelo_ree_energies,
     _ree_result_comparisons,
     build_decomp_dataset,
 )
 from novomodelo_bridge.comparators.model import ResultComparison
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
+from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 from tests.comparators.conftest import (
     _aligned_fixture,
     _extract_tab_content,
     _patch_aligned_frames,
     _patch_ree_sources,
     _patch_shared_case,
-    _ree_aligned_fixture,
+    _ree_block_fixture,
     _ree_dec_oper_ree_fixture,
     _ree_id_map,
     _ree_membership_fixture,
+    _ree_rule_fixture,
     _unmapped_codes,
 )
+from tests.conftest import make_decomp_case
+
+_RESULTS = "novomodelo_bridge.comparators.decomp.results"
 
 
-def _ree_novomodelo_hydro_fixture() -> pl.DataFrame:
-    """Two Novomodelo hydro plants (ids 0, 1), one stage: ENA sums to 150.0 MW,
-    EARM sums to 730000.0 MWh -- exactly ``1000.0 * _EARM_MWH_TO_MWMES``, so
-    the MWh -> MWmes reconciliation lands on a round number."""
-    return pl.DataFrame(
-        {
-            "entity_id": [0, 1],
-            "stage_id": [0, 0],
-            "incremental_inflow_energy_mw": [90.0, 60.0],
-            "stored_energy_final_mwh": [400000.0, 330000.0],
-        }
+def _ree_case(directory: Path, id_map: DecompIdMap | None = None) -> DecompCase:
+    return make_decomp_case(directory, id_map=id_map or _ree_id_map())
+
+
+def _patch_block_rows(monkeypatch: pytest.MonkeyPatch, rows: pl.DataFrame) -> None:
+    monkeypatch.setattr(
+        f"{_RESULTS}.novomodelo_readers.read_novomodelo_hydro_block_operation",
+        lambda *_a, **_k: rows,
     )
 
 
-class TestReeMembershipMap:
-    """``_ree_membership_map``: ``{novomodelo_hydro_id: codigo_ree}`` via
-    membership, restricted to the operated hydro codes."""
+class TestNovomodeloReeEnergies:
+    """``_novomodelo_ree_energies``: Novomodelo's per-scenario plant storage
+    and inflow valued with the rule, then weighted over the scenarios."""
 
-    def test_maps_novomodelo_ids_to_codigo_ree(self) -> None:
-        ree_by_novomodelo_id, unmapped = _ree_membership_map(
-            _ree_membership_fixture(), {10: 0, 20: 1}
-        )
-        assert ree_by_novomodelo_id == {0: 100, 1: 100}
-        assert unmapped == []
+    def test_values_each_stage_once_from_its_block_rows(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _patch_block_rows(monkeypatch, _ree_block_fixture())
 
-    def test_reports_unmapped_hydro_codes_instead_of_dropping_silently(self) -> None:
-        membership = pl.DataFrame({"codigo_usina": [10], "codigo_ree": [100]})
-
-        ree_by_novomodelo_id, unmapped = _ree_membership_map(membership, {10: 0, 99: 5})
-
-        assert ree_by_novomodelo_id == {0: 100}
-        assert unmapped == [99]
-
-    def test_empty_membership_excludes_every_hydro_code(self) -> None:
-        ree_by_novomodelo_id, unmapped = _ree_membership_map(
-            pl.DataFrame(), {10: 0, 20: 1}
+        out = _novomodelo_ree_energies(
+            _ree_rule_fixture(), {10: 0, 20: 1}, tmp_path, {}
         )
 
-        assert ree_by_novomodelo_id == {}
-        assert unmapped == [10, 20]
-
-
-class TestNovomodeloReeSums:
-    """``_novomodelo_ree_sums``: membership-weighted per-(codigo_ree, stage) sum
-    of Novomodelo hydro ENA/EARM."""
-
-    def test_sums_ena_and_earm_across_member_plants(self) -> None:
-        out = _novomodelo_ree_sums(_ree_novomodelo_hydro_fixture(), {0: 100, 1: 100})
-
-        assert out.height == 1
-        row = out.row(0, named=True)
-        assert row["entity_id"] == 100
-        assert row["stage_id"] == 0
-        assert row["ena_mw"] == pytest.approx(150.0)
-        assert row["earm_mwh"] == pytest.approx(730000.0)
-
-    def test_novomodelo_id_absent_from_membership_excluded_from_sum(self) -> None:
-        novomodelo_hydro = pl.DataFrame(
+        assert out.to_dicts() == [
             {
-                "entity_id": [0, 9],
-                "stage_id": [0, 0],
-                "incremental_inflow_energy_mw": [90.0, 999.0],
-                "stored_energy_final_mwh": [400000.0, 999.0],
+                "entity_id": 100,
+                "stage_id": 0,
+                "earm_mwmes": pytest.approx(1000.0),
+                "ena_mwmes": pytest.approx(150.0),
             }
+        ]
+
+    def test_scenarios_are_weighted_by_their_probability(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        base = _ree_block_fixture()
+        doubled = base.with_columns(
+            pl.lit(1, dtype=pl.Int64).alias("scenario_id"),
+            pl.col("storage_final_hm3") * 2.0,
+            pl.col("incremental_inflow_m3s") * 2.0,
+        )
+        _patch_block_rows(monkeypatch, pl.concat([base, doubled]))
+        monkeypatch.setattr(
+            f"{_RESULTS}.novomodelo_readers.read_novomodelo_scenario_weights",
+            lambda *_a, **_k: ScenarioWeights.from_probabilities([0, 1], [0.25, 0.75]),
         )
 
-        out = _novomodelo_ree_sums(novomodelo_hydro, {0: 100})
+        row = _novomodelo_ree_energies(
+            _ree_rule_fixture(), {10: 0, 20: 1}, tmp_path, {}
+        ).row(0, named=True)
 
-        assert out.height == 1
-        row = out.row(0, named=True)
-        assert row["ena_mw"] == pytest.approx(90.0)
-        assert row["earm_mwh"] == pytest.approx(400000.0)
+        assert row["earm_mwmes"] == pytest.approx(0.25 * 1000.0 + 0.75 * 2000.0)
+        assert row["ena_mwmes"] == pytest.approx(0.25 * 150.0 + 0.75 * 300.0)
 
-    def test_empty_novomodelo_hydro_yields_empty_frame(self) -> None:
-        assert _novomodelo_ree_sums(pl.DataFrame(), {0: 100}).is_empty()
+    def test_a_hydro_outside_the_operated_map_is_left_out(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        stray = (
+            _ree_block_fixture()
+            .head(1)
+            .with_columns(pl.lit(9, dtype=pl.Int64).alias("hydro_id"))
+        )
+        _patch_block_rows(monkeypatch, pl.concat([_ree_block_fixture(), stray]))
 
-    def test_empty_membership_map_yields_empty_frame(self) -> None:
-        assert _novomodelo_ree_sums(_ree_novomodelo_hydro_fixture(), {}).is_empty()
+        row = _novomodelo_ree_energies(
+            _ree_rule_fixture(), {10: 0, 20: 1}, tmp_path, {}
+        ).row(0, named=True)
 
-    def test_missing_energy_columns_degrades_to_empty_instead_of_raising(self) -> None:
-        """A ``novomodelo_hydro`` frame that carries no ENA/EARM columns at all --
-        e.g. the trimmed ``_aligned_fixture()`` shape other fixtures
-        use -- must degrade gracefully rather than raising a Polars
-        ``ColumnNotFoundError``."""
-        novomodelo_hydro = pl.DataFrame({"entity_id": [0], "stage_id": [0]})
+        assert row["earm_mwmes"] == pytest.approx(1000.0)
 
-        assert _novomodelo_ree_sums(novomodelo_hydro, {0: 100}).is_empty()
+    def test_a_run_without_hydro_rows_has_no_ree_energy(self, tmp_path: Path) -> None:
+        out = _novomodelo_ree_energies(
+            _ree_rule_fixture(), {10: 0, 20: 1}, tmp_path, {}
+        )
+
+        assert out.is_empty()
 
 
 class TestDecompReeFrame:
@@ -159,20 +155,17 @@ class TestDecompReeFrame:
 
 
 class TestReeResultComparisons:
-    """``_ree_result_comparisons``: the full REE rollup -- membership map,
-    scenario-averaged DECOMP side, membership-weighted Novomodelo side, the EARM
-    MWh -> MWmes reconciliation, and the never-silently-dropped
-    unmapped-plant diagnostic."""
+    """``_ree_result_comparisons``: the full REE rollup -- the scenario-averaged
+    DECOMP side, Novomodelo's energies under DECOMP's definition, and the
+    never-silently-dropped unmapped-plant diagnostic."""
 
-    def test_without_stage_hours_ena_is_unscaled_earm_is_divided_by_730(
+    def test_without_stage_hours_ena_spans_one_month(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        # With no stage_hours lookup, ENA falls back to the raw stage-mean MW
-        # (factor 1.0) -- the backward-compatible default.
         _patch_ree_sources(monkeypatch)
 
         results, unmapped = _ree_result_comparisons(
-            tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
+            _ree_case(tmp_path), tmp_path, tmp_path
         )
 
         assert unmapped == []
@@ -186,48 +179,35 @@ class TestReeResultComparisons:
         assert ena.novomodelo_id == 100
         assert ena.stage == 0
         assert ena.newave_value == pytest.approx(145.0)
-        assert ena.novomodelo_value == pytest.approx(150.0)  # unscaled fallback
+        assert ena.novomodelo_value == pytest.approx(150.0)
         assert ena.abs_diff == pytest.approx(5.0)
 
         earm = by_variable["earm_final_mwmes"]
-        assert earm.novomodelo_value == pytest.approx(730000.0 / _EARM_MWH_TO_MWMES)
+        assert earm.newave_value == pytest.approx(1010.0)
+        assert earm.novomodelo_value == pytest.approx(1000.0)
 
-    def test_stage_hours_convert_ena_rate_to_mwmes_energy(
+    def test_stage_hours_scale_ena_to_the_mean_month(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        # novomodelo's ena_mw is an average-MW rate; with stage_hours it is converted
-        # to MW-month energy via stage_hours/730 (mirroring EARM's ÷730), so it
-        # is comparable to DECOMP's ena_MWmes. Half a month (365h) halves it.
         _patch_ree_sources(monkeypatch)
 
         results, _ = _ree_result_comparisons(
+            _ree_case(tmp_path),
             tmp_path,
-            _ree_novomodelo_hydro_fixture(),
-            _ree_id_map(),
-            stage_hours={0: _EARM_MWH_TO_MWMES / 2},  # 365 h == 0.5 month
+            tmp_path,
+            stage_hours={0: MEAN_MONTH_HOURS / 2},
         )
 
-        ena = {r.variable: r for r in results}["ena_mwmes"]
-        # 150.0 MW (rate) × (365 / 730) == 75.0 MWmês.
-        assert ena.novomodelo_value == pytest.approx(75.0)
-        assert ena.newave_value == pytest.approx(145.0)
-
-    def test_none_id_map_returns_no_rows_and_no_unmapped(self, tmp_path: Path) -> None:
-        results, unmapped = _ree_result_comparisons(
-            tmp_path, _ree_novomodelo_hydro_fixture(), None
-        )
-
-        assert results == []
-        assert unmapped == []
+        by_variable = {r.variable: r for r in results}
+        assert by_variable["ena_mwmes"].novomodelo_value == pytest.approx(75.0)
+        assert by_variable["earm_final_mwmes"].novomodelo_value == pytest.approx(1000.0)
 
     def test_plant_absent_from_membership_excluded_and_recorded(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A hydro code absent from the membership table is excluded
-        from every REE sum and its code is recorded via the diagnostics
-        path, not silently dropped."""
-        # The id map declares a THIRD hydro code (30) the membership fixture
-        # never lists.
+        """A hydro code absent from the membership table is left out of every
+        REE energy and its code is recorded via the diagnostics path, not
+        silently dropped."""
         id_map = DecompIdMap(
             bus_codes=(1,), bus_names=("SE",), hydro_codes=(10, 20, 30)
         )
@@ -235,7 +215,7 @@ class TestReeResultComparisons:
 
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
-                tmp_path, _ree_novomodelo_hydro_fixture(), id_map
+                _ree_case(tmp_path, id_map), tmp_path, tmp_path
             )
 
         assert unmapped == [30]
@@ -243,8 +223,6 @@ class TestReeResultComparisons:
         assert collected[0].code == "ree-membership-plant-unmapped"
         assert collected[0].table is not None
         assert collected[0].table.rows == [[30]]
-        # The unmapped plant's novomodelo id (2) was never a REE member -- the
-        # sums are unaffected (still exactly the two-plant fixture's totals).
         by_variable = {r.variable: r for r in results}
         assert by_variable["ena_mwmes"].novomodelo_value == pytest.approx(150.0)
 
@@ -261,7 +239,7 @@ class TestReeResultComparisons:
 
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
-                tmp_path, _ree_novomodelo_hydro_fixture(), id_map
+                _ree_case(tmp_path, id_map), tmp_path, tmp_path
             )
 
         assert unmapped == []
@@ -277,7 +255,7 @@ class TestReeResultComparisons:
         gap: one missing-file note and an empty result."""
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
-                tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
+                _ree_case(tmp_path), tmp_path, tmp_path
             )
 
         assert results == []
@@ -292,14 +270,11 @@ class TestReeResultComparisons:
         def _boom(*_args: object, **_kwargs: object) -> pl.DataFrame:
             raise ValueError("relato.rv0 has no uhes_rees_submercados table")
 
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato_membership",
-            _boom,
-        )
+        monkeypatch.setattr(f"{_RESULTS}.read_relato_membership", _boom)
 
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
-                tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
+                _ree_case(tmp_path), tmp_path, tmp_path
             )
 
         assert results == []
@@ -312,14 +287,14 @@ class TestReeResultComparisons:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato_membership",
+            f"{_RESULTS}.read_relato_membership",
             lambda *_a, **_k: _ree_membership_fixture(),
         )
         # ``read_dec_oper_ree`` left unmocked -> raises FileNotFoundError.
 
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
-                tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
+                _ree_case(tmp_path), tmp_path, tmp_path
             )
 
         assert results == []
@@ -335,22 +310,43 @@ class TestReeResultComparisons:
             raise ValueError("dec_oper_ree.csv parsed empty")
 
         monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_relato_membership",
+            f"{_RESULTS}.read_relato_membership",
             lambda *_a, **_k: _ree_membership_fixture(),
         )
-        monkeypatch.setattr(
-            "novomodelo_bridge.comparators.decomp.results.read_dec_oper_ree", _boom
-        )
+        monkeypatch.setattr(f"{_RESULTS}.read_dec_oper_ree", _boom)
 
         with dx.collect() as collected:
             results, unmapped = _ree_result_comparisons(
-                tmp_path, _ree_novomodelo_hydro_fixture(), _ree_id_map()
+                _ree_case(tmp_path), tmp_path, tmp_path
             )
 
         assert results == []
         assert unmapped == []
         assert [(d.code, d.title) for d in collected] == [
             ("report-file-unreadable", "dec_oper_ree.csv could not be read")
+        ]
+
+    def test_an_energy_chain_outside_hidr_is_reported_and_degrades_to_no_rows(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def _boom(*_args: object, **_kwargs: object) -> None:
+            raise ValueError(
+                "plant 10's AC JUSENA names plant 77, which is neither in the "
+                "configuration nor in hidr.dat"
+            )
+
+        _patch_ree_sources(monkeypatch)
+        monkeypatch.setattr(f"{_RESULTS}._ree_energy_rule", _boom)
+
+        with dx.collect() as collected:
+            results, unmapped = _ree_result_comparisons(
+                _ree_case(tmp_path), tmp_path, tmp_path
+            )
+
+        assert results == []
+        assert unmapped == []
+        assert [(d.code, d.title) for d in collected] == [
+            ("report-file-unreadable", "dadger.rvN could not be read")
         ]
 
 
@@ -380,7 +376,7 @@ class TestBuildDecompDatasetRee:
     ) -> None:
         """``tidy`` has ``entity_type=="ree"`` rows for ``ena_mwmes`` and
         ``earm_final_mwmes``, with ``source`` in {"newave", "novomodelo"}."""
-        _patch_aligned_frames(monkeypatch, _ree_aligned_fixture())
+        _patch_aligned_frames(monkeypatch, _aligned_fixture())
         _patch_shared_case(monkeypatch, id_map=_ree_id_map())
         _patch_ree_sources(monkeypatch)
 
@@ -399,7 +395,7 @@ class TestBuildDecompDatasetRee:
     ) -> None:
         """``build_comparison_report(dataset)`` renders a non-empty REE
         energy section for a DECOMP dataset."""
-        _patch_aligned_frames(monkeypatch, _ree_aligned_fixture())
+        _patch_aligned_frames(monkeypatch, _aligned_fixture())
         _patch_shared_case(monkeypatch, id_map=_ree_id_map())
         _patch_ree_sources(monkeypatch)
 

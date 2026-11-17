@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 import pytest
 
+from novomodelo_bridge.comparators.decomp.ree_energy import EnergyCredit, ReeEnergyRule
 from novomodelo_bridge.comparators.decomp.results import _AlignedDecompFrames
+from novomodelo_bridge.core.units import C_M3S2HM3
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.conftest import _FakeDadger, make_decomp_case
 
@@ -97,7 +99,7 @@ def _aligned_fixture() -> _AlignedDecompFrames:
             "geracao_MW": [120.0, 60.0],
             "vazao_turbinada_m3s": [80.0, 40.0],
             "vazao_vertida_m3s": [0.0, 0.0],
-            "vazao_defluente_m3s": [80.0, 40.0],
+            "vazao_turbinada_vertida_m3s": [80.0, 40.0],
             "volume_util_final_hm3": [500.0, 300.0],
         }
     )
@@ -207,9 +209,9 @@ def _ree_membership_fixture() -> pl.DataFrame:
 def _ree_dec_oper_ree_fixture() -> pl.DataFrame:
     """One REE (100), stage 1 (1-based), two nodes -- scenario-mean
     ``ena_MWmes=145.0``, ``earm_final_MWmes=1010.0``, deliberately offset from
-    the Novomodelo-side fixture's ``150.0`` / ``1000.0`` (see
-    :func:`_ree_novomodelo_hydro_fixture`) so the per-variable diff is
-    hand-checkable rather than trivially zero."""
+    the Novomodelo side's ``150.0`` / ``1000.0`` (see
+    :func:`_ree_block_fixture`) so the per-variable diff is hand-checkable
+    rather than trivially zero."""
     return pl.DataFrame(
         {
             "estagio": [1, 1],
@@ -229,23 +231,46 @@ def _ree_dec_oper_ree_fixture() -> pl.DataFrame:
     )
 
 
-def _ree_aligned_fixture() -> _AlignedDecompFrames:
-    """``_aligned_fixture()`` with its ``novomodelo_hydro`` extended to carry the
-    ENA/EARM columns :func:`_novomodelo_ree_sums` reads -- the base fixture is
-    trimmed to only the columns ``_HYDRO_VARIABLES`` needs."""
-    base = _aligned_fixture()
-    return dataclasses.replace(
-        base,
-        novomodelo_hydro=base.novomodelo_hydro.with_columns(
-            pl.Series("incremental_inflow_energy_mw", [90.0, 60.0]),
-            pl.Series("stored_energy_final_mwh", [400000.0, 330000.0]),
-        ),
+def _ree_rule_fixture() -> ReeEnergyRule:
+    """Plants 10 -> 20, both in REE 100, valued at 0.5 and 0.25 MW/(m³/s)
+    whatever they hold, over a [0, 10000] hm³ range."""
+    rho = {10: 0.5, 20: 0.25}
+    chains = {
+        10: (EnergyCredit(10, 100), EnergyCredit(20, 100)),
+        20: (EnergyCredit(20, 100),),
+    }
+    return ReeEnergyRule(
+        stored=chains,
+        inflow=chains,
+        ez_fractions={},
+        storage_range=lambda _code, _stage: (0.0, 10000.0),
+        productivity=lambda code, _stage: lambda _useful: rho[code],
+    )
+
+
+def _ree_block_fixture() -> pl.DataFrame:
+    """Novomodelo hydros 0 (code 10) and 1 (code 20), one scenario and stage
+    over two blocks. Under :func:`_ree_rule_fixture` REE 100 holds EARM
+    1000.0 MWmês (``C_M3S2HM3 * 1000`` hm³ each, valued 0.75 and 0.25) and
+    ENA 150.0 MWmês (120 and 240 m³/s at 0.75 and 0.25), offset from
+    :func:`_ree_dec_oper_ree_fixture`'s 1010.0 and 145.0."""
+    storage = C_M3S2HM3 * 1000.0
+    return pl.DataFrame(
+        {
+            "scenario_id": [0, 0, 0, 0],
+            "stage_id": [0, 0, 0, 0],
+            "block_id": [0, 1, 0, 1],
+            "hydro_id": [0, 0, 1, 1],
+            "storage_final_hm3": [storage] * 4,
+            "incremental_inflow_m3s": [120.0, 120.0, 240.0, 240.0],
+        }
     )
 
 
 def _patch_ree_sources(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Wire ``read_relato_membership``/``read_dec_oper_ree`` -- outside
-    ``_read_aligned_frames`` -- to the fixtures above."""
+    """Wire the REE sources -- relato's membership, ``dec_oper_ree``, the
+    deck's energy rule and Novomodelo's per-block hydro rows, all read
+    outside ``_read_aligned_frames`` -- to the fixtures above."""
     monkeypatch.setattr(
         "novomodelo_bridge.comparators.decomp.results.read_relato_membership",
         lambda *_a, **_k: _ree_membership_fixture(),
@@ -253,6 +278,15 @@ def _patch_ree_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "novomodelo_bridge.comparators.decomp.results.read_dec_oper_ree",
         lambda *_a, **_k: _ree_dec_oper_ree_fixture(),
+    )
+    monkeypatch.setattr(
+        "novomodelo_bridge.comparators.decomp.results._ree_energy_rule",
+        lambda *_a, **_k: _ree_rule_fixture(),
+    )
+    monkeypatch.setattr(
+        "novomodelo_bridge.comparators.decomp.results.novomodelo_readers."
+        "read_novomodelo_hydro_block_operation",
+        lambda *_a, **_k: _ree_block_fixture(),
     )
 
 

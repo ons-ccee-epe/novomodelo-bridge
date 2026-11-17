@@ -45,6 +45,7 @@ from novomodelo_bridge.comparators.verdict import (
     CompareVerdict,
     build_compare_verdict,
 )
+from novomodelo_bridge.core import agreement
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.pandas_utils import as_float
 
@@ -230,6 +231,97 @@ def test_tidy_results_dataset_validates() -> None:
 
     dataset.validate()
     assert tidy.height == 2 * len(_make_results()) + 6
+
+
+def test_tidy_results_dataset_moves_a_tied_line_band_with_its_rows() -> None:
+    def line_row(line_id: int, variable: str) -> ResultComparison:
+        return ResultComparison(
+            entity_type="line",
+            entity_name=f"L{line_id}",
+            newave_code=line_id,
+            novomodelo_id=line_id,
+            stage=0,
+            variable=variable,
+            newave_value=100.0,
+            novomodelo_value=90.0,
+            abs_diff=10.0,
+            rel_diff=0.1,
+        )
+
+    pct = PercentileData(
+        line=pl.DataFrame(
+            {
+                "entity_id": [0, 1],
+                "stage_id": [0, 0],
+                "net_flow_mw_p10": [80.0, 80.0],
+                "net_flow_mw_p50": [90.0, 90.0],
+                "net_flow_mw_p90": [100.0, 100.0],
+            }
+        )
+    )
+
+    tidy = tidy_results_dataset(
+        [line_row(0, "net_flow_mw"), line_row(1, agreement.TIED_NET_FLOW)], pct
+    )
+
+    variables = (
+        tidy.filter(pl.col("source") == "p50")
+        .sort("entity_id")
+        .select("entity_id", "variable")
+        .rows()
+    )
+    assert variables == [(0, "net_flow_mw"), (1, agreement.TIED_NET_FLOW)]
+
+
+def test_tidy_results_dataset_moves_a_shared_plant_bus_band_with_its_rows() -> None:
+    def bus_row(name: str, bus_id: int, variable: str) -> ResultComparison:
+        return ResultComparison(
+            entity_type="bus",
+            entity_name=name,
+            newave_code=bus_id + 1,
+            novomodelo_id=bus_id,
+            stage=0,
+            variable=variable,
+            newave_value=100.0,
+            novomodelo_value=90.0,
+            abs_diff=10.0,
+            rel_diff=0.1,
+        )
+
+    pct = PercentileData(
+        bus=pl.DataFrame(
+            {
+                "entity_id": [0, 1],
+                "stage_id": [0, 0],
+                "net_import_mw_p10": [80.0, 80.0],
+                "net_import_mw_p50": [90.0, 90.0],
+                "net_import_mw_p90": [100.0, 100.0],
+                "spot_price_p50": [1.0, 1.0],
+            }
+        )
+    )
+
+    tidy = tidy_results_dataset(
+        [
+            bus_row("SE", 0, agreement.SHARED_PLANT_NET_IMPORT),
+            bus_row("SE+IV", 0, "net_import_mw"),
+            bus_row("S", 1, "net_import_mw"),
+        ],
+        pct,
+    )
+
+    variables = (
+        tidy.filter(pl.col("source") == "p50")
+        .sort("entity_id", "variable")
+        .select("entity_id", "variable")
+        .rows()
+    )
+    assert variables == [
+        (0, agreement.SHARED_PLANT_NET_IMPORT),
+        (0, "spot_price"),
+        (1, "net_import_mw"),
+        (1, "spot_price"),
+    ]
 
 
 def test_tidy_results_dataset_empty_inputs_validate() -> None:
@@ -1223,6 +1315,22 @@ def test_bus_groups_and_pct_missing_column_empty_lookup() -> None:
     assert pct_none == {}
 
 
+def test_bus_groups_and_pct_keeps_a_bus_sharing_a_plant() -> None:
+    results = [
+        _bus_rc("SE", 0, 1, agreement.SHARED_PLANT_NET_IMPORT),
+        _bus_rc("SE+IV", 0, 1, "net_import_mw"),
+        _bus_rc("S", 1, 1, "net_import_mw"),
+    ]
+
+    buses, _ = bus_groups_and_pct(results, "net_import_mw", None)
+
+    assert {name: [r.variable for r in rows] for name, rows in buses.items()} == {
+        "SE": [agreement.SHARED_PLANT_NET_IMPORT],
+        "SE+IV": ["net_import_mw"],
+        "S": ["net_import_mw"],
+    }
+
+
 def test_spillage_lookups_builds_nw_and_cb() -> None:
     results = [
         _spill_rc(1, "VERTOT", 100.0),
@@ -1349,6 +1457,20 @@ class TestCompareVerdict:
         verdict = build_compare_verdict(dataset)
 
         assert verdict.total == 1
+        assert verdict.all_close
+
+    def test_tied_routes_are_left_out(self) -> None:
+        dataset = _summary_dataset(
+            [
+                _summary_row("bus", "net_import_mw", 0.01, "close"),
+                _summary_row("line", "net_flow_mw", 0.03, "close"),
+                _summary_row("line", agreement.TIED_NET_FLOW, 0.5, "far"),
+            ]
+        )
+
+        verdict = build_compare_verdict(dataset)
+
+        assert verdict.total == 2
         assert verdict.all_close
 
     def test_far_variables_come_largest_gap_first_undefined_leading(self) -> None:
@@ -1620,3 +1742,34 @@ def test_with_masked_hydro_rows_replaces_each_masked_variable() -> None:
 def test_with_masked_hydro_rows_without_masked_rows_is_unchanged() -> None:
     results = _make_results()
     assert with_masked_hydro_rows(results, pl.DataFrame()) == results
+
+
+def test_summary_frame_gives_the_gap_without_ties_to_each_masked_variable() -> None:
+    """Generation is masked down to ITAIPU's stage-0 point at no difference;
+    storage has no masked rows and the thermal row is never masked."""
+    storage = ResultComparison(
+        entity_type="hydro",
+        entity_name="ITAIPU",
+        newave_code=10,
+        novomodelo_id=0,
+        stage=0,
+        variable="storage_hm3",
+        newave_value=100.0,
+        novomodelo_value=120.0,
+        abs_diff=20.0,
+        rel_diff=0.2,
+    )
+
+    frame = summary_frame_from_results(
+        [*_make_results(), storage], 1e-2, _masked_generation(0, 0, 95.0)
+    )
+
+    rows = {
+        (row["entity_type"], row["variable"]): (row["gap"], row["gap_excl_ties"])
+        for row in frame.to_dicts()
+    }
+    assert rows == {
+        ("hydro", "generation_mw"): (pytest.approx(20.0 / 150.0), 0.0),
+        ("hydro", "storage_hm3"): (pytest.approx(0.2), None),
+        ("thermal", "generation_mw"): (None, None),
+    }

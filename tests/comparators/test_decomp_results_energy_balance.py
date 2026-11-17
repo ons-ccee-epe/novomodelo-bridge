@@ -20,6 +20,7 @@ from novomodelo_bridge.comparators.decomp.results import (
     build_decomp_dataset,
 )
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
+from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from tests.comparators.conftest import (
     _aligned_fixture,
@@ -144,8 +145,8 @@ def _dec_oper_sist_frame() -> pl.DataFrame:
     )
 
 
-#: One 730-hour stage: MWmes and MW coincide, so values read through unscaled.
-_MONTH_HOURS = {1: 730.0}
+#: One mean-month stage: MWmes and MW coincide, so values read through unscaled.
+_MONTH_HOURS = {1: MEAN_MONTH_HOURS}
 
 
 class TestEnergyBalanceFrames:
@@ -249,8 +250,8 @@ class TestEnergyBalanceFrames:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """``ena_MWmes`` is energy over the stage; a 168-hour week holds
-        168/730 of a month, so the stage-mean MW is MWmes x 730 / 168. EARM
-        stays in MWmes (the chart scales Novomodelo's MWh by 730)."""
+        168 h of a 730.5 h mean month, so the stage-mean MW is
+        MWmes x 730.5 / 168. EARM stays in MWmes."""
         self._patch_source(monkeypatch)
 
         _nw_market, _nw_net_load, nw_sin = _energy_balance_frames(
@@ -258,7 +259,7 @@ class TestEnergyBalanceFrames:
         )
 
         by_var = {row["variable"]: row["value"] for row in nw_sin.iter_rows(named=True)}
-        assert by_var["ENA"] == pytest.approx((1200.0 + 400.0) * 730.0 / 168.0)
+        assert by_var["ENA"] == pytest.approx((1200.0 + 400.0) * 730.5 / 168.0)
         assert by_var["EARMF"] == pytest.approx(5000.0 + 2000.0)
 
     def test_ena_is_dropped_for_a_stage_without_hours(

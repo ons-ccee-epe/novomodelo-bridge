@@ -86,30 +86,30 @@ def _write_line_bounds_parquet(case_dir: Path, rows: list[dict[str, Any]]) -> No
 
 class TestCorridorLineAlignment:
     """``_corridor_line_alignment`` -- corridor (bus_de, bus_para)
-    -> ordered novomodelo (line_id, sign) legs."""
+    -> the novomodelo (line_id, sign) that carries it."""
 
     def test_direct_line_corridor_maps_with_positive_sign(self, tmp_path: Path) -> None:
-        id_map = _decomp_id_map_three_subsystems()
         output_dir = _write_lines_json(tmp_path, [_line_entry(0, 0, 1)])
 
-        alignment = _corridor_line_alignment(output_dir, id_map)
+        alignment = _corridor_line_alignment(output_dir)
 
-        assert alignment[(0, 1)] == [(0, 1)]
+        assert alignment[(0, 1)] == (0, 1)
 
     def test_reverse_declared_line_gets_negative_sign(self, tmp_path: Path) -> None:
         """A novomodelo line declared S -> SE realizes the SE -> S corridor with
         sign -1, orienting the line's own net_flow_mw onto the requested
         direction."""
-        id_map = _decomp_id_map_three_subsystems()
         output_dir = _write_lines_json(tmp_path, [_line_entry(0, 1, 0)])
 
-        alignment = _corridor_line_alignment(output_dir, id_map)
+        alignment = _corridor_line_alignment(output_dir)
 
-        assert alignment[(0, 1)] == [(0, -1)]
+        assert alignment[(0, 1)] == (0, -1)
 
-    def test_star_topology_two_leg_corridor(self, tmp_path: Path) -> None:
-        """No direct SE-S line; SE<->IV + IV<->S realizes the SE -> S
-        corridor as two consistently-oriented legs."""
+    def test_a_transhipment_line_carries_only_its_own_corridor(
+        self, tmp_path: Path
+    ) -> None:
+        """SE<->IV and IV<->S each carry their own corridor; with no direct
+        SE-S line, SE -> S is not built out of the two."""
         id_map = _decomp_id_map_three_subsystems()
         transhipment = id_map.transhipment_bus_id
         output_dir = _write_lines_json(
@@ -120,42 +120,52 @@ class TestCorridorLineAlignment:
             ],
         )
 
-        alignment = _corridor_line_alignment(output_dir, id_map)
+        alignment = _corridor_line_alignment(output_dir)
 
-        assert alignment[(0, 1)] == [(0, 1), (1, 1)]
+        assert alignment[(0, transhipment)] == (0, 1)
+        assert alignment[(transhipment, 0)] == (0, -1)
+        assert alignment[(transhipment, 1)] == (1, 1)
+        assert (0, 1) not in alignment
+
+    def test_a_line_declared_in_the_corridor_direction_wins(
+        self, tmp_path: Path
+    ) -> None:
+        output_dir = _write_lines_json(
+            tmp_path, [_line_entry(0, 1, 0), _line_entry(1, 0, 1)]
+        )
+
+        alignment = _corridor_line_alignment(output_dir)
+
+        assert alignment[(0, 1)] == (1, 1)
+        assert alignment[(1, 0)] == (0, 1)
 
     def test_corridor_with_no_realizing_path_is_absent(self, tmp_path: Path) -> None:
-        id_map = _decomp_id_map_three_subsystems()
-        # Only SE-S is wired; NE (bus id 2) has no line at all, direct or
-        # via the transhipment bus.
+        # Only SE-S is wired; NE (bus id 2) has no line at all.
         output_dir = _write_lines_json(tmp_path, [_line_entry(0, 0, 1)])
 
-        alignment = _corridor_line_alignment(output_dir, id_map)
+        alignment = _corridor_line_alignment(output_dir)
 
         assert (0, 2) not in alignment
         assert (2, 0) not in alignment
 
     def test_missing_lines_json_yields_an_empty_alignment(self, tmp_path: Path) -> None:
-        id_map = _decomp_id_map_three_subsystems()
         output_dir = tmp_path / "output"
         output_dir.mkdir()
 
-        assert _corridor_line_alignment(output_dir, id_map) == {}
+        assert _corridor_line_alignment(output_dir) == {}
 
     def test_ambiguous_duplicate_line_pair_is_excluded_not_guessed(
         self, tmp_path: Path
     ) -> None:
         """Two lines declared for the same ordered bus pair make that leg
-        ambiguous under the star-topology assumption -- both are dropped
-        rather than one picked arbitrarily."""
-        id_map = _decomp_id_map_three_subsystems()
+        ambiguous -- both are dropped rather than one picked arbitrarily."""
         output_dir = _write_lines_json(
             tmp_path, [_line_entry(0, 0, 1), _line_entry(1, 0, 1)]
         )
 
         with dx.collect() as collected:
             assert (0, 1) not in _read_novomodelo_lines_index(output_dir)
-        assert (0, 1) not in _corridor_line_alignment(output_dir, id_map)
+        assert (0, 1) not in _corridor_line_alignment(output_dir)
 
         [diag] = collected
         assert diag.code == "line-bus-pair-ambiguous"
@@ -165,11 +175,17 @@ class TestCorridorLineAlignment:
         assert diag.table.rows == [[0, 1]]
 
 
+#: The names ``dec_oper_interc`` prints beside each code of
+#: :func:`_decomp_id_map_three_subsystems`, and the code-less transhipment node.
+_INTERC_NAMES = {1: "SE", 2: "S", 3: "NE", None: "IV"}
+
+
 def _dec_oper_interc_frame(
-    *, de: int, para: int, origem_mw: float, perdas_mw: float = 5.0
+    *, de: int | None, para: int | None, origem_mw: float, perdas_mw: float = 5.0
 ) -> pl.DataFrame:
     """One corridor, one stage, one node -- the patamar-null aggregate row
-    ``_interc_side`` reads via ``_stage_rows``."""
+    ``_interc_side`` reads via ``_stage_rows``. A ``None`` endpoint is the
+    transhipment node, which ``dec_oper_interc`` names without a code."""
     return pl.DataFrame(
         {
             "estagio": [1],
@@ -177,11 +193,17 @@ def _dec_oper_interc_frame(
             "cenario": [1],
             "patamar": [None],
             "codigo_submercado_de": [de],
+            "nome_submercado_de": [_INTERC_NAMES[de]],
             "codigo_submercado_para": [para],
+            "nome_submercado_para": [_INTERC_NAMES[para]],
             "intercambio_origem_MW": [origem_mw],
             "intercambio_destino_MW": [origem_mw - perdas_mw],
             "perdas_MW": [perdas_mw],
-        }
+        },
+        schema_overrides={
+            "codigo_submercado_de": pl.Int64,
+            "codigo_submercado_para": pl.Int64,
+        },
     )
 
 
@@ -216,9 +238,11 @@ class TestIntercSide:
             {"entity_id": 0, "stage_id": 0, "net_flow_mw": 250.0}
         ]
 
-    def test_star_topology_corridor_reproduces_the_flow_on_both_legs(
+    def test_corridors_to_the_code_less_transhipment_node_resolve_by_name(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
+        """DECOMP reports the corridors through the Itaipu 60 Hz ``IV`` node
+        with a null code; each lands on its own transhipment line."""
         id_map = _decomp_id_map_three_subsystems()
         transhipment = id_map.transhipment_bus_id
         output_dir = _write_lines_json(
@@ -226,7 +250,13 @@ class TestIntercSide:
             [_line_entry(0, 0, transhipment), _line_entry(1, transhipment, 1)],
         )
         self._patch_interc(
-            monkeypatch, _dec_oper_interc_frame(de=1, para=2, origem_mw=180.0)
+            monkeypatch,
+            pl.concat(
+                [
+                    _dec_oper_interc_frame(de=1, para=None, origem_mw=180.0),
+                    _dec_oper_interc_frame(de=None, para=2, origem_mw=150.0),
+                ]
+            ),
         )
 
         result, unresolved = _interc_side(tmp_path, output_dir, id_map)
@@ -235,7 +265,7 @@ class TestIntercSide:
         by_line = {
             row["entity_id"]: row["net_flow_mw"] for row in result.iter_rows(named=True)
         }
-        assert by_line == {0: 180.0, 1: 180.0}
+        assert by_line == {0: 180.0, 1: 150.0}
 
     def test_unresolved_corridor_is_reported_and_excluded_from_the_frame(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -303,31 +333,15 @@ class TestIntercSide:
 
         assert result["net_flow_mw"].to_list() == [200.0]
 
-    def test_a_corridor_reported_by_name_only_is_unresolved_not_a_crash(
+    def test_a_code_less_endpoint_with_an_unknown_name_is_unresolved(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Regression guard: the source model reports some corridors (the
-        Itaipu 60 Hz ``IV`` node, in particular) with a null
-        ``codigo_submercado_de``/``_para`` -- a name-only endpoint outside
-        the ``SB`` register. This must surface as unresolved (``-1``
-        sentinel), never raise, since it can never resolve through
-        ``_corridor_line_alignment`` regardless (the transhipment bus is
-        never an outer-loop endpoint there)."""
+        """A null code whose name is no bus's is reported with the ``-1``
+        stand-in, never raised."""
         id_map = _decomp_id_map_three_subsystems()
         output_dir = _write_lines_json(tmp_path, [_line_entry(0, 0, 1)])
-        frame = pl.DataFrame(
-            {
-                "estagio": [1],
-                "no": [1],
-                "cenario": [1],
-                "patamar": [None],
-                "codigo_submercado_de": [None],
-                "codigo_submercado_para": [2],
-                "intercambio_origem_MW": [50.0],
-                "intercambio_destino_MW": [50.0],
-                "perdas_MW": [0.0],
-            },
-            schema_overrides={"codigo_submercado_de": pl.Float64},
+        frame = _dec_oper_interc_frame(de=None, para=2, origem_mw=50.0).with_columns(
+            pl.lit("XX").alias("nome_submercado_de")
         )
         self._patch_interc(monkeypatch, frame)
 
@@ -364,24 +378,17 @@ class TestIntercSide:
             {"entity_id": 0, "stage_id": 0, "net_flow_mw": 160.0}
         ]
 
-    def test_both_directions_of_one_interface_net_correctly_on_a_shared_star_leg(
+    def test_both_directions_of_a_transhipment_corridor_net_to_one_row(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """The same duplicate-direction netting must hold on each leg of a
-        two-leg star corridor: ``SE -> S`` and ``S -> SE`` both realize
-        through ``SE <-> transhipment <-> S``, so each leg must collapse to
-        one row equal to ``flow(SE -> S) - flow(S -> SE)``, not two rows
-        colliding on the same ``(entity_id, stage_id)`` key."""
+        """``SE -> IV`` and ``IV -> SE`` net onto the one SE-IV line."""
         id_map = _decomp_id_map_three_subsystems()
         transhipment = id_map.transhipment_bus_id
-        output_dir = _write_lines_json(
-            tmp_path,
-            [_line_entry(0, 0, transhipment), _line_entry(1, transhipment, 1)],
-        )
+        output_dir = _write_lines_json(tmp_path, [_line_entry(0, 0, transhipment)])
         frame = pl.concat(
             [
-                _dec_oper_interc_frame(de=1, para=2, origem_mw=180.0),
-                _dec_oper_interc_frame(de=2, para=1, origem_mw=70.0),
+                _dec_oper_interc_frame(de=1, para=None, origem_mw=180.0),
+                _dec_oper_interc_frame(de=None, para=1, origem_mw=70.0),
             ]
         )
         self._patch_interc(monkeypatch, frame)
@@ -389,10 +396,9 @@ class TestIntercSide:
         result, unresolved = _interc_side(tmp_path, output_dir, id_map)
 
         assert unresolved == []
-        by_line = {
-            row["entity_id"]: row["net_flow_mw"] for row in result.iter_rows(named=True)
-        }
-        assert by_line == {0: 110.0, 1: 110.0}
+        assert result.to_dicts() == [
+            {"entity_id": 0, "stage_id": 0, "net_flow_mw": 110.0}
+        ]
 
 
 class TestLineEntityNames:

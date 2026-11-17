@@ -63,6 +63,7 @@ from __future__ import annotations
 import calendar as _calendar
 import dataclasses
 import logging
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -78,6 +79,7 @@ from novomodelo_bridge.core.pandas_utils import (
     require_frame,
 )
 from novomodelo_bridge.core.policy_dates import hours_between
+from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.converters.thermal import dense_stage_records
 from novomodelo_bridge.decomp.temporal import hours_weighted, weekly_stage_count
 
@@ -92,7 +94,6 @@ _LOG = logging.getLogger(__name__)
 _DADGNL = "dadgnl.rvN"
 
 _NONZERO_TOLERANCE = 1e-9
-_DADGNL = "dadgnl.rvN"
 _HOURS_PER_OPERATIVE_WEEK = 168  # 7 days x 24 h; the study/post-study grid step
 
 
@@ -374,18 +375,25 @@ def gnl_block_commitments(
     inside the block's ``tg`` range at the stage, since the source model's
     ``tg`` minimum and capacity prevail over a ``gl`` value outside them.
     A stage no ``gl`` week starts in maps to ``None``: the plant's dispatch
-    there is not commanded.
+    there is not commanded. ``tg`` is read on the axis :func:`convert_gnl`
+    reads it on (:func:`_tg_axis`), so a record for a post-study month is
+    accepted here exactly when the conversion accepts it.
 
     Raises
     ------
     ValueError
         If a ``gl`` week inside a stage declares a different block count than
-        the stage itself.
+        the stage itself, a ``tg`` record lies past every post-study month, or
+        :func:`_post_study_calendar` refuses the plants' ``nl`` lags or ``gl``
+        weeks (an :class:`UnsupportedSourceError` where the deck is valid).
     """
     study_week_count = _study_gl_week_count(model.weeks_per_month, calendar)
-    horizon_end = calendar[-1].end_date
+    post_calendar, _ = _post_study_calendar(model, calendar)
     capabilities = dense_stage_records(
-        model.tg, calendar, register="TG", name_column="nome"
+        model.tg,
+        _tg_axis(calendar, post_calendar),
+        register="TG",
+        name_column="nome",
     )
     commitments: dict[int, list[tuple[float, ...] | None]] = {}
     for thermal in model.thermals:
@@ -393,7 +401,7 @@ def gnl_block_commitments(
             thermal.code,
             model.commitments[thermal.code].stages,
             study_week_count,
-            horizon_end,
+            calendar[-1],
         )
         capability = capabilities[thermal.code]["stages"]
         per_stage: list[tuple[float, ...] | None] = []
@@ -543,17 +551,17 @@ def operative_week_months(
     keyed by the interval's start.
 
     Walks the ``gs`` counts in ascending month order from the study start, the
-    first count being the study-start month's. The intervals are operative
+    first count being the first stage's operative month's, which an RV0 starts
+    in the month before (May's RV0 on 2026-04-25). The intervals are operative
     weeks, and a week belongs to the month ``gs`` books it to even when it
     ends in the next one (mar-26-rv2: the week starting 2026-05-30 is a May
     week); a study of monthly stages only has one interval per month, the
     month itself. Empty without a ``gs`` block.
     """
-    study_start = calendar[0].start_date
     monthly_only = weekly_stage_count(calendar) == 0
     weeks: dict[date, tuple[int, int]] = {}
-    week_start = study_start
-    year, month = study_start.year, study_start.month
+    week_start = calendar[0].start_date
+    year, month = calendar[0].operative_year, calendar[0].season_id + 1
     for key in sorted(weeks_per_month):
         if monthly_only:
             weeks[date(year, month, 1)] = (year, month)
@@ -563,6 +571,15 @@ def operative_week_months(
                 week_start += _ONE_OPERATIVE_WEEK
         year, month = (year + 1, 1) if month == 12 else (year, month + 1)
     return weeks
+
+
+def booked_month(
+    week_months: Mapping[date, tuple[int, int]], day: date
+) -> tuple[int, int]:
+    """The ``(year, month)`` :func:`operative_week_months` books the interval
+    starting on *day* to, or *day*'s calendar month when no interval starts
+    on it."""
+    return week_months.get(day, (day.year, day.month))
 
 
 def _read_nl_lags(dadgnl: _GnlRegisters) -> dict[int, int]:
@@ -626,9 +643,7 @@ def fill_undeclared_block_hours(
             if not week.block_mw or len(week.block_hours) == len(week.block_mw):
                 stages.append(week)
                 continue
-            year, month = week_months.get(
-                week.start_date, (week.start_date.year, week.start_date.month)
-            )
+            year, month = booked_month(week_months, week.start_date)
             shares = (patamar_fractions or {}).get((year, month))
             source = "boundary FCF patamar shares"
             if shares is None or len(shares) != len(week.block_mw):
@@ -753,7 +768,7 @@ def _split_at_study_end(
     code: int,
     stages: Sequence[GnlStageCommitment],
     study_week_count: int | None,
-    horizon_end: date,
+    last_stage: OperativeStage,
 ) -> tuple[tuple[GnlStageCommitment, ...], tuple[GnlStageCommitment, ...]]:
     """A plant's ``gl`` weeks split into the study's and those after it.
 
@@ -762,12 +777,8 @@ def _split_at_study_end(
     fall before the horizon end (the study's monthly stage ends on the 1st), yet
     the source model books it — and leaves its ``duracao`` blank — as a week
     past its horizon. Without ``gs`` the split falls back to ``start_date <
-    horizon_end``.
-
-    Such a week also lands in the study as its head ``[start_date,
-    horizon_end)``: same ``geracao``, ``hours`` and ``block_hours`` cut to the
-    head's share of the operative week, so the study's last stage weighs it by
-    the hours it actually covers.
+    horizon_end``. Such a week's days before the horizon end count in no study
+    stage; the last study week covers them instead (:func:`_stretch_last_week`).
 
     Raises
     ------
@@ -775,6 +786,7 @@ def _split_at_study_end(
         If ``gs`` books to the study a week starting at or after the horizon
         end, or past the study a week ending at or before it.
     """
+    horizon_end = last_stage.end_date
     study: list[GnlStageCommitment] = []
     after: list[GnlStageCommitment] = []
     for week in stages:
@@ -796,20 +808,46 @@ def _split_at_study_end(
                 f"or before the study horizon end {horizon_end.isoformat()}"
             )
         (study if in_study else after).append(week)
-        if not in_study and week.start_date < horizon_end:
-            study.append(_head_before(week, horizon_end))
-    return tuple(study), tuple(after)
+    return _stretch_last_week(study, last_stage), tuple(after)
 
 
-def _head_before(week: GnlStageCommitment, horizon_end: date) -> GnlStageCommitment:
-    """The part of *week* before *horizon_end*, its hours cut pro rata."""
-    head_hours = (horizon_end - week.start_date) / timedelta(hours=1)
-    share = head_hours / _HOURS_PER_OPERATIVE_WEEK
-    return dataclasses.replace(
-        week,
-        hours=head_hours,
-        block_hours=tuple(h * share for h in week.block_hours),
+def _stretch_last_week(
+    study: Sequence[GnlStageCommitment], last_stage: OperativeStage
+) -> tuple[GnlStageCommitment, ...]:
+    """*study* with its last week held to the end of *last_stage*.
+
+    When the weeks ``gs`` books to the last stage end less than one operative
+    week before the horizon end, the source model holds the last of them over
+    the stage's remaining days at its own MW per patamar: its patamar hours
+    become the stage's less the other weeks' in the stage. A week whose
+    patamar count differs from the stage's keeps its patamar proportions over
+    the stage's remaining hours.
+    """
+    in_stage = [
+        w for w in study if last_stage.start_date <= w.start_date < last_stage.end_date
+    ]
+    if not in_stage:
+        return tuple(study)
+    last = max(in_stage, key=lambda w: w.start_date)
+    shortfall = last_stage.end_date - (last.start_date + timedelta(hours=last.hours))
+    if last.hours <= 0 or not timedelta(0) < shortfall < _ONE_OPERATIVE_WEEK:
+        return tuple(study)
+    others = [w for w in in_stage if w is not last]
+    stage_hours = last_stage.block_hours
+    if all(len(w.block_hours) == len(stage_hours) for w in in_stage):
+        block_hours = tuple(
+            h - sum(w.block_hours[b] for w in others) for b, h in enumerate(stage_hours)
+        )
+    else:
+        remaining = sum(stage_hours) - sum(w.hours for w in others)
+        block_hours = tuple(h * remaining / last.hours for h in last.block_hours)
+    stretched = dataclasses.replace(
+        last,
+        committed_mw=_block_weighted_mean(last.block_mw, block_hours),
+        hours=sum(block_hours),
+        block_hours=block_hours,
     )
+    return tuple(stretched if w is last else w for w in study)
 
 
 class GnlClass4Window(NamedTuple):
@@ -865,8 +903,8 @@ def classify_gnl_windows(
 
     Já-comandada (class-4) is every ``gl`` week ``gs`` books past the study
     (:func:`_split_at_study_end`), ordered ascending. A week starting before the
-    horizon end is clipped to start at it: its leading days are folded into the
-    study's last stage instead (:func:`_split_at_study_end`). A
+    horizon end is clipped to start at it; the study's last week covers its
+    leading days instead (:func:`_split_at_study_end`). A
     non-terminal window ends at the next já-comandada week's start; the
     terminal window is one operative week (``start + _HOURS_PER_OPERATIVE_WEEK``)
     — never ``c.hours``, which the source model leaves at ``0`` past the
@@ -887,7 +925,7 @@ def classify_gnl_windows(
             code: _classify_plant(
                 code,
                 *_split_at_study_end(
-                    code, commitment.stages, study_week_count, horizon_end
+                    code, commitment.stages, study_week_count, calendar[-1]
                 ),
                 horizon_end,
                 grid_aligned=study_week_count is not None,
@@ -1393,64 +1431,230 @@ def _post_study_months(horizon_end: date, count: int) -> list[dict]:
     return stages
 
 
-def _pricing_axis(
-    calendar: Sequence[OperativeStage], post_count: int
-) -> list[OperativeStage]:
-    """The calendar extended by *post_count* stages, so the ``tg`` records of the
-    post-study months densify like in-study ones.
+def _monthly_lags(
+    model: GnlCommitmentModel, calendar: Sequence[OperativeStage]
+) -> dict[int, int]:
+    """Each plant's :func:`_monthly_lead_stages` on a study of monthly stages."""
+    horizon_end = calendar[-1].end_date
+    return {
+        t.code: _monthly_lead_stages(model, t, horizon_end, len(calendar))
+        for t in model.thermals
+    }
 
-    Each extension stage carries the last study stage's patamar hours: no
-    register declares the source model's post-horizon patamar durations.
+
+def _post_study_calendar(
+    model: GnlCommitmentModel, calendar: Sequence[OperativeStage]
+) -> tuple[list[dict], date | None]:
+    """The post-study stages :func:`convert_gnl` emits for *model*, and the
+    já-comandada cutoff a weekly study anchors them at.
+
+    A study of monthly stages only takes the whole months its longest ``nl``
+    lag reaches, with no cutoff. A weekly study without a ``gs`` calendar, the
+    deck's signal that there is no post-study month to price, has neither.
+
+    Raises
+    ------
+    UnsupportedSourceError
+        If :func:`_monthly_lead_stages` or :func:`_shared_class4_end` refuses
+        the plants' ``nl`` lags or ``gl`` weeks.
+    ValueError
+        If a plant declares no ``nl`` lag, or :func:`classify_gnl_windows`
+        refuses its ``gl`` weeks.
     """
+    horizon_end = calendar[-1].end_date
+    if weekly_stage_count(calendar) == 0:
+        lags = _monthly_lags(model, calendar)
+        return _post_study_months(horizon_end, max(lags.values(), default=0)), None
+    if not model.weeks_per_month:
+        return [], None
+    cutoff = _shared_class4_end(
+        classify_gnl_windows(model, calendar), model.thermals, horizon_end
+    )
+    spans = [(stage.start_date, stage.end_date) for stage in calendar]
+    return _build_post_study_calendar(spans, cutoff), cutoff
+
+
+def _tg_axis(
+    calendar: Sequence[OperativeStage], post_calendar: Sequence[dict]
+) -> list[OperativeStage]:
+    """The stage axis the ``tg`` records are read on: *calendar*, then one
+    stage per calendar month *post_calendar* reaches.
+
+    The ``tg`` stage axis runs on past the study, one stage per month: stage
+    ``n + 1 + k`` of an ``n``-stage study is the k-th month after the horizon
+    end's. Each extension stage carries the last study stage's patamar hours:
+    no register declares the source model's post-horizon patamar durations.
+    """
+    count = _post_study_month_count(calendar[-1].end_date, post_calendar)
     last = calendar[-1]
     return [
         *calendar,
-        *(
-            dataclasses.replace(last, index=last.index + 1 + j)
-            for j in range(post_count)
-        ),
+        *(dataclasses.replace(last, index=last.index + 1 + j) for j in range(count)),
     ]
 
 
-def _post_study_month_hours(
-    horizon_end: date, post_calendar: Sequence[dict]
-) -> list[dict[int, float]]:
-    """Each post-study stage's hours per calendar month it overlaps, keyed by
-    the 0-based month after the horizon end's (``{0: 144.0, 1: 24.0}`` for a
-    week crossing into the second post-study month)."""
-    shares: list[dict[int, float]] = []
-    for stage in post_calendar:
+def _months_after(horizon_end: date, year: int, month: int) -> int:
+    """How many calendar months ``(year, month)`` lies after *horizon_end*'s."""
+    return (year - horizon_end.year) * 12 + month - horizon_end.month
+
+
+def _month_label(horizon_end: date, offset: int) -> str:
+    """The ``YYYY-MM`` of the month *offset* months after *horizon_end*'s."""
+    year, month = divmod(horizon_end.year * 12 + horizon_end.month - 1 + offset, 12)
+    return f"{year}-{month + 1:02d}"
+
+
+def _stage_end(stage: dict) -> date:
+    """The exclusive end of a post-study stage."""
+    start = date.fromisoformat(stage["start_date"])
+    return start + timedelta(hours=stage["duration_hours"])
+
+
+def _post_study_month_count(horizon_end: date, post_calendar: Sequence[dict]) -> int:
+    """How many calendar months the post-study stages span, from the horizon
+    end's month on (``0`` without post-study stages)."""
+    if not post_calendar:
+        return 0
+    last_day = _stage_end(post_calendar[-1]) - timedelta(days=1)
+    return _months_after(horizon_end, last_day.year, last_day.month) + 1
+
+
+def _post_study_tg_months(
+    post_calendar: Sequence[dict],
+    class4_end: date,
+    week_months: Mapping[date, tuple[int, int]],
+    horizon_end: date,
+) -> dict[int, int]:
+    """Each class-3 post-study stage's ``tg`` month, keyed by the stage's
+    position, as the 0-based month after the horizon end's.
+
+    A stage takes the month ``gs`` books the interval it starts to
+    (:func:`booked_month`), the month the boundary cut prices its delivery in,
+    even when the stage ends in the next calendar month or starts in the month
+    after that one.
+
+    Raises
+    ------
+    UnsupportedSourceError
+        If that month lies outside the months the post-study stages span.
+    """
+    count = _post_study_month_count(horizon_end, post_calendar)
+    months: dict[int, int] = {}
+    for position, stage in enumerate(post_calendar):
         start = date.fromisoformat(stage["start_date"])
-        end = start + timedelta(hours=stage["duration_hours"])
-        hours: dict[int, float] = {}
-        cursor = start
-        while cursor < end:
-            _, days = _calendar.monthrange(cursor.year, cursor.month)
-            month_end = min(
-                end, date(cursor.year, cursor.month, days) + timedelta(days=1)
+        if start < class4_end:
+            continue
+        year, month = booked_month(week_months, start)
+        offset = _months_after(horizon_end, year, month)
+        if not 0 <= offset < count:
+            first, last = (
+                _month_label(horizon_end, 0),
+                _month_label(horizon_end, count - 1),
             )
-            offset = (
-                (cursor.year - horizon_end.year) * 12 + cursor.month - horizon_end.month
+            span = first if first == last else f"{first} to {last}"
+            raise UnsupportedSourceError(
+                f"{_DADGNL} GS books the post-study stage starting "
+                f"{start.isoformat()} to {year}-{month:02d}, outside the months the "
+                f"post-study stages span ({span}). A post-study stage booked "
+                "outside them is not converted yet, so set the GS interval counts "
+                "to book each interval past the study horizon to a month it "
+                "overlaps.",
+                path=_DADGNL,
+                field="GS semanas",
             )
-            hours[offset] = hours.get(offset, 0.0) + hours_between(cursor, month_end)
-            cursor = month_end
-        shares.append(hours)
-    return shares
+        months[position] = offset
+    return months
 
 
-def _blend_capability(
-    capability: Sequence[_StageCapability], hours: Mapping[int, float]
-) -> _StageCapability:
-    """The hours-weighted mean of the capabilities at each month in *hours*."""
-    distinct = {capability[k] for k in hours}
-    if len(distinct) == 1:
-        return distinct.pop()
-    total = sum(hours.values())
-    return _StageCapability(
-        *(
-            sum(getattr(capability[k], field) * h for k, h in hours.items()) / total
-            for field in _StageCapability._fields
+def _report_post_study_interval_hours(
+    model: GnlCommitmentModel,
+    calendar: Sequence[OperativeStage],
+    post_calendar: Sequence[dict],
+    priced: Iterable[int],
+) -> None:
+    """Report the priced post-study stages the source model weighs over other
+    hours.
+
+    The source model gives each ``gs`` interval of a month an equal share of a
+    :data:`MEAN_MONTH_HOURS` month, an operative week included; a post-study
+    stage spans its calendar hours. A stage's source hours sum the shares of
+    the intervals it overlaps, pro rata; a stage that overlaps none has no
+    counterpart and no row.
+    """
+    week_months = operative_week_months(model.weeks_per_month, calendar)
+    per_month = Counter(week_months.values())
+    monthly_only = weekly_stage_count(calendar) == 0
+    intervals = [
+        (
+            start,
+            start + timedelta(hours=_month_end_duration_hours(start))
+            if monthly_only
+            else start + _ONE_OPERATIVE_WEEK,
+            month,
         )
+        for start, month in sorted(week_months.items())
+    ]
+    rows: list[list[object]] = []
+    for position in sorted(priced):
+        stage = post_calendar[position]
+        start = date.fromisoformat(stage["start_date"])
+        end = _stage_end(stage)
+        covered = 0.0
+        source_hours = 0.0
+        for interval_start, interval_end, month in intervals:
+            overlap = hours_between(max(start, interval_start), min(end, interval_end))
+            if overlap <= 0.0:
+                continue
+            covered += overlap
+            share = MEAN_MONTH_HOURS / per_month[month]
+            source_hours += (
+                share * overlap / hours_between(interval_start, interval_end)
+            )
+        if covered == 0.0:
+            continue
+        year, month = booked_month(week_months, start)
+        rows.append(
+            [
+                position,
+                start.isoformat(),
+                f"{year}-{month:02d}",
+                per_month[(year, month)],
+                round(source_hours, 2),
+                round(covered, 2),
+            ]
+        )
+    if not rows:
+        return
+    dx.emit(
+        dx.Diagnostic(
+            code="decomp-gnl-post-study-interval-hours",
+            severity=dx.Severity.WARNING,
+            category="GNL",
+            title=f"GNL post-study stages whose hours differ from DECOMP's ({len(rows)})",
+            summary=(
+                "DECOMP divides each month past the study horizon into the GS "
+                "intervals of dadgnl.rvN and gives each interval an equal share of "
+                "a 730.5-hour month. The case holds each post-study stage in "
+                "post_study_stages.json over its calendar hours instead, since "
+                "Novomodelo weighs a post-study stage by its dates alone. In the "
+                "listed stages, the GNL energy committed and its cost therefore "
+                "differ from DECOMP's in the ratio of the two hour columns."
+            ),
+            table=dx.DiagnosticTable(
+                columns=[
+                    "Post-study stage",
+                    "Start date",
+                    "GS month",
+                    "GS intervals",
+                    "DECOMP (h)",
+                    "Case (h)",
+                ],
+                rows=rows,
+                justify=["right", "left", "left", "right", "right", "right"],
+                caption="Stage ids are 0-based.",
+            ),
+        ),
+        logger=_LOG,
     )
 
 
@@ -1494,16 +1698,10 @@ def _convert_monthly_gnl(
         )
     n_stages = len(calendar)
     horizon_start = calendar[0].start_date
-    horizon_end = calendar[-1].end_date
     stage_spans = [(stage.start_date, stage.end_date) for stage in calendar]
-    lags = {
-        t.code: _monthly_lead_stages(model, t, horizon_end, n_stages)
-        for t in model.thermals
-    }
-    post_calendar = _post_study_months(horizon_end, max(lags.values(), default=0))
-    capabilities = _stage_capabilities(
-        model.tg, _pricing_axis(calendar, len(post_calendar))
-    )
+    lags = _monthly_lags(model, calendar)
+    post_calendar, _ = _post_study_calendar(model, calendar)
+    capabilities = _stage_capabilities(model.tg, _tg_axis(calendar, post_calendar))
 
     thermals: list[dict] = []
     past: list[dict] = []
@@ -1528,13 +1726,18 @@ def _convert_monthly_gnl(
             thermal.code,
             model.commitments[thermal.code].stages,
             _study_gl_week_count(model.weeks_per_month, calendar),
-            horizon_end,
+            calendar[-1],
         )
         folded = _fold_onto_stages(study_weeks, stage_spans)
         past.extend(_study_tiles(tid, thermal, folded, study_capability, calendar, lag))
         for j in range(lag):
             _record_bound(bounds, seen_bounds, tid, j, stage_capability[n_stages + j])
 
+    # TRACKED NOVOMODELO-GAP (C44): each post-study month keeps its calendar
+    # hours, where the source model weighs a GS month at 730.5 h.
+    _report_post_study_interval_hours(
+        model, calendar, post_calendar, {b["post_study_stage_index"] for b in bounds}
+    )
     past.sort(key=lambda w: (w["thermal_id"], w["start_date"]))
     bounds.sort(key=lambda b: (b["thermal_id"], b["post_study_stage_index"]))
     return GnlEmission(
@@ -1592,10 +1795,9 @@ def convert_gnl(
     (signaled)** post-study calendar stage — one whose ``start_date >=
     class4_end`` — carrying its ``cvu`` (fuel-inclusive) as ``cost_per_mwh``
     and its ``[min_mw, max_mw]`` capability, the carrier a signaled stage
-    needs to be priced at all. Both are the ``tg`` records of the calendar
-    months the stage overlaps, weighted by its hours in each: the ``tg`` stage
-    axis runs on past the study, one stage per month
-    (:func:`_post_study_month_hours`, :func:`_pricing_axis`). A class-4
+    needs to be priced at all. Both come from the ``tg`` record of the month
+    ``gs`` books the stage to (:func:`_post_study_tg_months`): the ``tg`` stage
+    axis runs on past the study, one stage per month (:func:`_tg_axis`). A class-4
     (já-comandada) stage gets none: its delivery is already fixed by the
     ``past_anticipated_commitments`` window above, and a ``thermal_bounds`` row
     there would let novomodelo re-optimize a cell the source model has already
@@ -1648,21 +1850,14 @@ def _convert_gnl(
 
     horizon_end = stage_spans[-1][1]
     classification = classify_gnl_windows(model, calendar)
-
-    # The post-study calendar exists exactly when the deck declares a GS
-    # calendar (model.weeks_per_month), the deck's signal that there is a
-    # post-study month to price.
-    if model.weeks_per_month:
-        class4_end = _shared_class4_end(classification, model.thermals, horizon_end)
-        post_calendar = _build_post_study_calendar(stage_spans, class4_end)
-        lead_hours = hours_between(horizon_start, class4_end)
-    else:
-        # No GS calendar (a real dadgnl always declares GS; this is a degenerate
-        # deck): there is no post-study horizon to anticipate into, so the plant
-        # keeps a first-stage physical lead — a valid anticipated thermal with
-        # no free deliveries.
-        post_calendar = []
-        lead_hours = stage_hours[0]
+    post_calendar, cutoff = _post_study_calendar(model, calendar)
+    # No GS calendar (a real dadgnl always declares GS; this is a degenerate
+    # deck): there is no post-study horizon to anticipate into, so the plant
+    # keeps a first-stage physical lead — a valid anticipated thermal with no
+    # free deliveries.
+    lead_hours = (
+        stage_hours[0] if cutoff is None else hours_between(horizon_start, cutoff)
+    )
     # Sized from the emitted lead itself, never from the GS weeks of the study
     # months: GL commits the first weeks of the month after the study too, and
     # novomodelo derives the tiled prefix from lead_time_hours alone.
@@ -1674,20 +1869,22 @@ def _convert_gnl(
     seen_bounds: set[tuple[int, int]] = set()
 
     n_stages = len(calendar)
-    month_hours = _post_study_month_hours(horizon_end, post_calendar)
-    capabilities = _stage_capabilities(
-        model.tg,
-        _pricing_axis(calendar, max((max(h) for h in month_hours), default=-1) + 1),
+    capabilities = _stage_capabilities(model.tg, _tg_axis(calendar, post_calendar))
+    tg_months = (
+        {}
+        if cutoff is None
+        else _post_study_tg_months(
+            post_calendar,
+            cutoff,
+            operative_week_months(model.weeks_per_month, calendar),
+            horizon_end,
+        )
     )
     for thermal in model.thermals:
         tid = gnl_id[thermal.code]
         stage_capability = capabilities[thermal.code]
         study_capability = stage_capability[:n_stages]
         last_capability = study_capability[-1]
-        post_capability = [
-            _blend_capability(stage_capability[n_stages:], hours)
-            for hours in month_hours
-        ]
         plant_classification = classification.plants[thermal.code]
         folded = _fold_onto_stages(plant_classification.study_weeks, stage_spans)
         thermals.append(
@@ -1723,11 +1920,16 @@ def _convert_gnl(
         # above; giving it a thermal_bounds row too would let novomodelo
         # re-optimize an already-committed cell. Only class-3 (signaled)
         # stages get the carrier.
-        class4_end = plant_classification.class4_end
-        for m, stage in enumerate(post_calendar):
-            if date.fromisoformat(stage["start_date"]) >= class4_end:
-                _record_bound(bounds, seen_bounds, tid, m, post_capability[m])
+        for m, offset in tg_months.items():
+            _record_bound(
+                bounds, seen_bounds, tid, m, stage_capability[n_stages + offset]
+            )
 
+    # TRACKED NOVOMODELO-GAP (C44): each post-study stage keeps its calendar
+    # hours, where the source model weighs a GS interval at 730.5 / N h.
+    _report_post_study_interval_hours(
+        model, calendar, post_calendar, {b["post_study_stage_index"] for b in bounds}
+    )
     _reject_straddling_windows(past, horizon_end)
     past.sort(key=lambda w: (w["thermal_id"], w["start_date"]))
     bounds.sort(key=lambda b: (b["thermal_id"], b["post_study_stage_index"]))

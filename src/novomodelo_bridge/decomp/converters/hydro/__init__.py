@@ -5,10 +5,12 @@ Thin facade — re-exports the public API from :mod:`.entity`, :mod:`.bounds`,
 
 Converted scope: faithful registry, cascade, capability, initial storage,
 head/productivity, the a-priori turbined-flow limit (:mod:`.turbine_limit`),
-and the ``VI`` water travel time — a separate dadger register, not an ``AC``
-class, converted in :mod:`novomodelo_bridge.decomp.converters.travel_time`. Left
-unconverted are the evaporation/tailrace-polynomial models
-(``COTVAZ``/``COTARE``/``COFEVA`` — ``AC`` classes with no DECOMP consumer).
+reservoir evaporation (the monthly coefficients with ``AC COFEVA``, the ``EV``
+reference volume), and the ``VI`` water travel time — a separate dadger
+register, not an ``AC`` class, converted in
+:mod:`novomodelo_bridge.decomp.converters.travel_time`. The cota-area and
+tailrace polynomial overrides (``AC COTARE``/``COTVAZ``) are not converted and
+are reported by ``decomp-ac-overrides-deferred``.
 The ``AC`` families' own per-deck coverage (which of them a given deck actually
 declares) is reported by ``check decomp``
 (:mod:`novomodelo_bridge.decomp.preflight`).
@@ -87,6 +89,9 @@ from novomodelo_bridge.decomp.converters.hydro.productivity import (
 )
 from novomodelo_bridge.decomp.converters.hydro.productivity import (
     outage_stage_model as outage_stage_model,
+)
+from novomodelo_bridge.decomp.converters.hydro.productivity import (
+    stored_energy_productivity_at_storage as stored_energy_productivity_at_storage,
 )
 from novomodelo_bridge.decomp.converters.hydro.turbine_limit import (
     TurbineLimits as TurbineLimits,

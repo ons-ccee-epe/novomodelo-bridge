@@ -7,6 +7,7 @@ alignment, computation, comparison, and report generation.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -256,7 +257,10 @@ class TestAgreementTable:
     """The compare summary table labels each variable with its dataset band."""
 
     def _print(
-        self, results: list[ResultComparison], **kwargs: Any
+        self,
+        results: list[ResultComparison],
+        pct: PercentileData | None = None,
+        **kwargs: Any,
     ) -> tuple[ComparisonDataset, _MakeTableSpy]:
         from novomodelo_bridge.comparators.analyze import build_results_dataset
         from novomodelo_bridge.comparators.verdict import build_compare_verdict
@@ -264,7 +268,7 @@ class TestAgreementTable:
             print_results_summary_from_dataset,
         )
 
-        dataset = build_results_dataset(results, PercentileData(), 0.05)
+        dataset = build_results_dataset(results, pct or PercentileData(), 0.05)
         spy = _MakeTableSpy()
         with patch("novomodelo_bridge.ui.compare_summary.make_table", side_effect=spy):
             print_results_summary_from_dataset(
@@ -305,6 +309,61 @@ class TestAgreementTable:
         # One bold heading row opens the hydro group.
         assert rows[0][0] == "Hydro plants"
         assert spy.records[0]["row_styles"] == ["bold", None, None]
+        assert "Excl. ties" not in spy.records[0]["columns"]
+
+    def test_the_gap_without_ties_sits_beside_the_gap(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.comparators.operating_points import (
+            MASKED_HYDRO_SCHEMA,
+        )
+
+        thermal = dataclasses.replace(
+            _hydro_result("ANGRA", "generation_mw", 100.0, 100.0),
+            entity_type="thermal",
+        )
+        masked = pl.DataFrame(
+            [
+                dataclasses.asdict(
+                    _hydro_result("ITAIPU", "generation_mw", 100.0, 105.0)
+                )
+            ],
+            schema=MASKED_HYDRO_SCHEMA,
+        )
+
+        dataset, spy = self._print(
+            [_hydro_result("ITAIPU", "generation_mw", 100.0, 150.0), thermal],
+            PercentileData(hydro_masked=masked),
+        )
+
+        record = spy.records[0]
+        assert record["columns"] == [
+            "Variable",
+            "Points",
+            "Gap",
+            "Excl. ties",
+            "r",
+            "Agreement",
+        ]
+        cells = [
+            (str(row[0]).strip(), row[2], row[3], str(row[5]))
+            for row in record["rows"]
+            if str(row[0]).startswith("  ")
+        ]
+        assert cells == [
+            ("Generation (MW)", "50%", "5%", "far"),
+            ("Generation (MW)", "0%", "—", "close"),
+        ]
+        excl = dict(
+            zip(
+                dataset.summary["entity_type"],
+                dataset.summary["gap_excl_ties"],
+                strict=True,
+            )
+        )
+        assert excl == {"hydro": pytest.approx(0.05), "thermal": None}
+        out = " ".join(capsys.readouterr().out.split())
+        assert "Excl. ties is the gap without the points" in out
 
     def test_policy_rows_stay_out_of_the_table(self) -> None:
         dataset, spy = self._print(
@@ -317,6 +376,58 @@ class TestAgreementTable:
         assert "water_value_per_hm3" in dataset.summary["variable"].to_list()
         labels = [str(row[0]).strip() for row in spy.records[0]["rows"]]
         assert labels == ["Hydro plants", "Generation (MW)"]
+
+    def test_tied_routes_show_dimmed_and_out_of_the_headline(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.core.agreement import TIED_NET_FLOW
+
+        def line(variable: str, novomodelo: float) -> ResultComparison:
+            return dataclasses.replace(
+                _hydro_result("SE-NE", variable, 100.0, novomodelo),
+                entity_type="line",
+            )
+
+        _, spy = self._print([line("net_flow_mw", 100.0), line(TIED_NET_FLOW, 10.0)])
+
+        rows = spy.records[0]["rows"]
+        cells = [(str(row[0]).strip(), str(row[4])) for row in rows[1:]]
+        assert cells == [
+            ("Net flow (MW)", "close"),
+            ("Net flow on tied routes (MW)", "far, not in headline"),
+        ]
+        assert spy.records[0]["row_styles"] == ["bold", None, "dim"]
+        out = " ".join(capsys.readouterr().out.split())
+        assert "1 of 1 variables close" in out
+        assert "Net flow on tied routes is not in the headline" in out
+
+    def test_buses_sharing_a_plant_show_dimmed_and_out_of_the_headline(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from novomodelo_bridge.core.agreement import SHARED_PLANT_NET_IMPORT
+
+        def bus(name: str, variable: str, novomodelo: float) -> ResultComparison:
+            return dataclasses.replace(
+                _hydro_result(name, variable, 100.0, novomodelo),
+                entity_type="bus",
+            )
+
+        _, spy = self._print(
+            [
+                bus("SE+IV", "net_import_mw", 100.0),
+                bus("SE", SHARED_PLANT_NET_IMPORT, 10.0),
+            ]
+        )
+
+        rows = spy.records[0]["rows"]
+        cells = [(str(row[0]).strip(), str(row[4])) for row in rows[1:]]
+        assert cells == [
+            ("Net import (MW)", "close"),
+            ("Net import of a bus sharing a plant (MW)", "far, not in headline"),
+        ]
+        out = " ".join(capsys.readouterr().out.split())
+        assert "1 of 1 variables close" in out
+        assert "Net import judges those buses as one group instead" in out
 
     def test_training_costs_follow_the_table(
         self, capsys: pytest.CaptureFixture[str]
@@ -987,6 +1098,105 @@ class TestOverviewCostCharts:
             )
         }
         assert cats == {"FPHA Planes": pytest.approx((3.0e6, 2.0e6))}
+
+
+class TestDecisionBasisThermalRows:
+    """A source reporting its thermal cost on the decision basis (DECOMP with
+    GNL plants) gets the thermal row split; one reporting it as delivered
+    (NEWAVE, DECOMP without GNL) keeps one row against both columns."""
+
+    _NOVOMODELO = {"thermal_cost": 9.0e9, "anticipated_thermal_cost": 1.0e9}
+
+    @staticmethod
+    def _rows(nw_costs: dict[str, float], novomodelo: dict[str, float]) -> dict:
+        from novomodelo_bridge.comparators.charts import _resolve_cost_categories
+
+        return {
+            label: (nw, cb)
+            for label, nw, cb, _ in _resolve_cost_categories(nw_costs, novomodelo)
+        }
+
+    def test_the_decision_basis_splits_the_thermal_row(self) -> None:
+        rows = self._rows(
+            {"TERMICA SEM GNL": 8.0e9, "GNL COMANDADO": 2.0e9}, self._NOVOMODELO
+        )
+
+        assert rows == {
+            "Thermal excl. GNL": pytest.approx((8.0e9, 9.0e9)),
+            "GNL committed in study": pytest.approx((2.0e9, 1.0e9)),
+        }
+
+    def test_the_delivery_basis_keeps_one_row(self) -> None:
+        rows = self._rows({"GERACAO TERMICA": 11.0e9}, self._NOVOMODELO)
+
+        assert rows == {"Thermal": pytest.approx((11.0e9, 10.0e9))}
+
+    def test_both_bases_at_once_is_an_error(self) -> None:
+        with pytest.raises(ValueError, match="both"):
+            self._rows(
+                {"GERACAO TERMICA": 11.0e9, "GNL COMANDADO": 2.0e9}, self._NOVOMODELO
+            )
+
+    @pytest.mark.parametrize(
+        "nw_costs",
+        [
+            {"TERMICA SEM GNL": 8.0e9, "GNL COMANDADO": 2.0e9, "DEFICIT": 1.0e9},
+            {"GERACAO TERMICA": 10.0e9, "DEFICIT": 1.0e9},
+        ],
+    )
+    def test_the_thermal_cost_sums_the_thermal_rows(
+        self, nw_costs: dict[str, float]
+    ) -> None:
+        from novomodelo_bridge.comparators.charts.costs import thermal_cost
+
+        thermal = thermal_cost(nw_costs, {**self._NOVOMODELO, "deficit_cost": 5.0e9})
+
+        assert (thermal.reference, thermal.novomodelo) == pytest.approx(
+            (10.0e9, 10.0e9)
+        )
+
+    def test_the_split_rows_are_not_unclassified_in_the_net_bound(self) -> None:
+        from novomodelo_bridge.comparators.charts import net_of_penalties_table
+
+        conv = pl.DataFrame({"iteration": [1], "lower_bound": [20.0e9]})
+        html = net_of_penalties_table(
+            conv,
+            conv,
+            {"TERMICA SEM GNL": 8.0e9, "GNL COMANDADO": 2.0e9},
+            self._NOVOMODELO,
+        )
+
+        assert "not classified" not in html
+
+    def test_the_table_shows_gnl_delivered_under_the_total(self) -> None:
+        from novomodelo_bridge.comparators.charts.costs import cost_breakdown_table
+
+        html = cost_breakdown_table(
+            {"TERMICA SEM GNL": 8.0e9, "GNL COMANDADO": 2.0e9},
+            self._NOVOMODELO,
+            "DECOMP",
+            {"reference": 3.0e9, "novomodelo": 3.3e9},
+        )
+
+        total, info = html.split('<tr class="cb-total">')[1].split(
+            '<tr class="cb-info">'
+        )
+        assert ">10.000<" in total  # 8 + 2 on the reference side, without the 3
+        assert re.findall(r'<td class="cb-num">(.*?)</td>', info) == [
+            "3.000",
+            "3.300",
+            "0.300",
+            "+10.0%",
+        ]
+        assert "not in the total" in html
+
+    def test_the_table_has_no_gnl_row_without_delivered_gnl(self) -> None:
+        from novomodelo_bridge.comparators.charts.costs import cost_breakdown_table
+
+        html = cost_breakdown_table({"GERACAO TERMICA": 10.0e9}, self._NOVOMODELO)
+
+        assert "cb-info" not in html
+        assert "GNL delivered" not in html
 
 
 class TestNetOfPenaltiesTable:

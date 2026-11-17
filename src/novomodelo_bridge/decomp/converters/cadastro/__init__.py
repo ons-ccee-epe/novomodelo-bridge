@@ -7,6 +7,9 @@ Thin facade — defines nothing itself; re-exports the public API from
 from __future__ import annotations
 
 from novomodelo_bridge.decomp.converters.cadastro.effective import (
+    EVAPORATION_MONTH_COLUMNS as EVAPORATION_MONTH_COLUMNS,
+)
+from novomodelo_bridge.decomp.converters.cadastro.effective import (
     CadastroResolutionReport as CadastroResolutionReport,
 )
 from novomodelo_bridge.decomp.converters.cadastro.effective import (

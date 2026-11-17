@@ -64,10 +64,8 @@ COST_CATEGORIES: tuple[CostCategory, ...] = (
     CostCategory(
         "Thermal & Contracts",
         (
-            # Anticipated (forward-committed, GNL) thermal fuel is booked on the
-            # decision-stage commitment column; grouped with thermal generation so
-            # the component matches the source model's CTERM, which books GNL at
-            # delivery.
+            # Anticipated (GNL) fuel, booked at the stage that commits it, is
+            # thermal generation cost too.
             CostComponent("Thermal", ("thermal_cost", "anticipated_thermal_cost")),
             CostComponent("Contract", ("contract_cost",)),
         ),

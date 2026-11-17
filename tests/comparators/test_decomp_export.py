@@ -54,6 +54,7 @@ def _make_decomp_dataset() -> ComparisonDataset:
             "variable": ["generation_mw"],
             "count": [1],
             "gap": [0.1],
+            "gap_excl_ties": [None],
             "band": ["moderate"],
             "mean_abs_diff": [10.0],
             "max_abs_diff": [10.0],

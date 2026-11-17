@@ -41,6 +41,7 @@ def _make_dataset() -> ComparisonDataset:
             "variable": ["storage"],
             "count": [1],
             "gap": [0.05],
+            "gap_excl_ties": [None],
             "band": ["close"],
             "mean_abs_diff": [5.0],
             "max_abs_diff": [5.0],

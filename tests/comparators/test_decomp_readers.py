@@ -5,7 +5,9 @@ file excerpts under ``tests/fixtures/decomp_results/`` for the file layout:
 the ``dec_oper_*`` and ``decomp.tim`` excerpts come from the
 sintetizador-decomp project's test mocks; ``avl_cortesfpha_dec``,
 ``eco_fpha_`` and ``dec_desvfpha`` are trimmed from a March 2026 weekly run;
-``dec_oper_sist`` is the head of an October 2026 run written by DECOMP 32.15.1.
+``dec_oper_sist`` is the head of an October 2026 run written by DECOMP 32.15.1;
+``relgnl.rv2`` is the whole GNL report of an April 2026 RV2 run written by
+DECOMP 32.0.1.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import shutil
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import polars as pl
@@ -22,10 +25,12 @@ from idecomp.decomp import (
     DecEstatFpha,
     Decomptim,
     DecOperEvap,
+    DecOperGnl,
     DecOperRee,
     DecOperRheSoft,
     EcoFpha,
     Relato,
+    Relgnl,
 )
 
 from novomodelo_bridge.comparators.decomp.readers import (
@@ -40,6 +45,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_dec_desvfpha,
     read_dec_estatfpha,
     read_dec_oper_evap,
+    read_dec_oper_gnl,
     read_dec_oper_ree,
     read_dec_oper_rhesoft,
     read_dec_oper_sist,
@@ -50,6 +56,7 @@ from novomodelo_bridge.comparators.decomp.readers import (
     read_relato_convergence,
     read_relato_costs,
     read_relato_membership,
+    read_relgnl_operation,
 )
 from novomodelo_bridge.comparators.decomp.results import reconcile_kdollars_to_reais
 from novomodelo_bridge.core import diagnostics as dx
@@ -814,6 +821,107 @@ class TestReadRelatoMembership:
     def test_missing_relato_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="relato"):
             read_relato_membership(tmp_path)
+
+
+class TestReadDecOperGnl:
+    """`read_dec_oper_gnl`: anticipated-thermal operation, root-only file."""
+
+    def test_finds_root_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "dec_oper_gnl.csv").touch()
+        stub_table = pd.DataFrame(
+            {
+                "estagio": [1],
+                "codigo_usina": [1],
+                "custo_incremental": [5.0],
+                "geracao_MW": [100.0],
+                "custo_geracao": [42.0],
+            }
+        )
+        monkeypatch.setattr(
+            DecOperGnl,
+            "read",
+            staticmethod(lambda _path, version=None: _StubFile(stub_table)),
+        )
+        result = read_dec_oper_gnl(tmp_path)
+        assert isinstance(result, pl.DataFrame)
+        assert result.height == 1
+        assert "custo_geracao" in result.columns
+        assert "geracao_MW" in result.columns
+
+    def test_saidas_only_is_not_found(self, tmp_path: Path) -> None:
+        saidas = tmp_path / "saidas"
+        saidas.mkdir()
+        (saidas / "dec_oper_gnl.csv").touch()
+        with pytest.raises(FileNotFoundError, match="dec_oper_gnl.csv") as exc_info:
+            read_dec_oper_gnl(tmp_path)
+        assert "saidas/" not in str(exc_info.value)
+
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError, match="dec_oper_gnl.csv"):
+            read_dec_oper_gnl(tmp_path)
+
+    def test_empty_parse_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "dec_oper_gnl.csv").touch()
+        monkeypatch.setattr(
+            DecOperGnl,
+            "read",
+            staticmethod(lambda _path, version=None: _StubFile(None)),
+        )
+        with pytest.raises(ValueError, match="parsed empty"):
+            read_dec_oper_gnl(tmp_path)
+
+    def test_result_excerpt_parses(self) -> None:
+        df = read_dec_oper_gnl(_RESULTS_EXCERPT)
+        assert df.height > 0
+
+
+class TestReadRelgnlOperation:
+    """`read_relgnl_operation`: the GNL report's operation table, per stage,
+    scenario and signalled period."""
+
+    def test_result_excerpt_parses_every_period(self) -> None:
+        df = read_relgnl_operation(_RESULTS_EXCERPT)
+
+        santa_cruz = df.filter(
+            (pl.col("nome_usina") == "SANTA CRUZ") & (pl.col("cenario") == 1)
+        )
+        assert santa_cruz.select("estagio", "semana", "custo").rows() == [
+            (1, "Sem  8*", 14966.6),
+            (1, "Sem  9*", 14966.6),
+            (1, "Sem 10", 14966.6),
+            (1, "Sem 11", 14966.6),
+            (1, "Sem 12", 14966.6),
+            (1, "MENSAL", 74833.2),
+            (4, "Mes  4", 75322.4),
+        ]
+        assert df.filter(pl.col("estagio") == 4)[
+            "probabilidade"
+        ].unique().sort().to_list() == [
+            pytest.approx(0.479705),
+            pytest.approx(0.520295),
+        ]
+
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError, match="relgnl"):
+            read_relgnl_operation(tmp_path)
+
+    def test_a_report_without_the_table_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "relgnl.rv0").touch()
+        monkeypatch.setattr(
+            Relgnl,
+            "read",
+            staticmethod(
+                lambda _path: SimpleNamespace(relatorio_operacao_termica=None)
+            ),
+        )
+        with pytest.raises(ValueError, match="relatorio_operacao_termica"):
+            read_relgnl_operation(tmp_path)
 
 
 class TestReadDecOperRee:
