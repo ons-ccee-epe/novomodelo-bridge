@@ -1,4 +1,5 @@
-"""Tests for the tailrace lateral-flow resolver over a DECOMP deck's VL, VU and VA records.
+"""Tests for the tailrace lateral flows of a DECOMP deck: the resolver over its VL,
+VU and VA records, and their emission in the converted hydros.
 
 The decomp_mini deck pins the converted shape of a real deck; synthetic
 register doubles pin each resolution rule.
@@ -6,25 +7,36 @@ register doubles pin each resolution rule.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Collection, Mapping, Sequence
+from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 import pytest
 
-from novomodelo_bridge.core.diagnostics import Severity, collect
+from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, collect
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
     build_effective_cadastro,
 )
+from novomodelo_bridge.decomp.converters.hydro import convert_hydros
 from novomodelo_bridge.decomp.converters.tailrace_flow import (
     ResolvedTailraceFlow,
+    TailraceFlowEntry,
     TailraceFlowResolution,
+    TailraceRegisters,
+    convert_tailrace_flow,
+    piecewise_tailrace_codes,
     resolve_tailrace_flow,
 )
-from tests.conftest import _FakeDadger
+from novomodelo_bridge.decomp.id_map import DecompIdMap
+from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+from tests.conftest import _FakeDadger, make_decomp_case
+from tests.decomp.conftest import flat_turbine_limits
 
 _LOGGER = "novomodelo_bridge.decomp.converters.tailrace_flow"
 _VERTJU = "influencia_vertimento_canal_fuga"
@@ -112,7 +124,7 @@ def _resolve(
         if frame is not None
     }
     return resolve_tailrace_flow(
-        _FakeDadger(**frames),
+        cast("TailraceRegisters", _FakeDadger(**frames)),
         effective,
         effective.base.index.tolist() if case is None else case,
         piecewise,
@@ -130,13 +142,20 @@ def _codes(resolution: TailraceFlowResolution) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def decomp_mini_resolution(decomp_mini_case: DecompCase) -> TailraceFlowResolution:
+def decomp_mini_effective(decomp_mini_case: DecompCase) -> EffectiveCadastro:
     effective, _ = build_effective_cadastro(
         decomp_mini_case.dadger, decomp_mini_case.hidr, decomp_mini_case.calendar
     )
+    return effective
+
+
+@pytest.fixture(scope="module")
+def decomp_mini_resolution(
+    decomp_mini_case: DecompCase, decomp_mini_effective: EffectiveCadastro
+) -> TailraceFlowResolution:
     return resolve_tailrace_flow(
         decomp_mini_case.dadger,
-        effective,
+        decomp_mini_effective,
         decomp_mini_case.id_map.hydro_codes,
         set(),
     )
@@ -618,3 +637,302 @@ class TestDiagnosticContract:
             "tailrace-vl-polynomial-shadowed": Severity.WARNING,
         }
         assert len(resolution.diagnostics) == 8
+
+
+def _id_map(*codes: int) -> DecompIdMap:
+    return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=codes)
+
+
+def _declaration(
+    own: float = 1.0,
+    outflow: tuple[tuple[int, float], ...] = (),
+    incremental: tuple[tuple[int, float], ...] = (),
+    polynomial: tuple[float, ...] | None = None,
+) -> ResolvedTailraceFlow:
+    return ResolvedTailraceFlow(own, outflow, incremental, polynomial)
+
+
+def _convert(
+    declarations: Mapping[int, ResolvedTailraceFlow],
+    *,
+    stage: Collection[int],
+    eligible: Collection[int] | None = None,
+    records: Sequence[tuple[str, int]] = (),
+) -> tuple[dict[int, TailraceFlowEntry], list[Diagnostic]]:
+    codes = sorted(declarations)
+    resolution = TailraceFlowResolution(declarations, tuple(records), ())
+    with collect() as found:
+        entries = convert_tailrace_flow(
+            resolution,
+            stage,
+            _id_map(*codes),
+            fpha_codes=stage if eligible is None else eligible,
+            effective=_effective(codes),
+        )
+    return entries, found
+
+
+class TestConvertTailraceFlow:
+    def test_a_constant_productivity_plant_gets_no_entry_and_is_reported(
+        self,
+    ) -> None:
+        entries, found = _convert(
+            {
+                1: _declaration(outflow=((2, 1.0),)),
+                2: _declaration(outflow=((1, 1.0),)),
+                3: _declaration(1.05),
+            },
+            stage={1, 2},
+            records=[("VL", 3), ("VU", 3), ("VU", 1), ("VU", 2), ("VL", 1)],
+        )
+        assert set(entries) == {1, 2}
+        (diagnostic,) = found
+        assert diagnostic.code == "tailrace-constant-productivity-omitted"
+        assert diagnostic.severity is Severity.WARNING
+        assert diagnostic.table is not None
+        assert diagnostic.table.columns == ["Code", "Name", "Records"]
+        assert [list(row) for row in diagnostic.table.rows] == [[3, "Plant3", "VL, VU"]]
+
+    def test_every_omitted_plant_is_one_row_in_code_order(self) -> None:
+        _, found = _convert(
+            {5: _declaration(1.1), 2: _declaration(polynomial=(1.0, 0, 0, 0, 0))},
+            stage=(),
+            records=[("VA", 5), ("VL", 2)],
+        )
+        (diagnostic,) = found
+        assert diagnostic.table is not None
+        assert [list(row) for row in diagnostic.table.rows] == [
+            [2, "Plant2", "VL"],
+            [5, "Plant5", "VA"],
+        ]
+
+    def test_an_eligible_plant_in_outage_at_every_stage_is_dropped_silently(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger=_LOGGER)
+        entries, found = _convert(
+            {1: _declaration(1.05), 2: _declaration(1.05)},
+            stage={1},
+            eligible={1, 2},
+        )
+        assert set(entries) == {1}
+        assert found == []
+        assert [r.levelno for r in caplog.records] == [logging.DEBUG]
+        assert "plant 2" in caplog.records[0].getMessage()
+
+    def test_a_default_declaration_on_a_non_fpha_plant_reports_nothing(self) -> None:
+        entries, found = _convert({1: _declaration()}, stage=())
+        assert entries == {}
+        assert found == []
+
+    def test_a_default_declaration_on_an_fpha_plant_carries_nothing(self) -> None:
+        entries, _ = _convert({1: _declaration()}, stage={1})
+        assert entries == {1: TailraceFlowEntry(None, None)}
+
+    def test_lists_are_sorted_by_hydro_id_and_a_self_entry_stays_incremental(
+        self,
+    ) -> None:
+        entries, _ = _convert(
+            {
+                10: _declaration(),
+                20: _declaration(
+                    1.0,
+                    outflow=((30, 0.5), (10, 0.25)),
+                    incremental=((30, 0.1), (20, 0.3), (10, 0.2)),
+                ),
+                30: _declaration(),
+            },
+            stage={10, 20, 30},
+        )
+        assert entries[20].tailrace_flow == {
+            "own_outflow_factor": 1.0,
+            "outflow_influences": [
+                {"hydro_id": 0, "factor": 0.25},
+                {"hydro_id": 2, "factor": 0.5},
+            ],
+            "incremental_inflow_influences": [
+                {"hydro_id": 0, "factor": 0.2},
+                {"hydro_id": 1, "factor": 0.3},
+                {"hydro_id": 2, "factor": 0.1},
+            ],
+        }
+
+    def test_a_non_default_own_factor_alone_is_written_with_empty_lists(
+        self,
+    ) -> None:
+        entries, _ = _convert({1: _declaration(1.03)}, stage={1})
+        assert entries[1].tailrace_flow == {
+            "own_outflow_factor": 1.03,
+            "outflow_influences": [],
+            "incremental_inflow_influences": [],
+        }
+
+    def test_the_polynomial_alone_leaves_the_declaration_default(self) -> None:
+        polynomial = (3.0, 0.5, 0.0, 0.0, 0.0)
+        entries, _ = _convert({1: _declaration(polynomial=polynomial)}, stage={1})
+        assert entries == {1: TailraceFlowEntry(None, polynomial)}
+
+    def test_the_findings_of_the_resolution_are_emitted_once(self) -> None:
+        effective = _effective([1, 2])
+        resolution = _resolve(
+            effective, vl=_vl((1, 1.0), (1, 1.1)), vu=_vu((1, 1, 0.5))
+        )
+        assert _codes(resolution) == [
+            "tailrace-duplicate-vl-dropped",
+            "tailrace-self-outflow-folded",
+        ]
+        with collect() as found:
+            convert_tailrace_flow(
+                resolution,
+                {1},
+                _id_map(1, 2),
+                fpha_codes={1},
+                effective=effective,
+            )
+        assert [d.code for d in found] == _codes(resolution)
+
+
+class _StubPolinjus:
+    def __init__(self, families: pd.DataFrame) -> None:
+        self._families = families
+
+    def hidreletrica_curvajusante(self, *, df: bool) -> pd.DataFrame:
+        return self._families
+
+
+def _case_with_polinjus(polinjus: object | None) -> DecompCase:
+    return make_decomp_case(Path("unused"), polinjus=polinjus)
+
+
+class TestPiecewiseTailraceCodes:
+    def test_a_deck_without_polinjus_has_no_piecewise_plant(self) -> None:
+        case = _case_with_polinjus(None)
+        assert piecewise_tailrace_codes(case, _id_map(1, 2)) == frozenset()
+
+    def test_a_polinjus_without_families_has_no_piecewise_plant(self) -> None:
+        case = _case_with_polinjus(_StubPolinjus(pd.DataFrame()))
+        assert piecewise_tailrace_codes(case, _id_map(1, 2)) == frozenset()
+
+    def test_only_operated_plants_with_a_family_count(self) -> None:
+        families = pd.DataFrame({"codigo_usina": [1, 1, 3, 9]})
+        case = _case_with_polinjus(_StubPolinjus(families))
+        assert piecewise_tailrace_codes(case, _id_map(1, 2, 3)) == {1, 3}
+
+    def test_decomp_mini_plants_with_declarations_have_a_family(
+        self, decomp_mini_case: DecompCase
+    ) -> None:
+        codes = piecewise_tailrace_codes(decomp_mini_case, decomp_mini_case.id_map)
+        assert {147, 146, 288, 66} <= codes
+
+
+_FLOW = {
+    "own_outflow_factor": 1.1,
+    "outflow_influences": [],
+    "incremental_inflow_influences": [],
+}
+
+
+def _hydros_by_id(
+    case: DecompCase,
+    effective: EffectiveCadastro,
+    **flows: Any,
+) -> dict[int, dict]:
+    doc = convert_hydros(
+        case,
+        case.id_map,
+        effective=effective,
+        turbine_limits=flat_turbine_limits(
+            case.id_map, len(case.calendar), group_counts={66: 2}
+        ),
+        fpha_codes={147, 146},
+        **flows,
+    )
+    return {hydro["id"]: hydro for hydro in doc["hydros"]}
+
+
+class TestHydroEntry:
+    def test_a_vl_polynomial_replaces_the_constant_tailrace(
+        self, decomp_mini_case: DecompCase, decomp_mini_effective: EffectiveCadastro
+    ) -> None:
+        case, effective = decomp_mini_case, decomp_mini_effective
+        polynomial = (7.5, 0.25, 0.0, 0.0, 0.0)
+        base = _hydros_by_id(case, effective)
+        stamped = _hydros_by_id(
+            case,
+            effective,
+            tailrace_flows={
+                147: TailraceFlowEntry(_FLOW, polynomial),
+                146: TailraceFlowEntry(None, None),
+            },
+        )
+        fontes_ab = case.id_map.hydro_id(147)
+        assert base[fontes_ab]["tailrace"]["coefficients"] != list(polynomial)
+        assert stamped[fontes_ab]["tailrace"] == {
+            "type": "polynomial",
+            "coefficients": list(polynomial),
+        }
+        assert stamped[fontes_ab]["tailrace_flow"] == _FLOW
+        assert {i: h for i, h in stamped.items() if i != fontes_ab} == {
+            i: h for i, h in base.items() if i != fontes_ab
+        }
+
+    def test_an_entry_of_a_plant_that_is_not_fpha_is_ignored(
+        self, decomp_mini_case: DecompCase, decomp_mini_effective: EffectiveCadastro
+    ) -> None:
+        flows = {288: TailraceFlowEntry(_FLOW, (1.0, 0.0, 0.0, 0.0, 0.0))}
+        assert _hydros_by_id(
+            decomp_mini_case, decomp_mini_effective, tailrace_flows=flows
+        ) == _hydros_by_id(decomp_mini_case, decomp_mini_effective)
+
+    def test_no_flows_leaves_the_hydros_as_without_the_keyword(
+        self, decomp_mini_case: DecompCase, decomp_mini_effective: EffectiveCadastro
+    ) -> None:
+        assert _hydros_by_id(
+            decomp_mini_case, decomp_mini_effective, tailrace_flows=None
+        ) == _hydros_by_id(decomp_mini_case, decomp_mini_effective)
+
+
+class TestDecompMiniEmission:
+    def test_hydros_carry_the_declarations_of_the_deck(
+        self, decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "out"
+        report = convert_decomp_case(decomp_mini_deck, out, force=True)
+        hydros = json.loads((out / "system" / "hydros.json").read_text("utf-8"))[
+            "hydros"
+        ]
+        id_map = decomp_mini_case.id_map
+
+        def influences(*pairs: tuple[int, float]) -> list[dict]:
+            return [
+                {"hydro_id": id_map.hydro_id(code), "factor": factor}
+                for code, factor in pairs
+            ]
+
+        assert {
+            hydro["name"]: hydro["tailrace_flow"]
+            for hydro in hydros
+            if "tailrace_flow" in hydro
+        } == {
+            "FONTES AB": {
+                "own_outflow_factor": 1.0,
+                "outflow_influences": influences((146, 1.0)),
+                "incremental_inflow_influences": [],
+            },
+            "FONTES C": {
+                "own_outflow_factor": 1.0,
+                "outflow_influences": influences((147, 1.0)),
+                "incremental_inflow_influences": [],
+            },
+            "BELO MONTE": {
+                "own_outflow_factor": 1.0,
+                "outflow_influences": influences((314, 1.0)),
+                "incremental_inflow_influences": influences((314, 0.07)),
+            },
+            "ITAIPU": {
+                "own_outflow_factor": 1.03,
+                "outflow_influences": influences((83, 1.17)),
+                "incremental_inflow_influences": [],
+            },
+        }
+        assert not [d for d in report.diagnostics if d.code.startswith("tailrace-")]

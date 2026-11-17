@@ -59,7 +59,7 @@ from novomodelo_bridge.decomp.converters.hydro.bounds import (
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from novomodelo_bridge.decomp.case import DecompCase
@@ -67,6 +67,7 @@ if TYPE_CHECKING:
         EffectiveCadastro,
     )
     from novomodelo_bridge.decomp.converters.hydro.turbine_limit import TurbineLimits
+    from novomodelo_bridge.decomp.converters.tailrace_flow import TailraceFlowEntry
     from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
@@ -405,6 +406,7 @@ class _HydroContext:
     evaporation_references: dict[int, float] | None
     travel_time_hours: dict[int, float] | None
     fpha_codes: set[int] | None
+    tailrace_flows: Mapping[int, TailraceFlowEntry] | None
 
 
 def _hydro_context(
@@ -415,6 +417,7 @@ def _hydro_context(
     turbine_limits: TurbineLimits,
     travel_time_hours: dict[int, float] | None,
     fpha_codes: set[int] | None,
+    tailrace_flows: Mapping[int, TailraceFlowEntry] | None,
 ) -> _HydroContext:
     """Read the operated plants' ``UH`` minimum outflows and every converted
     plant's evaporation flag (and, for Itaipu, the ``MP``/``FD`` registers),
@@ -462,6 +465,7 @@ def _hydro_context(
         evaporation_references=evaporation_references,
         travel_time_hours=travel_time_hours,
         fpha_codes=fpha_codes,
+        tailrace_flows=tailrace_flows,
     )
 
 
@@ -612,6 +616,15 @@ def _hydro_entry(code: int, context: _HydroContext, id_map: DecompIdMap) -> _Pla
         efficiency_row = fpha_efficiency_capped_row(
             code, name, entry["specific_productivity_mw_per_m3s_per_m"]
         )
+        flow = (context.tailrace_flows or {}).get(code)
+        if flow is not None:
+            if flow.polynomial is not None:
+                entry["tailrace"] = {
+                    "type": "polynomial",
+                    "coefficients": list(flow.polynomial),
+                }
+            if flow.tailrace_flow is not None:
+                entry["tailrace_flow"] = flow.tailrace_flow
     travel_time_hours = context.travel_time_hours
     if travel_time_hours and code in travel_time_hours and downstream is not None:
         entry["travel_time_hours"] = travel_time_hours[code]
@@ -745,6 +758,7 @@ def convert_hydros(
     turbine_limits: TurbineLimits,
     travel_time_hours: dict[int, float] | None = None,
     fpha_codes: set[int] | None = None,
+    tailrace_flows: Mapping[int, TailraceFlowEntry] | None = None,
 ) -> dict:
     """Build ``hydros.json`` for the converted plants: the operated ones and
     the plants marked ``NW``, which enter after the horizon.
@@ -774,6 +788,12 @@ def convert_hydros(
     — or the whole map being ``None`` — emits no ``travel_time_hours`` key
     (novomodelo defaults it to instantaneous). The key is emitted only when the plant
     also has a downstream arc for the delay to act on.
+
+    *tailrace_flows* (``{plant code: entry}``, from
+    :func:`novomodelo_bridge.decomp.converters.tailrace_flow.convert_tailrace_flow`)
+    stamps each FPHA plant's ``tailrace_flow`` and replaces its constant ``tailrace``
+    with the ``VL`` polynomial when the entry carries one; a plant absent from it, or
+    the map being ``None``, leaves its entry unchanged.
 
     ``max_generation_mw`` is the installed (un-derated, ``TEIF``/``IP``-free)
     max-over-stages envelope of the AC-adjusted rated unit-power sum,
@@ -821,6 +841,7 @@ def convert_hydros(
         turbine_limits=turbine_limits,
         travel_time_hours=travel_time_hours,
         fpha_codes=fpha_codes,
+        tailrace_flows=tailrace_flows,
     )
     hydros: list[dict] = []
     n_runofriver_collapsed = 0

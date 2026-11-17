@@ -4,6 +4,8 @@ and ``VA`` records.
 :func:`resolve_tailrace_flow` is pure: it returns each influenced plant's
 declaration in DECOMP plant codes together with every finding, so the
 converter and ``check decomp`` report the same diagnostics.
+:func:`convert_tailrace_flow` maps the declarations onto the entries the
+FPHA plants of ``hydros.json`` take.
 """
 
 from __future__ import annotations
@@ -14,14 +16,26 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
-from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
+from novomodelo_bridge.core.diagnostics import (
+    Diagnostic,
+    DiagnosticTable,
+    Severity,
+    emit,
+)
 from novomodelo_bridge.core.errors import FieldParseError
-from novomodelo_bridge.core.pandas_utils import as_float, as_frame, is_na
+from novomodelo_bridge.core.pandas_utils import (
+    as_float,
+    as_frame,
+    as_frame_or_empty,
+    is_na,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Mapping, Sequence
 
+    from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
+    from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 _LOG = logging.getLogger(__name__)
 
@@ -69,6 +83,19 @@ class TailraceFlowResolution:
     declarations: Mapping[int, ResolvedTailraceFlow]
     records: tuple[tuple[str, int], ...]
     diagnostics: tuple[Diagnostic, ...]
+
+
+@dataclass(frozen=True)
+class TailraceFlowEntry:
+    """What an FPHA plant's ``hydros.json`` entry takes from its declaration.
+
+    ``tailrace_flow`` is the entry's ``tailrace_flow`` value, ``None`` when the
+    declaration is the default. ``polynomial`` is the VL ``a0..a4`` that
+    replaces the entry's constant ``tailrace``.
+    """
+
+    tailrace_flow: dict | None
+    polynomial: tuple[float, ...] | None
 
 
 class _Record(NamedTuple):
@@ -258,6 +285,94 @@ def resolve_tailrace_flow(
         declarations=declarations,
         records=tuple((r.register, r.plant) for r in all_records),
         diagnostics=tuple(diagnostics),
+    )
+
+
+def piecewise_tailrace_codes(case: DecompCase, id_map: DecompIdMap) -> frozenset[int]:
+    """The operated plants whose tailrace comes from a ``polinjus`` family.
+
+    Empty when the deck has no ``polinjus`` file.
+    """
+    polinjus = case.polinjus
+    if polinjus is None:
+        return frozenset()
+    families = as_frame_or_empty(polinjus.hidreletrica_curvajusante(df=True))
+    return frozenset(
+        int(code) for code in families.get("codigo_usina", ())
+    ) & frozenset(id_map.hydro_codes)
+
+
+def convert_tailrace_flow(
+    resolution: TailraceFlowResolution,
+    fpha_stage_codes: Collection[int],
+    id_map: DecompIdMap,
+    *,
+    fpha_codes: Collection[int],
+    effective: EffectiveCadastro,
+) -> dict[int, TailraceFlowEntry]:
+    """Map *resolution* onto the ``hydros.json`` entries of the FPHA plants.
+
+    *fpha_stage_codes* are the plants with the FPHA model at one stage or
+    more, the only ones that get an entry; *fpha_codes* are the FPHA-eligible
+    plants. The diagnostics of *resolution* are emitted here. A plant with a
+    non-default declaration that gets no entry is reported, except an
+    eligible plant in outage at every stage, which generates nothing.
+    """
+    for diagnostic in resolution.diagnostics:
+        emit(diagnostic, logger=_LOG)
+    records = set(resolution.records)
+    entries: dict[int, TailraceFlowEntry] = {}
+    omitted: list[list[object]] = []
+    for code in sorted(resolution.declarations):
+        entry = _entry(resolution.declarations[code], id_map)
+        if code in fpha_stage_codes:
+            entries[code] = entry
+        elif entry.tailrace_flow is None and entry.polynomial is None:
+            continue
+        elif code in fpha_codes:
+            _LOG.debug(
+                "tailrace declaration of plant %d dropped: the plant is in "
+                "outage at every stage",
+                code,
+            )
+        else:
+            omitted.append(
+                [
+                    code,
+                    str(effective.base.loc[code, "nome_usina"]).strip(),
+                    ", ".join(r for r in _REGISTER_ORDER if (r, code) in records),
+                ]
+            )
+    if omitted:
+        emit(_constant_productivity_omitted_diagnostic(omitted), logger=_LOG)
+    return entries
+
+
+def _entry(declaration: ResolvedTailraceFlow, id_map: DecompIdMap) -> TailraceFlowEntry:
+    outflow = _influence_list(declaration.outflow_influences, id_map)
+    incremental = _influence_list(declaration.incremental_inflow_influences, id_map)
+    default = declaration.own_outflow_factor == 1.0 and not outflow and not incremental
+    return TailraceFlowEntry(
+        None
+        if default
+        else {
+            "own_outflow_factor": declaration.own_outflow_factor,
+            "outflow_influences": outflow,
+            "incremental_inflow_influences": incremental,
+        },
+        declaration.polynomial,
+    )
+
+
+def _influence_list(
+    influences: Iterable[tuple[int, float]], id_map: DecompIdMap
+) -> list[dict]:
+    return sorted(
+        (
+            {"hydro_id": id_map.hydro_id(code), "factor": factor}
+            for code, factor in influences
+        ),
+        key=lambda influence: influence["hydro_id"],
     )
 
 
@@ -522,5 +637,29 @@ def _polynomial_shadowed_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnos
         ),
         table=DiagnosticTable(
             columns=["Code", "Name"], rows=rows, justify=["right", "left"]
+        ),
+    )
+
+
+def _constant_productivity_omitted_diagnostic(
+    rows: Sequence[Sequence[object]],
+) -> Diagnostic:
+    """WARNING: the omitted records carry a term DECOMP applies."""
+    return Diagnostic(
+        code="tailrace-constant-productivity-omitted",
+        severity=Severity.WARNING,
+        category=_CATEGORY,
+        title=f"Lateral flows not converted for plants with constant productivity ({len(rows)})",
+        summary=(
+            "The listed plants have VL, VU or VA records, but the conversion "
+            "gives them the constant-productivity model, whose productivity "
+            "does not follow the tailrace level. The records are not "
+            "converted, so the tailrace of these plants lacks the lateral "
+            "flows DECOMP applies and the results differ from DECOMP."
+        ),
+        table=DiagnosticTable(
+            columns=["Code", "Name", "Records"],
+            rows=rows,
+            justify=["right", "left", "left"],
         ),
     )
