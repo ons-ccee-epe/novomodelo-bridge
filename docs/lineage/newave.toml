@@ -64,7 +64,7 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   path = "modeling.inflow_non_negativity.method"
   from = []
   status = "constant"
-  how = "Sempre `truncation_with_penalty` (a conversão DECOMP usa `penalty`): a afluência incremental negativa mantém seu valor no balanço hídrico e nas defasagens, e a folga penalizada por `hydro.inflow_nonnegativity_cost` pode repor no máximo a água que falta, `max(-afluência, 0)`."
+  how = "Sempre `truncation` (a conversão DECOMP usa `penalty`), o tratamento do NEWAVE: o PL vê a afluência incremental negativa como zero, sem custo, e as defasagens mantêm o valor original."
 
   [[output.field]]
   path = "simulation.enabled"
@@ -596,7 +596,7 @@ summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalid
     { file = "sistema", item = "custo_deficit · custo" },
     { file = "hidr", item = "cadastro · produtibilidade_especifica" },
   ]
-  how = "`water_withdrawal_violation_cost` + 1 R$/(m³/s), para que a folga de afluência nunca seja mais barata que a violação de desvio de água. Sem contrapartida no NEWAVE."
+  how = "`water_withdrawal_violation_cost` + 1 R$/(m³/s), para que a folga de afluência nunca seja mais barata que a violação de desvio de água. Sem contrapartida no NEWAVE; sem efeito com `truncation`, o método desta conversão, que não precifica a folga."
 
   [[output.field]]
   path = "hydro.storage_violation_below_cost"

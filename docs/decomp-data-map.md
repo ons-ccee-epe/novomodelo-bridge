@@ -167,7 +167,7 @@ Critérios de parada (`GP` como gap relativo e `NI` como limite de iterações) 
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `modeling.inflow_non_negativity.method` | — *(constante)* | Sempre `penalty`, diferente da conversão NEWAVE (`truncation_with_penalty`): uma correção sem limite, penalizada por `hydro.inflow_nonnegativity_cost`, eleva a afluência incremental no balanço hídrico. Sem limite, ela mantém factível a primeira passada forward (ainda sem cortes) diante de um piso de armazenamento rígido em estágio posterior, como uma meta de volume de HV de uma só usina, e não compromete a regra de parada por gap. |
+| `modeling.inflow_non_negativity.method` | — *(constante)* | Sempre `penalty`, diferente da conversão NEWAVE (`truncation`): uma correção sem limite, penalizada por `hydro.inflow_nonnegativity_cost`, eleva a afluência incremental no balanço hídrico. Sem limite, ela mantém factível a primeira passada forward (ainda sem cortes) diante de um piso de armazenamento rígido em estágio posterior, como uma meta de volume de HV de uma só usina, e não compromete a regra de parada por gap. |
 | `simulation.enabled` | — *(constante)* | Sempre `true`: a simulação final é executada sobre a árvore explícita. |
 | `simulation.selection.method` | — *(constante)* | Sempre `enumerated`: a simulação percorre cada caminho raiz-folha do grafo de nós com a probabilidade do próprio nó. |
 | `simulation.cut_set` | — *(constante)* | Sempre `active`: a simulação usa os cortes ativos ao fim do treinamento. A conversão não ativa seleção de cortes, então todos os cortes gerados no treinamento estão ativos. |
