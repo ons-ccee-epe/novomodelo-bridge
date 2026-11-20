@@ -2542,60 +2542,6 @@ summary = "Histórico de vazões incrementais mensais de `vazoes.dat`, uma linha
   how = "Vazão incremental (m³/s): vazão natural do posto menos a soma das vazões naturais dos postos das usinas imediatamente a montante da usina na cascata de `confhd.dat`, cada posto uma vez (usinas NE/NC no caminho são atravessadas; usinas NE com enchimento em `exph.dat` contam como nó da cascata). Usina no posto artificial (300), sem posto fluviométrico, tem vazão natural nula: recebe série zero, sem subtração, e um posto artificial a montante não é subtraído. A série é truncada no mês anterior ao início do estudo."
 
 # ---------------------------------------------------------------------------
-# scenarios/inflow_seasonal_stats.parquet
-# ---------------------------------------------------------------------------
-[[output]]
-path = "scenarios/inflow_seasonal_stats.parquet"
-kind = "parquet"
-when = ""
-module = "src/novomodelo_bridge/newave/converters/stochastic.py"
-reads = [
-  { file = "vazoes" },
-  { file = "confhd" },
-  { file = "dger" },
-  { file = "hidr" },
-  { file = "exph" },
-]
-summary = "Média e desvio-padrão da vazão incremental histórica por usina e estágio, calculados por mês-calendário sobre `vazoes.dat`. A largura da matriz (320 ou 600 postos) não é declarada em nenhum lugar do deck e vem do tamanho do arquivo, descartada a largura cujo histórico, contado a partir de `ano_inicial_historico`, terminaria depois do ano de início do estudo; um tamanho que ainda sirva às duas larguras é lido como 320, com aviso."
-
-  [[output.field]]
-  path = "hydro_id"
-  from = [ { file = "confhd", item = "codigo_usina" } ]
-  status = "derived"
-  how = "Id Novomodelo 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). Toda usina ativa recebe uma linha por estágio."
-
-  [[output.field]]
-  path = "stage_id"
-  from = [
-    { file = "dger", item = "mes_inicio_estudo" },
-    { file = "dger", item = "num_anos_estudo" },
-    { file = "dger", item = "num_anos_pos_estudo" },
-  ]
-  status = "derived"
-  how = "Índice 0-based do estágio ao longo de todo o horizonte (estudo mais pós-estudo) definido em `dger.dat`; o estágio determina o mês-calendário usado na estatística."
-
-  [[output.field]]
-  path = "mean_m3s"
-  from = [
-    { file = "vazoes", item = "1..N (coluna por posto)" },
-    { file = "confhd", item = "posto" },
-    { file = "confhd", item = "codigo_usina_jusante" },
-    { file = "dger", item = "ano_inicial_historico" },
-    { file = "dger", item = "ano_inicio_estudo" },
-    { file = "dger", item = "mes_inicio_estudo" },
-  ]
-  how = "Média, ao longo dos anos do histórico (até o mês anterior ao início do estudo), da vazão incremental da usina no mês-calendário do estágio, calculada como em `scenarios/inflow_history.parquet`. Usina no posto artificial (300), ou cujo posto não tem coluna em `vazoes.dat`, recebe 0."
-
-  [[output.field]]
-  path = "std_m3s"
-  from = [
-    { file = "vazoes", item = "1..N (coluna por posto)" },
-    { file = "confhd", item = "posto" },
-    { file = "confhd", item = "codigo_usina_jusante" },
-  ]
-  how = "Desvio-padrão amostral (n − 1) da mesma amostra de vazões incrementais do mês-calendário; 0 quando há uma única observação, quando o posto não tem série ou quando a usina está no posto artificial (300)."
-
-# ---------------------------------------------------------------------------
 # scenarios/load_seasonal_stats.parquet
 # ---------------------------------------------------------------------------
 [[output]]

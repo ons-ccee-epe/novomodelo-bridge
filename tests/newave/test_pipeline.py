@@ -77,7 +77,6 @@ class TestConvertNewaweCasePipeline:
             dst / "system" / "buses.json",
             dst / "system" / "lines.json",
             dst / "system" / "pumping_stations.json",
-            dst / "scenarios" / "inflow_seasonal_stats.parquet",
             dst / "scenarios" / "load_seasonal_stats.parquet",
             dst / "scenarios" / "inflow_history.parquet",
             dst / "system" / "hydro_geometry.parquet",
@@ -99,6 +98,15 @@ class TestConvertNewaweCasePipeline:
         _run_with_all_mocks(src, dst)
 
         assert not (dst / "constraints" / "exchange_factors.json").exists()
+
+    def test_inflow_seasonal_stats_are_left_to_novomodelo(self, tmp_path: Path) -> None:
+        src = _make_fake_newave_dir(tmp_path)
+        dst = tmp_path / "novomodelo_case"
+
+        _run_with_all_mocks(src, dst)
+
+        assert not (dst / "scenarios" / "inflow_seasonal_stats.parquet").exists()
+        assert (dst / "scenarios" / "inflow_history.parquet").exists()
 
     def test_load_factors_and_ncs_factors_written_verbatim(
         self, tmp_path: Path
@@ -145,8 +153,6 @@ class TestConvertNewaweCasePipeline:
 
         _run_with_all_mocks(src, dst)
 
-        inflow = pq.read_table(dst / "scenarios" / "inflow_seasonal_stats.parquet")
-        assert inflow.num_columns == 4
         load = pq.read_table(dst / "scenarios" / "load_seasonal_stats.parquet")
         assert load.num_columns == 4
 

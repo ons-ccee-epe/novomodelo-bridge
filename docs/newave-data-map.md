@@ -61,17 +61,17 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 
 ### `scenarios/`
 
-| Arquivo do deck | `inflow_history.parquet` | `inflow_seasonal_stats.parquet` | `load_seasonal_stats.parquet` | `load_factors.json` | `non_controllable_stats.parquet` | `non_controllable_factors.json` |
-| --- | :-: | :-: | :-: | :-: | :-: | :-: |
-| `dger.dat` | ● | ● | ● | ● | ● | ● |
-| `confhd.dat` | ● | ● |  |  |  |  |
-| `sistema.dat` |  |  | ● | ● | ● | ● |
-| `ree.dat` |  |  | ● | ● | ● | ● |
-| `patamar.dat` |  |  |  | ● |  | ● |
-| `hidr.dat` | ● | ● |  |  |  |  |
-| `vazoes.dat` | ● | ● |  |  |  |  |
-| `exph.dat` (opcional) | ● | ● |  |  |  |  |
-| `c_adic.dat` (opcional) |  |  | ● |  |  |  |
+| Arquivo do deck | `inflow_history.parquet` | `load_seasonal_stats.parquet` | `load_factors.json` | `non_controllable_stats.parquet` | `non_controllable_factors.json` |
+| --- | :-: | :-: | :-: | :-: | :-: |
+| `dger.dat` | ● | ● | ● | ● | ● |
+| `confhd.dat` | ● |  |  |  |  |
+| `sistema.dat` |  | ● | ● | ● | ● |
+| `ree.dat` |  | ● | ● | ● | ● |
+| `patamar.dat` |  |  | ● |  | ● |
+| `hidr.dat` | ● |  |  |  |  |
+| `vazoes.dat` | ● |  |  |  |  |
+| `exph.dat` (opcional) | ● |  |  |  |  |
+| `c_adic.dat` (opcional) |  | ● |  |  |  |
 
 ### `constraints/`
 
@@ -483,21 +483,6 @@ Histórico de vazões incrementais mensais de `vazoes.dat`, uma linha por usina 
 | `end_date` | `dger.dat` › `ano_inicial_historico` *(derivado)* | Primeiro dia do mês seguinte (janela semiaberta `[start_date, end_date)`). |
 | `value_m3s` | `vazoes.dat` › `1..N (coluna por posto)`, `confhd.dat` › `posto`, `confhd.dat` › `codigo_usina_jusante`, `confhd.dat` › `usina_existente`, `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `mes_inicio_estudo` | Vazão incremental (m³/s): vazão natural do posto menos a soma das vazões naturais dos postos das usinas imediatamente a montante da usina na cascata de `confhd.dat`, cada posto uma vez (usinas NE/NC no caminho são atravessadas; usinas NE com enchimento em `exph.dat` contam como nó da cascata). Usina no posto artificial (300), sem posto fluviométrico, tem vazão natural nula: recebe série zero, sem subtração, e um posto artificial a montante não é subtraído. A série é truncada no mês anterior ao início do estudo. |
 
-### `scenarios/inflow_seasonal_stats.parquet`
-
-**Lê:** `vazoes.dat`, `confhd.dat`, `dger.dat`, `hidr.dat`, `exph.dat` (opcional)  
-**Quando:** sempre.  
-**Código:** `src/novomodelo_bridge/newave/converters/stochastic.py`
-
-Média e desvio-padrão da vazão incremental histórica por usina e estágio, calculados por mês-calendário sobre `vazoes.dat`. A largura da matriz (320 ou 600 postos) não é declarada em nenhum lugar do deck e vem do tamanho do arquivo, descartada a largura cujo histórico, contado a partir de `ano_inicial_historico`, terminaria depois do ano de início do estudo; um tamanho que ainda sirva às duas larguras é lido como 320, com aviso.
-
-| Coluna | Origem | Transformação |
-| --- | --- | --- |
-| `hydro_id` | `confhd.dat` › `codigo_usina` *(derivado)* | Id Novomodelo 0-based da usina (ordem crescente de `codigo_usina` entre as usinas ativas). Toda usina ativa recebe uma linha por estágio. |
-| `stage_id` | `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `num_anos_estudo`, `dger.dat` › `num_anos_pos_estudo` *(derivado)* | Índice 0-based do estágio ao longo de todo o horizonte (estudo mais pós-estudo) definido em `dger.dat`; o estágio determina o mês-calendário usado na estatística. |
-| `mean_m3s` | `vazoes.dat` › `1..N (coluna por posto)`, `confhd.dat` › `posto`, `confhd.dat` › `codigo_usina_jusante`, `dger.dat` › `ano_inicial_historico`, `dger.dat` › `ano_inicio_estudo`, `dger.dat` › `mes_inicio_estudo` | Média, ao longo dos anos do histórico (até o mês anterior ao início do estudo), da vazão incremental da usina no mês-calendário do estágio, calculada como em `scenarios/inflow_history.parquet`. Usina no posto artificial (300), ou cujo posto não tem coluna em `vazoes.dat`, recebe 0. |
-| `std_m3s` | `vazoes.dat` › `1..N (coluna por posto)`, `confhd.dat` › `posto`, `confhd.dat` › `codigo_usina_jusante` | Desvio-padrão amostral (n − 1) da mesma amostra de vazões incrementais do mês-calendário; 0 quando há uma única observação, quando o posto não tem série ou quando a usina está no posto artificial (300). |
-
 ### `scenarios/load_seasonal_stats.parquet`
 
 **Lê:** `sistema.dat`, `c_adic.dat` (opcional), `dger.dat`, `ree.dat`  
@@ -722,7 +707,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dger.dat`
 
-**Estado:** convertido em parte. **Lido por:** 27 arquivos gerados; ver a visão geral.
+**Estado:** convertido em parte. **Lido por:** 26 arquivos gerados; ver a visão geral.
 
 O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações, CVaR, curva de aversão, simulação final, reamostragem, seleção de cortes, GNL antecipado, FPHA, outros usos, sazonalização de VMAXT/VMINT/CFUGA-CMONT, estados dos cortes). Os demais flags são agrupados abaixo por tema.
 
@@ -862,12 +847,6 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 - `ano_inicial_historico` → `scenarios/inflow_history.parquet` › `end_date`
 - `ano_inicio_estudo` → `scenarios/inflow_history.parquet` › `value_m3s`
 - `mes_inicio_estudo` → `scenarios/inflow_history.parquet` › `value_m3s`
-- `mes_inicio_estudo` → `scenarios/inflow_seasonal_stats.parquet` › `stage_id`
-- `num_anos_estudo` → `scenarios/inflow_seasonal_stats.parquet` › `stage_id`
-- `num_anos_pos_estudo` → `scenarios/inflow_seasonal_stats.parquet` › `stage_id`
-- `ano_inicial_historico` → `scenarios/inflow_seasonal_stats.parquet` › `mean_m3s`
-- `ano_inicio_estudo` → `scenarios/inflow_seasonal_stats.parquet` › `mean_m3s`
-- `mes_inicio_estudo` → `scenarios/inflow_seasonal_stats.parquet` › `mean_m3s`
 - `mes_inicio_estudo` → `scenarios/load_seasonal_stats.parquet` › `stage_id`
 - `num_anos_estudo` → `scenarios/load_seasonal_stats.parquet` › `stage_id`
 - `num_anos_pos_estudo` → `scenarios/load_seasonal_stats.parquet` › `stage_id`
@@ -899,7 +878,7 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 
 ### `confhd.dat`
 
-**Estado:** convertido em parte. **Lido por:** 17 arquivos gerados; ver a visão geral.
+**Estado:** convertido em parte. **Lido por:** 16 arquivos gerados; ver a visão geral.
 
 Entram no caso as usinas em operação e não fictícias — `usina_existente` igual a `EX` ou a `EE` (existente em expansão) —, mais as usinas `NE` com registro de enchimento de volume morto em `exph.dat`. A usina `EE` opera desde o primeiro estágio e sua capacidade cresce conforme as máquinas de `exph.dat` entram.
 
@@ -957,11 +936,6 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `posto` → `scenarios/inflow_history.parquet` › `value_m3s`
 - `codigo_usina_jusante` → `scenarios/inflow_history.parquet` › `value_m3s`
 - `usina_existente` → `scenarios/inflow_history.parquet` › `value_m3s`
-- `codigo_usina` → `scenarios/inflow_seasonal_stats.parquet` › `hydro_id`
-- `posto` → `scenarios/inflow_seasonal_stats.parquet` › `mean_m3s`
-- `codigo_usina_jusante` → `scenarios/inflow_seasonal_stats.parquet` › `mean_m3s`
-- `posto` → `scenarios/inflow_seasonal_stats.parquet` › `std_m3s`
-- `codigo_usina_jusante` → `scenarios/inflow_seasonal_stats.parquet` › `std_m3s`
 - `ree` → `constraints/generic_constraints.json` › `constraints[].expression`
 - `codigo_usina` → `constraints/generic_constraints.json` › `constraints[].expression`
 - `usina_existente` → `constraints/generic_constraints.json` › `constraints[].expression`
@@ -1137,7 +1111,7 @@ Todas as colunas de `usinas` são lidas (potência, FCMAX, TEIF, IP, GTMIN por m
 
 ### `hidr.dat`
 
-**Estado:** convertido em parte. **Lido por:** 14 arquivos gerados; ver a visão geral.
+**Estado:** convertido em parte. **Lido por:** 13 arquivos gerados; ver a visão geral.
 
 Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alimentam nenhuma saída.
 
@@ -1326,13 +1300,11 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 
 ### `vazoes.dat`
 
-**Estado:** convertido. **Lido por:** `scenarios/inflow_history.parquet`, `scenarios/inflow_seasonal_stats.parquet`, `system/hydro_production_models.json`.
+**Estado:** convertido. **Lido por:** `scenarios/inflow_history.parquet`, `system/hydro_production_models.json`.
 
 - `1..N (coluna por posto)` → `system/hydro_production_models.json` › `production_models[].stage_ranges[].fpha_config.spillage_fit_max_m3s`
 - `1..N (coluna por posto)` → `system/hydro_production_models.json` › `production_models[].seasons[].fpha_config.spillage_fit_max_m3s`
 - `1..N (coluna por posto)` → `scenarios/inflow_history.parquet` › `value_m3s`
-- `1..N (coluna por posto)` → `scenarios/inflow_seasonal_stats.parquet` › `mean_m3s`
-- `1..N (coluna por posto)` → `scenarios/inflow_seasonal_stats.parquet` › `std_m3s`
 
 ### `modif.dat`
 
@@ -1542,7 +1514,7 @@ Os cinco tipos (`POTEF`, `FCMAX`, `TEIFT`, `GTMIN`, `IPTER`) são aplicados em `
 
 ### `exph.dat`
 
-**Estado:** convertido em parte. **Lido por:** 14 arquivos gerados; ver a visão geral.
+**Estado:** convertido em parte. **Lido por:** 13 arquivos gerados; ver a visão geral.
 
 Só o registro de enchimento (`data_inicio_enchimento`, `duracao_enchimento`, `volume_morto`) e as datas de entrada de máquinas (`data_entrada_operacao`, `conjunto_maquina_entrada`) são lidos. A usina EE não traz registro de enchimento: apenas linhas de entrada de máquina.
 
