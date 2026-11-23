@@ -23,7 +23,6 @@ from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.dashboard.data import (
     _aggregate_timing_by_iteration,
     _correct_wall_times_from_convergence,
-    _normalize_output_columns,
     entity_name,
     hydro_bus_label,
     load_entity_metadata,
@@ -97,16 +96,6 @@ def test_load_names_missing_system_dir_returns_empty(tmp_path: Path) -> None:
     assert result == {}
 
 
-def test_load_names_uses_id_as_fallback_when_name_absent(tmp_path: Path) -> None:
-    # Arrange — item has no "name" key
-    hydros_json = {"hydros": [{"id": 5}]}
-    _write_json(tmp_path / "system" / "hydros.json", hydros_json)
-
-    result = load_names(tmp_path)
-
-    assert result[("hydros", 5)] == "5"
-
-
 def test_load_names_multiple_entity_types(tmp_path: Path) -> None:
     _write_json(
         tmp_path / "system" / "hydros.json",
@@ -126,12 +115,12 @@ def test_load_names_multiple_entity_types(tmp_path: Path) -> None:
 def test_load_names_reads_line_names(tmp_path: Path) -> None:
     _write_json(
         tmp_path / "system" / "lines.json",
-        {"lines": [{"id": 0, "name": "SE-S"}, {"id": 1}]},
+        {"lines": [{"id": 0, "name": "SE-S"}, {"id": 1, "name": "S-SE"}]},
     )
 
     result = load_names(tmp_path)
 
-    assert result == {("lines", 0): "SE-S", ("lines", 1): "1"}
+    assert result == {("lines", 0): "SE-S", ("lines", 1): "S-SE"}
 
 
 def test_load_names_without_a_readable_lines_json_keeps_the_other_names(
@@ -288,13 +277,19 @@ def test_load_hydro_bus_map_omits_split_plant_without_one_loaded_bus(
     assert ambiguous_diags[0].table.rows == [[1, "X", "10, 20", loaded]]
 
 
+def _orphan(**override: Any) -> dict:
+    plant = hydro_with_group(3, 0, name="ORPHAN")
+    del plant["unit_groups"]
+    return {**plant, **override}
+
+
 @pytest.mark.parametrize(
     "plant",
     [
-        {"id": 3, "name": "ORPHAN"},
-        {"id": 3, "name": "ORPHAN", "unit_groups": []},
-        {"id": 3, "name": "ORPHAN", "unit_groups": [{"id": 0}]},
-        {"id": 3, "name": "ORPHAN", "unit_groups": "SE"},
+        _orphan(),
+        _orphan(unit_groups=[]),
+        _orphan(unit_groups=[{"id": 0}]),
+        _orphan(unit_groups="SE"),
     ],
 )
 def test_a_plant_without_unit_groups_has_no_bus_and_is_listed(
@@ -421,10 +416,8 @@ def test_load_hydro_metadata_extracts_fields(tmp_path: Path) -> None:
                 1,
                 name="Belo Monte",
                 reservoir={"max_storage_hm3": 5000.0, "min_storage_hm3": 100.0},
-                generation={
-                    "max_generation_mw": 11000.0,
-                    "max_turbined_m3s": 150000.0,
-                },
+                max_generation_mw=11000.0,
+                max_turbined_m3s=150000.0,
             )
         ]
     }
@@ -947,10 +940,8 @@ class TestDashboardIntegration:
                             "max_storage_hm3": 5000.0,
                             "min_storage_hm3": 100.0,
                         },
-                        generation={
-                            "max_generation_mw": 1000.0,
-                            "max_turbined_m3s": 12000.0,
-                        },
+                        max_generation_mw=1000.0,
+                        max_turbined_m3s=12000.0,
                     )
                 ]
             },
@@ -1038,7 +1029,7 @@ class TestDashboardIntegration:
             {
                 "iteration": pa.array([1, 2], type=pa.int32()),
                 "lower_bound": pa.array([1.0e9, 1.1e9], type=pa.float64()),
-                "upper_bound_mean": pa.array([1.5e9, 1.4e9], type=pa.float64()),
+                "upper_bound": pa.array([1.5e9, 1.4e9], type=pa.float64()),
                 "upper_bound_std": pa.array([1.0e7, 9.0e6], type=pa.float64()),
                 "gap_percent": pa.array([33.3, 21.4], type=pa.float64()),
                 "cuts_added": pa.array([10, 8], type=pa.int32()),
@@ -1373,7 +1364,7 @@ def _v2_case(tmp_path: Path) -> Path:
         {
             "iteration": pa.array([1, 2], type=pa.int32()),
             "lower_bound": pa.array([1.0e9, 1.1e9], type=pa.float64()),
-            "upper_bound_mean": pa.array([1.5e9, 1.4e9], type=pa.float64()),
+            "upper_bound": pa.array([1.5e9, 1.4e9], type=pa.float64()),
             "upper_bound_std": pa.array([1.0e7, 9.0e6], type=pa.float64()),
             "gap_percent": pa.array([33.3, 21.4], type=pa.float64()),
             "cuts_added": pa.array([10, 8], type=pa.int32()),
@@ -1477,7 +1468,7 @@ def test_load_training_metadata_present(_v2_case: Path) -> None:
     _write_json(
         _v2_case / "output" / "training" / "metadata.json",
         {
-            "cobre_version": "0.3.2",
+            "software_version": "0.21.0",
             "hostname": "test",
             "solver": "highs",
             "started_at": "2026-04-06T04:27:06Z",
@@ -1490,7 +1481,7 @@ def test_load_training_metadata_present(_v2_case: Path) -> None:
 
     data = DashboardData.load(_v2_case)
 
-    assert data.training_metadata["cobre_version"] == "0.3.2"
+    assert data.training_metadata["software_version"] == "0.21.0"
     assert data.training_metadata["duration_seconds"] == 136.135
     assert (
         data.training_metadata["convergence"]["termination_reason"] == "iteration_limit"
@@ -1515,7 +1506,7 @@ def test_simulation_metadata_field(_v2_case: Path) -> None:
     _write_json(
         _v2_case / "output" / "simulation" / "metadata.json",
         {
-            "cobre_version": "0.3.2",
+            "software_version": "0.21.0",
             "duration_seconds": 48.837,
             "status": "complete",
             "scenarios": {"total": 100, "completed": 100, "failed": 0},
@@ -2050,67 +2041,3 @@ class TestSectionLoaders:
         assert data.block_hours == temporal.block_hours
         assert data.discount_rate == temporal.discount_rate
         assert data.line_meta == temporal.line_meta
-
-
-# ---------------------------------------------------------------------------
-# _normalize_output_columns — novomodelo diagnostic-output axis renames
-# ---------------------------------------------------------------------------
-
-
-def test_normalize_output_columns_maps_novomodelo_solver_axes() -> None:
-    """``stage_id``/``opening_index`` map to the dashboard's ``stage``/``opening``."""
-    df = pd.DataFrame(
-        {
-            "stage_id": [0, 1, None],
-            "opening_index": [0, None, 2],
-            "lp_solves": [3, 4, 5],
-        }
-    )
-    out = _normalize_output_columns(df)
-    assert "stage" in out.columns and "stage_id" not in out.columns
-    assert "opening" in out.columns and "opening_index" not in out.columns
-    # A NULL stage/opening survives as NaN (not refilled to a -1 sentinel), so
-    # the chart layer's ``>= 0`` filters and ``notna()`` checks keep working.
-    assert out["stage"].isna().sum() == 1
-    assert out["opening"].isna().sum() == 1
-
-
-def test_normalize_output_columns_maps_novomodelo_convergence_upper_bound() -> None:
-    """``upper_bound`` maps to ``upper_bound_mean``; ``upper_bound_std`` kept."""
-    df = pd.DataFrame(
-        {
-            "iteration": [0, 1],
-            "upper_bound": [1.5e9, 1.4e9],
-            "upper_bound_std": [1.0e7, None],
-            "upper_bound_kind": ["statistical", "exact"],
-        }
-    )
-    out = _normalize_output_columns(df)
-    assert "upper_bound_mean" in out.columns and "upper_bound" not in out.columns
-    # The prefix-sharing std/kind columns must not be swept up by the rename.
-    assert "upper_bound_std" in out.columns
-    assert "upper_bound_kind" in out.columns
-
-
-def test_normalize_output_columns_leaves_dashboard_named_frame_unchanged() -> None:
-    """A frame already carrying the dashboard's names passes through untouched."""
-    df = pd.DataFrame(
-        {"stage": [0, 1], "upper_bound_mean": [1.0, 2.0], "upper_bound_std": [0.1, 0.1]}
-    )
-    out = _normalize_output_columns(df)
-    assert list(out.columns) == ["stage", "upper_bound_mean", "upper_bound_std"]
-
-
-def test_normalize_output_columns_does_not_clobber_existing_dashboard_name() -> None:
-    """If both spellings are present the dashboard's column wins (no overwrite)."""
-    df = pd.DataFrame({"stage": [7], "stage_id": [0]})
-    out = _normalize_output_columns(df)
-    # ``stage`` already exists, so ``stage_id`` is not renamed onto it.
-    assert out["stage"].tolist() == [7]
-    assert "stage_id" in out.columns
-
-
-def test_normalize_output_columns_empty_frame() -> None:
-    """An empty (absent-file) frame is returned as-is."""
-    empty = pd.DataFrame()
-    assert _normalize_output_columns(empty).empty

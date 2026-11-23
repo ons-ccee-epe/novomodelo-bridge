@@ -148,7 +148,7 @@ class OutOfHorizon:
 
 def _out_of_horizon_record(
     code: int,
-    mes: str | int | float | None,
+    mes: str | float | None,
     ano: int | float | None,
     param: str,
     calendar: Sequence[OperativeStage],

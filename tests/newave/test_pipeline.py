@@ -281,7 +281,7 @@ class TestOptionalLinesAndThermals:
         from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         src = _make_fake_newave_dir(tmp_path)
-        dst = tmp_path / "cobre_case"
+        dst = tmp_path / "novomodelo_case"
         with contextlib.ExitStack() as stack:
             for p in _all_converter_patches(MagicMock()):
                 stack.enter_context(p)

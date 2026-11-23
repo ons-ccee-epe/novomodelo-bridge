@@ -37,19 +37,15 @@ _MONTH_ABBR_TO_INT: dict[str, int] = {
 }
 
 
-def _parse_month(mes: str | int | float | None) -> int | None:
+def _parse_month(mes: str | float | None) -> int | None:
     """Normalize an ``AC`` ``mes`` field to a 1..12 month, or ``None`` when blank.
 
     Blank (``None``, NaN, or an empty/whitespace-only string after
-    ``strip()``) resolves to ``None``. An integer/float is coerced with
-    ``int(...)``. A non-blank string is matched case-insensitively against
-    the source model's 3-letter month abbreviations. A non-blank value that
-    is neither a valid month int (1..12) nor a known abbreviation raises
-    ``ValueError`` naming the value (a malformed deck is a hard error, never
-    a silent default).
+    ``strip()``) resolves to ``None``. A non-blank string is matched
+    case-insensitively against the source model's 3-letter month
+    abbreviations; any other value raises ``ValueError`` naming it (a
+    malformed deck is a hard error, never a silent default).
     """
-    if mes is None:
-        return None
     if isinstance(mes, str):
         stripped = mes.strip()
         if not stripped:
@@ -58,12 +54,9 @@ def _parse_month(mes: str | int | float | None) -> int | None:
         if month is None:
             raise ValueError(f"unrecognized AC month value: {mes!r}")
         return month
-    if pd.isna(mes):
+    if mes is None or pd.isna(mes):
         return None
-    month = int(mes)
-    if not 1 <= month <= 12:
-        raise ValueError(f"unrecognized AC month value: {mes!r}")
-    return month
+    raise ValueError(f"unrecognized AC month value: {mes!r}")
 
 
 def _resolve_year(ano: int | float | None, calendar: Sequence[OperativeStage]) -> int:
@@ -75,7 +68,7 @@ def _resolve_year(ano: int | float | None, calendar: Sequence[OperativeStage]) -
 
 
 def resolve_effective_stage(
-    mes: str | int | float | None,
+    mes: str | float | None,
     semana: int | float | None,
     ano: int | float | None,
     calendar: Sequence[OperativeStage],

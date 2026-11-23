@@ -27,7 +27,6 @@ from novomodelo_bridge.dashboard.data import (
     DashboardData,
     _cut_selection_per_stage,
     _load_policy_metadata,
-    _normalize_output_columns,
     load_temporal_context,
 )
 from tests.conftest import (
@@ -332,10 +331,8 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
                     0,
                     name="HYDRO_A",
                     reservoir={"max_storage_hm3": 5000.0, "min_storage_hm3": 100.0},
-                    generation={
-                        "max_generation_mw": 1000.0,
-                        "max_turbined_m3s": 12000.0,
-                    },
+                    max_generation_mw=1000.0,
+                    max_turbined_m3s=12000.0,
                 )
             ]
         },
@@ -411,7 +408,7 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
         {
             "iteration": pa.array([1, 2], type=pa.int32()),
             "lower_bound": pa.array([1.0e9, 1.1e9], type=pa.float64()),
-            "upper_bound_mean": pa.array([1.5e9, 1.4e9], type=pa.float64()),
+            "upper_bound": pa.array([1.5e9, 1.4e9], type=pa.float64()),
             "upper_bound_std": pa.array([1.0e7, 9.0e6], type=pa.float64()),
             "gap_percent": pa.array([33.3, 21.4], type=pa.float64()),
             "cuts_added": pa.array([10, 8], type=pa.int32()),
@@ -706,7 +703,7 @@ def _build_training_only_case(tmp_path: Path) -> Path:
         {
             "iteration": pa.array([1], type=pa.int32()),
             "lower_bound": pa.array([1.0e9], type=pa.float64()),
-            "upper_bound_mean": pa.array([1.2e9], type=pa.float64()),
+            "upper_bound": pa.array([1.2e9], type=pa.float64()),
             "upper_bound_std": pa.array([1.0e7], type=pa.float64()),
             "gap_percent": pa.array([16.7], type=pa.float64()),
             "cuts_added": pa.array([10], type=pa.int32()),
@@ -1167,24 +1164,22 @@ class TestCutSelectionPerStage:
 
     @staticmethod
     def _frame() -> pd.DataFrame:
-        return _normalize_output_columns(
-            pd.DataFrame(
-                {
-                    "iteration": [3, 3, 3],
-                    "pool_id": [0, 1, 2],
-                    "stage_id": [1, 1, 2],
-                    "node_id": [4, 5, None],
-                    "cuts_in_pool": [10, 6, 8],
-                    "cuts_active_after": [7, 5, 8],
-                    "cuts_deactivated": [None, None, 2],
-                }
-            )
+        return pd.DataFrame(
+            {
+                "iteration": [3, 3, 3],
+                "pool_id": [0, 1, 2],
+                "stage_id": [1, 1, 2],
+                "node_id": [4, 5, None],
+                "cuts_in_pool": [10, 6, 8],
+                "cuts_active_after": [7, 5, 8],
+                "cuts_deactivated": [None, None, 2],
+            }
         )
 
     def test_pools_of_a_stage_are_summed(self) -> None:
         result = _cut_selection_per_stage(self._frame())
-        assert result["stage"].tolist() == [1, 2]
-        assert result["cuts_populated"].tolist() == [16, 8]
+        assert result["stage_id"].tolist() == [1, 2]
+        assert result["cuts_in_pool"].tolist() == [16, 8]
         assert result["cuts_active_after"].tolist() == [12, 8]
         assert "pool_id" not in result.columns
         assert "node_id" not in result.columns
@@ -1194,6 +1189,6 @@ class TestCutSelectionPerStage:
         assert pd.isna(result["cuts_deactivated"].iloc[0])
         assert result["cuts_deactivated"].iloc[1] == 2
 
-    def test_a_frame_without_pools_is_returned_unchanged(self) -> None:
-        frame = pd.DataFrame({"iteration": [1], "stage": [0], "cuts_populated": [3]})
+    def test_an_empty_frame_is_returned_unchanged(self) -> None:
+        frame = pd.DataFrame()
         assert _cut_selection_per_stage(frame) is frame

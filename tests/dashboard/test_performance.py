@@ -39,9 +39,9 @@ def _make_solver_df(
     return pd.DataFrame(
         {
             "iteration": list(range(1, n_rows + 1)),
-            "stage": list(range(0, n_rows)),
+            "stage_id": list(range(0, n_rows)),
             "phase": [phase] * n_rows,
-            "opening": [
+            "opening_index": [
                 float("nan") if phase != "backward" else 0 for _ in range(n_rows)
             ],
             "rank": [0] * n_rows,
@@ -99,9 +99,9 @@ def _make_solver_train(n_stages: int = 4, n_iters: int = 3) -> pd.DataFrame:
                 rows.append(
                     {
                         "iteration": it,
-                        "stage": stage,
+                        "stage_id": stage,
                         "phase": phase,
-                        "opening": 0 if phase == "backward" else None,
+                        "opening_index": 0 if phase == "backward" else None,
                         "rank": 0,
                         "worker_id": 0 if phase == "backward" else None,
                         "lp_solves": 10,
@@ -127,7 +127,7 @@ def _make_retry_histogram(
 ) -> pd.DataFrame:
     """Synthetic retry_histogram DataFrame matching actual parquet schema.
 
-    Actual schema: iteration, phase, stage, retry_level, count.
+    Actual schema: iteration, phase, stage_id, retry_level, count.
     The chart function aggregates by retry_level, summing count.
     """
     if retry_levels is None:
@@ -139,7 +139,7 @@ def _make_retry_histogram(
         {
             "iteration": list(range(n)),
             "phase": ["forward"] * n,
-            "stage": [0] * n,
+            "stage_id": [0] * n,
             "retry_level": retry_levels,
             "count": counts,
         }
@@ -508,9 +508,9 @@ def _make_solver_train_with_openings(
             rows.append(
                 {
                     "iteration": it,
-                    "stage": stage,
+                    "stage_id": stage,
                     "phase": "forward",
-                    "opening": None,
+                    "opening_index": None,
                     "rank": 0,
                     "worker_id": None,
                     "lp_solves": 1,
@@ -535,9 +535,9 @@ def _make_solver_train_with_openings(
                 rows.append(
                     {
                         "iteration": it,
-                        "stage": stage,
+                        "stage_id": stage,
                         "phase": "backward",
-                        "opening": opening,
+                        "opening_index": opening,
                         "rank": 0,
                         "worker_id": 0,
                         "lp_solves": 1,
@@ -687,8 +687,8 @@ class TestLightweightPayloads:
                         {
                             "iteration": i,
                             "phase": "backward",
-                            "stage": s,
-                            "opening": o,
+                            "stage_id": s,
+                            "opening_index": o,
                             "rank": 0,
                             "worker_id": 0,
                             "lp_solves": 1,
@@ -738,7 +738,7 @@ class TestLightweightPayloads:
         solver = self._backward_synthetic_frame(n_iter=10, n_stages=20, n_openings=5)
         cuts = pd.DataFrame(
             [
-                {"iteration": i, "stage": s, "cuts_active_after": (i + s) % 50 + 1}
+                {"iteration": i, "stage_id": s, "cuts_active_after": (i + s) % 50 + 1}
                 for i in range(10)
                 for s in range(20)
             ]
@@ -769,7 +769,7 @@ class TestLightweightPayloads:
         )
         cuts = pd.DataFrame(
             [
-                {"iteration": i, "stage": s, "cuts_active_after": (i + s) % 50 + 1}
+                {"iteration": i, "stage_id": s, "cuts_active_after": (i + s) % 50 + 1}
                 for i in range(n_iter)
                 for s in range(n_stages)
             ]

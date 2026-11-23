@@ -436,7 +436,7 @@ def _run_libs_pipeline(
 
 
 class TestLibsElectricalPipelineWiring:
-    def test_ac1_converted_restrictions_appended_after_rhe_with_dense_ids(
+    def test_converted_restrictions_follow_the_links_with_dense_ids(
         self, tmp_path: Path
     ) -> None:
         """A stub deck whose ``read_libs_electrical`` yields a model
@@ -471,10 +471,11 @@ class TestLibsElectricalPipelineWiring:
         ]
         assert libs_rows
 
-    def test_ac2_no_entry_is_a_no_op(self, tmp_path: Path) -> None:
+    def test_no_entry_emits_no_constraint_and_no_diagnostic(
+        self, tmp_path: Path
+    ) -> None:
         """No ``RESTRICAO-ELETRICA-ESPECIAL`` entry -- no electrical
-        constraint emitted, no libs diagnostic produced, byte-identical to
-        the pipeline's behavior before the electrical path existed."""
+        constraint emitted and no libs diagnostic produced."""
         diagnostics_out: list[dx.Diagnostic] = []
         dst = _run_libs_pipeline(
             tmp_path,
@@ -490,9 +491,9 @@ class TestLibsElectricalPipelineWiring:
         assert "decomp-libs-electrical-present" not in codes
         assert "decomp-libs-electrical-converted" not in codes
 
-    def test_ac3_short_form_only_still_warns(self, tmp_path: Path) -> None:
+    def test_short_form_only_entry_still_warns(self, tmp_path: Path) -> None:
         """The entry is present but ``read_libs_electrical`` returns
-        ``None`` (short-form-only) -- the narrowed warn IS still emitted."""
+        ``None`` (short-form-only) -- the warning is still emitted."""
         canned_warning = dx.Diagnostic(
             code="decomp-libs-electrical-present",
             severity=dx.Severity.WARNING,
@@ -513,7 +514,7 @@ class TestLibsElectricalPipelineWiring:
         assert "decomp-libs-electrical-present" in codes
         assert "decomp-libs-electrical-converted" not in codes
 
-    def test_ac4_census_info_and_suppressed_warning_for_converted_subset(
+    def test_census_info_replaces_the_warning_for_the_converted_subset(
         self, tmp_path: Path
     ) -> None:
         """Exactly one INFO census diagnostic reporting the converted

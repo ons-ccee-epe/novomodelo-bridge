@@ -422,6 +422,8 @@ def hydro_with_group(
     hydro: dict[str, Any] = {
         "id": hydro_id,
         "name": plant_name,
+        "reservoir": {"min_storage_hm3": 0.0, "max_storage_hm3": 1000.0},
+        "outflow": {"min_outflow_m3s": 0.0, "max_outflow_m3s": None},
         "generation": {
             "min_generation_mw": min_generation_mw,
             "max_generation_mw": max_generation_mw,
@@ -850,8 +852,16 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:
             return_value={"production_models": []},
         ),
         patch(
-            "novomodelo_bridge.newave.pipeline.hydro_conv.compute_base_productivities",
-            return_value={},
+            "novomodelo_bridge.newave.pipeline.hydro_conv.compute_prodt_sin_mean",
+            return_value=1.0,
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.hydro_conv.compute_per_stage_prodt_sin_mean",
+            return_value=[],
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.constraints_conv.compute_max_prodtacum_sin",
+            return_value=1.0,
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.convert_hydro_energy_productivity",

@@ -225,10 +225,8 @@ def bootstrap_terminal_manifest(case_dir: Path, *, work_dir: Path) -> TerminalMa
     if not stage_cuts:
         raise RuntimeError(f"checkpoint at {output_dir} has no stage cuts")
 
-    # novomodelo 0.14 carries state_dimension per pool (on each stage_cuts entry),
-    # not on the checkpoint metadata, so the terminal pool's own value is the
-    # authoritative state-vector width — there is no separate global metadata
-    # value left to cross-check it against.
+    # state_dimension is carried per pool (on each stage_cuts entry), so the
+    # terminal pool's own value is the authoritative state-vector width.
     terminal = max(stage_cuts, key=lambda stage: stage["stage_id"])
     terminal_state_dimension = int(terminal["state_dimension"])
 

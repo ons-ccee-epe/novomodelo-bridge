@@ -20,6 +20,9 @@ links are cobre-bridge's.
   `config.json` sets the `truncation` method, which zeroes them in the LP at
   no cost, in place of `truncation_with_penalty`. Results change; reconvert
   NEWAVE cases.
+- **`dashboard` and `compare` read only the outputs of the paired novomodelo
+  release.** Outputs and cases an older novomodelo wrote no longer load; run
+  the case again with the paired release.
 
 ## [0.21.0] - 2026-11-16
 

@@ -153,7 +153,7 @@ def test_overview_shows_the_bounds_net_of_penalties_after_convergence() -> None:
         {
             "iteration": [1, 2],
             "lower_bound": [40e9, 50e9],
-            "upper_bound_mean": [60e9, 55e9],
+            "upper_bound": [60e9, 55e9],
         }
     )
     dataset.render.nw_convergence = conv

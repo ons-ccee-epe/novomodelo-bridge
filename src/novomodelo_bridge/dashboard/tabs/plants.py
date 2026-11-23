@@ -472,11 +472,11 @@ def _build_thermal_json(
     lp_index = _weighted_lp_generation_bounds(lp_bounds, 1, block_hours)
 
     for tid, meta in sorted(thermal_meta.items()):
-        name: str = meta.get("name", str(tid))
-        bus_id: int = meta.get("bus_id", -1)
+        name: str = meta["name"]
+        bus_id: int = meta["bus_id"]
         bus: str = bus_names.get(bus_id, str(bus_id))
-        max_mw: float = float(meta.get("max_mw", 0) or 0)
-        cost_per_mwh: float = float(meta.get("cost_per_mwh", 0) or 0)
+        max_mw: float = float(meta["max_mw"])
+        cost_per_mwh: float = float(meta["cost_per_mwh"])
 
         entry: dict = {
             "name": name,
@@ -596,10 +596,10 @@ def _thermal_table_pane(options: list[tuple[str, dict]]) -> str:
     """Thermal table: name, bus, capacity, unit cost and a generation sparkline."""
     table_rows: list[str] = []
     for tid, d in options:
-        name: str = d.get("name", "")
-        bus: str = d.get("bus", "")
-        max_mw: float = d.get("max_mw", 0)
-        cost_per_mwh: float = d.get("cost_per_mwh", 0)
+        name: str = d["name"]
+        bus: str = d["bus"]
+        max_mw: float = d["max_mw"]
+        cost_per_mwh: float = d["cost_per_mwh"]
         gen_spark = _gen_sparkline(d.get("gen_p50", []), "#F5A623")
         table_rows.append(
             f'<tr data-name="{escape_attr(name.lower())}" data-index="{tid}">'

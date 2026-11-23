@@ -572,18 +572,6 @@ def _read_penalid_costs(case: NewaveCase) -> dict[str, float]:
     return out
 
 
-def _own_productivities(
-    hydros_dict: dict, productivities: dict[int, float]
-) -> list[float]:
-    """Return the positive `productivities` entry of each hydro in `hydros_dict`."""
-    out: list[float] = []
-    for h in hydros_dict.get("hydros", []):
-        prod = productivities.get(int(h["id"]), 0.0)
-        if prod > 0:
-            out.append(prod)
-    return out
-
-
 # Hydro penalty columns that scale with ρ_avg or ρ_max_acum, so they can differ
 # per stage. ``generation_violation_below_cost`` and ``fpha_violation_cost`` are
 # energy-domain, never differ per stage, and are excluded.
@@ -604,11 +592,9 @@ _RHO_SCALED_HYDRO_COLUMNS: tuple[str, ...] = (
 
 def convert_penalties(
     case: NewaveCase,
-    hydros_dict: dict,
-    productivities: dict[int, float] | None = None,
     *,
-    max_accumulated_productivity: float | None = None,
-    prod_media_sin: float | None = None,
+    max_accumulated_productivity: float,
+    prod_media_sin: float,
 ) -> dict:
     """Generate a Novomodelo ``penalties.json`` dict from the source model data.
 
@@ -636,16 +622,10 @@ def convert_penalties(
     ----------
     case:
         Parsed the source model case.
-    hydros_dict:
-        The already-converted ``hydros.json`` dict; its ``hydros[].id`` pick
-        the ``productivities`` entries the ρ fallbacks average.
-    productivities:
-        ``{hydro_id: own_productivity_mw_per_m3s}`` for each hydro
-        (``hydro.compute_base_productivities``).
     max_accumulated_productivity:
-        Optional ``MAX_PRODTACUM_SIN`` override. When omitted, defaults to
-        ``max(productivities)`` — a coarse approximation; callers with
-        access to the cascade DAG should pass the true accumulated max.
+        ``MAX_PRODTACUM_SIN`` (see ``constraints.compute_max_prodtacum_sin``).
+    prod_media_sin:
+        ``PROD_MEDIA_SIN`` (see ``hydro.compute_prodt_sin_mean``).
     """
     sistema = case.sistema
     deficit_df = sistema.custo_deficit
@@ -659,39 +639,14 @@ def convert_penalties(
         max_deficit_cost = float(deficit_df["custo"].max())
 
     penalid_costs = _read_penalid_costs(case)
-    productivities = productivities or {}
-
-    # ρ_avg = PROD_MEDIA_SIN: The source model converts the PENALID R$/MWh penalties
-    # (VAZMIN, TURBMN, TURBMX, VOLMIN — manual table p.87) with the mean **PRODT**
-    # (equivalent productivity vol_min→vol_max) over ALL existing plants including
-    # zeros. Validated against pmo.dat's applied penalties (0.6299 ↔ penalty 821.78).
-    # Pass it in via ``prod_media_sin`` (see ``hydro.compute_prodt_sin_mean``). The
-    # fallback — mean of the 65%-reference own ρ, ρ>0 only — is ~4% high; it
-    # applies only when ``prod_media_sin`` is None.
-    own_prods = _own_productivities(hydros_dict, productivities)
-    rho_avg = (
-        prod_media_sin
-        if prod_media_sin is not None
-        else (sum(own_prods) / len(own_prods) if own_prods else 1.0)
-    )
-
-    # ρ_max_acum = MAX_PRODTACUM_SIN: used by the source model for DESVIO and the
-    # evaporation default. When the caller doesn't supply the true cascade accumulated
-    # max we approximate by `max(own_prods)`; the caller in `pipeline.py` passes the
-    # real value computed from the cascade DAG.
-    rho_max_acum = (
-        max_accumulated_productivity
-        if max_accumulated_productivity is not None
-        else (max(own_prods) if own_prods else rho_avg)
-    )
 
     # The ρ-scaled hydro penalty block is computed by a pure helper so the
     # global (base) penalties.json and the per-stage override parquet built by
     # ``convert_hydro_penalty_overrides`` apply byte-identical formulas — see
     # ``hydro_penalty_costs``.
     hydro_costs = hydro_penalty_costs(
-        rho_avg=rho_avg,
-        rho_max_acum=rho_max_acum,
+        rho_avg=prod_media_sin,
+        rho_max_acum=max_accumulated_productivity,
         penalid_costs=penalid_costs,
         max_deficit_cost=max_deficit_cost,
     )

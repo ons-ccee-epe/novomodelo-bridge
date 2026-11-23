@@ -4,7 +4,7 @@ NEWAVE consults a switch line before it reads several optional inputs, so a
 file that is present but switched off plays no part in its run. The converter
 mirrors that, so the converted case models what NEWAVE actually ran, and
 reports every input it leaves out for that reason. A switch line absent from
-``dger.dat`` counts as on, which keeps older decks converting as before.
+``dger.dat`` counts as on.
 """
 
 from __future__ import annotations

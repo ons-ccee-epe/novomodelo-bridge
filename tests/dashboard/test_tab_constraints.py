@@ -818,16 +818,6 @@ def test_type_filter_has_no_family_absent_from_the_case() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_no_three_separate_old_section_titles() -> None:
-    """render() must NOT contain the old three-section titles from Section C."""
-    data = _make_mock_data()
-
-    with _render_with_stubs_ctx(data) as html:
-        assert "VminOP: Stored Energy vs Minimum" not in html
-        assert "Electric Constraints (RE)" not in html
-        assert "Exchange Group Constraints (AGRINT)" not in html
-
-
 # ---------------------------------------------------------------------------
 # test_render (existing + updated)
 # ---------------------------------------------------------------------------

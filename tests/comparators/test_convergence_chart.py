@@ -21,7 +21,7 @@ def _novomodelo() -> pl.DataFrame:
         {
             "iteration": [1, 2, 3],
             "lower_bound": [10.0, 20.0, 25.0],
-            "upper_bound_mean": [40.0, 45.0, 30.0],
+            "upper_bound": [40.0, 45.0, 30.0],
         }
     )
 
@@ -31,7 +31,7 @@ def test_source_best_bound_pairs_with_the_novomodelo_running_minimum() -> None:
         {
             "iteration": [1, 2, 3],
             "lower_bound": [12.0, 21.0, 26.0],
-            "upper_bound_mean": [41.0, 44.0, 31.0],
+            "upper_bound": [41.0, 44.0, 31.0],
             "upper_bound_best": [41.0, 41.0, 31.0],
         }
     )
@@ -49,10 +49,10 @@ def test_source_without_a_per_iteration_upper_bound_draws_only_its_best() -> Non
         {
             "iteration": [1, 2],
             "lower_bound": [12.0, 21.0],
-            "upper_bound_mean": [None, None],
+            "upper_bound": [None, None],
             "upper_bound_best": [41.0, 33.0],
         },
-        schema_overrides={"upper_bound_mean": pl.Float64},
+        schema_overrides={"upper_bound": pl.Float64},
     )
 
     traces = _traces(convergence_chart(source, _novomodelo(), reference_label="DECOMP"))

@@ -1,9 +1,9 @@
-"""Post-emission self-checks mirroring novomodelo 0.13's new hard validation rules.
+"""Post-emission self-checks mirroring novomodelo's hard validation rules.
 
 Both pipelines build every artifact in memory before writing the Novomodelo case
 directory. This module inspects those in-memory artifacts — the ``hydros.json``
 document, the ``thermals.json`` document, the ``stages.json`` document, and the
-``*_bounds`` Parquet tables — for the novomodelo 0.13 rules the bridge is most
+``*_bounds`` Parquet tables — for the novomodelo rules the bridge is most
 likely to violate silently, and reports a match as an ``ERROR``
 :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` through the sink the pipeline
 already runs converters inside. A failure here therefore surfaces with

@@ -603,7 +603,7 @@ def reconcile_kdollars_to_reais(value: float) -> float:
 _CONVERGENCE_SCHEMA: dict[str, type[pl.DataType]] = {
     "iteration": pl.Int64,
     "lower_bound": pl.Float64,
-    "upper_bound_mean": pl.Float64,
+    "upper_bound": pl.Float64,
     "upper_bound_best": pl.Float64,
 }
 
@@ -614,7 +614,7 @@ def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
     Renames ``relato.convergencia``'s ``iteracao``/``zinf``/``zsup`` onto
     ``iteration``/``lower_bound``/``upper_bound_best``: ``zsup`` is the lowest
     upper bound so far, and the relato prints no per-iteration one, so
-    ``upper_bound_mean`` stays null. The iteration axis stays 1-based as
+    ``upper_bound`` stays null. The iteration axis stays 1-based as
     reported, no offset -- the chart plots it directly. ``zinf``/``zsup`` are
     native k$ and are reconciled to R$
     (:func:`reconcile_kdollars_to_reais`, x1e3) so the bounds are
@@ -644,7 +644,7 @@ def _decomp_convergence_frame(decomp_dir: Path) -> pl.DataFrame:
     return source.select(
         pl.col(columns["iteracao"]).cast(pl.Int64).alias("iteration"),
         (pl.col(columns["zinf"]).cast(pl.Float64) * k_to_r).alias("lower_bound"),
-        pl.lit(None, dtype=pl.Float64).alias("upper_bound_mean"),
+        pl.lit(None, dtype=pl.Float64).alias("upper_bound"),
         (pl.col(columns["zsup"]).cast(pl.Float64) * k_to_r).alias("upper_bound_best"),
     )
 

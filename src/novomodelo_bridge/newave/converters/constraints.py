@@ -396,7 +396,7 @@ def _cascade_sum(
     return result
 
 
-def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
+def compute_max_prodtacum_sin(case: NewaveCase) -> float:
     """Return ``MAX_PRODTACUM_SIN`` = max accumulated productivity at altura máxima.
 
     The source model converts the DESVIO ("outros usos da água" / water-withdrawal) and
@@ -409,18 +409,15 @@ def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
     OUTROS USOS" (19 149.55 → implied 6.4371) and Pmo's 6.4420; the 65%-reference
     accumulated max is 6.3542 (~1.4% low).
 
-    Falls back to ``None`` when the source model files cannot be read (mocked tests).
+    Returns 1.0 for a case without hydro plants, as
+    :func:`hydro.compute_prodt_sin_mean` does.
     """
     from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
 
-    try:
-        cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
-        confhd_df = case.hydro_plants
-        fictitious = case.fictitious_codes
-    except (OSError, ValueError, AttributeError, TypeError, KeyError):
-        return None
-
-    resolutions = resolve_cascade(confhd_df, cadastro, fictitious=fictitious)
+    cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
+    resolutions = resolve_cascade(
+        case.hydro_plants, cadastro, fictitious=case.fictitious_codes
+    )
     downstream_map: dict[int, int | None] = {
         code: r.downstream_code for code, r in resolutions.items()
     }
@@ -435,7 +432,7 @@ def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
         own_max[code] += resolution.fict_rho_sum
 
     acc = _cascade_sum(downstream_map, own_max)
-    return max(acc.values()) if acc else None
+    return max(acc.values(), default=1.0)
 
 
 #: curva.dat ``TIPO DE PENALIZACAO`` values, as the file's own header names them.

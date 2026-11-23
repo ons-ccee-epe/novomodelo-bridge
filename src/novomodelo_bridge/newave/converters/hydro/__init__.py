@@ -67,9 +67,6 @@ from novomodelo_bridge.newave.converters.hydro.productivity import (
     _per_stage_productivities as _per_stage_productivities,
 )
 from novomodelo_bridge.newave.converters.hydro.productivity import (
-    compute_base_productivities as compute_base_productivities,
-)
-from novomodelo_bridge.newave.converters.hydro.productivity import (
     compute_per_stage_prodt_sin_mean as compute_per_stage_prodt_sin_mean,
 )
 from novomodelo_bridge.newave.converters.hydro.productivity import (

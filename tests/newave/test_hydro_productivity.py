@@ -820,20 +820,17 @@ class TestProductivitySinMeans:
         acc_a = own(1) + own(2)  # A accumulates B downstream
         assert result == pytest.approx(max(acc_a, own(2), own(3)))
 
-    def test_max_prodtacum_sin_returns_none_on_read_error(self, tmp_path: Path) -> None:
-        """Unreadable the source model inputs → None (soft fallback for mocked
-        pipelines)."""
+    def test_max_prodtacum_sin_propagates_read_error(self, tmp_path: Path) -> None:
         from novomodelo_bridge.newave.converters.constraints import (
             compute_max_prodtacum_sin,
         )
 
         case = make_case(tmp_path)
-        # Drop the conftest default hidr so accessing ``case.hidr`` triggers the
-        # patched ``Hidr.read`` (this test exercises the read-error fallback).
         case.__dict__.pop("hidr", None)
         with patch("novomodelo_bridge.newave.case.Hidr") as mh:
             mh.read.side_effect = OSError("no file")
-            assert compute_max_prodtacum_sin(case) is None
+            with pytest.raises(OSError, match="no file"):
+                compute_max_prodtacum_sin(case)
 
 
 class TestConvertProductionModels:

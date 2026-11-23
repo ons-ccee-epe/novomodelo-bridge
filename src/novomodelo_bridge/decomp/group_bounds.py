@@ -1,7 +1,7 @@
 """``constraints/hydro_unit_group_bounds.parquet`` — per-group bound overlay.
 
 Every hydro declares a mandatory, stage-invariant ``unit_groups[]`` array
-(``build_mirror_unit_group``, ``core/hydro_units.py``). novomodelo 0.13 adds a
+(``build_mirror_unit_group``, ``core/hydro_units.py``). novomodelo takes a
 stage-varying (optionally per-block) overlay for it — this table — letting
 any of a group's four declared bounds be *lowered* per stage/block.
 

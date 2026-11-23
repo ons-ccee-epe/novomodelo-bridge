@@ -54,21 +54,15 @@ def convert_config(case: DecompCase) -> dict:
     the faithful analogue of DECOMP's own ``Zsup/Zinf − 1 ≤ GP`` convergence,
     which is itself risk-adjusted. It is admissible under a CVaR risk measure
     too: under enumerated forwards novomodelo computes the exact *risk-adjusted*
-    upper bound (``setup/mod.rs``, novomodelo commit landing the enumerated CVaR
-    UB), which brackets the risk-adjusted lower bound, provided the risk
+    upper bound (``setup/mod.rs``), which brackets the risk-adjusted lower bound, provided the risk
     measure is **uniform across all stages** — which
     :func:`novomodelo_bridge.decomp.temporal.stage_records` guarantees by emitting
     the CVaR measure on every stage (``reject_gap_under_nonuniform_risk``).
-    Requires that novomodelo build; an older novomodelo without the enumerated
-    risk-adjusted UB rejects a gap rule under CVaR and would need a
-    ``bound_stalling`` fallback instead.
 
     Both training and simulation use ``selection = {"method": "enumerated"}``:
     the explicit trunk-plus-fan node graph enumerates every root-to-leaf path,
     so training runs the full forward/backward census and simulation runs the
-    exact per-node-probability weighted census (novomodelo 0.14+ wires the
-    branching-graph census simulation, retiring the earlier ``sampled`` fallback
-    tracked as C9). The simulation omits its own ``scenario_source`` and inherits
+    exact per-node-probability weighted census. The simulation omits its own ``scenario_source`` and inherits
     training's external one.
 
     ``scenario_source.seed`` is a fixed ``0``. A seed controls random sampling;
