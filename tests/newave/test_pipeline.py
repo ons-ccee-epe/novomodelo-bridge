@@ -71,7 +71,7 @@ class TestConvertNewaweCasePipeline:
             dst / "config.json",
             dst / "stages.json",
             dst / "penalties.json",
-            dst / "initial_conditions.json",
+            dst / "boundary_conditions.json",
             dst / "system" / "hydros.json",
             dst / "system" / "thermals.json",
             dst / "system" / "buses.json",
@@ -88,6 +88,23 @@ class TestConvertNewaweCasePipeline:
         ]
         for f in expected:
             assert f.exists(), f"Expected output file not found: {f}"
+        assert not (dst / "initial_conditions.json").exists()
+
+    def test_cleared_set_removes_both_boundary_file_generations(
+        self, tmp_path: Path
+    ) -> None:
+        """A forced reconversion over an older bridge's output must not leave
+        both file sets (novomodelo refuses a mixed set)."""
+        from novomodelo_bridge.core.conversion import clear_dst_contents
+        from novomodelo_bridge.newave.pipeline import NEWAVE_CLEARED_ARTIFACTS
+
+        for name in ("boundary_conditions.json", "initial_conditions.json"):
+            (tmp_path / name).write_text("{}", encoding="utf-8")
+
+        clear_dst_contents(tmp_path, NEWAVE_CLEARED_ARTIFACTS)
+
+        assert not (tmp_path / "boundary_conditions.json").exists()
+        assert not (tmp_path / "initial_conditions.json").exists()
 
     def test_exchange_factors_json_is_not_written(self, tmp_path: Path) -> None:
         """The per-block exchange factors are folded into line_bounds.parquet;

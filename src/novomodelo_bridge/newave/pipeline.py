@@ -40,6 +40,7 @@ from novomodelo_bridge.newave.files import unindexed_libs_diagnostic
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import scalar_parameters as scalar_params_conv
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+from novomodelo_bridge.novomodelo.boundary_conditions import plant_keyed_boundary
 from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 logger = logging.getLogger(__name__)
@@ -501,7 +502,12 @@ def _write_json_outputs(
     writer.write_json("config.json", temporal.config)
     writer.write_json("stages.json", temporal.stages)
     writer.write_json("penalties.json", entities.penalties)
-    writer.write_json("initial_conditions.json", temporal.initial_conditions)
+    writer.write_json(
+        "boundary_conditions.json",
+        plant_keyed_boundary(
+            temporal.initial_conditions, None, temporal.stages
+        ).boundary_conditions,
+    )
     writer.write_json("system/hydros.json", entities.hydros)
     if entities.thermals["thermals"]:
         writer.write_json("system/thermals.json", entities.thermals)
@@ -778,6 +784,7 @@ NEWAVE_CLEARED_ARTIFACTS = ClearedArtifacts(
         "config.json",
         "stages.json",
         "penalties.json",
+        "boundary_conditions.json",
         "initial_conditions.json",
         "conversion_manifest.json",
     ),

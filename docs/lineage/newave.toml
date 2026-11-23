@@ -7,7 +7,7 @@
 track = "newave"
 
 # ===== frag_A_nw_root_network =====
-# Fragmento A — NEWAVE: raiz do caso (config, stages, penalties, initial_conditions),
+# Fragmento A — NEWAVE: raiz do caso (config, stages, penalties, boundary_conditions),
 # rede (buses, lines, non_controllable_sources), térmicas, parâmetros escalares e
 # as tabelas parquet de limites de intercâmbio, limites térmicos e sobrescritas de
 # penalidade. A chave `track` é escrita pelo montador.
@@ -631,10 +631,10 @@ summary = "Penalidades globais: custo de déficit de `sistema.dat`, micropenalid
   how = "Sem variável em `penalid.dat`: 0.9 × maior custo de déficit × MAX_PRODTACUM_SIN × 1e6/3600, em R$/hm³. Slot ainda não usado pelo LP do Novomodelo."
 
 # =============================================================================
-# initial_conditions.json
+# boundary_conditions.json
 # =============================================================================
 [[output]]
-path = "initial_conditions.json"
+path = "boundary_conditions.json"
 kind = "json"
 when = ""
 module = "src/novomodelo_bridge/newave/converters/initial_conditions.py"
@@ -650,16 +650,20 @@ reads = [
   { file = "conft" },
   { file = "vazpast" },
 ]
-summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto já enchido das usinas em enchimento, os despachos antecipados de `adterm.dat` e a tendência hidrológica de `vazpast.dat`."
+summary = "Condições de contorno por usina: o armazenamento inicial de cada usina hidrelétrica ativa (com o volume morto já enchido das usinas em enchimento), as vazões recentes de `vazpast.dat` por usina e os despachos antecipados de `adterm.dat` por térmica. Cada usina aparece uma vez, em ordem crescente de id, só com os campos que o deck traz."
 
   [[output.field]]
-  path = "storage[].hydro_id"
-  from = [ { file = "confhd", item = "usinas · codigo_usina" } ]
+  path = "hydros[].hydro_id"
+  from = [
+    { file = "confhd", item = "usinas · codigo_usina" },
+    { file = "confhd", item = "usinas · posto" },
+    { file = "vazpast", item = "tendencia · codigo_posto" },
+  ]
   status = "derived"
-  how = "Id Novomodelo 0-based da usina ativa (`usina_existente` = EX ou EE, não fictícia), atribuído em ordem crescente de `codigo_usina`. Ordenado pelo id."
+  how = "Id Novomodelo 0-based da usina ativa (`usina_existente` = EX ou EE, não fictícia), atribuído em ordem crescente de `codigo_usina`. Uma entrada por usina, ordenada pelo id, com o armazenamento inicial e, quando há tendência, as vazões recentes."
 
   [[output.field]]
-  path = "storage[].value_hm3"
+  path = "hydros[].storage_hm3"
   from = [
     { file = "confhd", item = "usinas · volume_inicial_percentual" },
     { file = "hidr", item = "cadastro · volume_minimo" },
@@ -668,94 +672,14 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
     { file = "hidr", item = "cadastro · volume_referencia" },
     { file = "modif", item = "VOLMIN · volume" },
     { file = "modif", item = "VOLMAX · volume" },
-  ]
-  how = "Percentual (limitado a [0, 100]) do volume útil `volume_maximo` − `volume_minimo`, somado ao mínimo, após VOLMIN/VOLMAX permanentes de `modif.dat`. Usinas `tipo_regulacao` D e S ancoram em `volume_referencia`, como o colapso de fio d'água dos limites; sem `volume_referencia`, seguem o percentual."
-
-  [[output.field]]
-  path = "filling_storage"
-  from = [
     { file = "confhd", item = "usinas · usina_existente" },
     { file = "exph", item = "expansoes · data_inicio_enchimento" },
-  ]
-  how = "Lista vazia quando nenhuma usina NE de `confhd.dat` tem linha de enchimento de volume morto em `exph.dat`; caso contrário, ver os campos `filling_storage[].*`."
-
-  [[output.field]]
-  path = "filling_storage[].hydro_id"
-  from = [
-    { file = "confhd", item = "usinas · codigo_usina" },
-    { file = "confhd", item = "usinas · usina_existente" },
-    { file = "exph", item = "expansoes · data_inicio_enchimento" },
-  ]
-  status = "derived"
-  when = "somente para usinas NE com linha de enchimento (`data_inicio_enchimento` não nula) em `exph.dat`"
-  how = "Id Novomodelo da usina em enchimento; ela nunca aparece também em `storage`."
-
-  [[output.field]]
-  path = "filling_storage[].value_hm3"
-  from = [
     { file = "exph", item = "expansoes · volume_morto" },
-    { file = "hidr", item = "cadastro · volume_minimo" },
   ]
-  when = "somente para usinas NE com linha de enchimento em `exph.dat`"
-  how = "`volume_morto` (percentual, limitado a [0, 100]) / 100 × `volume_minimo`: a fração do volume morto já represada no início do enchimento."
+  how = "Duas rotas, nunca as duas para a mesma usina. Usina sem enchimento: percentual `volume_inicial_percentual` (limitado a [0, 100]) do volume útil `volume_maximo` − `volume_minimo`, somado ao mínimo, após VOLMIN/VOLMAX permanentes de `modif.dat`; usinas `tipo_regulacao` D e S ancoram em `volume_referencia`, como o colapso de fio d'água dos limites, e sem `volume_referencia` seguem o percentual. Usina NE com linha de enchimento de volume morto em `exph.dat` (`data_inicio_enchimento` não nula): `volume_morto` (percentual, limitado a [0, 100]) / 100 × `volume_minimo`, a fração do volume morto já represada no início do enchimento."
 
   [[output.field]]
-  path = "past_anticipated_commitments[].thermal_id"
-  from = [
-    { file = "dger", item = "despacho_antecipado_gnl" },
-    { file = "adterm", item = "despachos · codigo_usina" },
-  ]
-  status = "derived"
-  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
-  how = "Id Novomodelo da térmica de `conft.dat`; códigos ausentes do mapa são ignorados com aviso."
-
-  [[output.field]]
-  path = "past_anticipated_commitments[].start_date"
-  from = [
-    { file = "adterm", item = "despachos · lag" },
-    { file = "dger", item = "mes_inicio_estudo" },
-    { file = "dger", item = "ano_inicio_estudo" },
-  ]
-  status = "derived"
-  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
-  how = "Primeiro dia do mês de entrega: `lag` = 1 é o primeiro mês do estudo, `lag` = 2 o segundo, e assim por diante; uma janela por `lag` de 1 ao máximo da usina."
-
-  [[output.field]]
-  path = "past_anticipated_commitments[].end_date"
-  from = [
-    { file = "adterm", item = "despachos · lag" },
-    { file = "dger", item = "mes_inicio_estudo" },
-    { file = "dger", item = "ano_inicio_estudo" },
-  ]
-  status = "derived"
-  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
-  how = "Primeiro dia do mês seguinte à entrega (fim exclusivo)."
-
-  [[output.field]]
-  path = "past_anticipated_commitments[].value_mw"
-  from = [
-    { file = "adterm", item = "despachos · valor" },
-    { file = "adterm", item = "despachos · patamar" },
-    { file = "patamar", item = "duracao_mensal_patamares · valor" },
-    { file = "term", item = "usinas · potencia_instalada" },
-    { file = "term", item = "usinas · fator_capacidade_maximo" },
-    { file = "term", item = "usinas · geracao_minima" },
-  ]
-  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
-  how = "Média dos MW por patamar ponderada pela fração de duração do patamar no mês de entrega (preserva o MWh comprometido). Limitado ao par estático [`min_mw`, `max_mw`] da térmica — o envelope dos limites por estágio —, com aviso."
-
-  [[output.field]]
-  path = "recent_observations[].hydro_id"
-  from = [
-    { file = "vazpast", item = "tendencia · codigo_posto" },
-    { file = "confhd", item = "usinas · posto" },
-  ]
-  status = "derived"
-  when = "somente quando `vazpast.dat` está presente com dados de tendência"
-  how = "Cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id."
-
-  [[output.field]]
-  path = "recent_observations[].start_date"
+  path = "hydros[].recent_inflows[].start_date"
   from = [
     { file = "vazpast", item = "tendencia · mes" },
     { file = "dger", item = "mes_inicio_estudo" },
@@ -763,10 +687,10 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   ]
   status = "derived"
   when = "somente quando `vazpast.dat` está presente com dados de tendência"
-  how = "Primeiro dia de cada um dos 12 meses calendário anteriores ao início do estudo, do mais antigo ao mais recente; mês sem valor na tendência é omitido."
+  how = "Primeiro dia de cada um dos 12 meses calendário anteriores ao início do estudo, do mais antigo ao mais recente; mês sem valor na tendência é omitido. Cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto."
 
   [[output.field]]
-  path = "recent_observations[].end_date"
+  path = "hydros[].recent_inflows[].end_date"
   from = [
     { file = "vazpast", item = "tendencia · mes" },
     { file = "dger", item = "mes_inicio_estudo" },
@@ -777,7 +701,7 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   how = "Primeiro dia do mês seguinte (fim exclusivo)."
 
   [[output.field]]
-  path = "recent_observations[].value_m3s"
+  path = "hydros[].recent_inflows[].value_m3s"
   from = [
     { file = "vazpast", item = "tendencia · valor" },
     { file = "confhd", item = "usinas · posto" },
@@ -785,6 +709,59 @@ summary = "Armazenamento inicial por usina ativa; opcionalmente o volume morto j
   ]
   when = "somente quando `vazpast.dat` está presente com dados de tendência"
   how = "Vazão natural do posto convertida em incremental subtraindo, mês a mês, a vazão natural dos postos das usinas imediatamente a montante da usina na cascata de `codigo_usina_jusante`, cada posto uma vez. Usina no posto artificial (300) recebe 0 nos 12 meses, e um posto artificial a montante não é subtraído."
+
+  [[output.field]]
+  path = "thermals"
+  from = [
+    { file = "dger", item = "despacho_antecipado_gnl" },
+    { file = "adterm", item = "despachos · codigo_usina" },
+  ]
+  how = "Lista vazia quando `despacho_antecipado_gnl` = 0 ou `adterm.dat` não tem despachos; caso contrário, ver os campos `thermals[].*`."
+
+  [[output.field]]
+  path = "thermals[].thermal_id"
+  from = [
+    { file = "dger", item = "despacho_antecipado_gnl" },
+    { file = "adterm", item = "despachos · codigo_usina" },
+  ]
+  status = "derived"
+  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
+  how = "Id Novomodelo da térmica de `conft.dat`; códigos ausentes do mapa são ignorados com aviso. Ordenado pelo id."
+
+  [[output.field]]
+  path = "thermals[].commitments[].start_date"
+  from = [
+    { file = "adterm", item = "despachos · lag" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
+  how = "Primeiro dia do mês de entrega: `lag` = 1 é o primeiro mês do estudo, `lag` = 2 o segundo, e assim por diante; uma janela por `lag` de 1 ao máximo da usina."
+
+  [[output.field]]
+  path = "thermals[].commitments[].end_date"
+  from = [
+    { file = "adterm", item = "despachos · lag" },
+    { file = "dger", item = "mes_inicio_estudo" },
+    { file = "dger", item = "ano_inicio_estudo" },
+  ]
+  status = "derived"
+  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
+  how = "Primeiro dia do mês seguinte à entrega (fim exclusivo)."
+
+  [[output.field]]
+  path = "thermals[].commitments[].value_mw"
+  from = [
+    { file = "adterm", item = "despachos · valor" },
+    { file = "adterm", item = "despachos · patamar" },
+    { file = "patamar", item = "duracao_mensal_patamares · valor" },
+    { file = "term", item = "usinas · potencia_instalada" },
+    { file = "term", item = "usinas · fator_capacidade_maximo" },
+    { file = "term", item = "usinas · geracao_minima" },
+  ]
+  when = "somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos"
+  how = "Média dos MW por patamar ponderada pela fração de duração do patamar no mês de entrega (preserva o MWh comprometido). Limitado ao par estático [`min_mw`, `max_mw`] da térmica — o envelope dos limites por estágio —, com aviso."
 
 # =============================================================================
 # system/buses.json
@@ -3361,7 +3338,7 @@ note = "O bridge toma, por variável, o primeiro valor `R$/MWh` não nulo do pri
 
 [[source]]
 file = "vazpast"
-note = "Lido integralmente: as vazões naturais por posto são convertidas em incrementais e recortadas aos 12 meses anteriores ao início do estudo para `initial_conditions.recent_observations`."
+note = "Lido integralmente: as vazões naturais por posto são convertidas em incrementais e recortadas aos 12 meses anteriores ao início do estudo para `hydros[].recent_inflows` de `boundary_conditions.json`."
 
 [[source]]
 file = "dsvagua"

@@ -14,7 +14,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 
 ### Raiz do caso
 
-| Arquivo do deck | `config.json` | `stages.json` | `penalties.json` | `initial_conditions.json` |
+| Arquivo do deck | `config.json` | `stages.json` | `penalties.json` | `boundary_conditions.json` |
 | --- | :-: | :-: | :-: | :-: |
 | `dger.dat` | ● | ● | ● | ● |
 | `confhd.dat` | ● |  | ● | ● |
@@ -210,29 +210,26 @@ Penalidades globais: custo de déficit de `sistema.dat`, micropenalidades intern
 | `hydro.storage_violation_below_cost` | `penalid.dat` › `VOLMIN · valor_R$_MWh`, `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica`, `confhd.dat` › `usinas · codigo_usina_jusante` | VOLMIN (sem registro, 10 × maior custo de déficit) × MAX_PRODTACUM_SIN × 1e6/3600 (≈ 277.78), convertendo para R$/hm³ pela equivalência volumétrica. Slot ainda não usado pelo LP do Novomodelo. |
 | `hydro.filling_target_violation_cost` | `sistema.dat` › `custo_deficit · custo`, `hidr.dat` › `cadastro · produtibilidade_especifica`, `confhd.dat` › `usinas · codigo_usina_jusante` | Sem variável em `penalid.dat`: 0.9 × maior custo de déficit × MAX_PRODTACUM_SIN × 1e6/3600, em R$/hm³. Slot ainda não usado pelo LP do Novomodelo. |
 
-### `initial_conditions.json`
+### `boundary_conditions.json`
 
 **Lê:** `confhd.dat`, `hidr.dat`, `modif.dat` (opcional), `exph.dat` (opcional), `dger.dat`, `adterm.dat` (opcional), `patamar.dat`, `term.dat`, `conft.dat`, `vazpast.dat` (opcional)  
 **Quando:** sempre.  
-**Esquema:** [initial_conditions.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/initial_conditions.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/initial_conditions.py`
+**Esquema:** [boundary_conditions.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/boundary_conditions.schema.json) · **Código:** `src/novomodelo_bridge/newave/converters/initial_conditions.py`
 
-Armazenamento inicial por usina ativa; opcionalmente o volume morto já enchido das usinas em enchimento, os despachos antecipados de `adterm.dat` e a tendência hidrológica de `vazpast.dat`.
+Condições de contorno por usina: o armazenamento inicial de cada usina hidrelétrica ativa (com o volume morto já enchido das usinas em enchimento), as vazões recentes de `vazpast.dat` por usina e os despachos antecipados de `adterm.dat` por térmica. Cada usina aparece uma vez, em ordem crescente de id, só com os campos que o deck traz.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `storage[].hydro_id` | `confhd.dat` › `usinas · codigo_usina` *(derivado)* | Id Novomodelo 0-based da usina ativa (`usina_existente` = EX ou EE, não fictícia), atribuído em ordem crescente de `codigo_usina`. Ordenado pelo id. |
-| `storage[].value_hm3` | `confhd.dat` › `usinas · volume_inicial_percentual`, `hidr.dat` › `cadastro · volume_minimo`, `hidr.dat` › `cadastro · volume_maximo`, `hidr.dat` › `cadastro · tipo_regulacao`, `hidr.dat` › `cadastro · volume_referencia`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume` | Percentual (limitado a [0, 100]) do volume útil `volume_maximo` − `volume_minimo`, somado ao mínimo, após VOLMIN/VOLMAX permanentes de `modif.dat`. Usinas `tipo_regulacao` D e S ancoram em `volume_referencia`, como o colapso de fio d'água dos limites; sem `volume_referencia`, seguem o percentual. |
-| `filling_storage` | `confhd.dat` › `usinas · usina_existente`, `exph.dat` › `expansoes · data_inicio_enchimento` | Lista vazia quando nenhuma usina NE de `confhd.dat` tem linha de enchimento de volume morto em `exph.dat`; caso contrário, ver os campos `filling_storage[].*`. |
-| `filling_storage[].hydro_id` | `confhd.dat` › `usinas · codigo_usina`, `confhd.dat` › `usinas · usina_existente`, `exph.dat` › `expansoes · data_inicio_enchimento` *(derivado; condicional: somente para usinas NE com linha de enchimento (`data_inicio_enchimento` não nula) em `exph.dat`)* | Id Novomodelo da usina em enchimento; ela nunca aparece também em `storage`. |
-| `filling_storage[].value_hm3` | `exph.dat` › `expansoes · volume_morto`, `hidr.dat` › `cadastro · volume_minimo` *(condicional: somente para usinas NE com linha de enchimento em `exph.dat`)* | `volume_morto` (percentual, limitado a [0, 100]) / 100 × `volume_minimo`: a fração do volume morto já represada no início do enchimento. |
-| `past_anticipated_commitments[].thermal_id` | `dger.dat` › `despacho_antecipado_gnl`, `adterm.dat` › `despachos · codigo_usina` *(derivado; condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Id Novomodelo da térmica de `conft.dat`; códigos ausentes do mapa são ignorados com aviso. |
-| `past_anticipated_commitments[].start_date` | `adterm.dat` › `despachos · lag`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Primeiro dia do mês de entrega: `lag` = 1 é o primeiro mês do estudo, `lag` = 2 o segundo, e assim por diante; uma janela por `lag` de 1 ao máximo da usina. |
-| `past_anticipated_commitments[].end_date` | `adterm.dat` › `despachos · lag`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Primeiro dia do mês seguinte à entrega (fim exclusivo). |
-| `past_anticipated_commitments[].value_mw` | `adterm.dat` › `despachos · valor`, `adterm.dat` › `despachos · patamar`, `patamar.dat` › `duracao_mensal_patamares · valor`, `term.dat` › `usinas · potencia_instalada`, `term.dat` › `usinas · fator_capacidade_maximo`, `term.dat` › `usinas · geracao_minima` *(condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Média dos MW por patamar ponderada pela fração de duração do patamar no mês de entrega (preserva o MWh comprometido). Limitado ao par estático [`min_mw`, `max_mw`] da térmica — o envelope dos limites por estágio —, com aviso. |
-| `recent_observations[].hydro_id` | `vazpast.dat` › `tendencia · codigo_posto`, `confhd.dat` › `usinas · posto` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. Ordenado pelo id. |
-| `recent_observations[].start_date` | `vazpast.dat` › `tendencia · mes`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Primeiro dia de cada um dos 12 meses calendário anteriores ao início do estudo, do mais antigo ao mais recente; mês sem valor na tendência é omitido. |
-| `recent_observations[].end_date` | `vazpast.dat` › `tendencia · mes`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Primeiro dia do mês seguinte (fim exclusivo). |
-| `recent_observations[].value_m3s` | `vazpast.dat` › `tendencia · valor`, `confhd.dat` › `usinas · posto`, `confhd.dat` › `usinas · codigo_usina_jusante` *(condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Vazão natural do posto convertida em incremental subtraindo, mês a mês, a vazão natural dos postos das usinas imediatamente a montante da usina na cascata de `codigo_usina_jusante`, cada posto uma vez. Usina no posto artificial (300) recebe 0 nos 12 meses, e um posto artificial a montante não é subtraído. |
+| `hydros[].hydro_id` | `confhd.dat` › `usinas · codigo_usina`, `confhd.dat` › `usinas · posto`, `vazpast.dat` › `tendencia · codigo_posto` *(derivado)* | Id Novomodelo 0-based da usina ativa (`usina_existente` = EX ou EE, não fictícia), atribuído em ordem crescente de `codigo_usina`. Uma entrada por usina, ordenada pelo id, com o armazenamento inicial e, quando há tendência, as vazões recentes. |
+| `hydros[].storage_hm3` | `confhd.dat` › `usinas · volume_inicial_percentual`, `hidr.dat` › `cadastro · volume_minimo`, `hidr.dat` › `cadastro · volume_maximo`, `hidr.dat` › `cadastro · tipo_regulacao`, `hidr.dat` › `cadastro · volume_referencia`, `modif.dat` › `VOLMIN · volume`, `modif.dat` › `VOLMAX · volume`, `confhd.dat` › `usinas · usina_existente`, `exph.dat` › `expansoes · data_inicio_enchimento`, `exph.dat` › `expansoes · volume_morto` | Duas rotas, nunca as duas para a mesma usina. Usina sem enchimento: percentual `volume_inicial_percentual` (limitado a [0, 100]) do volume útil `volume_maximo` − `volume_minimo`, somado ao mínimo, após VOLMIN/VOLMAX permanentes de `modif.dat`; usinas `tipo_regulacao` D e S ancoram em `volume_referencia`, como o colapso de fio d'água dos limites, e sem `volume_referencia` seguem o percentual. Usina NE com linha de enchimento de volume morto em `exph.dat` (`data_inicio_enchimento` não nula): `volume_morto` (percentual, limitado a [0, 100]) / 100 × `volume_minimo`, a fração do volume morto já represada no início do enchimento. |
+| `hydros[].recent_inflows[].start_date` | `vazpast.dat` › `tendencia · mes`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Primeiro dia de cada um dos 12 meses calendário anteriores ao início do estudo, do mais antigo ao mais recente; mês sem valor na tendência é omitido. Cada usina ativa recebe a tendência do seu `posto` em `confhd.dat`, inclusive quando várias usinas compartilham o posto. |
+| `hydros[].recent_inflows[].end_date` | `vazpast.dat` › `tendencia · mes`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Primeiro dia do mês seguinte (fim exclusivo). |
+| `hydros[].recent_inflows[].value_m3s` | `vazpast.dat` › `tendencia · valor`, `confhd.dat` › `usinas · posto`, `confhd.dat` › `usinas · codigo_usina_jusante` *(condicional: somente quando `vazpast.dat` está presente com dados de tendência)* | Vazão natural do posto convertida em incremental subtraindo, mês a mês, a vazão natural dos postos das usinas imediatamente a montante da usina na cascata de `codigo_usina_jusante`, cada posto uma vez. Usina no posto artificial (300) recebe 0 nos 12 meses, e um posto artificial a montante não é subtraído. |
+| `thermals` | `dger.dat` › `despacho_antecipado_gnl`, `adterm.dat` › `despachos · codigo_usina` | Lista vazia quando `despacho_antecipado_gnl` = 0 ou `adterm.dat` não tem despachos; caso contrário, ver os campos `thermals[].*`. |
+| `thermals[].thermal_id` | `dger.dat` › `despacho_antecipado_gnl`, `adterm.dat` › `despachos · codigo_usina` *(derivado; condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Id Novomodelo da térmica de `conft.dat`; códigos ausentes do mapa são ignorados com aviso. Ordenado pelo id. |
+| `thermals[].commitments[].start_date` | `adterm.dat` › `despachos · lag`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Primeiro dia do mês de entrega: `lag` = 1 é o primeiro mês do estudo, `lag` = 2 o segundo, e assim por diante; uma janela por `lag` de 1 ao máximo da usina. |
+| `thermals[].commitments[].end_date` | `adterm.dat` › `despachos · lag`, `dger.dat` › `mes_inicio_estudo`, `dger.dat` › `ano_inicio_estudo` *(derivado; condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Primeiro dia do mês seguinte à entrega (fim exclusivo). |
+| `thermals[].commitments[].value_mw` | `adterm.dat` › `despachos · valor`, `adterm.dat` › `despachos · patamar`, `patamar.dat` › `duracao_mensal_patamares · valor`, `term.dat` › `usinas · potencia_instalada`, `term.dat` › `usinas · fator_capacidade_maximo`, `term.dat` › `usinas · geracao_minima` *(condicional: somente quando `despacho_antecipado_gnl` ≠ 0 e `adterm.dat` tem despachos)* | Média dos MW por patamar ponderada pela fração de duração do patamar no mês de entrega (preserva o MWh comprometido). Limitado ao par estático [`min_mw`, `max_mw`] da térmica — o envelope dos limites por estágio —, com aviso. |
 
 ### `system/buses.json`
 
@@ -769,15 +766,16 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 - `mes_inicio_estudo` → `stages.json` › `pre_study_stages[].end_date`
 - `ano_inicio_estudo` → `stages.json` › `pre_study_stages[].end_date`
 - `num_anos_pre_estudo` → `stages.json` › `pre_study_stages[].season_id`
-- `despacho_antecipado_gnl` → `initial_conditions.json` › `past_anticipated_commitments[].thermal_id`
-- `mes_inicio_estudo` → `initial_conditions.json` › `past_anticipated_commitments[].start_date`
-- `ano_inicio_estudo` → `initial_conditions.json` › `past_anticipated_commitments[].start_date`
-- `mes_inicio_estudo` → `initial_conditions.json` › `past_anticipated_commitments[].end_date`
-- `ano_inicio_estudo` → `initial_conditions.json` › `past_anticipated_commitments[].end_date`
-- `mes_inicio_estudo` → `initial_conditions.json` › `recent_observations[].start_date`
-- `ano_inicio_estudo` → `initial_conditions.json` › `recent_observations[].start_date`
-- `mes_inicio_estudo` → `initial_conditions.json` › `recent_observations[].end_date`
-- `ano_inicio_estudo` → `initial_conditions.json` › `recent_observations[].end_date`
+- `mes_inicio_estudo` → `boundary_conditions.json` › `hydros[].recent_inflows[].start_date`
+- `ano_inicio_estudo` → `boundary_conditions.json` › `hydros[].recent_inflows[].start_date`
+- `mes_inicio_estudo` → `boundary_conditions.json` › `hydros[].recent_inflows[].end_date`
+- `ano_inicio_estudo` → `boundary_conditions.json` › `hydros[].recent_inflows[].end_date`
+- `despacho_antecipado_gnl` → `boundary_conditions.json` › `thermals`
+- `despacho_antecipado_gnl` → `boundary_conditions.json` › `thermals[].thermal_id`
+- `mes_inicio_estudo` → `boundary_conditions.json` › `thermals[].commitments[].start_date`
+- `ano_inicio_estudo` → `boundary_conditions.json` › `thermals[].commitments[].start_date`
+- `mes_inicio_estudo` → `boundary_conditions.json` › `thermals[].commitments[].end_date`
+- `ano_inicio_estudo` → `boundary_conditions.json` › `thermals[].commitments[].end_date`
 - `ano_inicial_historico` → `system/buses.json` › `buses[].operational_start_date`
 - `ano_inicial_historico` → `system/lines.json` › `lines[].operational_start_date`
 - `mes_inicio_estudo` → `system/lines.json` › `lines[].capacity.direct_mw`
@@ -893,14 +891,12 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 - `usinas · codigo_usina_jusante` → `penalties.json` › `hydro.evaporation_violation_cost`
 - `usinas · codigo_usina_jusante` → `penalties.json` › `hydro.storage_violation_below_cost`
 - `usinas · codigo_usina_jusante` → `penalties.json` › `hydro.filling_target_violation_cost`
-- `usinas · codigo_usina` → `initial_conditions.json` › `storage[].hydro_id`
-- `usinas · volume_inicial_percentual` → `initial_conditions.json` › `storage[].value_hm3`
-- `usinas · usina_existente` → `initial_conditions.json` › `filling_storage`
-- `usinas · codigo_usina` → `initial_conditions.json` › `filling_storage[].hydro_id`
-- `usinas · usina_existente` → `initial_conditions.json` › `filling_storage[].hydro_id`
-- `usinas · posto` → `initial_conditions.json` › `recent_observations[].hydro_id`
-- `usinas · posto` → `initial_conditions.json` › `recent_observations[].value_m3s`
-- `usinas · codigo_usina_jusante` → `initial_conditions.json` › `recent_observations[].value_m3s`
+- `usinas · codigo_usina` → `boundary_conditions.json` › `hydros[].hydro_id`
+- `usinas · posto` → `boundary_conditions.json` › `hydros[].hydro_id`
+- `usinas · volume_inicial_percentual` → `boundary_conditions.json` › `hydros[].storage_hm3`
+- `usinas · usina_existente` → `boundary_conditions.json` › `hydros[].storage_hm3`
+- `usinas · posto` → `boundary_conditions.json` › `hydros[].recent_inflows[].value_m3s`
+- `usinas · codigo_usina_jusante` → `boundary_conditions.json` › `hydros[].recent_inflows[].value_m3s`
 - `usinas · codigo_usina` → `constraints/generic_parameters.json` › `scalar_parameters[].id`
 - `usinas · codigo_usina` → `constraints/generic_parameters.json` › `scalar_parameters[].name`
 - `usinas · codigo_usina` → `constraints/generic_parameters.json` › `scalar_parameters[].computed_spec.hydro_id`
@@ -950,7 +946,7 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 
 ### `conft.dat`
 
-**Estado:** convertido em parte. **Lido por:** `constraints/generic_constraints.json`, `constraints/thermal_bounds.parquet`, `initial_conditions.json`, `system/thermals.json`.
+**Estado:** convertido em parte. **Lido por:** `boundary_conditions.json`, `constraints/generic_constraints.json`, `constraints/thermal_bounds.parquet`, `system/thermals.json`.
 
 - `usinas · codigo_usina` → `system/thermals.json` › `thermals[].id`
 - `usinas · nome_usina` → `system/thermals.json` › `thermals[].name`
@@ -1055,13 +1051,13 @@ Entram no caso as usinas em operação e não fictícias — `usina_existente` i
 
 ### `term.dat`
 
-**Estado:** convertido. **Lido por:** `constraints/thermal_bounds.parquet`, `initial_conditions.json`, `system/thermals.json`.
+**Estado:** convertido. **Lido por:** `boundary_conditions.json`, `constraints/thermal_bounds.parquet`, `system/thermals.json`.
 
 Todas as colunas de `usinas` são lidas (potência, FCMAX, TEIF, IP, GTMIN por mês do primeiro ano de estudo e GTMIN dos demais anos). Para usina `EE` ou `NE` em `conft.dat`, o NEWAVE descarta o GTMIN de `term.dat` e só valem as janelas GTMIN de `expt.dat`.
 
-- `usinas · potencia_instalada` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
-- `usinas · fator_capacidade_maximo` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
-- `usinas · geracao_minima` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
+- `usinas · potencia_instalada` → `boundary_conditions.json` › `thermals[].commitments[].value_mw`
+- `usinas · fator_capacidade_maximo` → `boundary_conditions.json` › `thermals[].commitments[].value_mw`
+- `usinas · geracao_minima` → `boundary_conditions.json` › `thermals[].commitments[].value_mw`
 - `usinas · geracao_minima (mes 1 a 12)` → `system/thermals.json` › `thermals[].generation.min_mw`
 - `usinas · geracao_minima (mes = 13)` → `system/thermals.json` › `thermals[].generation.min_mw`
 - `usinas · potencia_instalada` → `system/thermals.json` › `thermals[].generation.max_mw`
@@ -1095,7 +1091,7 @@ Todas as colunas de `usinas` são lidas (potência, FCMAX, TEIF, IP, GTMIN por m
 - `numero_patamares` → `stages.json` › `stages[].blocks[].id`
 - `numero_patamares` → `stages.json` › `stages[].blocks[].name`
 - `duracao_mensal_patamares · valor` → `stages.json` › `stages[].blocks[].hours`
-- `duracao_mensal_patamares · valor` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
+- `duracao_mensal_patamares · valor` → `boundary_conditions.json` › `thermals[].commitments[].value_mw`
 - `intercambio_patamares · patamar` → `constraints/line_bounds.parquet` › `block_id`
 - `intercambio_patamares · valor` → `constraints/line_bounds.parquet` › `direct_mw`
 - `intercambio_patamares · valor` → `constraints/line_bounds.parquet` › `reverse_mw`
@@ -1140,11 +1136,10 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 - `cadastro · produtibilidade_especifica` → `penalties.json` › `hydro.inflow_nonnegativity_cost`
 - `cadastro · produtibilidade_especifica` → `penalties.json` › `hydro.storage_violation_below_cost`
 - `cadastro · produtibilidade_especifica` → `penalties.json` › `hydro.filling_target_violation_cost`
-- `cadastro · volume_minimo` → `initial_conditions.json` › `storage[].value_hm3`
-- `cadastro · volume_maximo` → `initial_conditions.json` › `storage[].value_hm3`
-- `cadastro · tipo_regulacao` → `initial_conditions.json` › `storage[].value_hm3`
-- `cadastro · volume_referencia` → `initial_conditions.json` › `storage[].value_hm3`
-- `cadastro · volume_minimo` → `initial_conditions.json` › `filling_storage[].value_hm3`
+- `cadastro · volume_minimo` → `boundary_conditions.json` › `hydros[].storage_hm3`
+- `cadastro · volume_maximo` → `boundary_conditions.json` › `hydros[].storage_hm3`
+- `cadastro · tipo_regulacao` → `boundary_conditions.json` › `hydros[].storage_hm3`
+- `cadastro · volume_referencia` → `boundary_conditions.json` › `hydros[].storage_hm3`
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `spillage_cost`
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `turbined_cost`
 - `cadastro · produtibilidade_especifica` → `constraints/penalty_overrides_hydro.parquet` › `diversion_cost`
@@ -1317,8 +1312,8 @@ Cadastro binário lido integralmente pelo `inewave`; as colunas abaixo não alim
 
 Registros permanentes `VAZMIN`, `VOLMAX`, `VOLMIN`, `NUMCNJ`, `NUMMAQ`, `POTEFE`, `VOLCOTA`, `COTAREA` são aplicados ao cadastro; `VMAXT`, `VMINT`, `TURBMAXT`, `TURBMINT`, `VAZMINT` viram limites por estágio, `CFUGA`/`CMONT` alteram a produtibilidade por estágio e `CDESVIO` declara o canal de desvio da usina (`hydros[].diversion`). Só o primeiro bloco `USINA` de cada usina é lido, como admite o manual do NEWAVE; os registros de um bloco repetido e os anteriores ao primeiro `USINA` são ignorados e listados no diagnóstico `modif-records-ignored`.
 
-- `VOLMIN · volume` → `initial_conditions.json` › `storage[].value_hm3`
-- `VOLMAX · volume` → `initial_conditions.json` › `storage[].value_hm3`
+- `VOLMIN · volume` → `boundary_conditions.json` › `hydros[].storage_hm3`
+- `VOLMAX · volume` → `boundary_conditions.json` › `hydros[].storage_hm3`
 - `CFUGA` → `constraints/penalty_overrides_hydro.parquet` › `spillage_cost`
 - `CMONT` → `constraints/penalty_overrides_hydro.parquet` › `spillage_cost`
 - `CFUGA` → `constraints/penalty_overrides_hydro.parquet` › `turbined_cost`
@@ -1453,14 +1448,14 @@ O bridge toma, por variável, o primeiro valor `R$/MWh` não nulo do primeiro pa
 
 ### `vazpast.dat`
 
-**Estado:** convertido. **Lido por:** `initial_conditions.json`.
+**Estado:** convertido. **Lido por:** `boundary_conditions.json`.
 
-Lido integralmente: as vazões naturais por posto são convertidas em incrementais e recortadas aos 12 meses anteriores ao início do estudo para `initial_conditions.recent_observations`.
+Lido integralmente: as vazões naturais por posto são convertidas em incrementais e recortadas aos 12 meses anteriores ao início do estudo para `hydros[].recent_inflows` de `boundary_conditions.json`.
 
-- `tendencia · codigo_posto` → `initial_conditions.json` › `recent_observations[].hydro_id`
-- `tendencia · mes` → `initial_conditions.json` › `recent_observations[].start_date`
-- `tendencia · mes` → `initial_conditions.json` › `recent_observations[].end_date`
-- `tendencia · valor` → `initial_conditions.json` › `recent_observations[].value_m3s`
+- `tendencia · codigo_posto` → `boundary_conditions.json` › `hydros[].hydro_id`
+- `tendencia · mes` → `boundary_conditions.json` › `hydros[].recent_inflows[].start_date`
+- `tendencia · mes` → `boundary_conditions.json` › `hydros[].recent_inflows[].end_date`
+- `tendencia · valor` → `boundary_conditions.json` › `hydros[].recent_inflows[].value_m3s`
 
 ### `dsvagua.dat`
 
@@ -1523,9 +1518,8 @@ Os cinco tipos (`POTEF`, `FCMAX`, `TEIFT`, `GTMIN`, `IPTER`) são aplicados em `
 
 Só o registro de enchimento (`data_inicio_enchimento`, `duracao_enchimento`, `volume_morto`) e as datas de entrada de máquinas (`data_entrada_operacao`, `conjunto_maquina_entrada`) são lidos. A usina EE não traz registro de enchimento: apenas linhas de entrada de máquina.
 
-- `expansoes · data_inicio_enchimento` → `initial_conditions.json` › `filling_storage`
-- `expansoes · data_inicio_enchimento` → `initial_conditions.json` › `filling_storage[].hydro_id`
-- `expansoes · volume_morto` → `initial_conditions.json` › `filling_storage[].value_hm3`
+- `expansoes · data_inicio_enchimento` → `boundary_conditions.json` › `hydros[].storage_hm3`
+- `expansoes · volume_morto` → `boundary_conditions.json` › `hydros[].storage_hm3`
 - `data_inicio_enchimento` → `system/hydros.json` › `hydros[].id`
 - `data_inicio_enchimento` → `system/hydros.json` › `hydros[].operational_start_date`
 - `duracao_enchimento` → `system/hydros.json` › `hydros[].operational_start_date`
@@ -1667,15 +1661,16 @@ Lido integralmente. `varredura`, `ano_inicio_varredura` e `anos_inicio_simulacoe
 
 ### `adterm.dat`
 
-**Estado:** convertido. **Lido por:** `initial_conditions.json`, `system/thermals.json`.
+**Estado:** convertido. **Lido por:** `boundary_conditions.json`, `system/thermals.json`.
 
 Lido integralmente quando `despacho_antecipado_gnl ≠ 0`; despachos por patamar são ponderados pela duração dos patamares e lags além do horizonte são truncados com aviso.
 
-- `despachos · codigo_usina` → `initial_conditions.json` › `past_anticipated_commitments[].thermal_id`
-- `despachos · lag` → `initial_conditions.json` › `past_anticipated_commitments[].start_date`
-- `despachos · lag` → `initial_conditions.json` › `past_anticipated_commitments[].end_date`
-- `despachos · valor` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
-- `despachos · patamar` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
+- `despachos · codigo_usina` → `boundary_conditions.json` › `thermals`
+- `despachos · codigo_usina` → `boundary_conditions.json` › `thermals[].thermal_id`
+- `despachos · lag` → `boundary_conditions.json` › `thermals[].commitments[].start_date`
+- `despachos · lag` → `boundary_conditions.json` › `thermals[].commitments[].end_date`
+- `despachos · valor` → `boundary_conditions.json` › `thermals[].commitments[].value_mw`
+- `despachos · patamar` → `boundary_conditions.json` › `thermals[].commitments[].value_mw`
 - `despachos · codigo_usina` → `system/thermals.json` › `thermals[].anticipated_config`
 - `despachos · lag` → `system/thermals.json` › `thermals[].anticipated_config.lead_stages`
 
