@@ -1530,10 +1530,10 @@ def test_assemble_bound_period_patamar_override_flips_operator() -> None:
     assert result.lower is None
 
 
-def test_assemble_bound_empty_overrides_matches_pre_ticket_base_fold() -> None:
+def test_assemble_bound_empty_overrides_matches_the_base_fold() -> None:
     # an empty overrides tuple must be byte-identical to folding
-    # restriction.lhs/.operator/.rhs verbatim (the pre-override behavior),
-    # for a cell nowhere near any override range.
+    # restriction.lhs/.operator/.rhs verbatim, for a cell nowhere near any
+    # override range.
     restriction = _inequacao(505, "ger_usih(9)", "<=", "1000 - 0.02*val_demanda(1)")
     ctx = _dict_context({"val_demanda(1)": 400.0})
     model = _model()

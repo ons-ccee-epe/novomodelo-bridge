@@ -1,8 +1,8 @@
 """Presentation helpers for the constraints tab.
 
 The constraint-expression *domain* logic (parser, parameter resolver, LHS
-evaluator) now lives in :mod:`novomodelo_bridge.novomodelo.constraint_expr` so the dashboard and
-the comparator share one definition. This module keeps only the HTML rendering
+evaluator) lives in :mod:`novomodelo_bridge.novomodelo.constraint_expr` so the dashboard and
+the comparator share one definition. This module holds only the HTML rendering
 plus the small bound-shape derivation used to display it.
 """
 
@@ -32,7 +32,7 @@ def derive_constraint_shape(bounds_rows: pd.DataFrame) -> str:
     (:func:`novomodelo_bridge.dashboard.tabs.constraints._build_constraint_lhs_data`)
     — read ``bound_lower``/``bound_upper`` directly per row instead of
     relying on this single derived label. Falls back to ``"<="`` — the
-    legacy default sense for a constraint with no bound rows — when
+    default sense for a constraint with no bound rows — when
     *bounds_rows* has no such row (including when it is empty).
     """
     for _, row in bounds_rows.iterrows():

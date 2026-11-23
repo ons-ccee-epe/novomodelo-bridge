@@ -1,11 +1,8 @@
 """Network-tab tests for ``comparators.decomp.results``.
 
-Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
-corridor/line alignment, the DECOMP interchange side, line entity
-names and result comparisons, and the Network tab's
-``build_decomp_dataset`` rows. The remaining concern bands (energy balance,
-costs, performance, hydro/thermal detail, productivity, FPHA, REE,
-evaporation, constraints, CLI) stay in the mega file pending their own carve.
+Covers corridor/line alignment, the DECOMP interchange side, line entity
+names and result comparisons, and the Network tab's ``build_decomp_dataset``
+rows.
 """
 
 from __future__ import annotations

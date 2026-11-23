@@ -64,7 +64,7 @@ def _compute_prod_media_sin_safe(case: NewaveCase) -> float | None:
     with the mean **PRODT** — the equivalent productivity from vol_min to vol_max — over
     all existing plants including zeros. See :func:`hydro.compute_prodt_sin_mean`;
     validated against pmo.dat's applied penalty (0.6299 ↔ VAZMIN 821.78). Falls back to
-    ``None`` (caller uses its legacy point-reference mean) when the source model files
+    ``None`` (caller falls back to its point-reference mean) when the source model files
     cannot be read — e.g. in unit tests that mock the pipeline.
     """
     try:
@@ -86,7 +86,7 @@ def _compute_per_stage_sin_productivities(
       seasonal reference volume — so this is essentially **flat** across the
       horizon. pmo.dat confirms it: the applied VAZMIN/TURBMN/TURBMX penalties
       vary only 0.15% over the whole study (= the per-config PRODT-mean spread), not the
-      ~2% that the old seasonal point-reference ρ implied. We therefore emit a constant
+      ~2% that a seasonal point-reference ρ implies. We therefore emit a constant
       ``compute_prodt_sin_mean`` for every stage; the per-stage penalty override then
       collapses to the base for the ρ_avg-scaled columns (correct — the source model
       does not seasonalise these penalties). The genuinely seasonal per-plant ρ still
@@ -295,7 +295,7 @@ def _convert_core_entities(case: NewaveCase, id_map: NewaveIdMap) -> _EntityArti
     # altura máxima, constant); VAZMIN/TURBMN/TURBMX use PROD_MEDIA_SIN (mean PRODT,
     # drifting per CFUGA/CMONT config). Both come from the source model inputs and
     # return None when files are absent (mocked-pipeline tests), so convert_penalties
-    # falls back to its own legacy approximation.
+    # falls back to its own approximation.
     max_prodtacum_sin = constraints_conv.compute_max_prodtacum_sin(case)
     prod_media_sin = _compute_prod_media_sin_safe(case)
     penalties_dict = network_conv.convert_penalties(

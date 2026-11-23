@@ -403,7 +403,7 @@ def hydro_slack_per_bus_chart(
 
     # Frame-sourced per-(bus, stage) sums (analyze owns the roll-up and the
     # bus-name resolution / NOFICT skip). The band's bus ids come from the
-    # Novomodelo frame, matching the legacy ``per_bus_cb, per_bus_ids`` pairing.
+    # Novomodelo frame.
     cb_agg = analyze.per_bus_sums_from_frame(
         novomodelo_hydro, variable, matched_ids, hydro_meta, bus_meta
     )

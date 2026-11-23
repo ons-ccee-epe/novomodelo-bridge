@@ -331,7 +331,7 @@ class TestConvertLines:
 
 # ---------------------------------------------------------------------------
 # Line bounds conversion (folds patamar.dat exchange factors into per-block
-# rows — novomodelo decision 10)
+# rows)
 # ---------------------------------------------------------------------------
 
 
@@ -602,10 +602,10 @@ def _newave_expected_factor(
 
 
 class TestConvertLineBoundsZeroCapability:
-    """novomodelo decision 10 makes ``direct_mw = 0.0`` an ordinary bound. No
-    current deck ever records a zero exchange factor (measured: 1152
-    factors across the converted example cases, zero zeros, min 0.5582), so
-    only a synthetic fixture can pin the new capability."""
+    """``direct_mw = 0.0`` is an ordinary novomodelo bound. No current deck
+    records a zero exchange factor (measured: 1152 factors across the converted
+    example cases, zero zeros, min 0.5582), so only a synthetic fixture can pin
+    it."""
 
     def _make_id_map(self) -> NewaveIdMap:
         return NewaveIdMap(subsystem_ids=[1, 2, 99], hydro_codes=[], thermal_codes=[])
@@ -690,7 +690,7 @@ class TestConvertPenalties:
             {
                 "hydros": [
                     {
-                        "generation": {"productivity_mw_per_m3s": 1.0},
+                        "id": 0,
                         "reservoir": {
                             "max_storage_hm3": 1000.0,
                             "min_storage_hm3": 100.0,
@@ -698,6 +698,7 @@ class TestConvertPenalties:
                     }
                 ]
             },
+            productivities={0: 1.0},
         )
         for key in ("bus", "hydro", "line", "non_controllable_source"):
             assert key in result
@@ -711,7 +712,7 @@ class TestConvertPenalties:
             {
                 "hydros": [
                     {
-                        "generation": {"productivity_mw_per_m3s": 1.0},
+                        "id": 0,
                         "reservoir": {
                             "max_storage_hm3": 1000.0,
                             "min_storage_hm3": 100.0,
@@ -719,6 +720,7 @@ class TestConvertPenalties:
                     }
                 ]
             },
+            productivities={0: 1.0},
         )
         # First subsystem=1, patamar=1: custo = 500.0*1 = 500.0
         seg = result["bus"]["deficit_segments"][0]
@@ -733,7 +735,7 @@ class TestConvertPenalties:
             {
                 "hydros": [
                     {
-                        "generation": {"productivity_mw_per_m3s": 1.0},
+                        "id": 0,
                         "reservoir": {
                             "max_storage_hm3": 1000.0,
                             "min_storage_hm3": 100.0,
@@ -741,6 +743,7 @@ class TestConvertPenalties:
                     }
                 ]
             },
+            productivities={0: 1.0},
         )
         required = {
             "spillage_cost",

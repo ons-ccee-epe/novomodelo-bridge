@@ -1645,15 +1645,11 @@ _EMPTY_THERMAL_BOUNDS_GNL_EMISSION = GnlEmission(
 
 
 class TestGnlWiring:
-    """Regression-guard the pre-existing GNL wiring
-    block. ``convert_gnl``
-    synthesises a GS-driven post-study calendar and free (not just pinned)
-    forward deliveries, but the pipeline call site already carried the
-    unchanged ``GnlEmission`` shape to disk — no tier-1 test exercised it,
-    since the mock deck's ``DecompFiles`` always carried ``dadgnl=None``.
-    These tests drive the block via ``_run_cadastro_pipeline``'s
-    ``gnl_emission`` param without a real ``dadgnl`` deck or a real
-    ``convert_gnl`` call (mocked)."""
+    """The pipeline's GNL block, driven through ``_run_cadastro_pipeline``'s
+    ``gnl_emission`` param with ``convert_gnl`` mocked (no real ``dadgnl``
+    deck): the pipeline passes ``convert_gnl`` its inputs and writes the
+    ``GnlEmission`` it returns — thermals, past commitments and the GS-driven
+    post-study calendar — to disk."""
 
     def test_convert_gnl_called_with_first_thermal_id_bus_id_of_and_calendar(
         self, tmp_path: Path
@@ -1687,9 +1683,8 @@ class TestGnlWiring:
     ) -> None:
         """Every created GNL thermal id lands in ``thermals.json``, sorted
         ascending; the past boundary lands in ``initial_conditions.json``
-        verbatim, with no ``future_anticipated_deliveries`` key (retired);
-        the post-study ``thermal_bounds`` carrier is still written and
-        non-empty."""
+        verbatim, with no ``future_anticipated_deliveries`` key; the
+        post-study ``thermal_bounds`` carrier is written and non-empty."""
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, gnl_emission=_POPULATED_GNL_EMISSION
         )
@@ -1724,7 +1719,7 @@ class TestGnlWiring:
         (empty ``post_study_stages["thermal_bounds"]``) still gets
         ``post_study_stages.json`` (non-``None`` calendar);
         ``initial_conditions.json`` carries no
-        ``future_anticipated_deliveries`` key (retired)."""
+        ``future_anticipated_deliveries`` key."""
         dst = _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
@@ -1748,8 +1743,8 @@ class TestGnlWiring:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The summary log names only the emitted GNL thermal count -- no
-        "future anticipated deliver(y/ies)" clause (the retired free lane)
-        and no "post-horizon deliver(y/ies)" wording (an older phrasing)."""
+        "future anticipated deliver(y/ies)" or "post-horizon deliver(y/ies)"
+        clause."""
         with caplog.at_level(logging.INFO, logger="novomodelo_bridge.decomp.pipeline"):
             _run_cadastro_pipeline(
                 tmp_path, ac_volmax_frame=None, gnl_emission=_POPULATED_GNL_EMISSION
@@ -1862,9 +1857,8 @@ class TestCadastroPipelineWiring:
     def test_initial_conditions_json_stamps_schema_as_first_key(
         self, tmp_path: Path
     ) -> None:
-        """``$schema`` is now stamped on DECOMP ``initial_conditions.json`` too
-        (a previously deferred twin-track asymmetry), first key to match the
-        source model's own key order, pinned to the registry."""
+        """``$schema`` is stamped as the first key of DECOMP
+        ``initial_conditions.json``, pinned to the registry."""
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
 
         doc = json.loads((dst / "initial_conditions.json").read_text(encoding="utf-8"))
@@ -3287,9 +3281,9 @@ class TestDiscoverDecompFilesBoundaryFcf:
 
         assert files.cortesh == target
 
-    def test_decomp_files_still_constructs_without_the_new_fields(self) -> None:
-        """Every pre-existing ``DecompFiles(...)`` call site keeps
-        constructing unchanged -- both new fields default to ``None``."""
+    def test_decomp_files_boundary_fcf_fields_default_to_none(self) -> None:
+        """``cortesh`` and ``cortes`` default to ``None``: a ``DecompFiles``
+        built without them is a deck with no boundary FCF."""
         from novomodelo_bridge.decomp.files import DecompFiles
 
         files = DecompFiles(

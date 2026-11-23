@@ -194,8 +194,8 @@ class TestStageRecords:
 
     def test_no_num_openings_on_external_stages(self) -> None:
         """Every DECOMP stage is external-only, so novomodelo rejects a per-stage
-        ``num_openings`` (and the retired ``num_scenarios``); the node graph's
-        per-node ``scenario_id`` binds the openings instead."""
+        ``num_openings`` (and refuses ``num_scenarios`` as an unknown field); the
+        node graph's per-node ``scenario_id`` binds the openings instead."""
         for record in stage_records(self._calendar()):
             assert "num_openings" not in record
             assert "num_scenarios" not in record

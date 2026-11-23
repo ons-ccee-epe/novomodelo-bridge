@@ -33,11 +33,6 @@ def configure_logging(verbose: int, log_file: Path | None) -> None:
     printed twice); ``1`` (``-v`` / ``--verbose``) raises the console to INFO; and
     ``2`` or more (``-vv``) raises it to DEBUG.
 
-    This is a behavior change from the previous boolean ``--verbose``: a bare
-    ``--verbose`` used to mean DEBUG and now means INFO; ``-vv`` is required for the
-    full DEBUG firehose. ``--log-file`` (below) gives the complete DEBUG trace to
-    anyone who needs it regardless of the console level.
-
     When *log_file* is not ``None``, its missing parent directories are created and
     a DEBUG ``FileHandler`` is attached to the
     ``novomodelo_bridge`` logger and the package logger level is lowered to DEBUG, so the

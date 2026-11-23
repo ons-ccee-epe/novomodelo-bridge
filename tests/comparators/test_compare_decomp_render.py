@@ -155,9 +155,8 @@ class TestCompareDecompCommand:
     def test_renders_headline_and_exits_zero(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """The legacy per-variable table and bounds table renderer
-        is retired; the shared ``build_compare_verdict`` headline is the sole
-        terminal summary."""
+        """The shared ``build_compare_verdict`` headline is the sole terminal
+        summary: no per-variable table, no bounds table."""
         result = self._invoke(
             ["compare", "decomp", str(tmp_path), str(tmp_path)], monkeypatch
         )
@@ -359,10 +358,9 @@ class TestCompareDecompCommand:
     def test_format_html_writes_the_shared_multi_tab_report_labelled_decomp(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """The HTML block now renders the SAME shared multi-tab
-        report as ``compare newave`` (``build_comparison_report``), not the
-        legacy single-page renderer, with the reference series labelled
-        "DECOMP" (never "NEWAVE")."""
+        """The HTML block renders the SAME shared multi-tab report as
+        ``compare newave`` (``build_comparison_report``), with the reference
+        series labelled "DECOMP" (never "NEWAVE")."""
         out_dir = tmp_path / "artifacts"
         result = self._invoke(
             [

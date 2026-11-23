@@ -1,6 +1,6 @@
-"""Tier-1 tests for the compare-family typed-args migration.
+"""Tier-1 tests for the compare-family typed args.
 
-Locks in two things: `_compare_newave` / `_compare_decomp` build a typed
+Pins two things: `_compare_newave` / `_compare_decomp` build a typed
 `CompareArgs` instead of a duck-typed `SimpleNamespace`, and
 `_resolve_compare_settings` returns a resolved copy instead of mutating its
 (frozen) input. Drives the precedence logic directly with a patched

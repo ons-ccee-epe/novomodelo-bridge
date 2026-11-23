@@ -1047,9 +1047,9 @@ class TestConvertConfig:
         assert src["historical_years"] == [2025]
         assert [d.code for d in found] == ["shist-start-years-empty"]
 
-    def test_shist_absent_falls_back_to_legacy_range(self, tmp_path) -> None:
-        """When shist.dat is not in NewaveFiles, fall back to the pre-Shist
-        default (ano_inicial_historico+1 .. ano_inicio_estudo-1)."""
+    def test_shist_absent_falls_back_to_dger_history_range(self, tmp_path) -> None:
+        """When shist.dat is not in NewaveFiles, the historical years default to
+        ano_inicial_historico+1 .. ano_inicio_estudo-1."""
         dger = _make_dger_mock(
             tipo_execucao=1,
             tipo_simulacao_final=2,

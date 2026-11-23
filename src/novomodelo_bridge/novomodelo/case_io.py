@@ -5,9 +5,8 @@ Both the dashboard (``dashboard/data.py``) and the comparator
 module holds the pieces they genuinely share, so a fix lands in one place
 instead of drifting between two near-copies.
 
-Currently it owns the hydro-productivity resolution (the parquet override table
-plus the legacy production-models JSON fallback). It is the seed of the wider
-shared Novomodelo-I/O foundation; more low-level readers can move here over time.
+It owns the case-directory layout (:func:`case_dir_for`) and the
+hydro-productivity resolution (:func:`resolve_hydro_productivities`).
 """
 
 from __future__ import annotations
@@ -30,9 +29,7 @@ def case_dir_for(output_dir: Path) -> Path:
     ``<case_dir>/output``. The comparator is handed the ``output/`` directory,
     so the case directory is its parent.
 
-    This is the single home for that "``output`` sits under the case" contract,
-    which used to be hard-coded as ``novomodelo_output_dir.parent`` at ~13 sites — and
-    the one place a future custom ``--output`` layout would override.
+    This is the single home for that "``output`` sits under the case" contract.
     """
     return output_dir.parent
 
@@ -58,8 +55,7 @@ def productivity_from_energy_parquet(case_dir: Path) -> dict[int, float]:
                 "system/hydro_energy_productivity.parquet",
                 parquet_path,
                 "the report takes the hydro plants' productivity from "
-                "system/hydro_production_models.json or system/hydros.json, "
-                "which only older cases fill, or shows none.",
+                "system/hydro_production_models.json, or shows none.",
                 exc,
             ),
             logger=_LOG,
@@ -99,13 +95,13 @@ def productivity_from_energy_parquet(case_dir: Path) -> dict[int, float]:
 
 
 def productivity_from_production_models(case_dir: Path) -> dict[int, float]:
-    """Legacy fallback: read productivity from ``hydro_production_models.json``.
+    """Return ``{hydro_id: ρ}`` from ``hydro_production_models.json``.
 
-    Pre-modernization novomodelo-bridge cases (before the parquet-only contract) embed
-    ``productivity_mw_per_m3s`` in the JSON stage_range entries; this preserves
-    dashboard/compare support for those older outputs. New cases use
-    :func:`productivity_from_energy_parquet` instead. Returns ``{}`` when the file
-    is absent, unreadable, or carries only model selection.
+    A ``constant_productivity`` stage range may carry its
+    ``productivity_mw_per_m3s`` here rather than in
+    ``hydro_energy_productivity.parquet``; this takes each hydro's first stage
+    range that does. Returns ``{}`` when the file is absent, unreadable, or
+    carries only model selection.
     """
     pm_path = case_dir / "system" / "hydro_production_models.json"
     if not pm_path.exists():
@@ -145,13 +141,10 @@ def resolve_hydro_productivities(
     For each hydro in ``hydros`` (the ``hydros.json`` ``"hydros"`` list), try in
     order:
 
-    1. ``hydro_energy_productivity.parquet`` — the modern per-(hydro, stage)
-       contract (:func:`productivity_from_energy_parquet`);
-    2. ``hydro_production_models.json`` — legacy embedded productivity
-       (:func:`productivity_from_production_models`);
-    3. ``hydros.json`` ``generation.productivity_mw_per_m3s`` — deprecated
-       embedded field;
-    4. ``hydros.json`` top-level ``productivity_mw_per_m3s`` — oldest layout.
+    1. ``hydro_energy_productivity.parquet`` — the per-(hydro, stage) table
+       (:func:`productivity_from_energy_parquet`);
+    2. ``hydro_production_models.json`` — a constant-productivity stage range's
+       own value (:func:`productivity_from_production_models`).
 
     The cascade is **per hydro**, not whole-dict: a hydro absent from the
     parquet still falls through to the next source even when other hydros do
@@ -170,11 +163,5 @@ def resolve_hydro_productivities(
         prod = energy.get(hid)
         if prod is None:
             prod = pm.get(hid)
-        if prod is None:
-            gen = hydro.get("generation")
-            if isinstance(gen, dict):
-                prod = gen.get("productivity_mw_per_m3s")
-        if prod is None:
-            prod = hydro.get("productivity_mw_per_m3s")
         result[hid] = float(prod) if prod is not None else None
     return result

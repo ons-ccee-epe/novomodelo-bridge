@@ -41,9 +41,8 @@ def test_storage_axis_is_stage_level() -> None:
 
 
 def test_diversion_axis_is_two_sided_block_eligible() -> None:
-    """Diversion widened from upper-only to two-sided —
-    novomodelo's generic-constraint-authoring landed ``min_diversion_m3s``
-    alongside the pre-existing ``max_diversion_m3s``."""
+    """Diversion is two-sided — ``min_diversion_m3s`` and ``max_diversion_m3s``
+    — and block-eligible."""
     spec = axis_spec("hydro", "diversion")
     assert spec.lower_column == "min_diversion_m3s"
     assert spec.upper_column == "max_diversion_m3s"
@@ -121,10 +120,9 @@ def test_hydro_water_withdrawal_axis_is_lower_only_stage_level() -> None:
     assert spec.block_eligible is False
 
 
-def test_pre_existing_eight_axes_unchanged() -> None:
-    """Every previously registered axis resolves to the exact
-    same :class:`AxisSpec` it always did — the six new families/axes are
-    additive only."""
+def test_hydro_thermal_pumping_axes_resolve_to_their_specs() -> None:
+    """Each hydro, thermal and pumping axis resolves to its :class:`AxisSpec`
+    columns and block eligibility."""
     expected = {
         ("hydro", "turbined"): ("min_turbined_m3s", "max_turbined_m3s", True),
         ("hydro", "outflow"): ("min_outflow_m3s", "max_outflow_m3s", True),

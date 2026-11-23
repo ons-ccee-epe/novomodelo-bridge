@@ -138,10 +138,9 @@ def _cfuga_modif_mock(code: int, *, month: int, year: int, nivel: float) -> Magi
 
 
 class TestConvertHydrosMaxTurbinedEnvelope:
-    """Declared ``max_turbined_m3s`` must rise to cover every
-    per-stage head-corrected cap ``convert_per_stage_capacity_caps``
-    emits for that hydro (novomodelo rule 43), instead of staying pinned at the
-    single reference-head value it used to declare unconditionally.
+    """Declared ``max_turbined_m3s`` rises to cover every per-stage
+    head-corrected cap ``convert_per_stage_capacity_caps`` emits for that
+    hydro (novomodelo rule 43), not just the single reference-head value.
 
     ``124.34830115445888`` (offset from the reference ``120.26013470805694``)
     is the exact value ``_operational_caps`` returns for USINA_A's fixture with
@@ -330,15 +329,14 @@ class TestConvertHydrosMaxTurbinedEnvelope:
         hydro_a = next(h for h in result["hydros"] if h["name"] == "USINA_A")
         assert hydro_a["generation"]["max_turbined_m3s"] == pytest.approx(expected_a)
 
-    def test_per_stage_hydro_bounds_rows_unaffected_by_the_declaration_fix(
+    def test_per_stage_hydro_bounds_rows_unaffected_by_the_declared_envelope(
         self, tmp_path: Path
     ) -> None:
         """LP-neutrality: the per-stage rows
         ``convert_per_stage_capacity_caps`` emits for ``hydro_bounds.parquet``
         are IDENTICAL whether or not ``convert_hydros``'s envelope-raising
-        declaration fix already ran against an equivalent case —
-        the fix only ever raises the entity-level declaration, never the
-        per-stage table. Two independently-built (but data-identical) cases
+        declaration already ran against an equivalent case — it only ever
+        raises the entity-level declaration, never the per-stage table. Two independently-built (but data-identical) cases
         isolate this: one has ``convert_hydros`` run against it FIRST, the
         other never sees ``convert_hydros`` at all, and the per-stage tables
         must still match row for row."""
@@ -349,30 +347,30 @@ class TestConvertHydrosMaxTurbinedEnvelope:
 
         id_map = self._make_id_map()
 
-        case_without_declaration_fix = self._case_with_cfuga_on_usina_a(tmp_path)
-        caps_without_declaration_fix = convert_per_stage_capacity_caps(
-            case_without_declaration_fix, id_map
+        case_without_declaration = self._case_with_cfuga_on_usina_a(tmp_path)
+        caps_without_declaration = convert_per_stage_capacity_caps(
+            case_without_declaration, id_map
         )
-        assert caps_without_declaration_fix is not None
-        rows_without_declaration_fix = [
-            r for r in caps_without_declaration_fix.to_pylist() if r["hydro_id"] == 0
+        assert caps_without_declaration is not None
+        rows_without_declaration = [
+            r for r in caps_without_declaration.to_pylist() if r["hydro_id"] == 0
         ]
 
-        case_with_declaration_fix = self._case_with_cfuga_on_usina_a(tmp_path)
-        convert_hydros(case_with_declaration_fix, id_map)  # exercises the raise
-        caps_with_declaration_fix = convert_per_stage_capacity_caps(
-            case_with_declaration_fix, id_map
+        case_with_declaration = self._case_with_cfuga_on_usina_a(tmp_path)
+        convert_hydros(case_with_declaration, id_map)  # exercises the raise
+        caps_with_declaration = convert_per_stage_capacity_caps(
+            case_with_declaration, id_map
         )
-        assert caps_with_declaration_fix is not None
-        rows_with_declaration_fix = [
-            r for r in caps_with_declaration_fix.to_pylist() if r["hydro_id"] == 0
+        assert caps_with_declaration is not None
+        rows_with_declaration = [
+            r for r in caps_with_declaration.to_pylist() if r["hydro_id"] == 0
         ]
 
-        assert len(rows_without_declaration_fix) == len(rows_with_declaration_fix) == 12
-        assert rows_without_declaration_fix == rows_with_declaration_fix
+        assert len(rows_without_declaration) == len(rows_with_declaration) == 12
+        assert rows_without_declaration == rows_with_declaration
         assert all(
             r["max_turbined_m3s"] == pytest.approx(124.34830115445888)
-            for r in rows_with_declaration_fix
+            for r in rows_with_declaration
         )
 
 
@@ -751,10 +749,9 @@ class TestConvertStorageBoundsMaxGenColumn:
     def test_max_generation_populated_for_filling_ramp_rows(self, tmp_path) -> None:
         """The column is populated for JURUENA's ramp rows.
 
-        The column starts all-null; the ramp branch now
-        emits explicit ``0.0`` caps for JURUENA's pre-operating stages (0–3) while
-        the non-ramp GHMIN row (EX plant 1) keeps ``max_generation_mw`` null. So
-        the column is no longer all-null: exactly the GHMIN row is null and the
+        The ramp branch emits explicit ``0.0`` caps for JURUENA's
+        pre-operating stages (0–3) while the non-ramp GHMIN row (EX plant 1)
+        keeps ``max_generation_mw`` null: exactly the GHMIN row is null and the
         JURUENA ramp rows carry ``0.0``.
         """
         tbl = self._run_filling(tmp_path)

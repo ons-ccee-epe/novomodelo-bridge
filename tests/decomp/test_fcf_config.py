@@ -59,8 +59,7 @@ class TestConvertConfigStateSpace:
                 "ncs": {"scheme": "external"},
             },
         }
-        # Simulation is the exact weighted census over the branching graph
-        # (novomodelo 0.14+ wires it; the old C9 sampled fallback is retired). With
+        # Simulation is the exact weighted census over the branching graph. With
         # no simulation.scenario_source, novomodelo inherits training's external one.
         expected_simulation = {
             "enabled": True,

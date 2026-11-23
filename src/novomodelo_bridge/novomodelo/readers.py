@@ -929,10 +929,8 @@ def read_novomodelo_training_metadata(novomodelo_output_dir: Path) -> dict:
 
     Tries ``case_dir_for(novomodelo_output_dir) / "output" / "training"``,
     falling back to ``novomodelo_output_dir`` then ``novomodelo_output_dir.parent``
-    (each with a ``training/metadata.json`` suffix) -- the single candidate
-    search every caller now shares, replacing the two divergent searches
-    ``export._read_novomodelo_version`` and ``dashboard.load_output_metadata``
-    used to run separately, and which could resolve different files.
+    (each with a ``training/metadata.json`` suffix) -- the one candidate
+    search every caller shares.
     Returns ``{}`` on an absent file, unparseable JSON, or a non-dict
     payload.
     """
@@ -1963,8 +1961,8 @@ def read_novomodelo_bus_aggregates(
     Hydro generation is read from novomodelo 0.13's
     ``simulation/hydro_bus_generation/`` partition (see
     :func:`read_novomodelo_hydro_bus_generation`), which carries ``bus_id`` per
-    row directly. Hydros no longer carry a plant-level ``bus_id`` in
-    ``system/hydros.json``, so unlike thermal/NCS there is no plant→bus map
+    row directly. ``system/hydros.json`` carries no plant-level ``bus_id``,
+    so unlike thermal/NCS there is no plant→bus map
     for hydro; a missing partition is a real operational state (the output
     predates novomodelo 0.13), not "no hydro generation", and propagates
     :class:`~novomodelo_bridge.core.errors.NovomodeloPartitionMissingError` to the caller
@@ -2061,7 +2059,7 @@ def read_novomodelo_cost_breakdown(
         return {}
 
     # Sum every individual cost component (the canonical set, so no column is
-    # silently dropped — contract_cost used to be missing here). The aggregate
+    # silently dropped). The aggregate
     # roll-ups (hydro_violation_cost, total/immediate/future) are excluded.
     cost_cols = list(NOVOMODELO_COST_COMPONENT_COLUMNS)
 
@@ -2322,12 +2320,12 @@ def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
         elif lower == "upper_bound_mean":
             col_map[col] = "upper_bound_mean"
 
-    # novomodelo 0.14 renamed the statistical upper-bound column
-    # "upper_bound_mean" -> "upper_bound" (alongside a nullable
-    # "upper_bound_std" and a new "upper_bound_kind" tag).  Accept the new
-    # spelling as an exact match into our canonical "upper_bound_mean" slot,
-    # but only when the legacy column is absent, and via an exact compare so
-    # the prefix-sharing "upper_bound_std"/"upper_bound_kind" never claim it.
+    # novomodelo 0.14 writes the statistical upper bound as "upper_bound"
+    # (alongside a nullable "upper_bound_std" and an "upper_bound_kind" tag);
+    # older outputs write "upper_bound_mean". Map the 0.14 spelling into the
+    # canonical "upper_bound_mean" slot only when the older column is absent,
+    # via an exact compare so the prefix-sharing "upper_bound_std" /
+    # "upper_bound_kind" never claim it.
     if "upper_bound_mean" not in col_map.values():
         for col, lower in cols_lower.items():
             if lower == "upper_bound":
@@ -2377,34 +2375,28 @@ def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
 
 
 def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
-    """Read hydro metadata from Novomodelo system JSON files.
+    """Read hydro metadata from ``system/hydros.json``.
 
-    Reads ``hydros.json`` and ``hydro_production_models.json``.
-    Productivity now lives per-(hydro, stage) in
-    ``hydro_production_models.json`` on novomodelo HEAD. We surface the
-    first ``stage_ranges`` entry's value as ``productivity_mw_per_m3s`` for
-    backward compatibility with comparator/dashboard callers.
+    Productivity comes from :func:`resolve_hydro_productivities` and is
+    surfaced as ``productivity_mw_per_m3s``.
 
     Returns ``{entity_id: {"name": str, "productivity_mw_per_m3s": float | None,
     "min_storage_hm3": float, ...}}``.
 
     This reader's job is plant *physics* (productivity, storage, outflow/
-    generation bounds) — it does **not** carry a plant-level bus id. Hydros
-    no longer carry a plant-level ``bus_id`` in ``system/hydros.json`` under
-    novomodelo 0.13; the compare layer's plant->bus label is
-    re-sourced from the ``simulation/hydro_bus_generation/`` partition via
-    :func:`read_novomodelo_hydro_bus_labels` instead. Removing the key here
-    (rather than leaving it ``None``) makes a stale caller expecting it
-    break visibly (``KeyError``) instead of silently degrading to an empty
-    bus map.
+    generation bounds) — it does **not** carry a plant-level bus id:
+    ``system/hydros.json`` has none, and the compare layer's plant->bus label
+    comes from the ``simulation/hydro_bus_generation/`` partition via
+    :func:`read_novomodelo_hydro_bus_labels`. Omitting the key (rather than
+    setting it ``None``) makes a caller expecting it fail with ``KeyError``
+    instead of silently degrading to an empty bus map.
     """
     hydros_path, hydros = _read_hydros_json(novomodelo_output_dir)
     if hydros_path is None or not hydros:
         return {}
 
-    # Productivity resolution is shared with the dashboard via the single
-    # canonical cascade in novomodelo_io so the two products never report a
-    # different ρ for the same plant (see resolve_hydro_productivities).
+    # Shared with the dashboard so the two never report a different ρ for the
+    # same plant.
     productivities = resolve_hydro_productivities(hydros_path.parent.parent, hydros)
 
     result: dict[int, dict] = {}
@@ -2446,10 +2438,10 @@ def read_novomodelo_hydro_bus_labels(
 ) -> dict[int, frozenset[int]]:
     """Derive the plant -> bus *label* map from the 0.13 hydro_bus_generation partition.
 
-    ``read_novomodelo_hydro_metadata`` no longer carries a plant-level ``bus_id`` —
-    this is the correct re-source for the compare layer's
-    plant->bus label: it reads :func:`read_novomodelo_hydro_bus_generation` and
-    collapses it to the distinct ``(hydro_id, bus_id)`` pairs.
+    ``read_novomodelo_hydro_metadata`` carries no plant-level ``bus_id``; this is
+    the compare layer's source for the plant->bus label: it reads
+    :func:`read_novomodelo_hydro_bus_generation` and collapses it to the distinct
+    ``(hydro_id, bus_id)`` pairs.
 
     Returns ``{hydro_id: frozenset(bus_id, ...)}``. A plant with a single bus
     (every real deck today) maps to a one-element ``frozenset``; a plant
