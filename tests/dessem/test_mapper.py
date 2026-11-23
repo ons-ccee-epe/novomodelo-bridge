@@ -1018,8 +1018,10 @@ class TestGnlCommittedCosts:
 
         with pytest.raises(
             MappingError,
-            match=rf"GNL thermal {missing} has no commitment window in "
-            r"past_anticipated_commitments of initial_conditions\.json",
+            match=rf"GNL thermal {missing} has no commitment window in the case's "
+            r"commitment windows \(`thermals\[\]\.commitments` of "
+            r"boundary_conditions\.json, or `past_anticipated_commitments` of the "
+            r"deprecated initial_conditions\.json\)",
         ):
             gnl_committed_costs(_weekly_stages(), thermals, windows)
 

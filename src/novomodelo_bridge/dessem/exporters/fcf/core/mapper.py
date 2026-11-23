@@ -813,15 +813,19 @@ def _refuse_window_set(
             raise MappingError(
                 f"a commitment window from {window.start_date} to {window.end_date} "
                 f"names thermal {thermal_id}, which is not a GNL thermal of the "
-                "case; past_anticipated_commitments in initial_conditions.json "
-                "holds windows only for GNL thermals"
+                "case; the case's commitment windows (`thermals[].commitments` of "
+                "boundary_conditions.json, or `past_anticipated_commitments` of "
+                "the deprecated initial_conditions.json) hold windows only for "
+                "GNL thermals"
             )
     for thermal in gnl_thermals:
         if thermal.id not in by_thermal:
             raise MappingError(
                 f"GNL thermal {thermal.id} ({thermal.name}) has no commitment "
-                "window in past_anticipated_commitments of initial_conditions.json; "
-                "a solved case holds one for every GNL thermal"
+                "window in the case's commitment windows (`thermals[].commitments` "
+                "of boundary_conditions.json, or `past_anticipated_commitments` of "
+                "the deprecated initial_conditions.json); a solved case holds one "
+                "for every GNL thermal"
             )
     horizon_end = parse_end_date(stages[-1])
     for thermal in gnl_thermals:

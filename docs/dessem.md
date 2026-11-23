@@ -41,7 +41,8 @@ holds its policy checkpoint. The checkpoint is read through `novomodelo-python`,
 it must have been written by the novomodelo release this bridge pairs with; an
 older checkpoint is refused with an error naming its format version, and so is
 one that holds no cut past its warm-start cuts, from a run that trained none. The
-export also reads the case's `stages.json`, `initial_conditions.json`,
+export also reads the case's `stages.json`, `boundary_conditions.json` (or the
+deprecated `initial_conditions.json`; a case holding both is refused),
 `system/hydros.json`, `system/thermals.json`, and `system/buses.json`.
 
 A plant whose `hydros.json` entry carries `travel_time_hours` is one of
@@ -65,7 +66,9 @@ the first cut-building node is not at the case's first stage.
 
 `mapcut` register 10 carries, for each study stage, the cost of the GNL
 generation committed before the study (premise P11). For every GNL plant, the
-export takes the commitment windows in the case's `initial_conditions.json`.
+export takes the commitment windows in the case's `boundary_conditions.json`
+(`thermals[].commitments`), or in the deprecated `initial_conditions.json`
+(`past_anticipated_commitments`).
 It multiplies the MW of each window that covers the whole stage by the sum of
 the stage's load-block hours in `stages.json` and by the plant's
 `cost_per_mwh` in `system/thermals.json`. It sums the plants and writes the
@@ -143,7 +146,7 @@ and every export copies it into `export_manifest.json`. In brief:
 | P13 | `cortdeco` holds one extra record duplicating the last cut. |
 | P14 | The first cut-building node's cuts carry each GNL plant's coefficient for the delivery of the case's second stage, divided by that stage's hours; the other GNL coefficients are dropped and counted in the `dessem-fcf-gnl-coefficients-exported` note. |
 | P15 | GNL lag months are read from the deck's `NL` records; a GNL plant with no `NL` record is refused. |
-| P16 | A hydro that never enters the case's horizon is left out of `mapcut` and `cortdeco`, and each cut's intercept takes its storage coefficient times its initial storage. The export is refused unless these hydros are exactly the deck's `NW` plants, and when another plant drains into one, a cut prices a transit bucket of one, or `initial_conditions.json` gives one no storage. |
+| P16 | A hydro that never enters the case's horizon is left out of `mapcut` and `cortdeco`, and each cut's intercept takes its storage coefficient times its initial storage. The export is refused unless these hydros are exactly the deck's `NW` plants, and when another plant drains into one, a cut prices a transit bucket of one, or `boundary_conditions.json` (or the deprecated `initial_conditions.json`) gives one no storage. |
 
 ## Exit codes
 

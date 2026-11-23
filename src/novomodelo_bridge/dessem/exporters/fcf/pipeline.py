@@ -872,7 +872,8 @@ def _plan_export(
                 raise MappingError(
                     f"hydro {hydro.id} ({hydro.name}, plant "
                     f"{source.hydros[hydro.id].code}) never enters the horizon "
-                    "but initial_conditions.json holds no storage for it"
+                    "but the case's boundary_conditions.json (or deprecated "
+                    "initial_conditions.json) holds no storage for it"
                 )
         frozen_storage_hm3 = {
             hydro_id: inputs.initial_storage_hm3[hydro_id]

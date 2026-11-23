@@ -1,6 +1,8 @@
 """Tests for dessem/exporters/fcf/inputs_reader.py."""
 
 import json
+import shutil
+from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -9,11 +11,12 @@ import pytest
 
 from novomodelo_bridge.dessem.exporters.fcf.core.inputs_reader import (
     CaseInputs,
+    CommitmentWindow,
     InputReadError,
     anticipated_thermals,
     read_case_inputs,
 )
-from tests.dessem.conftest import weekly_windows
+from tests.dessem.conftest import weekly_windows, write_commitments
 
 
 def _declare_storage(case_dir: Path, storage: Any) -> None:
@@ -21,6 +24,45 @@ def _declare_storage(case_dir: Path, storage: Any) -> None:
     conditions = json.loads(path.read_text(encoding="utf-8"))
     conditions["storage"] = storage
     path.write_text(json.dumps(conditions), encoding="utf-8")
+
+
+def _write_boundary_conditions(case_dir: Path, document: Any) -> None:
+    (case_dir / "initial_conditions.json").unlink(missing_ok=True)
+    (case_dir / "boundary_conditions.json").write_text(
+        json.dumps(document), encoding="utf-8"
+    )
+
+
+def _declare_filling(case_dir: Path, pos: int) -> None:
+    path = case_dir / "system" / "hydros.json"
+    hydros = json.loads(path.read_text(encoding="utf-8"))
+    hydros["hydros"][pos]["filling"] = {"start_stage_id": 1}
+    path.write_text(json.dumps(hydros), encoding="utf-8")
+
+
+def _boundary_document(
+    windows: Sequence[CommitmentWindow] = (),
+    storage_hm3: Mapping[int, float] | None = None,
+) -> dict[str, Any]:
+    by_thermal: dict[int, list[dict[str, Any]]] = {}
+    for w in windows:
+        by_thermal.setdefault(w.thermal_id, []).append(
+            {
+                "start_date": w.start_date.isoformat(),
+                "end_date": w.end_date.isoformat(),
+                "value_mw": w.value_mw,
+            }
+        )
+    return {
+        "hydros": [
+            {"hydro_id": hydro_id, "storage_hm3": value}
+            for hydro_id, value in (storage_hm3 or {}).items()
+        ],
+        "thermals": [
+            {"thermal_id": thermal_id, "commitments": commitments}
+            for thermal_id, commitments in by_thermal.items()
+        ],
+    }
 
 
 def _declare_entry_stage_id(case_dir: Path, pos: int, value: Any) -> None:
@@ -314,6 +356,208 @@ class TestReadInitialConditions:
 
         with pytest.raises(InputReadError, match=message):
             read_case_inputs(synthetic_case_dir)
+
+
+class TestReadBoundaryConditions:
+    """Test reading boundary_conditions.json, the plant-keyed boundary file."""
+
+    def test_boundary_commitments_follow_file_order(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        windows = (*weekly_windows(101, (5.0, 6.0)), *weekly_windows(100, (7.0,)))
+        _write_boundary_conditions(synthetic_case_dir, _boundary_document(windows))
+
+        inputs = read_case_inputs(synthetic_case_dir)
+
+        assert inputs.past_anticipated_commitments == windows
+        assert inputs.initial_storage_hm3 == {}
+
+    def test_boundary_storage_is_read_by_hydro_id(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        document = _boundary_document(storage_hm3={2: 0.0, 1: 10.0})
+        document["hydros"].append({"hydro_id": 3})
+        document["hydros"].append({"hydro_id": 4, "storage_hm3": None})
+        _write_boundary_conditions(synthetic_case_dir, document)
+
+        inputs = read_case_inputs(synthetic_case_dir)
+
+        assert inputs.initial_storage_hm3 == {1: 10.0, 2: 0.0}
+        assert inputs.past_anticipated_commitments == ()
+
+    def test_boundary_storage_of_a_filling_hydro_is_not_read(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        _declare_filling(synthetic_case_dir, 1)
+        _write_boundary_conditions(
+            synthetic_case_dir, _boundary_document(storage_hm3={1: 10.0, 2: 20.0})
+        )
+
+        inputs = read_case_inputs(synthetic_case_dir)
+
+        assert [hydro.has_filling for hydro in inputs.hydros] == [False, True, False]
+        assert inputs.initial_storage_hm3 == {1: 10.0}
+
+    def test_boundary_absent_arrays_and_unknown_keys_read_as_empty(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        _write_boundary_conditions(
+            synthetic_case_dir,
+            {
+                "$schema": "x",
+                "note": "x",
+                "thermals": [{"thermal_id": 100, "note": "x"}],
+                "hydros": [{"hydro_id": 1, "recent_inflows": [], "note": "x"}],
+            },
+        )
+
+        inputs = read_case_inputs(synthetic_case_dir)
+
+        assert inputs.past_anticipated_commitments == ()
+        assert inputs.initial_storage_hm3 == {}
+
+        _write_boundary_conditions(synthetic_case_dir, {})
+
+        assert read_case_inputs(synthetic_case_dir).past_anticipated_commitments == ()
+
+    def test_boundary_and_deprecated_file_together_raise(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        (synthetic_case_dir / "boundary_conditions.json").write_text(
+            "{}", encoding="utf-8"
+        )
+
+        with pytest.raises(
+            InputReadError,
+            match=r"holds both boundary_conditions\.json and the deprecated "
+            r"initial_conditions\.json; keep one file set",
+        ):
+            read_case_inputs(synthetic_case_dir)
+
+    def test_boundary_file_missing_names_both_files(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        (synthetic_case_dir / "initial_conditions.json").unlink()
+
+        with pytest.raises(
+            InputReadError,
+            match=r"Novomodelo input file not found: .*boundary_conditions\.json "
+            r"\(or the deprecated initial_conditions\.json\)",
+        ):
+            read_case_inputs(synthetic_case_dir)
+
+    def test_boundary_top_level_not_an_object_raises(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        _write_boundary_conditions(synthetic_case_dir, [])
+
+        with pytest.raises(
+            InputReadError,
+            match=r"boundary_conditions\.json must hold a JSON object, got list",
+        ):
+            read_case_inputs(synthetic_case_dir)
+
+    @pytest.mark.parametrize(
+        ("override", "message"),
+        [
+            (
+                {"start_date": "2026-13-01"},
+                r"thermals\[1\]\.commitments\[1\]\.start_date must be an ISO-8601 date, got '2026-13-01'",
+            ),
+            (
+                {"end_date": "2026-01-08"},
+                r"thermals\[1\]\.commitments\[1\]\.end_date 2026-01-08 is not after start_date 2026-01-08",
+            ),
+            (
+                {"value_mw": "10"},
+                r"thermals\[1\]\.commitments\[1\]\.value_mw must be a number",
+            ),
+            (
+                {"value_mw": float("nan")},
+                r"thermals\[1\]\.commitments\[1\]\.value_mw must be a finite number",
+            ),
+        ],
+        ids=["bad-start-date", "end-equals-start", "string-value", "nan-value"],
+    )
+    def test_boundary_malformed_commitment_raises(
+        self, synthetic_case_dir: Path, override: dict[str, Any], message: str
+    ) -> None:
+        windows = (*weekly_windows(101, (5.0,)), *weekly_windows(100, (7.0, 8.0)))
+        document = _boundary_document(windows)
+        document["thermals"][1]["commitments"][1].update(override)
+        _write_boundary_conditions(synthetic_case_dir, document)
+
+        with pytest.raises(InputReadError, match=message):
+            read_case_inputs(synthetic_case_dir)
+
+    def test_boundary_malformed_document_raises(self, synthetic_case_dir: Path) -> None:
+        cases: list[tuple[Any, str]] = [
+            ({"thermals": {}}, r"thermals must be a list, got dict"),
+            ({"hydros": {}}, r"hydros must be a list, got dict"),
+            (
+                {"thermals": [{"commitments": []}]},
+                r"missing required key thermals\[0\]\.thermal_id",
+            ),
+            (
+                {"thermals": [{"thermal_id": 100.0}]},
+                r"thermals\[0\]\.thermal_id must be int, got float",
+            ),
+            (
+                {"thermals": [{"thermal_id": 100, "commitments": {}}]},
+                r"thermals\[0\]\.commitments must be a list, got dict",
+            ),
+            (
+                {"thermals": [{"thermal_id": 100, "commitments": [3]}]},
+                r"thermals\[0\]\.commitments\[0\]\.start_date must be an object, got int",
+            ),
+            (
+                {"hydros": [{"storage_hm3": 1.0}]},
+                r"missing required key hydros\[0\]\.hydro_id",
+            ),
+            (
+                {"hydros": [{"hydro_id": 1, "storage_hm3": "10"}]},
+                r"hydros\[0\]\.storage_hm3 must be a number, got str",
+            ),
+            (
+                {
+                    "hydros": [
+                        {"hydro_id": 1, "storage_hm3": 1.0},
+                        {"hydro_id": 1, "storage_hm3": 2.0},
+                    ]
+                },
+                r"hydros\[1\]\.hydro_id 1 repeats an earlier hydros entry",
+            ),
+            (
+                {"hydros": [{"hydro_id": 1, "storage_hm3": -1.0}]},
+                r"hydros\[0\]\.storage_hm3 must be non-negative, got -1\.0",
+            ),
+        ]
+        for document, message in cases:
+            _write_boundary_conditions(synthetic_case_dir, document)
+
+            with pytest.raises(InputReadError, match=message):
+                read_case_inputs(synthetic_case_dir)
+
+    def test_boundary_and_deprecated_formats_read_equal(
+        self, synthetic_case_dir: Path, tmp_path: Path
+    ) -> None:
+        legacy_dir = tmp_path / "legacy_case"
+        shutil.copytree(synthetic_case_dir, legacy_dir)
+        for case_dir in (synthetic_case_dir, legacy_dir):
+            _declare_filling(case_dir, 2)
+        windows = (*weekly_windows(100, (7.0, 8.0)), *weekly_windows(101, (5.0,)))
+        write_commitments(legacy_dir, windows)
+        _declare_storage(legacy_dir, [{"hydro_id": 2, "value_hm3": 20.0}])
+        _write_boundary_conditions(
+            synthetic_case_dir, _boundary_document(windows, {2: 20.0, 3: 30.0})
+        )
+
+        from_boundary = read_case_inputs(synthetic_case_dir)
+        from_legacy = read_case_inputs(legacy_dir)
+
+        assert from_boundary == from_legacy
+        assert from_boundary.initial_storage_hm3 == {2: 20.0}
+        assert from_boundary.past_anticipated_commitments == windows
 
 
 class TestAnticipatedThermals:

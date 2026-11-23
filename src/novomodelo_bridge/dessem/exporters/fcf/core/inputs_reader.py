@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -27,6 +27,7 @@ _LOG = logging.getLogger(__name__)
 
 _STAGES_FILE = "stages.json"
 _CONFIG_FILE = "config.json"
+_BOUNDARY_CONDITIONS_FILE = "boundary_conditions.json"
 _INITIAL_CONDITIONS_FILE = "initial_conditions.json"
 _SYSTEM_DIR = "system"
 _HYDROS_FILE = "hydros.json"
@@ -66,6 +67,7 @@ class HydroInfo:
     `None` marks a terminal plant in `downstream_id`, in
     `travel_time_hours` a plant whose defluence reaches its downstream plant at
     once, and in `entry_stage_id` a plant in service from the first stage.
+    `has_filling` marks a plant that declares a filling operation.
     """
 
     id: int
@@ -75,6 +77,7 @@ class HydroInfo:
     max_storage_hm3: float
     travel_time_hours: float | None = None
     entry_stage_id: int | None = None
+    has_filling: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,7 +96,7 @@ class ThermalInfo:
 
 @dataclass(frozen=True)
 class CommitmentWindow:
-    """One `past_anticipated_commitments` window, `[start_date, end_date)` with the end excluded."""
+    """One commitment window, `[start_date, end_date)` with the end excluded."""
 
     thermal_id: int
     start_date: date
@@ -114,7 +117,8 @@ class CaseInputs:
     """Everything the conversion reads from the case's JSON inputs.
 
     *initial_storage_hm3* maps a hydro id to its initial storage and is empty
-    when `initial_conditions.json` declares none.
+    when the case's boundary file declares none. A hydro that declares a filling
+    operation is left out: its initial storage is not read.
     """
 
     stages: tuple[StageInfo, ...]
@@ -300,6 +304,7 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
                 ),
                 travel_time_hours=travel_time,
                 entry_stage_id=entry_stage,
+                has_filling=entry.get("filling") is not None,
             )
         )
     return tuple(hydros)
@@ -377,22 +382,21 @@ def _read_commitment_windows(raw: dict[str, Any]) -> tuple[CommitmentWindow, ...
     ):
         dotted = f"past_anticipated_commitments[{pos}]"
         thermal_id = _require_int(entry, "thermal_id", f"{dotted}.thermal_id")
-        start = _require_iso_date(entry, "start_date", f"{dotted}.start_date")
-        end = _require_iso_date(entry, "end_date", f"{dotted}.end_date")
-        value_mw = _require_float(entry, "value_mw", f"{dotted}.value_mw")
-        if end <= start:
-            raise InputReadError(
-                f"{dotted}.end_date {end} is not after start_date {start}"
-            )
-        windows.append(
-            CommitmentWindow(
-                thermal_id=thermal_id,
-                start_date=start,
-                end_date=end,
-                value_mw=value_mw,
-            )
-        )
+        windows.append(_read_commitment_window(entry, dotted, thermal_id))
     return tuple(windows)
+
+
+def _read_commitment_window(
+    entry: Any, dotted: str, thermal_id: int
+) -> CommitmentWindow:
+    start = _require_iso_date(entry, "start_date", f"{dotted}.start_date")
+    end = _require_iso_date(entry, "end_date", f"{dotted}.end_date")
+    value_mw = _require_float(entry, "value_mw", f"{dotted}.value_mw")
+    if end <= start:
+        raise InputReadError(f"{dotted}.end_date {end} is not after start_date {start}")
+    return CommitmentWindow(
+        thermal_id=thermal_id, start_date=start, end_date=end, value_mw=value_mw
+    )
 
 
 def _read_initial_storage(raw: dict[str, Any]) -> dict[int, float]:
@@ -415,6 +419,77 @@ def _read_initial_storage(raw: dict[str, Any]) -> dict[int, float]:
     return storage
 
 
+def _optional_list(obj: dict[str, Any], key: str, dotted: str) -> list[Any]:
+    return _require_list(obj, key, dotted) if key in obj else []
+
+
+def _read_boundary_conditions(
+    path: Path, filling_ids: Collection[int]
+) -> tuple[tuple[CommitmentWindow, ...], dict[int, float]]:
+    """Read the commitment windows and the storage of boundary_conditions.json.
+
+    The storage of a hydro in *filling_ids* is not read.
+    """
+    raw = _load_json(path)
+    if not isinstance(raw, dict):
+        raise InputReadError(
+            f"{path} must hold a JSON object, got {type(raw).__name__}"
+        )
+    windows = []
+    for pos, thermal in enumerate(_optional_list(raw, "thermals", "thermals")):
+        dotted = f"thermals[{pos}]"
+        thermal_id = _require_int(thermal, "thermal_id", f"{dotted}.thermal_id")
+        for window_pos, entry in enumerate(
+            _optional_list(thermal, "commitments", f"{dotted}.commitments")
+        ):
+            windows.append(
+                _read_commitment_window(
+                    entry, f"{dotted}.commitments[{window_pos}]", thermal_id
+                )
+            )
+    storage: dict[int, float] = {}
+    for pos, entry in enumerate(_optional_list(raw, "hydros", "hydros")):
+        dotted = f"hydros[{pos}]"
+        hydro_id = _require_int(entry, "hydro_id", f"{dotted}.hydro_id")
+        if hydro_id in filling_ids or entry.get("storage_hm3") is None:
+            continue
+        storage_hm3 = _require_float(entry, "storage_hm3", f"{dotted}.storage_hm3")
+        if hydro_id in storage:
+            raise InputReadError(
+                f"{dotted}.hydro_id {hydro_id} repeats an earlier hydros entry "
+                "with storage_hm3"
+            )
+        if storage_hm3 < 0.0:
+            raise InputReadError(
+                f"{dotted}.storage_hm3 must be non-negative, got {storage_hm3}"
+            )
+        storage[hydro_id] = storage_hm3
+    return tuple(windows), storage
+
+
+def _read_boundary_file(
+    case_dir: Path, filling_ids: Collection[int]
+) -> tuple[tuple[CommitmentWindow, ...], dict[int, float]]:
+    """Read the case's boundary file; the deprecated initial_conditions.json is also accepted."""
+    boundary_path = case_dir / _BOUNDARY_CONDITIONS_FILE
+    legacy_path = case_dir / _INITIAL_CONDITIONS_FILE
+    has_boundary = boundary_path.is_file()
+    has_legacy = legacy_path.is_file()
+    if has_boundary and has_legacy:
+        raise InputReadError(
+            f"{case_dir} holds both {_BOUNDARY_CONDITIONS_FILE} and the deprecated "
+            f"{_INITIAL_CONDITIONS_FILE}; keep one file set"
+        )
+    if has_legacy:
+        return _read_initial_conditions(legacy_path)
+    if not has_boundary:
+        raise InputReadError(
+            f"Novomodelo input file not found: {boundary_path} "
+            f"(or the deprecated {_INITIAL_CONDITIONS_FILE})"
+        )
+    return _read_boundary_conditions(boundary_path, filling_ids)
+
+
 def anticipated_thermals(inputs: CaseInputs) -> tuple[ThermalInfo, ...]:
     """Return the GNL-capable thermals, ascending by id."""
     return tuple(
@@ -426,16 +501,17 @@ def anticipated_thermals(inputs: CaseInputs) -> tuple[ThermalInfo, ...]:
 
 
 def read_case_inputs(case_dir: Path) -> CaseInputs:
-    """Read stages.json, initial_conditions.json and the system/ inputs the conversion needs."""
+    """Read stages.json, the case's boundary file and the system/ inputs the conversion needs."""
     case_dir = case_dir.resolve()
     system_dir = case_dir / _SYSTEM_DIR
     stages, annual_discount_rate = _read_stages(case_dir / _STAGES_FILE)
-    commitments, initial_storage = _read_initial_conditions(
-        case_dir / _INITIAL_CONDITIONS_FILE
+    hydros = _read_hydros(system_dir / _HYDROS_FILE)
+    commitments, initial_storage = _read_boundary_file(
+        case_dir, {h.id for h in hydros if h.has_filling}
     )
     inputs = CaseInputs(
         stages=stages,
-        hydros=_read_hydros(system_dir / _HYDROS_FILE),
+        hydros=hydros,
         thermals=_read_thermals(system_dir / _THERMALS_FILE),
         buses=_read_buses(system_dir / _BUSES_FILE),
         annual_discount_rate=annual_discount_rate,

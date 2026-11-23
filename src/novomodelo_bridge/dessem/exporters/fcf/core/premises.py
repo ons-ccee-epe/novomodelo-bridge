@@ -84,8 +84,9 @@ P10 = (
 P11 = (
     "P11: mapcut reg 10's geracao_termica_minima_gerada_gnl holds, per stage, the "
     "cost of the GNL generation committed before the study: for each GNL thermal, "
-    "the value_mw of the initial_conditions.json commitment window that covers the "
-    "stage, times the stage's block hours from stages.json, times the thermal's "
+    "the value_mw of the boundary_conditions.json commitment window that covers the "
+    "stage (the deprecated initial_conditions.json is also read), times the "
+    "stage's block hours from stages.json, times the thermal's "
     "cost_per_mwh from thermals.json, summed, converted to 10^3 R$ as in P2 and "
     "not discounted. Novomodelo treats these commitments as sunk, so its cut "
     "intercepts leave this cost out. parcela_custo_geracao_termica_minima, "
@@ -145,14 +146,15 @@ P15 = (
 P16 = (
     "P16: mapcut and cortdeco leave out every hydro that never enters the "
     "horizon, one whose entry_stage_id is at or past the stage count. Its "
-    "storage stays at its initial_conditions.json value, so its term in a cut "
+    "storage stays at its boundary_conditions.json value (the deprecated "
+    "initial_conditions.json is also read), so its term in a cut "
     "is a constant: the export adds each cut's coefficient on that storage "
     "times the value to the cut's intercept, in R$ and hm3 before P2's "
     "division, and leaves every other coefficient unchanged. The hydros left "
     "out must be exactly the source deck's NW plants, the plants DECOMP leaves "
     "out of its own pair. The export is refused when they are not, when a kept "
     "hydro drains into one, when a cut-building pool prices a transit bucket "
-    "of one, or when one has no initial storage in initial_conditions.json."
+    "of one, or when one has no initial storage in boundary_conditions.json."
 )
 
 
