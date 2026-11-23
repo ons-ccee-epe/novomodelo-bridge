@@ -14,6 +14,16 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `convert newave` and `convert decomp` write
+  `boundary_conditions.json`** and the post-study lists of `stages.json`, not
+  `initial_conditions.json` and `post_study_stages.json`. Update readers of
+  the old files; results do not change.
+- **`export dessem` reads a case holding `boundary_conditions.json` or the
+  deprecated `initial_conditions.json`**, and refuses a case holding both.
+  Delete the one you do not use.
+
 ## [0.22.1] - 2026-11-24
 
 Pairs the bridge with **novomodelo 0.22.0**, as 0.22.0 did; convert NEWAVE and
