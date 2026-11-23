@@ -36,7 +36,7 @@ from novomodelo_bridge.decomp.fcf.coupling import (
 )
 from novomodelo_bridge.decomp.fcf.importer import (
     _patch_policy_boundary,
-    _seed_recent_observations,
+    _seed_recent_inflows,
 )
 from novomodelo_bridge.decomp.files import DecompFiles
 from novomodelo_bridge.decomp.pipeline import FcfInputs, convert_decomp_case
@@ -478,7 +478,7 @@ def test_decomp_mini_halves_exchange_only_on_lines_touching_marketless_buses(
 #: decomp_mini's one ``NW`` plant: no initial volume, run-of-river, draining
 #: into SALTO.
 _ESTRELA = 260
-_NW_CASE_FILES = ("initial_conditions.json",)
+_NW_CASE_FILES = ("boundary_conditions.json",)
 _NW_CASE_DIRS = ("system", "scenarios", "constraints")
 
 
@@ -511,8 +511,10 @@ def test_decomp_mini_converts_estrela_as_a_dormant_hydro(
     assert estrela["downstream_id"] == salto["id"]
     assert "entry_stage_id" not in salto
 
-    initial = json.loads((dst / "initial_conditions.json").read_text(encoding="utf-8"))
-    storage = {e["hydro_id"]: e["value_hm3"] for e in initial["storage"]}
+    boundary = json.loads(
+        (dst / "boundary_conditions.json").read_text(encoding="utf-8")
+    )
+    storage = {e["hydro_id"]: e["storage_hm3"] for e in boundary["hydros"]}
     reference = float(decomp_mini_case.hidr.loc[_ESTRELA, "volume_referencia"])
     assert storage[estrela["id"]] == pytest.approx(reference)
 
@@ -658,17 +660,17 @@ def test_boundary_cuts_bind_the_dormant_nw_plant_and_the_case_runs(
     assert cut["coefficients"][position] != 0.0
 
     config = json.loads((case_dir / "config.json").read_text(encoding="utf-8"))
-    initial_conditions = json.loads(
-        (case_dir / "initial_conditions.json").read_text(encoding="utf-8")
+    boundary_conditions = json.loads(
+        (case_dir / "boundary_conditions.json").read_text(encoding="utf-8")
     )
     writer = CaseWriter(case_dir)
     _patch_policy_boundary(writer, config)
-    _seed_recent_observations(
+    _seed_recent_inflows(
         writer,
         convert_recent_observation_windows(
             Vazoes.read(str(case.files.vazoes)), effective, case.id_map, case.calendar
         ),
-        initial_conditions,
+        boundary_conditions,
     )
 
     result = novomodelo.io.validate(str(case_dir))
@@ -688,7 +690,7 @@ def test_boundary_cuts_bind_the_dormant_nw_plant_and_the_case_runs(
     operation = read_novomodelo_hydro_block_operation(output_dir)
     rows = operation.filter(operation["hydro_id"] == estrela).to_dicts()
     assert rows
-    stored = {e["hydro_id"]: e["value_hm3"] for e in initial_conditions["storage"]}
+    stored = {e["hydro_id"]: e["storage_hm3"] for e in boundary_conditions["hydros"]}
     for row in rows:
         assert row["turbined_m3s"] == 0.0
         assert row["generation_mw"] == 0.0

@@ -433,7 +433,7 @@ def _import_decomp_boundary_fcf(
                 # refuses a pool with no cost_scale_factor.
                 cost_scale_factor=1.0,
                 config=fcf_inputs.config,
-                initial_conditions=fcf_inputs.initial_conditions,
+                boundary_conditions=fcf_inputs.boundary_conditions,
                 coupling_auxiliaries=fcf_inputs.coupling_auxiliaries,
                 float_digits=args.json_float_digits,
             )
@@ -529,7 +529,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
     out_console = args.out_console()
     err_console = args.err_console()
     # Threaded to `import_boundary_fcf` below, so it reuses the pipeline's own
-    # in-memory `config`/`initial_conditions` dicts instead of re-reading
+    # in-memory `config`/`boundary_conditions` dicts instead of re-reading
     # either file off disk.
     fcf_inputs = FcfInputs()
 

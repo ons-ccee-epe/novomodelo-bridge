@@ -42,7 +42,7 @@ def test_travel_time_longer_than_the_stage_names_the_plant() -> None:
 
 
 @requires_novomodelo_python
-def test_decomp_mini_deck_water_only_post_study_file_validates(
+def test_decomp_mini_deck_water_only_post_study_calendar_validates(
     decomp_mini_deck: Path, tmp_path: Path
 ) -> None:
     import novomodelo.io  # tier-2: guarded import inside the body, never module scope
@@ -50,16 +50,15 @@ def test_decomp_mini_deck_water_only_post_study_file_validates(
     dst = tmp_path / "converted"
     convert_decomp_case(decomp_mini_deck, dst, force=True)
 
-    horizon_end = json.loads((dst / "stages.json").read_text(encoding="utf-8"))[
-        "stages"
-    ][-1]["end_date"]
-    post_study = json.loads(
-        (dst / "post_study_stages.json").read_text(encoding="utf-8")
-    )
-    assert set(post_study) == {"water_bucket_stages"}
-    assert [stage["start_date"] for stage in post_study["water_bucket_stages"]] == [
+    stages = json.loads((dst / "stages.json").read_text(encoding="utf-8"))
+    horizon_end = stages["stages"][-1]["end_date"]
+    assert {key for key in stages if key.startswith("post_study_")} == {
+        "post_study_water_stages"
+    }
+    assert [stage["start_date"] for stage in stages["post_study_water_stages"]] == [
         horizon_end
     ]
+    assert not (dst / "post_study_stages.json").exists()
 
     result = novomodelo.io.validate(str(dst))
     assert result["valid"] is True

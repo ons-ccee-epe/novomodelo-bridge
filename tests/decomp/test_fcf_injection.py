@@ -22,7 +22,7 @@ from novomodelo_bridge.decomp.fcf.coupling import CouplingResolution
 from novomodelo_bridge.decomp.fcf.importer import (
     _DeckCoupling,
     _patch_policy_boundary,
-    _seed_recent_observations,
+    _seed_recent_inflows,
     import_boundary_fcf,
 )
 from novomodelo_bridge.decomp.fcf.mapper import MappingResult
@@ -216,7 +216,7 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     )
 
     config: dict = {}
-    initial_conditions: dict = {}
+    boundary_conditions: dict = {"hydros": []}
     with caplog.at_level(logging.WARNING):
         boundary_dir = import_boundary_fcf(
             case_dir,
@@ -224,11 +224,13 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
             work_dir=tmp_path / "work",
             cost_scale_factor=1.0,
             config=config,
-            initial_conditions=initial_conditions,
+            boundary_conditions=boundary_conditions,
         )
 
     assert boundary_dir == case_dir / "boundary"
-    assert initial_conditions["recent_observations"] == []
+    assert boundary_conditions["hydros"] == []
+    assert (case_dir / "boundary_conditions.json").is_file()
+    assert not (case_dir / "initial_conditions.json").exists()
 
     patched_config = json.loads((case_dir / "config.json").read_text(encoding="utf-8"))
     assert patched_config["policy"]["boundary"] == {"path": "boundary"}
@@ -277,7 +279,7 @@ def test_import_boundary_fcf_rejects_storageless_manifest(
             work_dir=tmp_path / "work",
             cost_scale_factor=1.0,
             config={},
-            initial_conditions={},
+            boundary_conditions={"hydros": []},
         )
 
 
@@ -285,7 +287,7 @@ def test_import_boundary_fcf_raises_when_config_missing_with_cut_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC — once cut files are present, ``config``/``initial_conditions``
+    """AC — once cut files are present, ``config``/``boundary_conditions``
     left at their ``None`` default (rather than the pipeline's own in-memory
     dicts) is a caller bug, not a legitimate no-op: `import_boundary_fcf`
     raises `ValueError` before touching the cut readers or the writer.
@@ -305,14 +307,14 @@ def test_import_boundary_fcf_raises_when_config_missing_with_cut_files(
 
     with pytest.raises(
         ValueError,
-        match="requires the converted case's config and initial_conditions",
+        match="requires the converted case's config and boundary_conditions",
     ):
         import_boundary_fcf(
             case_dir,
             case,
             work_dir=tmp_path / "work",
             cost_scale_factor=1.0,
-            initial_conditions={},
+            boundary_conditions={"hydros": []},
         )
 
 
@@ -360,45 +362,81 @@ def test_import_boundary_fcf_reuses_shared_case_no_reparse(
         work_dir=tmp_path / "work",
         cost_scale_factor=1.0,
         config={},
-        initial_conditions={},
+        boundary_conditions={"hydros": []},
     )
 
     assert boundary_dir == case_dir / "boundary"
     read_spy.assert_not_called()
 
 
-def test_seed_recent_observations_mutates_passed_dict_no_reread(
+def test_seed_recent_inflows_mutates_passed_dict_no_reread(
     tmp_path: Path,
 ) -> None:
-    """`_seed_recent_observations` folds `recent_observations` into the passed
-    `initial_conditions` dict and writes it through `CaseWriter` once, never
-    re-reading `initial_conditions.json`: the written file is the
+    """`_seed_recent_inflows` folds `recent_inflows` into the passed
+    `boundary_conditions` dict and writes it through `CaseWriter` once, never
+    re-reading `boundary_conditions.json`: the written file is the
     `_write_json` style (indent=2 / ensure_ascii=False / single trailing
-    newline), and every pre-existing key survives untouched.
+    newline), every pre-existing key survives untouched, and a hydro with no
+    entry yet is inserted at its ascending-id position.
     """
-    windows = [{"hydro_id": 1, "values": [10.0, 20.0]}]
-    ic_path = tmp_path / "initial_conditions.json"
-    other_sections = {
-        "$schema": "https://example.invalid/initial_conditions.json",
-        "storage": [{"hydro_id": 1, "volume_hm3": 100.0}],
-        "filling_storage": [],
+    windows = [
+        {
+            "hydro_id": 1,
+            "start_date": "2026-04-01",
+            "end_date": "2026-05-01",
+            "value_m3s": 10.0,
+        },
+        {
+            "hydro_id": 0,
+            "start_date": "2026-04-01",
+            "end_date": "2026-05-01",
+            "value_m3s": 20.0,
+        },
+    ]
+    bc_path = tmp_path / "boundary_conditions.json"
+    boundary_conditions = {
+        "$schema": "https://example.invalid/boundary_conditions.json",
+        "hydros": [{"hydro_id": 1, "storage_hm3": 100.0}],
+        "thermals": [],
     }
-    # The pipeline's own in-memory dict — no initial_conditions.json exists
-    # on disk yet; `_seed_recent_observations` mutates and writes *this*
-    # object, never re-reading the file.
-    initial_conditions = dict(other_sections)
+    # The pipeline's own in-memory dict -- no boundary_conditions.json exists
+    # on disk yet; `_seed_recent_inflows` mutates and writes *this* object,
+    # never re-reading the file.
+    _seed_recent_inflows(CaseWriter(tmp_path), windows, boundary_conditions)
 
-    _seed_recent_observations(CaseWriter(tmp_path), windows, initial_conditions)
+    expected = {
+        "$schema": "https://example.invalid/boundary_conditions.json",
+        "hydros": [
+            {
+                "hydro_id": 0,
+                "recent_inflows": [
+                    {
+                        "start_date": "2026-04-01",
+                        "end_date": "2026-05-01",
+                        "value_m3s": 20.0,
+                    }
+                ],
+            },
+            {
+                "hydro_id": 1,
+                "storage_hm3": 100.0,
+                "recent_inflows": [
+                    {
+                        "start_date": "2026-04-01",
+                        "end_date": "2026-05-01",
+                        "value_m3s": 10.0,
+                    }
+                ],
+            },
+        ],
+        "thermals": [],
+    }
+    assert boundary_conditions == expected
 
-    assert initial_conditions["recent_observations"] == windows
-    for key, value in other_sections.items():
-        assert initial_conditions[key] == value
-
-    expected = {**other_sections, "recent_observations": windows}
     expected_text = json.dumps(expected, indent=2, ensure_ascii=False) + "\n"
-    written_text = ic_path.read_text(encoding="utf-8")
+    written_text = bc_path.read_text(encoding="utf-8")
     assert written_text == expected_text, (
-        "patched initial_conditions.json's raw serialized text diverges from "
+        "patched boundary_conditions.json's raw serialized text diverges from "
         "the expected indent=2 / ensure_ascii=False / single-trailing-newline "
         "style"
     )

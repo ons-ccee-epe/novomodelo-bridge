@@ -95,6 +95,7 @@ from novomodelo_bridge.decomp.files import (
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+from novomodelo_bridge.novomodelo.boundary_conditions import plant_keyed_boundary
 from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 _LOG = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ DECOMP_CLEARED_ARTIFACTS = ClearedArtifacts(
         "config.json",
         "stages.json",
         "penalties.json",
+        "boundary_conditions.json",
         "initial_conditions.json",
         "conversion_manifest.json",
         # DECOMP-only, conditional, root-level artifacts a re-run may not
@@ -157,7 +159,7 @@ class DecompCaseArtifacts:
     buses_doc: dict | None = None
     lines_doc: dict | None = None
     line_bounds: pa.Table | None = None
-    initial_conditions: dict | None = None
+    boundary_conditions: dict | None = None
     deficit_cost: float | None = None
     fpha_codes: set[int] | None = None
     turbine_limits: hydro_conv.TurbineLimits | None = None
@@ -184,8 +186,8 @@ class DecompCaseArtifacts:
 @dataclass
 class FcfInputs:
     """Optional out-parameter carrying the pipeline's in-memory ``config``/
-    ``initial_conditions`` dicts back to a caller that needs them post-return
-    (the boundary-FCF importer's ``config``/``initial_conditions`` params —
+    ``boundary_conditions`` dicts back to a caller that needs them post-return
+    (the boundary-FCF importer's ``config``/``boundary_conditions`` params —
     see ``fcf/importer.py::import_boundary_fcf``).
 
     Deliberately not :class:`DecompCaseArtifacts`: that bundle carries several
@@ -198,7 +200,7 @@ class FcfInputs:
     """
 
     config: dict | None = None
-    initial_conditions: dict | None = None
+    boundary_conditions: dict | None = None
     coupling_auxiliaries: tuple[CouplingAuxiliary, ...] = ()
 
 
@@ -1145,7 +1147,6 @@ def _convert_config_and_stages(
         cvar=cvar,
     )
     artifacts.stages_dict = stages_dict
-    writer.write_json("stages.json", stages_dict)
 
 
 def _fpha_stage_models(
@@ -1220,17 +1221,16 @@ def _convert_lines_with_itaipu_link(
 
 def _convert_thermals_with_gnl(
     artifacts: DecompCaseArtifacts,
-    writer: CaseWriter,
     initial_conditions_doc: dict,
     travel_time_hours: Mapping[int, float],
-) -> tuple[dict, anticipated_conv.GnlCommitmentModel | None]:
-    """The thermal registry with the dadgnl GNL fleet spliced in, and the GNL
-    commitment model (``None`` when the deck has no dadgnl file).
+) -> tuple[dict, anticipated_conv.GnlCommitmentModel | None, dict | None]:
+    """The thermal registry with the dadgnl GNL fleet spliced in, the GNL
+    commitment model (``None`` when the deck has no dadgnl file), and the
+    post-study calendars (``None`` when the deck has none).
 
-    Extends *initial_conditions_doc* with the GNL left boundary and writes
-    ``post_study_stages.json`` once: the GNL thermal calendar when the deck
-    declares a GS calendar, plus the water calendar of a deck with a
-    travel-time arc.
+    Extends *initial_conditions_doc* with the GNL left boundary. The calendars
+    are the GNL thermal calendar when the deck declares a GS calendar, plus the
+    water calendar of a deck with a travel-time arc.
     """
     case = artifacts.case
     id_map = artifacts.id_map
@@ -1240,7 +1240,7 @@ def _convert_thermals_with_gnl(
     # the created thermals plus their anticipated ring: the mandatory left
     # boundary (past_anticipated_commitments, including any já-comandada
     # post-horizon run) and, when the deck declares a GS calendar, the
-    # post-study thermal_bounds carrier (post_study_stages.json).
+    # post-study thermal_bounds carrier.
     gnl_model = (
         anticipated_conv.read_gnl_model(case.dadgnl)
         if case.dadgnl is not None
@@ -1280,9 +1280,7 @@ def _convert_thermals_with_gnl(
     )
     if water_bucket_stages is not None:
         post_study_stages["water_bucket_stages"] = water_bucket_stages
-    if post_study_stages:
-        writer.write_json("post_study_stages.json", post_study_stages)
-    return thermals_dict, gnl_model
+    return thermals_dict, gnl_model, post_study_stages or None
 
 
 def _write_hydro_production_files(
@@ -1317,7 +1315,7 @@ def _write_hydro_production_files(
 
 def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     """The ``step("Converting entities")`` phase: CVaR, ``config``/``stages``,
-    FPHA configs, productivity, penalties, the ``initial_conditions`` doc,
+    FPHA configs, productivity, penalties, the boundary-conditions doc,
     buses, hydros (kept on *artifacts*, not written -- the bounds phase defers
     ``hydros.json`` for the diversion-channel coupling), lines (+ the Itaipu
     SE<->IV line), pumping, thermals + the GNL splice, production models,
@@ -1396,7 +1394,6 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     # it with the left/right temporal-boundary arrays, and those need the thermal
     # ids assigned when thermals.json is built.
     initial_conditions_doc: dict = {
-        "$schema": novomodelo_schemas.schema_url_for("initial_conditions.json"),
         "storage": [
             *hydro_conv.convert_initial_storage(case, id_map, effective=effective),
             *auxiliary_conv.auxiliary_initial_storage(artifacts.coupling_auxiliaries),
@@ -1405,7 +1402,6 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     }
     if past_defluences:
         initial_conditions_doc["past_defluences"] = past_defluences
-    artifacts.initial_conditions = initial_conditions_doc
 
     buses_doc = network_conv.convert_buses(case, id_map)
     artifacts.buses_doc = buses_doc
@@ -1439,19 +1435,25 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         "system/pumping_stations.json",
         network_conv.convert_pumping_stations(case, id_map),
     )
-    thermals_dict, gnl_model = _convert_thermals_with_gnl(
-        artifacts, writer, initial_conditions_doc, travel_time_hours
+    thermals_dict, gnl_model, post_study = _convert_thermals_with_gnl(
+        artifacts, initial_conditions_doc, travel_time_hours
     )
     artifacts.thermals_dict = thermals_dict
     artifacts.gnl_model = gnl_model
     if thermals_dict["thermals"]:
         writer.write_json("system/thermals.json", thermals_dict)
-    # The PAR inflow-lag seed (initial_conditions.recent_observations) is
+    # The PAR inflow-lag seed (``hydros[].recent_inflows`` of boundary_conditions.json) is
     # written by `fcf/importer.py::import_boundary_fcf`, not here: it is read on
     # the boundary cut's coupling postos and feeds only that cut's inflow-lag
     # terms. Without a boundary FCF the inflow model is order 0, so the lags
     # are inert.
-    writer.write_json("initial_conditions.json", initial_conditions_doc)
+    stages_dict = artifacts.stages_dict
+    assert stages_dict is not None
+    boundary = plant_keyed_boundary(initial_conditions_doc, post_study, stages_dict)
+    artifacts.stages_dict = boundary.stages
+    artifacts.boundary_conditions = boundary.boundary_conditions
+    writer.write_json("stages.json", boundary.stages)
+    writer.write_json("boundary_conditions.json", boundary.boundary_conditions)
     _write_hydro_production_files(artifacts, writer, stage_models, productivity_parquet)
 
     ncs_registry = ncs_conv.convert_non_controllable_sources(case, id_map)
@@ -2810,9 +2812,9 @@ def convert_decomp_case(
         :attr:`~novomodelo_bridge.core.conversion.ConversionReport.would_write_paths`.
     fcf_inputs_out:
         Optional :class:`FcfInputs` out-parameter. When given, its
-        ``config``/``initial_conditions`` fields are assigned the same
+        ``config``/``boundary_conditions`` fields are assigned the same
         in-memory dict objects this run wrote to ``config.json``/
-        ``initial_conditions.json``, so a caller (the CLI's boundary-FCF
+        ``boundary_conditions.json``, so a caller (the CLI's boundary-FCF
         step) can thread them into ``import_boundary_fcf`` without
         re-reading either file. ``None`` (the default) leaves it unused.
         Its ``coupling_auxiliaries`` field receives the auxiliary coupling
@@ -2879,7 +2881,7 @@ def _convert_decomp_case_impl(
     would have been written are still accumulated and recorded on the report.
 
     ``fcf_inputs_out`` (when given) receives the run's in-memory ``config``/
-    ``initial_conditions`` dicts — see :func:`convert_decomp_case`.
+    ``boundary_conditions`` dicts — see :func:`convert_decomp_case`.
     """
     step = on_phase if on_phase is not None else (lambda _label: None)
     step("Discovering deck")
@@ -2906,6 +2908,6 @@ def _convert_decomp_case_impl(
     report = _emit_and_write(artifacts, writer)
     if fcf_inputs_out is not None:
         fcf_inputs_out.config = artifacts.config
-        fcf_inputs_out.initial_conditions = artifacts.initial_conditions
+        fcf_inputs_out.boundary_conditions = artifacts.boundary_conditions
         fcf_inputs_out.coupling_auxiliaries = artifacts.coupling_auxiliaries
     return report

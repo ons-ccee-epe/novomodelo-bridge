@@ -498,7 +498,7 @@ class TestDecompCaseArtifacts:
     ``_convert_scenarios`` thread across the discovery/entity/scenario phases,
     and the still-inline bounds/constraints/write phases read back off — must
     carry every field those five functions (plus the FCF importer,
-    which reads ``config``/``initial_conditions``) depend on."""
+    which reads ``config``/``boundary_conditions``) depend on."""
 
     def test_field_contract(self) -> None:
         field_names = {f.name for f in dataclasses.fields(DecompCaseArtifacts)}
@@ -519,7 +519,7 @@ class TestDecompCaseArtifacts:
             "buses_doc",
             "lines_doc",
             "line_bounds",
-            "initial_conditions",
+            "boundary_conditions",
             "deficit_cost",
             "fpha_codes",
         } <= field_names
@@ -539,7 +539,7 @@ class TestDecompCaseArtifacts:
             tx=0.1,
         )
         assert artifacts.config is None
-        assert artifacts.initial_conditions is None
+        assert artifacts.boundary_conditions is None
         assert artifacts.stages_dict is None
         assert artifacts.hydros_dict is None
         assert artifacts.thermals_dict is None
@@ -547,14 +547,14 @@ class TestDecompCaseArtifacts:
         assert artifacts.line_bounds is None
 
         artifacts.config = {"a": 1}
-        artifacts.initial_conditions = {"storage": []}
+        artifacts.boundary_conditions = {"hydros": []}
         artifacts.stages_dict = {"stages": []}
         artifacts.hydros_dict = {"hydros": []}
         artifacts.thermals_dict = {"thermals": []}
         artifacts.lines_doc = {"lines": []}
         artifacts.line_bounds = pa.table({"line_id": pa.array([], type=pa.int32())})
         assert isinstance(artifacts.config, dict)
-        assert isinstance(artifacts.initial_conditions, dict)
+        assert isinstance(artifacts.boundary_conditions, dict)
         assert isinstance(artifacts.stages_dict, dict)
         assert isinstance(artifacts.hydros_dict, dict)
         assert isinstance(artifacts.thermals_dict, dict)
@@ -1632,12 +1632,30 @@ _POPULATED_GNL_EMISSION = GnlEmission(
         {"id": 2, "name": "GNL B", "anticipated_config": {"lead_time_hours": 336.0}},
     ],
     past_anticipated_commitments=[
-        {"thermal_id": 1, "stage_id": 0, "mw": 50.0},
-        {"thermal_id": 2, "stage_id": 0, "mw": 30.0},
+        {
+            "thermal_id": 1,
+            "start_date": "2026-07-18",
+            "end_date": "2026-07-25",
+            "value_mw": 50.0,
+        },
+        {
+            "thermal_id": 2,
+            "start_date": "2026-07-18",
+            "end_date": "2026-07-25",
+            "value_mw": 30.0,
+        },
     ],
     post_study_stages={
-        "thermal_stages": [{"id": 12, "start_date": "2027-07-06"}],
-        "thermal_bounds": [{"thermal_id": 1, "stage_id": 12, "max_mw": 50.0}],
+        "thermal_stages": [{"start_date": "2026-09-01", "duration_hours": 720.0}],
+        "thermal_bounds": [
+            {
+                "thermal_id": 1,
+                "post_study_stage_index": 0,
+                "cost_per_mwh": 120.0,
+                "min_mw": 0.0,
+                "max_mw": 50.0,
+            }
+        ],
     },
 )
 
@@ -1645,9 +1663,16 @@ _EMPTY_THERMAL_BOUNDS_GNL_EMISSION = GnlEmission(
     thermals=[
         {"id": 1, "name": "GNL A", "anticipated_config": {"lead_time_hours": 168.0}},
     ],
-    past_anticipated_commitments=[{"thermal_id": 1, "stage_id": 0, "mw": 20.0}],
+    past_anticipated_commitments=[
+        {
+            "thermal_id": 1,
+            "start_date": "2026-07-18",
+            "end_date": "2026-07-25",
+            "value_mw": 20.0,
+        }
+    ],
     post_study_stages={
-        "thermal_stages": [{"id": 12, "start_date": "2027-07-06"}],
+        "thermal_stages": [{"start_date": "2026-09-01", "duration_hours": 720.0}],
         "thermal_bounds": [],
     },
 )
@@ -1691,9 +1716,10 @@ class TestGnlWiring:
         self, tmp_path: Path
     ) -> None:
         """Every created GNL thermal id lands in ``thermals.json``, sorted
-        ascending; the past boundary lands in ``initial_conditions.json``
-        verbatim, with no ``future_anticipated_deliveries`` key; the
-        post-study ``thermal_bounds`` carrier is written and non-empty."""
+        ascending; the past boundary lands in ``boundary_conditions.json`` as
+        each thermal's ``commitments``, with no ``future_anticipated_deliveries``
+        key (retired); the post-study bounds land on the thermal that has
+        them and the calendar in ``stages.json``, ids continuing the study's."""
         dst = _run_cadastro_pipeline(
             tmp_path, ac_volmax_frame=None, gnl_emission=_POPULATED_GNL_EMISSION
         )
@@ -1707,46 +1733,53 @@ class TestGnlWiring:
         assert thermal_ids == sorted(thermal_ids)
         assert {1, 2}.issubset(set(thermal_ids))
 
-        initial_conditions = json.loads(
-            (dst / "initial_conditions.json").read_text(encoding="utf-8")
+        boundary = json.loads(
+            (dst / "boundary_conditions.json").read_text(encoding="utf-8")
         )
-        assert (
-            initial_conditions["past_anticipated_commitments"]
-            == _POPULATED_GNL_EMISSION.past_anticipated_commitments
-        )
-        assert "future_anticipated_deliveries" not in initial_conditions
+        by_thermal = {t["thermal_id"]: t for t in boundary["thermals"]}
+        assert by_thermal[1]["commitments"] == [
+            {"start_date": "2026-07-18", "end_date": "2026-07-25", "value_mw": 50.0}
+        ]
+        assert by_thermal[2]["commitments"] == [
+            {"start_date": "2026-07-18", "end_date": "2026-07-25", "value_mw": 30.0}
+        ]
+        assert by_thermal[1]["post_study_bounds"] == [
+            {"stage_id": 3, "cost_per_mwh": 120.0, "min_mw": 0.0, "max_mw": 50.0}
+        ]
+        assert "post_study_bounds" not in by_thermal[2]
+        assert "future_anticipated_deliveries" not in boundary
 
-        post_study = json.loads(
-            (dst / "post_study_stages.json").read_text(encoding="utf-8")
-        )
-        assert post_study["thermal_bounds"]
+        stages = json.loads((dst / "stages.json").read_text(encoding="utf-8"))
+        assert stages["post_study_thermal_stages"] == [
+            {"id": 3, "start_date": "2026-09-01", "end_date": "2026-10-01"}
+        ]
+        assert not (dst / "initial_conditions.json").exists()
+        assert not (dst / "post_study_stages.json").exists()
 
-    def test_empty_thermal_bounds_still_writes_post_study_stages(
+    def test_empty_thermal_bounds_still_writes_post_study_thermal_stages(
         self, tmp_path: Path
     ) -> None:
         """A GS-calendar-only plant whose post-study stages are all class-4
         (empty ``post_study_stages["thermal_bounds"]``) still gets
-        ``post_study_stages.json`` (non-``None`` calendar);
-        ``initial_conditions.json`` carries no
-        ``future_anticipated_deliveries`` key."""
+        ``post_study_thermal_stages`` in ``stages.json`` (non-``None``
+        calendar) but no ``post_study_bounds``; ``boundary_conditions.json``
+        carries no ``future_anticipated_deliveries`` key (retired)."""
         dst = _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
             gnl_emission=_EMPTY_THERMAL_BOUNDS_GNL_EMISSION,
         )
 
-        post_study = json.loads(
-            (dst / "post_study_stages.json").read_text(encoding="utf-8")
-        )
-        assert post_study["thermal_bounds"] == []
-        expected_post_study = _EMPTY_THERMAL_BOUNDS_GNL_EMISSION.post_study_stages
-        assert expected_post_study is not None
-        assert post_study["thermal_stages"] == expected_post_study["thermal_stages"]
+        stages = json.loads((dst / "stages.json").read_text(encoding="utf-8"))
+        assert stages["post_study_thermal_stages"] == [
+            {"id": 3, "start_date": "2026-09-01", "end_date": "2026-10-01"}
+        ]
 
-        initial_conditions = json.loads(
-            (dst / "initial_conditions.json").read_text(encoding="utf-8")
+        boundary = json.loads(
+            (dst / "boundary_conditions.json").read_text(encoding="utf-8")
         )
-        assert "future_anticipated_deliveries" not in initial_conditions
+        assert all("post_study_bounds" not in t for t in boundary["thermals"])
+        assert "future_anticipated_deliveries" not in boundary
 
     def test_summary_log_names_only_thermal_count(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -1818,7 +1851,7 @@ class TestCadastroPipelineWiring:
         self, tmp_path: Path
     ) -> None:
         """No ``AC`` volume record: the combined table equals the pre-override
-        baseline (no storage rows), and ``initial_conditions.json`` /
+        baseline (no storage rows), and ``boundary_conditions.json`` /
         ``system/hydros.json`` reflect the base registry values unchanged."""
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
 
@@ -1835,10 +1868,10 @@ class TestCadastroPipelineWiring:
         assert reservoirs[0] == {"min_storage_hm3": 20.0, "max_storage_hm3": 100.0}
         assert reservoirs[1] == {"min_storage_hm3": 10.0, "max_storage_hm3": 50.0}
 
-        storage = json.loads(
-            (dst / "initial_conditions.json").read_text(encoding="utf-8")
-        )["storage"]
-        values = {row["hydro_id"]: row["value_hm3"] for row in storage}
+        hydros_boundary = json.loads(
+            (dst / "boundary_conditions.json").read_text(encoding="utf-8")
+        )["hydros"]
+        values = {row["hydro_id"]: row["storage_hm3"] for row in hydros_boundary}
         # 50% of the base [20, 100] / [10, 50] ranges.
         assert values[0] == pytest.approx(60.0)
         assert values[1] == pytest.approx(30.0)
@@ -1863,17 +1896,17 @@ class TestCadastroPipelineWiring:
         ]
         assert rows == [(0, 0, 100.0), (0, 1, 80.0), (0, 2, 100.0)]
 
-    def test_initial_conditions_json_stamps_schema_as_first_key(
+    def test_boundary_conditions_json_stamps_schema_as_first_key(
         self, tmp_path: Path
     ) -> None:
-        """``$schema`` is stamped as the first key of DECOMP
-        ``initial_conditions.json``, pinned to the registry."""
+        """``$schema`` is the first key of DECOMP ``boundary_conditions.json``,
+        pinned to the registry."""
         dst = _run_cadastro_pipeline(tmp_path, ac_volmax_frame=None)
 
-        doc = json.loads((dst / "initial_conditions.json").read_text(encoding="utf-8"))
+        doc = json.loads((dst / "boundary_conditions.json").read_text(encoding="utf-8"))
         assert next(iter(doc)) == "$schema"
         assert doc["$schema"] == novomodelo_schemas.schema_url_for(
-            "initial_conditions.json"
+            "boundary_conditions.json"
         )
 
     def test_temporal_override_adds_storage_rows_and_raises_the_entity_envelope(
@@ -2373,6 +2406,8 @@ class TestDryRun:
         [report] = report_out
         assert str(dst / "config.json") in report.would_write_paths
         assert str(dst / "stages.json") in report.would_write_paths
+        assert str(dst / "boundary_conditions.json") in report.would_write_paths
+        assert str(dst / "initial_conditions.json") not in report.would_write_paths
 
     def test_dry_run_defers_generic_parameters_but_records_its_path(
         self, tmp_path: Path
@@ -2461,7 +2496,8 @@ class TestDryRun:
     def test_force_preclears_stale_decomp_artifacts(self, tmp_path: Path) -> None:
         """A successful ``--force`` re-run over a populated ``dst`` pre-clears
         the previous case's full artifact set first, so a conditional
-        artifact the new run does not reproduce (``post_study_stages.json``,
+        artifact the new run does not reproduce (the legacy
+        ``post_study_stages.json`` and ``initial_conditions.json``,
         ``boundary/``) cannot survive on top of the fresh case."""
         from novomodelo_bridge.decomp import pipeline as decomp_pipeline
 
@@ -2469,6 +2505,8 @@ class TestDryRun:
         dst.mkdir()
         post_study = dst / "post_study_stages.json"
         post_study.write_text("{}", encoding="utf-8")
+        initial = dst / "initial_conditions.json"
+        initial.write_text("{}", encoding="utf-8")
         boundary = dst / "boundary"
         boundary.mkdir()
         (boundary / "metadata.json").write_text("{}", encoding="utf-8")
@@ -2482,6 +2520,7 @@ class TestDryRun:
             decomp_pipeline.convert_decomp_case(tmp_path / "src", dst, force=True)
 
         assert not post_study.exists()
+        assert not initial.exists()
         assert not boundary.exists()
 
     def test_force_dry_run_preserves_stale_decomp_artifacts(
@@ -2533,8 +2572,9 @@ class TestDryRun:
     def test_clear_dst_contents_removes_decomp_only_artifacts(
         self, tmp_path: Path
     ) -> None:
-        """The DECOMP set clears the shared artifacts plus its own root-level
-        ``post_study_stages.json`` and ``boundary/`` tree."""
+        """The DECOMP set clears the shared artifacts, both generations of the
+        boundary file, its own root-level ``post_study_stages.json`` and the
+        ``boundary/`` tree."""
         from novomodelo_bridge.core.conversion import clear_dst_contents
         from novomodelo_bridge.decomp.pipeline import DECOMP_CLEARED_ARTIFACTS
 
@@ -2542,6 +2582,10 @@ class TestDryRun:
         dst.mkdir()
         post_study = dst / "post_study_stages.json"
         post_study.write_text("{}", encoding="utf-8")
+        initial = dst / "initial_conditions.json"
+        initial.write_text("{}", encoding="utf-8")
+        boundary_conditions = dst / "boundary_conditions.json"
+        boundary_conditions.write_text("{}", encoding="utf-8")
         boundary = dst / "boundary"
         boundary.mkdir()
         (boundary / "metadata.json").write_text("{}", encoding="utf-8")
@@ -2553,6 +2597,8 @@ class TestDryRun:
         clear_dst_contents(dst, DECOMP_CLEARED_ARTIFACTS)
 
         assert not post_study.exists()
+        assert not initial.exists()
+        assert not boundary_conditions.exists()
         assert not boundary.exists()
         assert not config.exists()
         assert notes.exists()
