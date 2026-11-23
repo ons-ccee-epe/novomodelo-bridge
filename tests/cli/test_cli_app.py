@@ -74,7 +74,8 @@ class TestTyperApp:
         The Options box wraps the help column at a width set by the longest
         option name/metavar in that *specific* command, so the same help
         string breaks across a different number of lines per command; compare
-        the reflowed words, not the raw wrapped lines.
+        the reflowed words, not the raw wrapped lines. The option's first row
+        also holds its ``<bool>`` metavar between the name and the help text.
         """
         words: list[str] = []
         capturing = False
@@ -82,7 +83,7 @@ class TestTyperApp:
             content = raw.strip().strip("│").strip()
             if content.startswith("--json"):
                 capturing = True
-                words.extend(content.split()[1:])
+                words.extend(content.split()[2:])
                 continue
             if capturing:
                 if content == "" or content.startswith(("--", "╰")):

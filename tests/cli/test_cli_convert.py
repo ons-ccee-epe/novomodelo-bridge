@@ -2941,9 +2941,17 @@ class TestJsonFloatDigits:
         assert mock_import.call_args.kwargs["float_digits"] == 9
 
     @pytest.mark.parametrize("track", ["newave", "decomp"])
-    @pytest.mark.parametrize("digits", ["0", "18"])
+    @pytest.mark.parametrize(
+        ("digits", "violated_bound"),
+        [("0", "greater than or equal to 1"), ("18", "less than or equal to 17")],
+    )
     def test_out_of_range_digits_is_a_usage_error(
-        self, tmp_path: Path, track: str, digits: str
+        self,
+        tmp_path: Path,
+        track: str,
+        digits: str,
+        violated_bound: str,
+        dumb_terminal: None,
     ) -> None:
         result = self._invoke(
             ["convert", track, str(tmp_path / "src"), str(tmp_path / "dst")]
@@ -2951,4 +2959,5 @@ class TestJsonFloatDigits:
         )
 
         assert result.exit_code == 2
-        assert "1<=x<=17" in result.output
+        unwrapped = " ".join(result.output.translate(str.maketrans("│|", "  ")).split())
+        assert violated_bound in unwrapped
