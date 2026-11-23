@@ -26,8 +26,7 @@ class ConversionReport:
     #: Structured findings (rich tables, severities, remediation) for the CLI to
     #: render. Populated by :func:`run_conversion`.
     diagnostics: list[dx.Diagnostic] = field(default_factory=list)
-    #: Flat WARNING-severity summary strings, kept for backward-compatible consumers
-    #: (derived from :attr:`diagnostics`).
+    #: Flat WARNING-severity summary strings (derived from :attr:`diagnostics`).
     warnings: list[str] = field(default_factory=list)
     #: Absolute output paths the conversion produced (real run) or would produce
     #: (dry run), in write order. Optional Parquet tables that were skipped are

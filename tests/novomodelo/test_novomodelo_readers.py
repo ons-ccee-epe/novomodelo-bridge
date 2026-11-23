@@ -65,6 +65,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_training_metadata,
     split_plant_row,
 )
+from tests.conftest import hydro_with_group
 
 # ---------------------------------------------------------------------------
 # Fixtures: build corrupt vs. valid-but-empty Novomodelo output layouts on disk.
@@ -528,7 +529,7 @@ class TestHydroBusGenerationValidPartition:
 
 
 class TestHydroBusGenerationAbsentRaisesNamed:
-    def test_missing_directory_raises_typed_error_naming_dir_and_version(
+    def test_missing_directory_raises_typed_error_naming_the_dir(
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "output"
@@ -539,7 +540,6 @@ class TestHydroBusGenerationAbsentRaisesNamed:
 
         message = str(excinfo.value)
         assert str(out / "simulation" / "hydro_bus_generation") in message
-        assert "0.13.0" in message
 
     def test_missing_directory_error_is_typed_not_bare(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
@@ -674,25 +674,16 @@ class TestHydroBusGenerationCorruptRaisesNovomodeloReadError:
 
 
 # ---------------------------------------------------------------------------
-# read_novomodelo_hydro_metadata drops "bus_id"; the
-# plant->bus label is re-sourced from the hydro_bus_generation partition via
-# read_novomodelo_hydro_bus_labels.
+# read_novomodelo_hydro_metadata carries no "bus_id"; the plant->bus label comes
+# from the hydro_bus_generation partition via read_novomodelo_hydro_bus_labels.
 # ---------------------------------------------------------------------------
 
 
 class TestHydroMetadataHasNoBusId:
-    def test_bus_id_key_is_absent_even_when_present_in_source_json(
-        self, tmp_path: Path
-    ) -> None:
+    def test_bus_id_key_is_absent(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir(parents=True)
-        # A stray "bus_id" in hydros.json is ignored -- the metadata reader's job
-        # is plant physics only, not a bus source, so the key never surfaces in
-        # its return value.
-        _write_minimal_hydros_json(
-            tmp_path,
-            [{"id": 0, "name": "H0", "bus_id": 100}],
-        )
+        _write_minimal_hydros_json(tmp_path, [hydro_with_group(0, 100, name="H0")])
 
         result = read_novomodelo_hydro_metadata(out)
 
@@ -2245,17 +2236,6 @@ class TestNovomodeloSoftwareVersion:
         assert (
             novomodelo_software_version(
                 {"software": "novomodelo", "software_version": "0.18.0"}
-            )
-            == "0.18.0"
-        )
-
-    def test_falls_back_to_the_cobre_version_key(self) -> None:
-        assert novomodelo_software_version({"cobre_version": "0.17.0"}) == "0.17.0"
-
-    def test_prefers_software_version_when_both_are_present(self) -> None:
-        assert (
-            novomodelo_software_version(
-                {"software_version": "0.18.0", "cobre_version": "0.17.0"}
             )
             == "0.18.0"
         )

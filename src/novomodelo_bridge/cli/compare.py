@@ -385,7 +385,7 @@ def _run_decomp_comparison(args: CompareArgs) -> None:
             hydros = read_novomodelo_hydros(args.novomodelo_output_dir)
             if hydros:
                 match_case_hydros(
-                    {hydro["id"]: str(hydro.get("name", "")) for hydro in hydros},
+                    {hydro["id"]: hydro["name"] for hydro in hydros},
                     deck_hydros(decomp_case),
                 )
             with spinner(

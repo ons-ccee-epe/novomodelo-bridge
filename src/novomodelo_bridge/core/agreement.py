@@ -116,7 +116,7 @@ VARIABLE_LABELS: dict[str, str] = {
     "withdrawal_m3s": "Water withdrawal (m³/s)",
     "water_value_per_hm3": "Water value (R$/hm³)",
     "lower_bound": "Lower bound (R$)",
-    "upper_bound_mean": "Upper bound, mean (R$)",
+    "upper_bound": "Upper bound, mean (R$)",
 }
 
 

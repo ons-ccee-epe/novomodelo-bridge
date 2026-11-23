@@ -32,12 +32,8 @@ def _build_case(case_dir: Path) -> None:
 
     hydros = {
         "hydros": [
-            hydro_with_group(
-                0, 0, name="H0", generation={"max_turbined_m3s": 100.0}, reservoir={}
-            ),
-            hydro_with_group(
-                1, 0, name="H1", generation={"max_turbined_m3s": 100.0}, reservoir={}
-            ),
+            hydro_with_group(0, 0, name="H0"),
+            hydro_with_group(1, 0, name="H1"),
         ]
     }
     (system / "hydros.json").write_text(json.dumps(hydros), encoding="utf-8")

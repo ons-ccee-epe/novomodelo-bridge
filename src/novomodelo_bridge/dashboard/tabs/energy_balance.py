@@ -938,8 +938,7 @@ def _aggregate_hydro_column(
 
     When *block_filter* is given (default 0), filters the LazyFrame to that
     block — appropriate for stage-level columns like ``stored_energy_*_mwh``.
-    Returns an empty DataFrame when the column is absent (older simulation
-    outputs without the novomodelo HEAD energy columns).
+    Returns an empty DataFrame when the hydros frame lacks *column*.
     """
     try:
         lf = data.hydros_lf

@@ -1002,6 +1002,7 @@ class TestOverviewCostCharts:
                 "immediate_cost": [10.0, 20.0],
                 "future_cost": [5.0, 5.0],
                 "thermal_cost": [8.0, 12.0],
+                "anticipated_thermal_cost": [0.0, 0.0],
             }
         ).write_parquet(d / "data.parquet")
 
@@ -1010,8 +1011,6 @@ class TestOverviewCostCharts:
         row = df.filter(pl.col("stage_id") == 0).row(0, named=True)
         assert row["thermal_cost"] == pytest.approx(20.0)  # block sum 8 + 12
         assert row["immediate_cost"] == pytest.approx(30.0)  # 10 + 20
-        # Pre-anticipation run (no anticipated_thermal_cost column): the derived
-        # thermal_cost_total falls back to thermal_cost (anticipated read as 0).
         assert "thermal_cost_total" in df.columns
         assert row["thermal_cost_total"] == pytest.approx(20.0)
 
@@ -1364,12 +1363,10 @@ class TestEdgeCases:
         assert read_novomodelo_convergence(fake_dir).is_empty()
         assert read_novomodelo_hydro_metadata(fake_dir) == {}
 
-    def test_novomodelo_convergence_reads_014_upper_bound(self, tmp_path: Path) -> None:
-        """novomodelo 0.14 renamed ``upper_bound_mean`` -> ``upper_bound`` (with a
-        sibling ``upper_bound_std``/``upper_bound_kind``).  The reader must map
-        ``upper_bound`` into the canonical ``upper_bound_mean`` slot and must
-        NOT let the prefix-sharing ``_std``/``_kind`` columns hijack it — the
-        failure mode is a silently empty convergence frame."""
+    def test_novomodelo_convergence_reads_upper_bound(self, tmp_path: Path) -> None:
+        """The reader takes ``upper_bound`` itself, not the prefix-sharing
+        ``upper_bound_std``/``upper_bound_kind`` columns beside it — the failure
+        mode is a silently empty convergence frame."""
         import polars as pl
 
         from novomodelo_bridge.novomodelo.readers import read_novomodelo_convergence
@@ -1390,28 +1387,7 @@ class TestEdgeCases:
         assert not df.is_empty()
         assert df["iteration"].to_list() == [1, 2]
         assert df["lower_bound"].to_list() == [10.0, 20.0]
-        assert df["upper_bound_mean"].to_list() == [15.0, 22.0]
-
-    def test_novomodelo_convergence_reads_legacy_upper_bound_mean(
-        self, tmp_path: Path
-    ) -> None:
-        """A convergence file carrying ``upper_bound_mean`` instead of ``upper_bound`` reads."""
-        import polars as pl
-
-        from novomodelo_bridge.novomodelo.readers import read_novomodelo_convergence
-
-        training = tmp_path / "training"
-        training.mkdir()
-        pl.DataFrame(
-            {
-                "iteration": [1],
-                "lower_bound": [10.0],
-                "upper_bound_mean": [15.0],
-            }
-        ).write_parquet(training / "convergence.parquet")
-
-        df = read_novomodelo_convergence(tmp_path)
-        assert df["upper_bound_mean"].to_list() == [15.0]
+        assert df["upper_bound"].to_list() == [15.0, 22.0]
 
     def test_empty_alignment_produces_no_results(self) -> None:
         """Alignment with no entities produces empty comparison."""

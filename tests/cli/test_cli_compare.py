@@ -294,10 +294,10 @@ class TestCompareDatasetWiring:
         assert code == 2
         assert "bogus" in stderr
 
-    def test_compare_results_help_omits_output_flag(
+    def test_compare_help_lists_format_and_out_dir_options(
         self, monkeypatch: pytest.MonkeyPatch, dumb_terminal: None
     ) -> None:
-        """``compare results --help`` lists --format/--out-dir, not --output/-o."""
+        """``compare newave --help`` lists --format and --out-dir."""
         code, stdout, _ = self._invoke_main(
             ["compare", "newave", "--help"],
             monkeypatch,
@@ -306,8 +306,6 @@ class TestCompareDatasetWiring:
         assert code == 0
         assert "--format" in stdout
         assert "--out-dir" in stdout
-        assert "--output" not in stdout
-        assert "-o " not in stdout
 
     def test_compare_results_artifact_oserror_does_not_change_exit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -551,7 +549,6 @@ class TestCompareJson:
         assert doc["status"] == "error"
         summary = doc["diagnostics"][0]["summary"]
         assert str(novomodelo_dir / "simulation" / "hydro_bus_generation") in summary
-        assert "0.13.0" in summary
 
 
 class TestCompareConfigEnvPrecedence:

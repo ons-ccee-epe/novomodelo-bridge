@@ -14,6 +14,12 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`dashboard` and `compare` read only the outputs of the paired novomodelo
+  release.** Outputs and cases an older novomodelo wrote no longer load; run
+  the case again with the paired release.
+
 ## [0.21.0] - 2026-11-16
 
 Pairs the bridge with the **novomodelo 0.21.0** release and pins

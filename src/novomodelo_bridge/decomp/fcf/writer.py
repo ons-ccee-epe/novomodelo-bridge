@@ -56,7 +56,7 @@ def build_stage_cuts_payload(
     verbatim into the payload — the boundary loader reads them per pool to
     select the source pool by calendar date (matching ``priced_state_date``
     against the loading study's own boundary date), to require a single-node
-    terminal source, and to reject a legacy (pre-self-describing) checkpoint.
+    terminal source, and to reject a checkpoint that lacks them.
 
     Raises
     ------

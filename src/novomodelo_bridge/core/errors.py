@@ -94,11 +94,9 @@ class NovomodeloPartitionMissingError(BridgeError):
     """A required Novomodelo output simulation partition does not exist.
 
     Raised by readers that must fail loudly instead of silently returning an
-    empty frame when their source partition is absent — e.g. because the
-    Novomodelo output directory predates the novomodelo version that introduced the
-    partition. The message names the missing directory and the minimum
-    required novomodelo version, so the caller learns their *output* is stale
-    rather than concluding there is nothing to report.
+    empty frame when their source partition is absent. The message names the
+    missing directory, so the caller learns the *output* lacks it rather than
+    concluding there is nothing to report.
     """
 
     def __init__(self, message: str, *, path: str | None = None) -> None:
@@ -156,7 +154,7 @@ _TYPE_MAP: dict[type[BaseException], tuple[str, str | None]] = {
     ),
     NovomodeloPartitionMissingError: (
         "novomodelo-partition-missing",
-        "Re-run novomodelo at the required version to produce this partition.",
+        "Re-run novomodelo to produce this partition.",
     ),
     OutputWriteError: (
         "output-write-failed",

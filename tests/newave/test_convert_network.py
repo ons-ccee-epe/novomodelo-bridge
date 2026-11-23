@@ -686,19 +686,7 @@ class TestConvertPenalties:
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
         result = convert_penalties(
-            case,
-            {
-                "hydros": [
-                    {
-                        "id": 0,
-                        "reservoir": {
-                            "max_storage_hm3": 1000.0,
-                            "min_storage_hm3": 100.0,
-                        },
-                    }
-                ]
-            },
-            productivities={0: 1.0},
+            case, max_accumulated_productivity=1.0, prod_media_sin=1.0
         )
         for key in ("bus", "hydro", "line", "non_controllable_source"):
             assert key in result
@@ -708,19 +696,7 @@ class TestConvertPenalties:
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
         result = convert_penalties(
-            case,
-            {
-                "hydros": [
-                    {
-                        "id": 0,
-                        "reservoir": {
-                            "max_storage_hm3": 1000.0,
-                            "min_storage_hm3": 100.0,
-                        },
-                    }
-                ]
-            },
-            productivities={0: 1.0},
+            case, max_accumulated_productivity=1.0, prod_media_sin=1.0
         )
         # First subsystem=1, patamar=1: custo = 500.0*1 = 500.0
         seg = result["bus"]["deficit_segments"][0]
@@ -731,19 +707,7 @@ class TestConvertPenalties:
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
         result = convert_penalties(
-            case,
-            {
-                "hydros": [
-                    {
-                        "id": 0,
-                        "reservoir": {
-                            "max_storage_hm3": 1000.0,
-                            "min_storage_hm3": 100.0,
-                        },
-                    }
-                ]
-            },
-            productivities={0: 1.0},
+            case, max_accumulated_productivity=1.0, prod_media_sin=1.0
         )
         required = {
             "spillage_cost",
@@ -766,7 +730,9 @@ class TestConvertPenalties:
         from novomodelo_bridge.newave.converters.network import convert_penalties
 
         case = make_case(tmp_path, sistema=_make_sistema_mock())
-        result = convert_penalties(case, {"hydros": []})
+        result = convert_penalties(
+            case, max_accumulated_productivity=1.0, prod_media_sin=1.0
+        )
         assert result["non_controllable_source"] == {"curtailment_cost": 0.0}
 
 

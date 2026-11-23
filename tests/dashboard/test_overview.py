@@ -55,7 +55,7 @@ def _make_conv_df(n: int = 50) -> pd.DataFrame:
         {
             "iteration": list(range(1, n + 1)),
             "lower_bound": [float(i * 100) for i in range(n)],
-            "upper_bound_mean": [float(i * 110) for i in range(n)],
+            "upper_bound": [float(i * 110) for i in range(n)],
             "upper_bound_std": [float(5) for _ in range(n)],
             "gap_percent": [float(10 - i * 0.2) for i in range(n)],
             "cuts_active": [int(i * 10) for i in range(n)],
@@ -345,7 +345,7 @@ def test_run_status_strip_lower_bound_and_cuts() -> None:
         {
             "iteration": [1, 2],
             "lower_bound": [5000.0, 5430.0],
-            "upper_bound_mean": [6000.0, 5800.0],
+            "upper_bound": [6000.0, 5800.0],
             "cuts_active": [600, 702],
             "cuts_added": [50, 52],
         }
@@ -434,14 +434,14 @@ def test_chart_training_mini_returns_figure_for_valid_conv() -> None:
     """_chart_training_mini must return a Figure when conv has required columns.
 
     When upper_bound_std is present the implementation adds two invisible band
-    traces (fill=tonexty) in addition to the lower_bound and upper_bound_mean
+    traces (fill=tonexty) in addition to the lower_bound and upper_bound
     lines, for a total of 4 traces.
     """
     conv = _make_conv_df(10)
     fig = _chart_training_mini(conv)
     assert isinstance(fig, go.Figure)
     # 2 band traces (upper/lower of ±1-std confidence band) + lower_bound +
-    # upper_bound_mean
+    # upper_bound
     assert len(fig.data) == 4
 
 
