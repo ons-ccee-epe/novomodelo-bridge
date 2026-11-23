@@ -8,7 +8,6 @@ binary, no deck, and no installed novomodelo wheel needed.
 
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 import sys
@@ -109,7 +108,7 @@ def _mock_deck_and_cut_seams(
 
 
 def test_patch_policy_boundary_preserves_other_sections(tmp_path: Path) -> None:
-    """AC 1 — `_patch_policy_boundary` sets `policy.boundary` and leaves
+    """`_patch_policy_boundary` sets `policy.boundary` and leaves
     every other top-level section byte-for-byte unchanged, writing the file
     in `decomp/pipeline.py`'s `_write_json` style (`indent=2`,
     `ensure_ascii=False`, single trailing newline).
@@ -169,8 +168,8 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
 ) -> None:
     """The orchestration's return value and config patch are correct, and the
     boundary loads on a plain `novomodelo run <case>` — no run-with-`--output`
-    warning, because novomodelo now resolves `policy.boundary.path` against the case
-    dir (the former C8 gap is closed).
+    warning, because novomodelo resolves `policy.boundary.path` against the case
+    dir.
 
     Needs no novomodelo binary, no real deck, and no installed novomodelo wheel: every
     seam that would touch any of the three (`bootstrap_terminal_manifest`,
@@ -180,9 +179,7 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     test: that `import_boundary_fcf` returns `case_dir / "boundary"` and
     patches `config.json`'s `policy.boundary` to the date-driven
     `{"path": "boundary"}` block (no stage/pool index — novomodelo selects the
-    source by calendar date). The regression guards below pin that neither the
-    retired `--output` WARNING nor the `TRACKED NOVOMODELO-GAP (C8)` code comment
-    comes back.
+    source by calendar date).
     """
     case_dir = tmp_path / "case"
     case_dir.mkdir()
@@ -239,23 +236,16 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     assert config["policy"]["boundary"] == {"path": "boundary"}
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    # The retired C8 workaround emitted a run-with-`--output` WARNING; the gap
-    # is closed, so no such warning may surface.
     assert not any("--output" in r.message for r in warnings), (
-        f"a retired run-with-output WARNING resurfaced: {caplog.text}"
+        f"a run-with-output WARNING surfaced: {caplog.text}"
     )
-
-    source_path = inspect.getsourcefile(import_boundary_fcf)
-    assert source_path is not None
-    source_text = Path(source_path).read_text(encoding="utf-8")
-    assert "TRACKED NOVOMODELO-GAP WORKAROUND (C8" not in source_text
 
 
 def test_import_boundary_fcf_rejects_storageless_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 4 — a bootstrapped manifest with no `HydroStorage` slot at all is
+    """A bootstrapped manifest with no `HydroStorage` slot at all is
     a terminal-manifest read bug, not a legitimate empty-storage case.
 
     `map_boundary_cuts` is deliberately left un-mocked here (unlike the
@@ -330,7 +320,7 @@ def test_import_boundary_fcf_reuses_shared_case_no_reparse(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 2 — the importer reads the shared case's already-parsed ``dadger``/
+    """The importer reads the shared case's already-parsed ``dadger``/
     ``id_map`` rather than re-discovering and re-parsing the deck itself: a
     spy on ``idecomp.decomp.Dadger.read`` is never called when
     ``import_boundary_fcf`` is handed a pre-parsed shared case."""

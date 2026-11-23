@@ -67,15 +67,12 @@ _FILLING_TARGET_DEFICIT_FRACTION = 0.9
 
 # --- Inflow non-negativity -------------------------------------------------
 #: ``modeling.inflow_non_negativity.method`` for the source-model track, pinned
-#: whatever novomodelo's default is; the DECOMP track pins ``penalty``. A negative
-#: incremental inflow keeps its value, in the water balance and in the inflow
-#: lags; the priced slack may add back at most the missing water,
-#: ``max(-inflow, 0)``.
-#: With the anchor below the LP buys that water only when the alternative costs
-#: more, so a negative inflow mostly acts as a water loss.
-INFLOW_NON_NEGATIVITY_METHOD = "truncation_with_penalty"
+#: whatever novomodelo's default is; the DECOMP track pins ``penalty``.
+#: ``truncation`` is NEWAVE's handling: the LP sees a negative incremental inflow
+#: as zero, at no cost, and the inflow lags keep the raw value.
+INFLOW_NON_NEGATIVITY_METHOD = "truncation"
 
-# inflow_nonnegativity_cost prices that slack at ``water_withdrawal_violation_cost
+# inflow_nonnegativity_cost prices the inflow slack at ``water_withdrawal_violation_cost
 # + 1`` (R$/m³/s). The slack *generates* water where every other flow slack only
 # *absorbs* a violation, so pricing it even infinitesimally below withdrawal would
 # make lifting the inflow a cheaper substitute for failing the withdrawal

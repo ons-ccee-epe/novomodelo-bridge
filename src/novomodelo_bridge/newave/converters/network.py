@@ -89,12 +89,12 @@ _LOG = logging.getLogger(__name__)
 #   = 277.78 × ρ MWh (purely volumetric — 730h convention cancels). So
 #     novomodelo_coef [R$/hm³] = source_R$/MWh × ρ × HM3_TO_MWH_PER_RHO
 #   with HM3_TO_MWH_PER_RHO = 1e6/3600 ≈ 277.78.
-#   Both slots are now DERIVED from the deficit cost via ρ_max_acum, not
-#   hard-coded: storage_violation_below_cost = 10 × MAX_CUSTO_DEFICIT × ρ_max_acum
+#   Both slots are derived from the deficit cost via ρ_max_acum:
+#   storage_violation_below_cost = 10 × MAX_CUSTO_DEFICIT × ρ_max_acum
 #   × HM3_TO_MWH_PER_RHO (the evaporation level, i.e. the greatest hydro penalty —
 #   it equals evaporation_cost × HM3_TO_MWH_PER_RHO); filling_target_violation_cost
 #   = 0.9 × MAX_CUSTO_DEFICIT × ρ_max_acum × HM3_TO_MWH_PER_RHO (a little below the
-#   deficit cost). Neither is a hard-coded placeholder any more.
+#   deficit cost).
 #
 # The source model's 730 h-per-month convention vs novomodelo's actual calendar block_hours
 # (672–744 h) introduces only a ±2% numerical drift in absolute LP cost for the Families
@@ -575,21 +575,10 @@ def _read_penalid_costs(case: NewaveCase) -> dict[str, float]:
 def _own_productivities(
     hydros_dict: dict, productivities: dict[int, float]
 ) -> list[float]:
-    """Return the list of per-hydro own productivities for averaging.
-
-    Preferred source is the `productivities` map (new contract). Falls back
-    to the legacy `hydros.json:generation.productivity_mw_per_m3s` field per
-    entry so older test fixtures keep working.
-    """
+    """Return the positive `productivities` entry of each hydro in `hydros_dict`."""
     out: list[float] = []
     for h in hydros_dict.get("hydros", []):
-        prod = 0.0
-        if "id" in h:
-            prod = productivities.get(int(h["id"]), 0.0)
-        if prod <= 0.0:
-            legacy = h.get("generation", {}).get("productivity_mw_per_m3s")
-            if legacy is not None:
-                prod = float(legacy)
+        prod = productivities.get(int(h["id"]), 0.0)
         if prod > 0:
             out.append(prod)
     return out
@@ -648,12 +637,11 @@ def convert_penalties(
     case:
         Parsed the source model case.
     hydros_dict:
-        The already-converted ``hydros.json`` dict (used for reservoir
-        useful-volume weights and the productivity fallback).
+        The already-converted ``hydros.json`` dict; its ``hydros[].id`` pick
+        the ``productivities`` entries the ρ fallbacks average.
     productivities:
-        ``{hydro_id: own_productivity_mw_per_m3s}`` for each hydro. Required
-        because productivity moved out of ``hydros.json:generation`` on
-        novomodelo HEAD.
+        ``{hydro_id: own_productivity_mw_per_m3s}`` for each hydro
+        (``hydro.compute_base_productivities``).
     max_accumulated_productivity:
         Optional ``MAX_PRODTACUM_SIN`` override. When omitted, defaults to
         ``max(productivities)`` — a coarse approximation; callers with
@@ -678,8 +666,8 @@ def convert_penalties(
     # (equivalent productivity vol_min→vol_max) over ALL existing plants including
     # zeros. Validated against pmo.dat's applied penalties (0.6299 ↔ penalty 821.78).
     # Pass it in via ``prod_media_sin`` (see ``hydro.compute_prodt_sin_mean``). The
-    # legacy fallback — mean of the 65%-reference own ρ, ρ>0 only — is ~4% high; kept
-    # only for callers/tests that don't supply ``prod_media_sin``.
+    # fallback — mean of the 65%-reference own ρ, ρ>0 only — is ~4% high; it
+    # applies only when ``prod_media_sin`` is None.
     own_prods = _own_productivities(hydros_dict, productivities)
     rho_avg = (
         prod_media_sin

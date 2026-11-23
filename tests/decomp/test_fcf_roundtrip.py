@@ -16,8 +16,7 @@ Agreement to f64 tolerance (``policy.fbs`` stores ``coefficients`` as
 ``float64``, so authored values round-trip through novomodelo-io exactly) across
 both a direct coefficient comparison and a deterministic evaluation sweep
 catches a sign flip, a unit error, a lag off-by-one, or a dropped
-``cost_scale_factor`` marker (which makes novomodelo silently scale every value
-by 10⁶) in one test.
+``cost_scale_factor`` marker in one test.
 
 Gated on ``@requires_novomodelo_python`` (novomodelo is import-able) stacked with
 ``@requires_writer_binding`` (the installed wheel actually exposes the
@@ -59,7 +58,7 @@ _HYDRO_INFLOW_LAG = 1
 _HYDRO_TRANSIT_BUCKET = 3
 _STORAGE_SUBINDEX = 0
 
-#: Random states in the AC 4 sweep beyond the all-zero and per-plant
+#: Random states in the synthetic sweep beyond the all-zero and per-plant
 #: unit-storage states — 2 + 8 = 10, comfortably above the required >= 8
 #: floor. Shared by the tier-2 synthetic sweep test below.
 _N_RANDOM_STATES = 8
@@ -244,7 +243,7 @@ def _synthetic_two_plant_case() -> tuple[
 @requires_novomodelo_python
 @requires_writer_binding
 def test_synthetic_roundtrip_coefficient_identity(tmp_path: Path) -> None:
-    """AC 1/2 — coefficient identity, no deck and no novomodelo binary.
+    """Coefficient identity, no deck and no novomodelo binary.
 
     Reuses this module's own ``_resolve`` oracle (never
     ``fcf.mapper.map_boundary_cuts``'s bookkeeping) against a hand-authored
@@ -322,7 +321,7 @@ def test_synthetic_roundtrip_coefficient_identity(tmp_path: Path) -> None:
 @requires_novomodelo_python
 @requires_writer_binding
 def test_synthetic_roundtrip_theta_sweep(tmp_path: Path) -> None:
-    """AC 3 — ``theta_novomodelo(x) == theta_source(x)`` over >= 8 states, no deck
+    """``theta_novomodelo(x) == theta_source(x)`` over >= 8 states, no deck
     and no novomodelo binary.
 
     Reuses this module's own ``_theta_source``/``_theta_novomodelo`` oracle
@@ -426,7 +425,7 @@ def test_synthetic_roundtrip_carries_slot_dates_and_priced_date(
     field, the reloaded pool carries the manifest's own `priced_state_date`
     (the date the boundary loader selects a source against), and that
     `metadata["producer"]["cost_scale_factor"] == 1.0` survives the round
-    trip (guards the legacy 10**6-scale marker from silently reappearing).
+    trip.
     """
     plant_codes = (10,)
     id_map = make_id_map(plant_codes)

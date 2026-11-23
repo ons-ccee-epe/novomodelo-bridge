@@ -242,10 +242,9 @@ class TestConvertHydroBounds:
         # Plant 1's historical minimum overridden to zero: no contributions.
         assert 0 not in {c.entity_id for c in contributions}
 
-    def test_qdef_windowed_plant_still_contributes_its_rq_default(self) -> None:
-        """``convert_hydro_bounds`` no longer
-        skips a plant with an explicit ``QDEF`` flow window — that window's
-        own ``outflow`` contribution now comes from
+    def test_qdef_windowed_plant_contributes_its_rq_default(self) -> None:
+        """``convert_hydro_bounds`` keeps a plant with an explicit ``QDEF`` flow
+        window — that window's own ``outflow`` contribution comes from
         ``single_term_bounds.single_term_bound_contributions`` (RHQ), and the
         accumulator intersects the two on the same ``(hydro, stage, block)``
         cell rather than one replacing the other."""

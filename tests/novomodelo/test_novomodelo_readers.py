@@ -556,9 +556,8 @@ class TestHydroBusGenerationAbsentRaisesNamed:
     def test_missing_output_dir_itself_also_raises_named_error(
         self, tmp_path: Path
     ) -> None:
-        # The output dir doesn't exist at all (e.g. `compare` pointed at a
-        # stale/pre-0.13 case dir) -- still the named error, never a bare
-        # FileNotFoundError from deeper I/O and never an empty frame.
+        # The output dir doesn't exist at all -- still the named error, never a
+        # bare FileNotFoundError from deeper I/O and never an empty frame.
         out = tmp_path / "does-not-exist"
 
         with pytest.raises(NovomodeloPartitionMissingError):
@@ -687,9 +686,9 @@ class TestHydroMetadataHasNoBusId:
     ) -> None:
         out = tmp_path / "output"
         out.mkdir(parents=True)
-        # A stray "bus_id" in hydros.json (e.g. a stale pre-0.13 case) must be
-        # ignored -- the metadata reader's job is plant physics only, not a
-        # bus source, so the key must never resurface in its return value.
+        # A stray "bus_id" in hydros.json is ignored -- the metadata reader's job
+        # is plant physics only, not a bus source, so the key never surfaces in
+        # its return value.
         _write_minimal_hydros_json(
             tmp_path,
             [{"id": 0, "name": "H0", "bus_id": 100}],
@@ -1264,10 +1263,8 @@ class TestBusAggregatesHydroReportsNonZero:
     def test_hydros_json_absence_does_not_affect_hydro_generation(
         self, tmp_path: Path
     ) -> None:
-        """The hydro branch no longer depends on a
-        hydro plant->bus map at all, so it is unaffected by hydros.json
-        being entirely absent -- proof that no caller of
-        ``_load_entity_bus_map`` passes ``"hydros"`` any more."""
+        """Hydro generation per bus is reported with no hydros.json in the
+        case: the hydro branch takes no plant->bus map from it."""
         out = _build_full_bus_aggregates_case(tmp_path)
         # No system/hydros.json is written by the builder above; assert
         # that explicitly, then confirm hydro generation is still reported.
@@ -1279,13 +1276,11 @@ class TestBusAggregatesHydroReportsNonZero:
         assert row["hydro_gen_mw_p50"][0] > 0.0
 
 
-class TestBusAggregatesThermalNcsUnchanged:
-    """Thermal and NCS per-bus aggregates are unchanged --
-    pinned numerically against the pre-change formula (block-
-    hours-weighted mean of generation_mw, exactly as ``_agg_entity_by_bus``
-    computed before and still computes now, untouched)."""
+class TestBusAggregatesThermalNcsWeightedMean:
+    """Thermal and NCS per-bus aggregates are the block-hours-weighted mean of
+    ``generation_mw`` per scenario, as ``_agg_entity_by_bus`` computes it."""
 
-    def test_thermal_and_ncs_gen_mw_match_pre_change_weighted_mean(
+    def test_thermal_and_ncs_gen_mw_are_block_hours_weighted_means(
         self, tmp_path: Path
     ) -> None:
         out = _build_full_bus_aggregates_case(tmp_path)
@@ -1434,17 +1429,15 @@ class TestBusAggregatesEnergyNotReweighted:
 
 
 class TestBusAggregatesHydroFallsBackToBlockZeroMwWithoutStagesJson:
-    """Regression: without ``stages.json`` (``block_hours`` is
-    ``None``), the hydro branch has no stage-hours denominator to convert an
-    energy total back into a power figure, so it must mirror every sibling
-    aggregator in this module (``_agg_entity_by_bus``,
-    :func:`read_novomodelo_hydro_means`, :func:`read_novomodelo_thermal_means`,
-    :func:`read_novomodelo_bus_means`) and report the ``block_id == 0``
-    representative block's ``generation_mw`` -- already a genuine MW figure
-    -- summed across hydros per bus. The pre-fix code instead relabeled the
-    raw ``generation_mwh`` sum as ``hydro_gen_mw``, off by the block-hours
-    factor; this is the only fixture in the module that omits
-    ``stages.json``, so this path was previously untested."""
+    """Without ``stages.json`` (``block_hours`` is ``None``), the hydro
+    branch has no stage-hours denominator to convert an energy total back into
+    a power figure, so it mirrors every sibling aggregator in this module
+    (``_agg_entity_by_bus``, :func:`read_novomodelo_hydro_means`,
+    :func:`read_novomodelo_thermal_means`, :func:`read_novomodelo_bus_means`)
+    and reports the ``block_id == 0`` representative block's ``generation_mw``
+    -- already a genuine MW figure -- summed across hydros per bus, never the
+    raw ``generation_mwh`` sum. This is the only fixture in the module that
+    omits ``stages.json``."""
 
     def test_no_stages_json_uses_block_zero_generation_mw_not_energy_sum(
         self, tmp_path: Path
@@ -1510,9 +1503,8 @@ class TestBusAggregatesHydroFallsBackToBlockZeroMwWithoutStagesJson:
         expected_mw = 10.0 + 5.0  # block_id==0 generation_mw, summed across plants.
         assert row["hydro_gen_mw_p50"][0] == pytest.approx(expected_mw)
 
-        # The pre-fix behaviour relabeled the raw MWh sum (across ALL blocks,
-        # including the null-block row) as MW -- assert the fix does not
-        # reproduce that order-of-magnitude-inflated figure.
+        # Not the raw MWh sum (across ALL blocks, including the null-block row)
+        # relabeled as MW.
         wrong_energy_sum = 1000.0 + 999000.0 + 500.0 + 777000.0
         assert row["hydro_gen_mw_p50"][0] != pytest.approx(wrong_energy_sum)
 
@@ -1859,9 +1851,7 @@ class TestBusSumMatchesPlantTotalCrossCheck:
 
 # ---------------------------------------------------------------------------
 # read_novomodelo_lines / read_novomodelo_line_bounds /
-# read_novomodelo_training_metadata -- the three previously-missing readers that
-# every ad-hoc lines.json / line_bounds.parquet / training/metadata.json
-# site now routes through.
+# read_novomodelo_training_metadata
 # ---------------------------------------------------------------------------
 
 
@@ -2221,10 +2211,8 @@ class TestReadNovomodeloTrainingMetadata:
     def test_unified_path_rule_resolves_the_case_dir_parent_fallback(
         self, tmp_path: Path
     ) -> None:
-        """A case layout with no doubled ``output/`` segment (the shape
-        ``export._read_novomodelo_version`` used to resolve via its own fallback
-        but ``dashboard.load_output_metadata`` could not) still
-        resolves through the one unified candidate search."""
+        """A case layout with no doubled ``output/`` segment resolves through
+        the one unified candidate search."""
         case_dir = tmp_path / "case"
         training_dir = case_dir / "training"
         training_dir.mkdir(parents=True)
@@ -2261,7 +2249,7 @@ class TestNovomodeloSoftwareVersion:
             == "0.18.0"
         )
 
-    def test_falls_back_to_the_pre_software_key(self) -> None:
+    def test_falls_back_to_the_cobre_version_key(self) -> None:
         assert novomodelo_software_version({"cobre_version": "0.17.0"}) == "0.17.0"
 
     def test_prefers_software_version_when_both_are_present(self) -> None:

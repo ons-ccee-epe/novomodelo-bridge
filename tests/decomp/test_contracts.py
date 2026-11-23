@@ -84,9 +84,8 @@ def _case(calendar: list[OperativeStage]) -> DecompCase:
     return make_decomp_case(Path("unused"), calendar=calendar)
 
 
-# ``decomp/pipeline.py`` no longer exposes module-level
-# ``_write_json``/``_write_parquet`` helpers (they became dry-run-aware
-# closures local to ``_convert_decomp_case_impl``), so
+# ``decomp/pipeline.py``'s writers are dry-run-aware closures local to
+# ``_convert_decomp_case_impl``, so
 # ``test_synthetic_contracts_validate_in_a_real_case`` below carries its own
 # minimal writers to overwrite the two files after a real conversion. The
 # case's ``system/``/``constraints/`` directories already exist post-

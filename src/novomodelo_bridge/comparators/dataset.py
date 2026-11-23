@@ -104,12 +104,11 @@ SUMMARY_SCHEMA: dict[str, type[pl.DataType]] = {
 class RenderInputs:
     """Typed render-input side-table for the HTML report builder.
 
-    Replaces the untyped ``metadata`` grab-bag: every field is one of the
-    non-tidy artifacts ``report_builder.build_comparison_report`` reads —
-    percentile-band frames, cost/name dicts, and the raw ``results`` list.
-    Each field's empty default reproduces the legacy ``_meta_*`` accessors'
-    empty-on-miss behaviour, so an absent input renders the same "No data"
-    fallback as before, never a ``KeyError``/``AttributeError``.
+    Every field is one of the non-tidy artifacts
+    ``report_builder.build_comparison_report`` reads — percentile-band frames,
+    cost/name dicts, and the raw ``results`` list. Each field defaults to
+    empty, so an absent input renders the "No data" fallback, never a
+    ``KeyError``/``AttributeError``.
 
     ``results`` is typed under ``TYPE_CHECKING`` so this module stays a leaf:
     it never imports ``results.py`` at runtime (see the module docstring).

@@ -334,7 +334,7 @@ def test_build_line_explorer_bounds_in_data() -> None:
 
 def test_build_line_explorer_net_and_bound_keys() -> None:
     """Embedded NW_DATA JSON contains net_p10/p50/p90 and upper_bound/lower_bound
-    for each line.  The legacy util_p10/p50/p90 keys are no longer present."""
+    for each line, and no util_p10/p50/p90 keys."""
     import json
     import re
 
@@ -371,10 +371,9 @@ def test_build_line_explorer_net_and_bound_keys() -> None:
                 f"{key} length mismatch for line {lid_str}: "
                 f"got {len(entry[key])}, expected {n_stages}"
             )
-        # Legacy util keys must be absent
         for key in ("util_p10", "util_p50", "util_p90"):
             assert key not in entry, (
-                f"Legacy key {key} unexpectedly present for line {lid_str}"
+                f"util key {key} unexpectedly present for line {lid_str}"
             )
 
 
@@ -447,8 +446,8 @@ def test_build_line_explorer_bound_values() -> None:
 
 
 def test_build_line_explorer_bound_lines_in_js() -> None:
-    """build_line_explorer JS renders Upper Bound and Lower Bound traces on nw-net.
-    The legacy nw-util chart and Capacity Utilisation label are absent."""
+    """build_line_explorer JS renders Upper Bound and Lower Bound traces on nw-net,
+    with no nw-util chart and no Capacity Utilisation label."""
     exchanges_lf = _make_exchanges_lf([0, 1], n_scenarios=2, n_stages=3)
     bh_df = _make_bh_df(3)
     names = _make_names([0, 1])
@@ -468,10 +467,9 @@ def test_build_line_explorer_bound_lines_in_js() -> None:
         weights=UNIFORM,
     )
 
-    # Bound data is now rendered as traces on the single nw-net chart
+    # Bounds render as traces on the single nw-net chart
     assert "upper_bound" in html
     assert "lower_bound" in html
-    # Legacy chart id and section label are gone
     assert "nw-util" not in html
     assert "Capacity Utilisation" not in html
 
@@ -737,15 +735,14 @@ def test_render_empty_line_meta_returns_no_data_paragraph() -> None:
 
 def test_render_normal_contains_all_section_titles() -> None:
     """render() with valid data contains the two section titles (Line Explorer,
-    Bus Balance). The Capacity Utilisation section was merged into the heatmap
-    and is no longer a standalone section header in render()."""
+    Bus Balance); capacity utilisation lives in the heatmap, not in a section
+    header of its own."""
     data = _make_mock_data([0, 1])
 
     result = render(data)
 
     assert "Line Explorer" in result
     assert "Bus Balance" in result
-    # Capacity Utilisation is no longer a top-level section in render()
     assert "Capacity Utilisation" not in result
 
 

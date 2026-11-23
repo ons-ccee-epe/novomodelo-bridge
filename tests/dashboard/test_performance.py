@@ -157,8 +157,7 @@ def _make_mock_data(
 ) -> MagicMock:
     """Build a MagicMock that mimics DashboardData with real DataFrames.
 
-    Maps legacy parameter names to the attribute names used by the current
-    implementation:
+    Maps the parameter names to DashboardData attribute names:
       - ``metadata`` (with nested ``run_info``) -> ``training_metadata``
         (flat dict with ``duration_seconds``).
       - ``simulation_manifest`` -> ``simulation_metadata``.
@@ -172,9 +171,8 @@ def _make_mock_data(
     # the aggregated timing frame as both the summed view and the raw view.
     data.timing_raw = data.timing
 
-    # The implementation reads data.training_metadata.get("duration_seconds").
-    # The legacy test helper accepted metadata={"run_info": {"duration_seconds": X}};
-    # flatten that to the format the implementation expects.
+    # The implementation reads data.training_metadata.get("duration_seconds"):
+    # flatten metadata={"run_info": {"duration_seconds": X}} to that.
     if metadata is not None:
         run_info = metadata.get("run_info", {})
         data.training_metadata = run_info
@@ -439,8 +437,7 @@ def test_render_wraps_retry_histogram_in_chart_card() -> None:
 
     retry_start = html.index("Solver Retries")
     retry_section = html[retry_start : html.index("Simulation", retry_start)]
-    # Before the fix, only the heatmap sibling was wrap_chart(...)-ed, so this
-    # section held exactly one "chart-card" div; now both charts are wrapped.
+    # Both charts are wrap_chart(...)-ed, so the section holds two chart-card divs.
     assert retry_section.count('<div class="chart-card">') == 2
 
 
@@ -674,9 +671,8 @@ def test_render_empty_solver() -> None:
 
 
 class TestLightweightPayloads:
-    """Long-run dashboards used to grow to GB-scale because per-iteration box
-    plots and scatter charts dumped every raw sample into the HTML. These
-    tests pin the lighter payloads in place so future edits don't regress.
+    """Per-iteration box plots and scatter charts embed summarised payloads,
+    not every raw sample, so a long-run dashboard stays far from GB-scale.
     """
 
     def _backward_synthetic_frame(

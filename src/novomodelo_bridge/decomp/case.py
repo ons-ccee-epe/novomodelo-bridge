@@ -1,11 +1,7 @@
 """Parsed deck case — read each input file once, cache the result.
 
 ``DecompFiles`` (:mod:`novomodelo_bridge.decomp.files`) resolves the *paths* of
-a deck revision; this module adds the parsing layer on top. Converters
-historically took a raw ``dadger`` plus several derived params
-(``id_map``, ``calendar``, ``hidr``) computed ad hoc by the pipeline and
-hand-threaded positionally, so a conversion's own orchestrator re-derived
-``id_map``/``calendar`` from the same ``dadger`` parse at each call site.
+a deck revision; this module adds the parsing layer on top.
 
 :class:`DecompCase` wraps a :class:`~novomodelo_bridge.decomp.files.DecompFiles`
 and exposes one :func:`functools.cached_property` per input file, mirroring

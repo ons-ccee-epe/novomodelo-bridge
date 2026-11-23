@@ -79,15 +79,11 @@ def _make_training_metadata(
     training_manifest: dict | None,
     metadata: dict | None,
 ) -> dict:
-    """Build a training_metadata dict from legacy test parameters.
+    """Build a training_metadata dict from ``training_manifest`` and ``metadata``.
 
     The implementation reads from ``data.training_metadata`` using keys
     ``novomodelo_version``, ``started_at``, ``duration_seconds``, and a nested
     ``convergence`` sub-dict with ``termination_reason``.
-
-    Legacy test helpers passed ``training_manifest`` and ``metadata``
-    separately.  This function unifies them into the shape the
-    implementation now expects.
     """
     result: dict = {}
     if metadata:
@@ -109,7 +105,7 @@ def _make_training_metadata(
 
 
 def _make_policy_metadata(training_manifest: dict | None) -> dict:
-    """Build a policy_metadata dict from the legacy training_manifest."""
+    """Build a policy_metadata dict from ``training_manifest``."""
     result: dict = {}
     if training_manifest and "policy_states" in training_manifest:
         result["state_dimension"] = training_manifest["policy_states"]

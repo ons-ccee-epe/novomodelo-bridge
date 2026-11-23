@@ -806,7 +806,7 @@ class TestApplyPermanentOverridesDiagnostics:
 
     def test_no_sink_fallback_logs_one_warning(self, tmp_path, caplog) -> None:
         """With no active collect() sink, emit() degrades to a single logging
-        record — the pre-migration caplog contract keeps working."""
+        record."""
         import logging
 
         from novomodelo_bridge.newave.converters.hydro import _apply_permanent_overrides

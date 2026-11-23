@@ -1,9 +1,7 @@
 """Dashboard data layer — loading helpers and DashboardData dataclass.
 
-All data loading previously performed inside ``build_dashboard()`` is
-consolidated here into ``DashboardData.load(case_dir)``.  Chart functions
-receive a single ``DashboardData`` instance instead of a long list of
-individual arguments.
+``DashboardData.load(case_dir)`` loads every input the dashboard renders;
+chart functions receive that single ``DashboardData`` instance.
 """
 
 from __future__ import annotations
@@ -336,17 +334,11 @@ def load_thermal_metadata(case_dir: Path) -> dict[int, dict]:
     """Return thermal_id -> {bus_id, max_mw, cost_per_mwh} metadata."""
     result = {}
     for t in read_novomodelo_thermals(case_dir / "output"):
-        # v0.4.3+: scalar cost_per_mwh; legacy: cost_segments array.
-        if "cost_per_mwh" in t:
-            cost = float(t["cost_per_mwh"])
-        else:
-            segments = t.get("cost_segments", [])
-            cost = float(segments[0]["cost_per_mwh"]) if segments else 0.0
         cap = t.get("generation", {}).get("max_mw", 0.0)
         result[t["id"]] = {
             "bus_id": t["bus_id"],
             "max_mw": cap,
-            "cost_per_mwh": cost,
+            "cost_per_mwh": float(t["cost_per_mwh"]),
             "name": t.get("name", str(t["id"])),
         }
     return result
@@ -368,11 +360,7 @@ def load_hydro_metadata(
     ``bus_id`` is the plant's *bus_map* entry, absent when it has none.
     *bus_map* defaults to :func:`load_hydro_bus_map`.
 
-    Productivity is read from ``hydro_energy_productivity.parquet`` (the
-    novomodelo productivity-resolution-rules contract). Falls back through
-    ``hydro_production_models.json`` and then the deprecated
-    ``hydros.json:generation.productivity_mw_per_m3s`` field so older
-    converted cases still render.
+    Productivity comes from :func:`resolve_hydro_productivities`.
     """
     hydros = read_novomodelo_hydros(case_dir / "output")
     if not hydros:
@@ -903,10 +891,10 @@ def _normalize_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     pre-0.14 frame (legacy names already present) is returned unchanged, and a
     frame that shares a source name for a different concept it keeps canonical
     elsewhere (e.g. ``bounds.parquet``'s ``stage_id``) is deliberately NOT run
-    through here. The ``-1`` -> ``NULL`` marker change needs no handling: a null
-    stage/opening reaches pandas as ``NaN``, and the chart layer's
-    ``stage >= 0`` filters drop those rows exactly as they dropped the old
-    ``-1`` rows, while its ``opening.notna()`` checks rely on the null directly.
+    through here. A null stage/opening needs no handling: it reaches pandas as
+    ``NaN``, which the chart layer's ``stage >= 0`` filters drop (as they drop a
+    pre-0.14 ``-1``), while its ``opening.notna()`` checks rely on the null
+    directly.
     """
     if df.empty:
         return df
@@ -1258,10 +1246,9 @@ class DashboardData:
     Holds the eight ``load_*``-produced sub-structs verbatim (``temporal``,
     ``entities``, ``simulation``, ``scenario``, ``performance``,
     ``stochastic``, ``metadata``, ``gc``) plus the handful of values derived
-    at load time that belong to none of them. Every historical flat
-    ``data.<field>`` name a tab module reads is exposed as a read-only
-    ``@property`` forwarding to its sub-struct, so tab code keeps working
-    unchanged. Populated via ``DashboardData.load(case_dir)``.
+    at load time that belong to none of them. Each flat ``data.<field>`` name a
+    tab module reads is a read-only ``@property`` forwarding to its sub-struct.
+    Populated via ``DashboardData.load(case_dir)``.
     """
 
     case_dir: Path
@@ -1299,7 +1286,7 @@ class DashboardData:
 
         Thin orchestrator: each cohesive section is read by a dedicated
         ``load_*`` loader returning a sub-struct, which :class:`DashboardData`
-        holds directly (see the flat-field ``@property`` shims below). Only
+        holds directly (see the flat-field ``@property`` pass-throughs below). Only
         ``stages.json`` is required: :func:`_read_stages` raises
         ``NovomodeloOutputError`` when it is absent or unusable. Every other
         file is optional: an absent one falls back to an empty DataFrame /
@@ -1369,9 +1356,8 @@ class DashboardData:
         )
 
     # ---------------------------------------------------------------------------
-    # Flat-field shims — read-only pass-throughs onto the held sub-structs
-    # above, preserved so every existing tab module keeps reading
-    # ``data.<field>`` without change.
+    # Flat-field pass-throughs — read-only ``@property`` views onto the held
+    # sub-structs above, for the ``data.<field>`` names the tab modules read.
     # ---------------------------------------------------------------------------
 
     @property

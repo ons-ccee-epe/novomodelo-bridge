@@ -198,7 +198,7 @@ def test_bootstrap_passes_single_iteration_run_contract(
 def test_bootstrap_flattens_terminal_fan_and_preserves_stage_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC 1 — given a ``stages.json`` policy graph with a 2-leaf terminal
+    """Given a ``stages.json`` policy graph with a 2-leaf terminal
     fan, the bootstrap variant's ``policy_graph.nodes``/``transitions`` are
     empty lists while every stage's own content is unchanged; the only
     addition is the ``num_openings: 1`` companion field novomodelo's chain
@@ -303,7 +303,7 @@ def test_bootstrap_raises_on_empty_terminal_entity_manifest(
 def test_bootstrap_returns_real_single_node_id_after_flattening(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC 2 — a flattened bootstrap whose ``load_policy`` seam reports a
+    """A flattened bootstrap whose ``load_policy`` seam reports a
     real single node (``node_id=7``, a non-sentinel, non-zero id — a value
     that would stay hidden by an accidental falsy-``0`` check) threads
     through with no ``RuntimeError``."""

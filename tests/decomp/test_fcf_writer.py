@@ -117,16 +117,15 @@ def test_write_boundary_checkpoint_creates_files(tmp_path: Path) -> None:
     write_boundary_checkpoint(boundary_dir, payload, metadata)
 
     assert (boundary_dir / "manifest.bin").exists()
-    # novomodelo 0.14 keys the cut file by pool id (stage_id 10 -> "010.bin"),
-    # replacing the old positional "stage_NNN.bin".
+    # novomodelo keys the cut file by pool id (stage_id 10 -> "010.bin").
     assert (boundary_dir / "cuts" / "010.bin").exists()
     assert (boundary_dir / "basis").is_dir()
 
     reloaded = novomodelo.results.load_policy(
         boundary_dir.parent, policy_subdir=boundary_dir.name
     )
-    # 0.14 nests the algorithm provenance (incl. cost_scale_factor) under a
-    # "producer" block; state_dimension is no longer a metadata field.
+    # The algorithm provenance (incl. cost_scale_factor) sits in a "producer"
+    # block; state_dimension is per pool, not a metadata field.
     assert "state_dimension" not in reloaded["metadata"]
     assert reloaded["metadata"]["producer"]["cost_scale_factor"] is not None
     # Only the software and version that wrote a checkpoint load it, so the

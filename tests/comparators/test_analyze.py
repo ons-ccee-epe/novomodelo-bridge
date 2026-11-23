@@ -539,14 +539,14 @@ def test_render_inputs_fields_match_report_builder_consumption() -> None:
 # -------------------------------------------------------------------
 
 
-def test_results_footer_counts_matches_legacy_summary() -> None:
+def test_results_footer_counts_match_results_summary() -> None:
     results = _make_results()
 
     footer = results_footer_counts(results)
-    legacy = build_results_summary(results, 1e-2)
+    summary = build_results_summary(results, 1e-2)
 
-    assert footer["total"] == legacy.total
-    assert footer["by_entity_type"] == legacy.by_entity_type
+    assert footer["total"] == summary.total
+    assert footer["by_entity_type"] == summary.by_entity_type
 
 
 def test_build_results_dataset_carries_footer_counts() -> None:
@@ -554,11 +554,11 @@ def test_build_results_dataset_carries_footer_counts() -> None:
 
     dataset = build_results_dataset(results, PercentileData(), 1e-2)
 
-    legacy = build_results_summary(results, 1e-2)
+    summary = build_results_summary(results, 1e-2)
     footer = dataset.metadata["footer_counts"]
     assert isinstance(footer, dict)
-    assert footer["total"] == legacy.total
-    assert footer["by_entity_type"] == legacy.by_entity_type
+    assert footer["total"] == summary.total
+    assert footer["by_entity_type"] == summary.by_entity_type
 
 
 # ---------------------------------------------------------------------------
@@ -715,7 +715,7 @@ def test_per_stage_sum_from_results_no_match_returns_empty() -> None:
     assert matched == set()
 
 
-def test_per_stage_sum_from_frame_matches_legacy() -> None:
+def test_per_stage_sum_from_frame_sums_each_stage_in_order() -> None:
     df = pl.DataFrame(
         {
             "entity_id": [0, 1, 0, 1],
@@ -779,10 +779,9 @@ def _hydro_row(
 def test_per_bus_sums_from_results_buckets_and_skips_fictitious() -> None:
     # Four hydro rows: ids 0,1 -> SUDESTE; id 2 -> SUL; id 3 -> NOFICT1 (dropped).
     #
-    # The bus label is re-sourced from the hydro_bus_generation
-    # partition's distinct (hydro_id, bus_id) pairs (merged onto hydro_meta as
-    # "bus_ids" by the results-comparison orchestrator) -- read_novomodelo_hydro_metadata
-    # itself no longer carries a "bus_id" key.
+    # The bus label comes from the hydro_bus_generation partition's distinct
+    # (hydro_id, bus_id) pairs, merged onto hydro_meta as "bus_ids" by the
+    # results-comparison orchestrator.
     results = [
         _hydro_row(0, 1, "storage_final_hm3", 100.0, 90.0),
         _hydro_row(1, 1, "storage_final_hm3", 200.0, 180.0),
@@ -821,8 +820,7 @@ def test_per_bus_sums_from_results_skips_plants_without_bus_ids() -> None:
         _hydro_row(1, 1, "storage_final_hm3", 200.0, 180.0),
     ]
     # id 1 carries no "bus_ids" label at all (e.g. it never appears in the
-    # hydro_bus_generation partition) -> skipped entirely, same as the legacy
-    # bus_id-is-None skip.
+    # hydro_bus_generation partition) -> skipped entirely.
     hydro_meta: dict[int, dict[str, object]] = {
         0: {"bus_ids": {100}},
         1: {},
@@ -848,8 +846,8 @@ def test_per_bus_sums_from_results_excludes_multi_bus_plant() -> None:
     ]
     hydro_meta: dict[int, dict[str, object]] = {
         0: {"bus_ids": {100}},
-        # synthetic two-bus plant; named so the fix (include the plant
-        # name, not just its numeric id) is checked.
+        # synthetic two-bus plant; named so the diagnostic's plant name (not
+        # just its numeric id) is checked.
         9: {"bus_ids": {100, 101}, "name": "AMBIGUOUS_PLANT"},
     }
     bus_meta: dict[int, dict[str, object]] = {
@@ -904,7 +902,7 @@ def test_per_bus_sums_from_results_counts_split_plant_at_its_loaded_bus() -> Non
     assert not [d for d in collected if d.code == "hydro-multi-bus-ambiguous"]
 
 
-def test_per_bus_sums_from_frame_matches_legacy_closure() -> None:
+def test_per_bus_sums_from_frame_buckets_and_skips_fictitious() -> None:
     df = pl.DataFrame(
         {
             "entity_id": [0, 1, 0, 2],
