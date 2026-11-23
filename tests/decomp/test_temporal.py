@@ -426,8 +426,7 @@ class TestConvertConfigStoppingRules:
 
 def test_convert_config_pins_penalty_inflow_non_negativity() -> None:
     """The method is emitted, not left to novomodelo's default, and is the
-    unbounded ``penalty`` correction rather than the other track's
-    ``truncation_with_penalty``."""
+    unbounded ``penalty`` correction."""
     dadger = MagicMock()
     dadger.ni.iteracoes = 500
     dadger.gp.data = [0.001]

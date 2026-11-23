@@ -123,10 +123,10 @@ def convert_config(case: DecompCase) -> dict:
             },
         },
         "modeling": {
-            # `penalty`, not the other track's `truncation_with_penalty`: the
-            # unbounded priced inflow keeps a cut-less forward pass feasible
-            # against a later stage's hard storage floor (an HV volume target),
-            # which the boundary-FCF bootstrap run would otherwise die on.
+            # `penalty`: the unbounded priced inflow keeps a cut-less forward
+            # pass feasible against a later stage's hard storage floor (an HV
+            # volume target), which the boundary-FCF bootstrap run would
+            # otherwise die on.
             "inflow_non_negativity": {"method": "penalty"},
         },
         "simulation": {

@@ -14,6 +14,13 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`convert newave` treats negative inflows as NEWAVE does:** the converted
+  `config.json` sets the `truncation` method, which zeroes them in the LP at
+  no cost, in place of `truncation_with_penalty`. Results change; reconvert
+  NEWAVE cases.
+
 ## [0.21.0] - 2026-11-16
 
 Pairs the bridge with the **novomodelo 0.21.0** release and pins

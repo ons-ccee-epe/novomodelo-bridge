@@ -28,7 +28,7 @@ summary = "Critérios de parada (`GP` como gap relativo e `NI` como limite de it
   path = "modeling.inflow_non_negativity.method"
   from = []
   status = "constant"
-  how = "Sempre `penalty`, diferente da conversão NEWAVE (`truncation_with_penalty`): uma correção sem limite, penalizada por `hydro.inflow_nonnegativity_cost`, eleva a afluência incremental no balanço hídrico. Sem limite, ela mantém factível a primeira passada forward (ainda sem cortes) diante de um piso de armazenamento rígido em estágio posterior, como uma meta de volume de HV de uma só usina, e não compromete a regra de parada por gap."
+  how = "Sempre `penalty`, diferente da conversão NEWAVE (`truncation`): uma correção sem limite, penalizada por `hydro.inflow_nonnegativity_cost`, eleva a afluência incremental no balanço hídrico. Sem limite, ela mantém factível a primeira passada forward (ainda sem cortes) diante de um piso de armazenamento rígido em estágio posterior, como uma meta de volume de HV de uma só usina, e não compromete a regra de parada por gap."
 
   [[output.field]]
   path = "simulation.enabled"
