@@ -115,10 +115,10 @@ def _flatten_terminal_fan(case_dir: Path, variant_dir: Path) -> None:
     instead of the real case's terminal-fan leaves — see
     :func:`bootstrap_terminal_manifest`'s docstring for why a single-node
     terminal is what the bootstrap run needs. Every other file (``config``,
-    ``system``, ``scenarios``, ``constraints``, ``post_study_stages.json``,
-    ``initial_conditions.json``) is copied verbatim, so the terminal state
-    layout read back from this variant is the real case's own. ``case_dir``
-    itself is only ever read, never written.
+    ``system``, ``scenarios``, ``constraints``, ``boundary_conditions.json``)
+    and the post-study lists of ``stages.json`` are copied verbatim, so the
+    terminal state layout read back from this variant is the real case's own.
+    ``case_dir`` itself is only ever read, never written.
 
     Every stage additionally gets ``num_openings: 1``: novomodelo's schema
     requires an explicit per-stage opening count once ``nodes[]`` is empty

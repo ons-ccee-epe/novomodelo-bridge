@@ -5,9 +5,9 @@ Builds the two windowed inflow inputs of the unified representation:
 - the realized-inflow history Parquet
   (``{hydro_id, start_date, end_date, value_m3s}``, one row per hydro per
   calendar month of the historical record), and
-- the conditioning windows for ``initial_conditions.recent_observations``
-  (the source model's hydrological tendency, as the 12 calendar months
-  preceding the study start).
+- the conditioning windows for ``hydros[].recent_inflows`` of
+  ``boundary_conditions.json`` (the source model's hydrological tendency, as
+  the 12 calendar months preceding the study start).
 
 Values are incremental inflows in m³/s. The module also holds the readers of
 ``vazoes.dat`` and ``vazpast.dat`` behind them: the posto width, the inflow
@@ -486,7 +486,7 @@ def convert_recent_observation_windows(
 
     Emits, per hydro, the 12 calendar-month windows immediately preceding
     the study start (oldest first), shaped for the
-    ``initial_conditions.recent_observations`` field. Values are
+    ``hydros[].recent_inflows`` field of ``boundary_conditions.json``. Values are
     incremental m³/s. A calendar month absent from the tendency data is
     omitted rather than zero-filled — downstream coverage validation
     surfaces genuine gaps, and a fabricated zero-inflow window would be

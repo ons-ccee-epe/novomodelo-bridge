@@ -41,8 +41,8 @@ stages as a left-boundary ``past_anticipated_commitment``, and one it books
 past the study becomes a fixed já-comandada ``past_anticipated_commitment``
 too (:func:`classify_gnl_windows`). Any
 remaining post-study stage not covered by a já-comandada window is priced via
-``post_study_stages.json`` ``thermal_bounds`` instead — the deck does not
-declare a synthesised free lane past what ``gl`` actually commits.
+``thermals[].post_study_bounds`` of ``boundary_conditions.json`` instead — the
+deck does not declare a synthesised free lane past what ``gl`` actually commits.
 
 Committed MW per stage is the block-duration-weighted mean of ``geracao`` over
 that stage's own ``duracao`` blocks (``Σ_b duracao_b·geracao_b / Σ_b duracao_b``),
@@ -1010,13 +1010,14 @@ class GnlEmission:
     """The novomodelo inputs an anticipated GNL fleet contributes to a converted case.
 
     ``thermals`` are created ``system/thermals.json`` entries (GNL plants are
-    absent from ``CT``); ``past_anticipated_commitments`` extends
-    ``initial_conditions.json`` with every temporal piece already fixed by
-    ``gl`` (the in-study left boundary plus the post-horizon já-comandada run);
-    ``post_study_stages`` is the standalone ``post_study_stages.json`` payload,
-    ``None`` when the model declares no GS calendar (``weeks_per_month`` empty)
-    and non-``None`` (its ``thermal_bounds`` possibly empty) whenever a GS
-    calendar exists.
+    absent from ``CT``); ``past_anticipated_commitments`` become the
+    ``thermals[].commitments`` of ``boundary_conditions.json``, every temporal
+    piece already fixed by ``gl`` (the in-study left boundary plus the
+    post-horizon já-comandada run); ``post_study_stages`` carries the
+    ``post_study_thermal_stages`` calendar of ``stages.json`` and the
+    ``thermals[].post_study_bounds``, ``None`` when the model declares no GS
+    calendar (``weeks_per_month`` empty) and non-``None`` (its
+    ``thermal_bounds`` possibly empty) whenever a GS calendar exists.
     """
 
     thermals: list[dict]
@@ -1635,10 +1636,11 @@ def _report_post_study_interval_hours(
                 "DECOMP divides each month past the study horizon into the GS "
                 "intervals of dadgnl.rvN and gives each interval an equal share of "
                 "a 730.5-hour month. The case holds each post-study stage in "
-                "post_study_stages.json over its calendar hours instead, since "
-                "Novomodelo weighs a post-study stage by its dates alone. In the "
-                "listed stages, the GNL energy committed and its cost therefore "
-                "differ from DECOMP's in the ratio of the two hour columns."
+                "`stages.json`'s `post_study_thermal_stages` over its calendar "
+                "hours instead, since Novomodelo weighs a post-study stage by its "
+                "dates alone. In the listed stages, the GNL energy committed and "
+                "its cost therefore differ from DECOMP's in the ratio of the two "
+                "hour columns."
             ),
             table=dx.DiagnosticTable(
                 columns=[

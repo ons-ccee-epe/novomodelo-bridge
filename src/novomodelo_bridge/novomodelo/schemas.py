@@ -22,7 +22,6 @@ SCHEMA_URLS: dict[str, str] = {
     "config.json": _url("config"),
     "stages.json": _url("stages"),
     "penalties.json": _url("penalties"),
-    "initial_conditions.json": _url("initial_conditions"),
     "boundary_conditions.json": _url("boundary_conditions"),
     "system/buses.json": _url("buses"),
     "system/lines.json": _url("lines"),

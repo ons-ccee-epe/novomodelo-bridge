@@ -219,21 +219,21 @@ inputs follow DECOMP:
   machine under maintenance, gets a zero constant productivity in place of
   the production function. DECOMP builds no planes for such a stage.
 
-The calendars Novomodelo keeps past the study horizon go to
-`post_study_stages.json`. A deck with `GS` deliveries in `dadgnl` gets the
-thermal calendar there (`thermal_stages` and `thermal_bounds`). A GNL plant's
-capacity, minimum and cost in a post-study week come from the `TG` record of
-the month `GS` books the week to, as in DECOMP, even when the week ends in the
-next month or starts after the month it is booked to. DECOMP gives each `GS`
-interval of a month an equal share of a 730.5-hour month, while the case holds
-each post-study stage over its calendar hours; `convert decomp` warns with
-`decomp-gnl-post-study-interval-hours`, listing both per stage. A deck with
-`VI` travel times gets `water_bucket_stages`: one stage from the end of the
+The calendars Novomodelo keeps past the study horizon go to `stages.json`
+(`post_study_thermal_stages`, `post_study_water_stages`). A deck with `GS`
+deliveries in `dadgnl` gets the thermal calendar there and the GNL post-study
+bounds in `boundary_conditions.json` (`thermals[].post_study_bounds`). A GNL
+plant's capacity, minimum and cost in a post-study week come from the `TG`
+record of the month `GS` books the week to, as in DECOMP, even when the week
+ends in the next month or starts after the month it is booked to. DECOMP gives
+each `GS` interval of a month an equal share of a 730.5-hour month, while the
+case holds each post-study stage over its calendar hours; `convert decomp` warns
+with `decomp-gnl-post-study-interval-hours`, listing both per stage. A deck with
+`VI` travel times gets `post_study_water_stages`: one stage from the end of the
 last operative stage to the end of that month, so a horizon that ends on the
 first of a month gives the whole month. A `VI` travel time longer than that
-stage fails the conversion, naming the plant: a water calendar of more than
-one stage is not converted yet. A deck with neither writes no
-`post_study_stages.json`.
+stage fails the conversion, naming the plant: a water calendar of more than one
+stage is not converted yet. A deck with neither writes no post-study list.
 
 Evaporation takes the monthly coefficients of `hidr.dat` with the deck's
 `AC COFEVA` overrides, linearized at the reference volume the `EV` record

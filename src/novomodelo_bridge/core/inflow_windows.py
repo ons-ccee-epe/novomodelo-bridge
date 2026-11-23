@@ -35,7 +35,7 @@ def format_observation_windows(
 ) -> list[dict]:
     """Format ``(hydro_id, start, end, value_m3s)`` rows as JSON entries.
 
-    Produces the ``recent_observations`` entry shape (ISO dates), preserving
+    Produces the ``hydros[].recent_inflows`` entry shape (ISO dates), preserving
     the caller's ordering.
     """
     return [

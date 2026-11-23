@@ -54,7 +54,7 @@ def thermal_generation_bounds(case: NewaveCase) -> dict[int, tuple[float, float]
     These are the plant-level (non-stage-varying) bounds written to
     ``thermals.json`` as ``generation.min_mw`` / ``generation.max_mw``, and the
     interval Novomodelo's semantic validator enforces on each
-    ``past_anticipated_commitments.values_mw`` entry.
+    ``thermals[].commitments[].value_mw`` of ``boundary_conditions.json``.
 
     The pair is the **envelope** of the per-stage bounds
     :func:`convert_thermal_bounds` writes: the smallest minimum and the largest

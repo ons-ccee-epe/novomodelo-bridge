@@ -386,8 +386,8 @@ def recent_observation_rows(
     there (or where the study begins, if earlier), keeping its whole observed
     value: the source model drops a first week's previous-month days from
     every lag month. No two windows overlap, as
-    novomodelo requires of ``recent_observations`` (``start == previous end`` is
-    fine).
+    novomodelo requires of ``hydros[].recent_inflows`` (``start == previous end``
+    is fine).
     """
     study_start = first_stage.start_date
     operative_start = first_stage.operative_month_start
@@ -427,7 +427,7 @@ def convert_recent_observation_windows(
     id_map: DecompIdMap,
     calendar: Sequence[OperativeStage],
 ) -> list[dict]:
-    """``initial_conditions.recent_observations``: the pre-study observed inflows
+    """``hydros[].recent_inflows``: the pre-study observed inflows
     (:func:`recent_observation_rows`) seeding novomodelo's PAR inflow-lag accumulator.
 
     Read on each plant's boundary-cut coupling gauge

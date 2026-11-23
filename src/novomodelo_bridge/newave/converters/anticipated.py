@@ -23,7 +23,7 @@ every thermal as non-anticipated.
 Novomodelo side
 ----------
 For each anticipated thermal the LP needs a single MW value per delivery stage
-(``InitialConditions.past_anticipated_commitments``).  The MW is held
+(``thermals[].commitments`` of ``boundary_conditions.json``).  The MW is held
 *uniformly across blocks* of the delivery stage by the fishing row, so the
 right aggregation from the source model's per-block values is the
 block-duration-weighted mean:

@@ -50,8 +50,6 @@ CANONICAL_ORDER = (
     "stages.json",
     "penalties.json",
     "boundary_conditions.json",
-    "initial_conditions.json",
-    "post_study_stages.json",
     "buses.json",
     "lines.json",
     "thermals.json",

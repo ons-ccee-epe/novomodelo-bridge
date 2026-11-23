@@ -147,9 +147,9 @@ def _export_dessem(
     export notes. A plant with no coefficient for that delivery, or a
     coefficient of exactly zero, gets 0.0 and a warning. Each stage's mapcut
     register 10 also carries the cost of the GNL generation committed before
-    the study, from the case's initial_conditions.json, in 10³ R$. Every export
-    warns that mapcut's physical records and register 10's other cost parcels
-    are written as zeros.
+    the study, from the case's boundary_conditions.json (or the deprecated
+    initial_conditions.json), in 10³ R$. Every export warns that mapcut's
+    physical records and register 10's other cost parcels are written as zeros.
     """
     _configure_logging(verbose, log_file)
 

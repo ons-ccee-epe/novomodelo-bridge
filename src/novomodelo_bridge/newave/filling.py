@@ -136,7 +136,7 @@ def filling_min_rate_m3s(
 ) -> float:
     """Constant per-stage minimum accumulation floor (m³/s) for the filling window.
 
-    Fills the reservoir from its seeded ``filling_storage`` volume up to
+    Fills the reservoir from its seeded ``hydros[].storage_hm3`` volume up to
     ``min_storage_hm3`` linearly across the half-open filling window
     ``[start_stage_id, entry_stage_id)``::
 

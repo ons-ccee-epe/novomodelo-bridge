@@ -95,7 +95,7 @@ Shell completion: `novomodelo-bridge --install-completion`.
 ### What `convert` writes
 
 `DST` becomes a Novomodelo case directory: `config.json`, `stages.json`,
-`penalties.json`, and `initial_conditions.json` at the top, entity registries
+`penalties.json`, and `boundary_conditions.json` at the top, entity registries
 under `system/`, inflow and load data under `scenarios/`, and bounds and
 generic constraints under `constraints/`. Stage-varying tables are Parquet;
 everything else is JSON. The layout is Novomodelo's documented input format (see

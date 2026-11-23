@@ -324,9 +324,9 @@ hours. The policy&#x27;s other GNL coefficients are left out and counted in the
 export notes. A plant with no coefficient for that delivery, or a
 coefficient of exactly zero, gets 0.0 and a warning. Each stage&#x27;s mapcut
 register 10 also carries the cost of the GNL generation committed before
-the study, from the case&#x27;s initial_conditions.json, in 10³ R$. Every export
-warns that mapcut&#x27;s physical records and register 10&#x27;s other cost parcels
-are written as zeros.
+the study, from the case&#x27;s boundary_conditions.json (or the deprecated
+initial_conditions.json), in 10³ R$. Every export warns that mapcut&#x27;s
+physical records and register 10&#x27;s other cost parcels are written as zeros.
 
 **Usage**:
 

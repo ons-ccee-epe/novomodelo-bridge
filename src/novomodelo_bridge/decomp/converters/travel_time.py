@@ -8,12 +8,13 @@ without a ``VI`` register has an instantaneous arc (default travel time nil).
 
 novomodelo models the delayed arc with ``Hydro.travel_time_hours`` and seeds the
 water already in transit at the study start with
-``initial_conditions.past_defluences`` — one ``[start_date, end_date)`` window
-per pre-study release period, keyed by the upstream (releasing) plant. novomodelo's
-config-time validator (``travel_time.rs`` rule 5) requires those windows to
-**cover** the arc's in-transit span ``[start_0 − travel_time, start_0)`` with no
-gap and none future-dated (rule 5b), so this module tiles exactly that span
-with the ``VI`` weekly flows, most-recent window first.
+``hydros[].past_defluences`` of ``boundary_conditions.json`` — one
+``[start_date, end_date)`` window per pre-study release period, under the
+upstream (releasing) plant. novomodelo's config-time validator
+(``travel_time.rs`` rule 5) requires those windows to **cover** the arc's
+in-transit span ``[start_0 − travel_time, start_0)`` with no gap and none future-dated
+(rule 5b), so this module tiles exactly that span with the ``VI`` weekly flows,
+most-recent window first.
 
 Only converted plants with a downstream cascade arc get a travel-time arc; a
 ``VI`` row for a plant the case leaves out or that has no downstream is dropped
@@ -142,7 +143,7 @@ def convert_travel_time(
     Returns ``(travel_time_hours_by_code, past_defluences)`` where the first is
     the ``{plant code: travel_time_hours}`` map :func:`~novomodelo_bridge.decomp.
     hydro.convert_hydros` stamps onto each arc plant's ``hydros.json`` entry,
-    and the second is the ``initial_conditions.past_defluences`` list seeding
+    and the second is the ``hydros[].past_defluences`` list seeding
     the in-transit water. Both cover the same set of plants — those converted
     **and** carrying a downstream cascade arc — so novomodelo's coverage rule sees a
     seed for every declared arc.

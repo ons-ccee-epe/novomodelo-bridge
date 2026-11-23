@@ -244,7 +244,7 @@ def _covered_means(
     windows: Iterable[tuple[date, date, float]], months: Sequence[tuple[int, int]]
 ) -> tuple[float, ...]:
     """Each month's mean over the days *windows* cover (0 when none is covered),
-    as novomodelo casts the ``recent_observations`` seed onto a lag period."""
+    as novomodelo casts the ``recent_inflows`` seed onto a lag period."""
     materialized = tuple(windows)
     means: list[float] = []
     for year, month in months:

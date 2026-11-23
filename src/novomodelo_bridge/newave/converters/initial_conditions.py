@@ -25,7 +25,6 @@ from novomodelo_bridge.newave.converters.thermal import thermal_generation_bound
 from novomodelo_bridge.newave.horizon import study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.newave.plants import filling_hydro_codes
-from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 _LOG = logging.getLogger(__name__)
 
@@ -184,7 +183,6 @@ def convert_initial_conditions(case: NewaveCase, id_map: NewaveIdMap) -> dict:
     past_anticipated_commitments = _past_anticipated_commitments(case, id_map)
 
     result: dict = {
-        "$schema": novomodelo_schemas.schema_url_for("initial_conditions.json"),
         "storage": storage,
         "filling_storage": filling_storage,
     }
