@@ -221,9 +221,7 @@ def test_stage_labels_falls_back_to_stage_id_when_start_date_absent() -> None:
 
 
 def test_load_hydro_bus_map_returns_mapping(tmp_path: Path) -> None:
-    """0.13-shaped hydros (unit_groups[].bus_id, no top-level bus_id)
-    resolve to the same bus ids the pre-0.13 top-level ``bus_id`` field
-    produced, proving the relocation is value-preserving."""
+    """Each hydro resolves to the bus of its ``unit_groups[].bus_id``."""
     hydros_json = {
         "hydros": [
             hydro_with_group(0, 10),
@@ -374,26 +372,6 @@ def test_load_thermal_metadata_extracts_scalar_cost(tmp_path: Path) -> None:
     assert result[0]["cost_per_mwh"] == pytest.approx(150.0)
 
 
-def test_load_thermal_metadata_legacy_cost_segments(tmp_path: Path) -> None:
-    thermals_json = {
-        "thermals": [
-            {
-                "id": 2,
-                "bus_id": 3,
-                "name": "Coal",
-                "cost_segments": [{"capacity_mw": 300.0, "cost_per_mwh": 80.0}],
-                "generation": {"max_mw": 300.0},
-            }
-        ]
-    }
-    _write_json(tmp_path / "system" / "thermals.json", thermals_json)
-
-    result = load_thermal_metadata(tmp_path)
-
-    assert result[2]["max_mw"] == pytest.approx(300.0)
-    assert result[2]["cost_per_mwh"] == pytest.approx(80.0)
-
-
 def test_load_thermal_metadata_missing_file_returns_empty(tmp_path: Path) -> None:
     result = load_thermal_metadata(tmp_path)
 
@@ -431,8 +409,11 @@ def test_load_ncs_bus_map_missing_file_returns_empty(tmp_path: Path) -> None:
 
 
 def test_load_hydro_metadata_extracts_fields(tmp_path: Path) -> None:
-    """Bus id relocated into unit_groups[0].bus_id still resolves to the
-    same value (1) the pre-0.13 top-level ``bus_id`` field produced."""
+    """The plant's bus resolves from ``unit_groups[0].bus_id`` (1) and its
+    productivity from ``hydro_energy_productivity.parquet``."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     hydros_json = {
         "hydros": [
             hydro_with_group(
@@ -442,13 +423,22 @@ def test_load_hydro_metadata_extracts_fields(tmp_path: Path) -> None:
                 reservoir={"max_storage_hm3": 5000.0, "min_storage_hm3": 100.0},
                 generation={
                     "max_generation_mw": 11000.0,
-                    "productivity_mw_per_m3s": 0.08,
                     "max_turbined_m3s": 150000.0,
                 },
             )
         ]
     }
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
+    pq.write_table(
+        pa.table(
+            {
+                "hydro_id": pa.array([0], pa.int32()),
+                "stage_id": pa.array([None], pa.int32()),
+                "equivalent_productivity_mw_per_m3s": pa.array([0.08], pa.float64()),
+            }
+        ),
+        tmp_path / "system" / "hydro_energy_productivity.parquet",
+    )
 
     result = load_hydro_metadata(tmp_path)
 
@@ -503,13 +493,10 @@ def test_hydro_metadata_takes_its_bus_from_the_bus_map(tmp_path: Path) -> None:
 def test_load_entity_metadata_emits_multi_bus_diagnostic_once(
     tmp_path: Path,
 ) -> None:
-    """Regression: load_entity_metadata calls both
-    load_hydro_bus_map and load_hydro_metadata over the same hydros.json.
-    The existing ambiguous-plant tests above call one loader at a time, so
-    the double emission through the real load_entity_metadata path was
-    previously untested. An ambiguous plant's
-    hydro-unit-groups-multi-bus warning must fire once per case load, not
-    once per loader."""
+    """load_entity_metadata calls both load_hydro_bus_map and
+    load_hydro_metadata over the same hydros.json; an ambiguous plant's
+    hydro-unit-groups-multi-bus warning fires once per case load, not once
+    per loader."""
     hydros_json = {
         "hydros": [hydro_with_group(0, 5), _split_plant(1, (10, 20), "AMBIGUOUS")]
     }
@@ -945,10 +932,9 @@ class TestDashboardIntegration:
         _write_json(case / "config.json", {"num_scenarios": 2, "num_stages": 2})
 
         # ---- system/ JSON files ----
-        # 0.13-shaped hydros.json (unit_groups[].bus_id, no top-level
-        # bus_id) — exercises the full DashboardData.load() pipeline,
-        # including load_hydro_bus_map/load_hydro_metadata, against this
-        # shape end-to-end.
+        # hydros.json places each plant's bus in unit_groups[].bus_id —
+        # exercises the full DashboardData.load() pipeline, including
+        # load_hydro_bus_map/load_hydro_metadata, against this shape end-to-end.
         _write_json(
             case / "system" / "hydros.json",
             {
@@ -963,12 +949,23 @@ class TestDashboardIntegration:
                         },
                         generation={
                             "max_generation_mw": 1000.0,
-                            "productivity_mw_per_m3s": 0.08,
                             "max_turbined_m3s": 12000.0,
                         },
                     )
                 ]
             },
+        )
+        pq.write_table(
+            pa.table(
+                {
+                    "hydro_id": pa.array([0], pa.int32()),
+                    "stage_id": pa.array([None], pa.int32()),
+                    "equivalent_productivity_mw_per_m3s": pa.array(
+                        [0.08], pa.float64()
+                    ),
+                }
+            ),
+            case / "system" / "hydro_energy_productivity.parquet",
         )
         _write_json(
             case / "system" / "buses.json",
@@ -2056,12 +2053,12 @@ class TestSectionLoaders:
 
 
 # ---------------------------------------------------------------------------
-# _normalize_output_columns — novomodelo 0.14 diagnostic-output axis renames
+# _normalize_output_columns — novomodelo diagnostic-output axis renames
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_output_columns_maps_014_solver_axes() -> None:
-    """0.14 ``stage_id``/``opening_index`` map to the dashboard's legacy names."""
+def test_normalize_output_columns_maps_novomodelo_solver_axes() -> None:
+    """``stage_id``/``opening_index`` map to the dashboard's ``stage``/``opening``."""
     df = pd.DataFrame(
         {
             "stage_id": [0, 1, None],
@@ -2078,8 +2075,8 @@ def test_normalize_output_columns_maps_014_solver_axes() -> None:
     assert out["opening"].isna().sum() == 1
 
 
-def test_normalize_output_columns_maps_014_convergence_upper_bound() -> None:
-    """0.14 ``upper_bound`` maps to ``upper_bound_mean``; ``upper_bound_std`` kept."""
+def test_normalize_output_columns_maps_novomodelo_convergence_upper_bound() -> None:
+    """``upper_bound`` maps to ``upper_bound_mean``; ``upper_bound_std`` kept."""
     df = pd.DataFrame(
         {
             "iteration": [0, 1],
@@ -2095,8 +2092,8 @@ def test_normalize_output_columns_maps_014_convergence_upper_bound() -> None:
     assert "upper_bound_kind" in out.columns
 
 
-def test_normalize_output_columns_leaves_pre_014_frame_unchanged() -> None:
-    """A 0.13 frame already carries the legacy names — pass through untouched."""
+def test_normalize_output_columns_leaves_dashboard_named_frame_unchanged() -> None:
+    """A frame already carrying the dashboard's names passes through untouched."""
     df = pd.DataFrame(
         {"stage": [0, 1], "upper_bound_mean": [1.0, 2.0], "upper_bound_std": [0.1, 0.1]}
     )
@@ -2104,8 +2101,8 @@ def test_normalize_output_columns_leaves_pre_014_frame_unchanged() -> None:
     assert list(out.columns) == ["stage", "upper_bound_mean", "upper_bound_std"]
 
 
-def test_normalize_output_columns_does_not_clobber_existing_legacy_name() -> None:
-    """If both spellings are present the legacy column wins (no overwrite)."""
+def test_normalize_output_columns_does_not_clobber_existing_dashboard_name() -> None:
+    """If both spellings are present the dashboard's column wins (no overwrite)."""
     df = pd.DataFrame({"stage": [7], "stage_id": [0]})
     out = _normalize_output_columns(df)
     # ``stage`` already exists, so ``stage_id`` is not renamed onto it.

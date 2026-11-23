@@ -103,7 +103,7 @@ def _make_mock_data(
 
     # Normalise the training manifest: the implementation reads
     # data.training_metadata.get("duration_seconds").  Map "elapsed_seconds"
-    # -> "duration_seconds" if present so legacy test data still works.
+    # -> "duration_seconds" if present.
     # When training_manifest is None, supply an empty dict so that
     # .get("duration_seconds") returns None -> "N/A" display.
     if training_manifest is None:

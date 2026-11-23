@@ -17,12 +17,6 @@ productivity, all **pure functions over a ``Hidr.cadastro`` row** (``hreg``):
   coeffs adapter over :func:`equivalent_productivity_from_coeffs`.
 - :func:`integrated_productivity` — the volume-integrated ρ over the useful
   range (the source model's stored-energy / EARM convention, used by VminOP).
-
-These were private helpers in ``hydro.py`` that the constraint and FICT-cascade
-converters reached into across module boundaries; hosting them here gives them
-public names and one home. ``hydro.py`` keeps ``_compute_productivity`` /
-``_equivalent_productivity`` / ``_compute_integrated_productivity`` aliases for
-its own callers.
 """
 
 from __future__ import annotations

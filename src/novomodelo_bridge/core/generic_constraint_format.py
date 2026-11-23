@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 #: Canonical column list/order for a generic-constraint bounds table: the
 #: per-``(constraint, stage)`` key, a nullable per-block axis, and two
-#: nullable interval endpoints in place of a legacy single ``bound`` column.
+#: nullable interval endpoints.
 GENERIC_BOUNDS_COLUMNS = [
     "constraint_id",
     "stage_id",

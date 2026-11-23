@@ -1,12 +1,8 @@
 """Performance tab tests for ``comparators.decomp.results``.
 
-Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
-the convergence frame, TIM stages/iterations, the max-stage guard,
+Covers the convergence frame, TIM stages/iterations, the max-stage guard,
 the forward/backward split chart's column-robustness guard, and the
-Performance tab's ``build_decomp_dataset`` rows. The remaining concern bands
-(network, energy balance, costs, hydro/thermal detail, productivity, FPHA,
-REE, evaporation, constraints, CLI) stay in the mega file pending their own
-carve.
+Performance tab's ``build_decomp_dataset`` rows.
 """
 
 from __future__ import annotations

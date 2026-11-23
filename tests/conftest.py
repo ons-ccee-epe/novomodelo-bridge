@@ -6,7 +6,7 @@ with paths under a tmp dir (no filesystem access). ``make_case`` wraps it in a
 slots, so a converter under test reads the supplied mock objects instead of
 parsing files. ``make_decomp_files``/``make_decomp_case`` are the DECOMP-track
 twins, wrapping a :class:`~novomodelo_bridge.decomp.case.DecompCase`.
-``hydro_with_group`` builds a 0.13-shaped ``hydros.json`` hydro
+``hydro_with_group`` builds a ``hydros.json`` hydro
 dict (no top-level ``bus_id``, one mirror ``unit_groups`` entry) for tests that
 hand-build a hydro fixture rather than calling a converter. ``_FakeDadger``
 is a decomp-side test double returning preset DataFrames for register
@@ -392,26 +392,23 @@ def hydro_with_group(
     max_turbined_m3s: float = 100.0,
     **extra: Any,
 ) -> dict[str, Any]:
-    """Build a 0.13-shaped ``hydros.json`` hydro dict for tests.
+    """Build a ``hydros.json`` hydro dict for tests.
 
-    Matches the shape every converter now emits (novomodelo decisions 13/14 →
-    §7.6, §7.8, via
+    Matches the shape every converter emits (via
     :func:`novomodelo_bridge.core.hydro_units.build_mirror_unit_group`): no
     top-level ``bus_id`` and a single seven-field mirror ``unit_groups``
     entry whose four bounds equal this dict's own ``generation`` envelope
     (novomodelo rule 41's mirror invariant).
 
     Use this wherever a test needs "some hydro on bus N" rather than a
-    real converter output — it replaces a hand-rolled seven-field group
-    literal duplicated across test modules.
+    real converter output.
 
     Parameters
     ----------
     hydro_id:
         The Novomodelo 0-based hydro id.
     bus_id:
-        The plant's bus id (relocated into ``unit_groups[0].bus_id``; no
-        longer emitted at the top level).
+        The plant's bus id, written to ``unit_groups[0].bus_id``.
     name:
         The plant name. Defaults to ``f"HYDRO_{hydro_id}"``.
     min_generation_mw, max_generation_mw, min_turbined_m3s, max_turbined_m3s:

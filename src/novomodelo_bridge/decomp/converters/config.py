@@ -113,8 +113,7 @@ def convert_config(case: DecompCase) -> dict:
             # external: inflow (the tree), NCS (renewables), and load. novomodelo's
             # scheme-aware load membership admits an external load class
             # regardless of σ (a deterministic std = 0 load standardizes to
-            # eta = 0), so load is external here rather than the former
-            # in-sample-with-null-std workaround. seed is a schema-required
+            # eta = 0), so load is external here. seed is a schema-required
             # inert placeholder (0) — external + enumerated never samples.
             "scenario_source": {
                 "seed": 0,

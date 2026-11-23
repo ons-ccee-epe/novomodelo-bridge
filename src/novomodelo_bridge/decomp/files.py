@@ -39,14 +39,12 @@ class DecompFiles:
     renovaveis: Path | None
     polinjus: Path | None
     #: The deck's LIBs-era electrical-constraint file, from the LIBS index;
-    #: ``None`` when the index lists none. Defaults to ``None`` so every
-    #: pre-existing ``DecompFiles(...)`` call site keeps constructing without it.
+    #: ``None`` when the index lists none.
     libs_restricao_eletrica: Path | None = None
     #: The deck's boundary-FCF header file (``cortesh.dat``), resolved via
     #: :func:`_resolve_fc_record_path` (the deck's ``FC NEWV21`` record) or,
     #: failing that, the ``cortesh*`` glob idiom; ``None`` when the deck
-    #: carries no boundary FCF. Defaults to ``None`` for the
-    #: same back-compat reason as ``libs_restricao_eletrica`` above.
+    #: carries no boundary FCF.
     cortesh: Path | None = None
     #: The deck's boundary-FCF cut-record file: a single-stage partition
     #: export (``cortes-<estagio>.dat``, preferred) or the consolidated

@@ -6,14 +6,13 @@ to the terminal manifest's state-vector layout (``fcf/bootstrap.py``).
 This module assembles that pair into the plain-dict payload and
 metadata shapes ``novomodelo.write_policy_checkpoint`` expects, then calls it to
 produce ``boundary/{manifest.bin, cuts/<pool>.bin, basis/}`` — a raw,
-one-pool checkpoint (novomodelo 0.14 keys the cut file by pool id, not the old
-``stage_NNN.bin``) the target case's ``config.json -> policy.boundary``
+one-pool checkpoint the target case's ``config.json -> policy.boundary``
 loads.
 
-``cost_scale_factor`` is the single most dangerous field in ``metadata``: if
-absent (``None``), novomodelo treats the checkpoint as legacy and silently scales
-every value by 10⁶. :func:`build_metadata` therefore refuses to
-build a metadata dict without it.
+Every pool payload carries ``cost_scale_factor``, the units of its cut values:
+novomodelo refuses a pool without one. :func:`build_stage_cuts_payload` and
+:func:`build_metadata` (which records it in the ``producer`` block as
+provenance) refuse an unset factor before any novomodelo call.
 """
 
 from __future__ import annotations
@@ -67,14 +66,13 @@ def build_stage_cuts_payload(
         `manifest.state_dimension` — the sentinel check runs before the cut
         loop, the length check inside it, both before any novomodelo call.
     RuntimeError
-        If `cost_scale_factor` is `None` — an unset marker makes novomodelo treat
-        this pool as legacy and silently scale every value by 10⁶.
+        If `cost_scale_factor` is `None` — novomodelo refuses a pool without
+        its factor.
     """
     if cost_scale_factor is None:
         raise RuntimeError(
-            "cost_scale_factor must not be None: an unset marker makes "
-            "novomodelo treat this pool as legacy and silently scale every "
-            "value by 10⁶"
+            "cost_scale_factor must not be None: novomodelo rejects a cut "
+            "pool without the factor its values are in"
         )
     if node_id == -1:
         raise ValueError(
@@ -100,9 +98,7 @@ def build_stage_cuts_payload(
                 "is_active": mapped.is_active,
                 # Inflow-lag gradient terms keyed by hydro (depth 1..N), placed by
                 # novomodelo's write_policy_checkpoint into the canonical HydroInflowLag
-                # slots it reserves. Empty (the common case: the manifest already
-                # carried the lag slots, or the boundary prices no lag) — an empty
-                # map leaves the written checkpoint byte-identical.
+                # slots it reserves. Empty when the boundary prices no lag.
                 "inflow_lag_coefficients": {
                     hydro_id: list(coeffs)
                     for hydro_id, coeffs in mapped.inflow_lag_coefficients.items()
@@ -144,7 +140,7 @@ def build_metadata(
     The software identity is not a caller field: novomodelo stamps the writing
     build's own `software` and `software_version`, and only that build loads
     the checkpoint. `state_dimension`
-    is no longer a metadata field — it is per-pool, on each `stage_cuts` payload
+    is not a metadata field: it is per-pool, on each `stage_cuts` payload
     (:func:`build_stage_cuts_payload`). `created_at` is accepted as a parameter
     rather than derived internally (this module never calls `datetime.now()`) —
     the caller supplies an ISO 8601 timestamp.
@@ -158,14 +154,13 @@ def build_metadata(
     Raises
     ------
     RuntimeError
-        If `cost_scale_factor` is `None` — an unset marker makes novomodelo treat
-        the checkpoint as legacy and silently scale every value by 10⁶.
+        If `cost_scale_factor` is `None`.
     """
     if cost_scale_factor is None:
         raise RuntimeError(
-            "cost_scale_factor must not be None: an unset marker makes "
-            "novomodelo treat this checkpoint as legacy and silently scale "
-            "every value by 10⁶"
+            "cost_scale_factor must not be None: it records the factor the "
+            "checkpoint's cut pools are in, which novomodelo requires of "
+            "every pool"
         )
     metadata: dict[str, Any] = {
         "created_at": created_at,

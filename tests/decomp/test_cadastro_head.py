@@ -334,7 +334,7 @@ def test_cotvol_out_of_horizon_reported_not_dropped() -> None:
 
 def test_per_stage_rho_eq_does_not_cap_generation() -> None:
     """A plant's ``PROESP`` doubles from stage 1 onward, so its per-stage
-    ρ_eq doubles too — but that no longer lowers ``max_generation_mw``. The
+    ρ_eq doubles too — but that does not lower ``max_generation_mw``. The
     generation cap is the installed × MP × FD availability (head-independent),
     and the hydraulic limit binds through the turbined-flow limit instead. With
     no MP/FD derate here the availability is the rated 1000 MW at every stage.
@@ -453,8 +453,8 @@ def test_no_override_is_byte_identical() -> None:
     """With no head/productivity override at all, the emitted rho_eq
     equals the base-registry formula bit-for-bit — reconstructed
     here independently via the same shared coeffs-keyed primitives
-    (``mean_cota``, ``apply_hydraulic_loss``) the production code now calls.
-    The head no longer feeds a generation cap, so the availability overlay's
+    (``mean_cota``, ``apply_hydraulic_loss``) the production code calls.
+    The head feeds no generation cap, so the availability overlay's
     ``max_generation_mw`` stays at the 400 MW rated envelope on every stage.
     """
     hidr = _hidr_frame(
@@ -560,7 +560,7 @@ def test_generation_productivity_anchors_at_initial_volume() -> None:
         .to_pandas()
         .set_index("hydro_id")["equivalent_productivity_mw_per_m3s"][hydro_id]
     )
-    # No map -> full-range mean fallback (the engolimento/legacy anchor).
+    # No map -> full-range mean fallback (the engolimento anchor).
     fallback = (
         convert_energy_productivity(effective, id_map)
         .to_pandas()

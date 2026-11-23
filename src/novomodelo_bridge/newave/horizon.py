@@ -2,9 +2,8 @@
 
 Every per-stage table the pipeline emits (inflows, loads, bounds, penalties,
 constraints) is sized against the study horizon, and the study/post-study
-boundary drives post-study extrapolation. That arithmetic used to be hand-copied
-at ~25 sites across the converters and comparators; this module owns it so all of
-them agree by construction.
+boundary drives post-study extrapolation. Every converter and comparator takes
+that arithmetic from this module, so they agree by construction.
 
 The source model conventions encoded here:
 

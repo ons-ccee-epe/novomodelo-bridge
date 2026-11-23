@@ -1100,8 +1100,8 @@ class TestOverviewCostCharts:
         }
         # All 10 the source model parcelas land in one row, equal to Novomodelo's aggregate.
         assert cats["Generic Constraints"] == pytest.approx((5.5e8, 5.5e8))
-        # CAR/SAR no longer pollute the storage-bounds row (the source model side empty;
-        # the row is now Novomodelo-only, carrying the individual-reservoir slack).
+        # CAR/SAR are not storage-bounds parcelas: the row's source-model side is empty
+        # and its Novomodelo side carries the individual-reservoir slack.
         assert cats["Storage Bounds"][0] == pytest.approx(0.0)
         assert cats["Storage Bounds"][1] == pytest.approx(1.0e7)
 
@@ -1395,7 +1395,7 @@ class TestEdgeCases:
     def test_novomodelo_convergence_reads_legacy_upper_bound_mean(
         self, tmp_path: Path
     ) -> None:
-        """The legacy ``upper_bound_mean`` spelling still reads (back-compat)."""
+        """A convergence file carrying ``upper_bound_mean`` instead of ``upper_bound`` reads."""
         import polars as pl
 
         from novomodelo_bridge.novomodelo.readers import read_novomodelo_convergence
@@ -1875,7 +1875,7 @@ class TestProductivityDetail:
         assert alpha["losses_m"] == pytest.approx(0.8)
         assert alpha["vmin_hm3"] == pytest.approx(100.0)
         assert alpha["vmax_hm3"] == pytest.approx(500.0)
-        # The reader no longer reads point/equivalent/accumulated from Novomodelo.
+        # Point/equivalent/accumulated productivity is the bridge's own computation.
         assert "point" not in alpha
         assert "equivalent" not in alpha
         assert "accumulated" not in alpha
@@ -2456,7 +2456,7 @@ class TestShapeFromBounds:
             shape_from_bounds(None, None)
 
 
-class TestGenericConstraintF3Loaders:
+class TestGenericConstraintLoaders:
     """The constraints loader consumes sense-free JSON."""
 
     def test_constraints_loader_parses_sense_free_json(self, tmp_path: Path) -> None:
@@ -2489,11 +2489,11 @@ class TestGenericConstraintF3Loaders:
 
 
 class TestPerStageBoundsResolution:
-    """per_stage_bounds resolves the endpoint a legacy
-    single ``bound`` column held, for every constraint direction."""
+    """per_stage_bounds resolves each constraint direction's limit from its
+    interval endpoints."""
 
     @staticmethod
-    def _f3_bounds() -> pl.DataFrame:
+    def _interval_bounds() -> pl.DataFrame:
         return pl.DataFrame(
             {
                 "constraint_id": [0, 0, 1, 1, 2, 2],
@@ -2510,7 +2510,7 @@ class TestPerStageBoundsResolution:
     def test_resolves_ge_from_lower_endpoint(self) -> None:
         from novomodelo_bridge.comparators.constraints import per_stage_bounds
 
-        resolved = per_stage_bounds(self._f3_bounds())
+        resolved = per_stage_bounds(self._interval_bounds())
         assert resolved[0][0].value == 500.0
         assert resolved[0][0].shape == ">="
         assert resolved[0][1].value == 520.0
@@ -2518,7 +2518,7 @@ class TestPerStageBoundsResolution:
     def test_resolves_le_from_upper_endpoint(self) -> None:
         from novomodelo_bridge.comparators.constraints import per_stage_bounds
 
-        resolved = per_stage_bounds(self._f3_bounds())
+        resolved = per_stage_bounds(self._interval_bounds())
         assert resolved[1][0].value == 200.0
         assert resolved[1][0].shape == "<="
         assert resolved[1][1].value == 210.0
@@ -2526,28 +2526,26 @@ class TestPerStageBoundsResolution:
     def test_resolves_eq_from_either_endpoint(self) -> None:
         from novomodelo_bridge.comparators.constraints import per_stage_bounds
 
-        resolved = per_stage_bounds(self._f3_bounds())
+        resolved = per_stage_bounds(self._interval_bounds())
         assert resolved[2][0].value == 300.0
         assert resolved[2][0].shape == "=="
 
 
-class TestAC3NumericRegressionAcrossF3Migration:
-    """A sense-free case whose constraints round-trip
-    unchanged from legacy ``(sense, bound)`` content produces identical
-    per-stage evaluated limits and pass/fail verdicts to a legacy
-    comparison — same numbers, interval column layout."""
+class TestSenseIntervalRoundTrip:
+    """(sense, value) pairs written as interval bounds by ``sense_to_interval``
+    resolve to the same per-stage limit, shape and pass/fail verdict."""
 
-    def test_f3_limits_and_verdicts_match_pre_f3_content(self, tmp_path: Path) -> None:
+    def test_interval_bounds_reproduce_sense_limits_and_verdicts(
+        self, tmp_path: Path
+    ) -> None:
         import pyarrow.parquet as pq
 
         from novomodelo_bridge.comparators.constraints import per_stage_bounds
         from novomodelo_bridge.core.generic_constraint_format import sense_to_interval
 
-        # Legacy ground truth this case is built from: constraint 0 is a
-        # VminOP-style `>=` security-curve floor; constraint 1 is an
-        # AGRINT-style `<=` ceiling. These are the exact (sense, value) pairs
-        # a legacy case carries in its single `bound` column.
-        pre_f3_bound = {
+        # Constraint 0 is a VminOP-style `>=` security-curve floor; constraint 1
+        # is an AGRINT-style `<=` ceiling.
+        sense_bounds = {
             (0, 0): (">=", 500.0),
             (0, 1): (">=", 520.0),
             (1, 0): ("<=", 200.0),
@@ -2562,7 +2560,7 @@ class TestAC3NumericRegressionAcrossF3Migration:
         blocks: list[int] = []
         lowers: list[float | None] = []
         uppers: list[float | None] = []
-        for (cid, stage), (sense, value) in pre_f3_bound.items():
+        for (cid, stage), (sense, value) in sense_bounds.items():
             lo, up = sense_to_interval(sense, value)
             cids.append(cid)
             stages.append(stage)
@@ -2585,29 +2583,23 @@ class TestAC3NumericRegressionAcrossF3Migration:
         gc_bounds = pl.read_parquet(
             constraints_dir / "generic_constraint_bounds.parquet"
         )
-        assert "bound" not in gc_bounds.columns
         resolved = per_stage_bounds(gc_bounds)
 
-        for (cid, stage), (sense, value) in pre_f3_bound.items():
+        for (cid, stage), (sense, value) in sense_bounds.items():
             rb = resolved[cid][stage]
-            # Identical per-stage evaluated limit to the legacy single
-            # `bound` column value.
             assert rb.value == value
             assert rb.shape == sense
-            # Identical pass/fail verdict to what a legacy comparison
-            # (LHS vs. the single (sense, bound) pair) reaches.
             lhs_value = lhs[(cid, stage)]
-            pre_f3_pass = lhs_value >= value if sense == ">=" else lhs_value <= value
-            f3_pass = (
+            sense_pass = lhs_value >= value if sense == ">=" else lhs_value <= value
+            interval_pass = (
                 lhs_value >= rb.value if rb.shape == ">=" else lhs_value <= rb.value
             )
-            assert f3_pass == pre_f3_pass
+            assert interval_pass == sense_pass
 
 
 class TestConstraintsChartShapeLabelFromBounds:
-    """The chart title derives the shape label from the
-    resolved bounds via `shape_from_bounds`, not from a removed `sense`
-    field on the (now sense-free) constraint dict."""
+    """The chart title derives the shape label from the resolved bounds via
+    `shape_from_bounds`; the constraint dict carries no sense."""
 
     def test_chart_title_uses_shape_derived_from_bounds(self) -> None:
         from novomodelo_bridge.comparators.charts import constraints_comparison_chart
@@ -2643,51 +2635,6 @@ class TestConstraintsChartShapeLabelFromBounds:
             }
         )
 
-        # No bound entries for cid 0 -> the "<=" default (matching the old
-        # `c.get("sense", "<=")` fallback) is used.
+        # No bound entries for cid 0 -> the "<=" default is used.
         html = constraints_comparison_chart(constraints, lhs_newave, lhs_novomodelo, {})
         assert "RE_1 (\\u003c=)" in html
-
-
-_BOUND_ACCESS_RE = re.compile(
-    r'\.col\(\s*["\']bound["\']\s*\)|\[\s*["\']bound["\']\s*\]|\.get\(\s*["\']bound["\']'
-)
-_SENSE_ACCESS_RE = re.compile(
-    r'\.col\(\s*["\']sense["\']\s*\)|\[\s*["\']sense["\']\s*\]|\.get\(\s*["\']sense["\']'
-)
-
-
-class TestNoSenseOrSingleBoundColumnRemainsInComparators:
-    """Grep guard: no comparator reads a removed `sense` key or a single
-    `bound` column. Matches only genuine column/dict *access* patterns
-    (``.col("bound")``, ``row["bound"]``, ``.get("bound"``) — column *names*
-    that merely contain "bound" as a substring (``bound_lower``,
-    ``bound_upper``) and unrelated string literals (e.g. the charts
-    package's ``"legendgroup": "bound"`` trace label) are not matches.
-    """
-
-    @pytest.mark.parametrize(
-        "relative_path",
-        [
-            "src/novomodelo_bridge/comparators/constraints.py",
-            "src/novomodelo_bridge/comparators/newave/constraints.py",
-            "src/novomodelo_bridge/comparators/charts/__init__.py",
-            "src/novomodelo_bridge/comparators/charts/_shared.py",
-            "src/novomodelo_bridge/comparators/charts/costs.py",
-            "src/novomodelo_bridge/comparators/charts/convergence.py",
-            "src/novomodelo_bridge/comparators/charts/performance.py",
-            "src/novomodelo_bridge/comparators/charts/spillage.py",
-            "src/novomodelo_bridge/comparators/newave/results.py",
-        ],
-    )
-    def test_module_has_no_sense_or_bound_column_access(
-        self, relative_path: str
-    ) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        text = (repo_root / relative_path).read_text(encoding="utf-8")
-        assert not _BOUND_ACCESS_RE.search(text), (
-            f"{relative_path} still accesses a single `bound` column"
-        )
-        assert not _SENSE_ACCESS_RE.search(text), (
-            f"{relative_path} still accesses a `sense` key"
-        )

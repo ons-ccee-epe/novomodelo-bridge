@@ -1,11 +1,8 @@
 """Tests for the shared Novomodelo-I/O seam (``novomodelo_bridge.novomodelo.case_io``).
 
 Pins the contract that the dashboard and the results comparator resolve hydro
-productivity through the SAME canonical cascade, so the two products never
-report a different ρ for the same converted case (regression for the divergent
-hydro-reader layers: the comparator did a per-hydro fallback while the
-dashboard only consulted production_models when the WHOLE parquet dict was
-empty).
+productivity through the SAME per-hydro cascade, so the two products never
+report a different ρ for the same converted case.
 """
 
 from __future__ import annotations
@@ -26,39 +23,20 @@ def _build_case(case_dir: Path) -> None:
     """Lay out a case where hydro 0 is in the parquet and hydro 1 is not.
 
     hydro 1 is absent from hydro_energy_productivity.parquet but present in
-    hydro_production_models.json — the exact "parquet present overall but id
-    missing" case that made the two readers disagree.
+    hydro_production_models.json: the parquet is present overall but misses
+    that id.
     """
     system = case_dir / "system"
     system.mkdir(parents=True, exist_ok=True)
     (case_dir / "output").mkdir(parents=True, exist_ok=True)
 
-    # 0.13-shaped hydros.json (unit_groups[].bus_id, no top-level bus_id).
-    # Feeds load_hydro_metadata (dashboard/data.py) below.
-    # read_novomodelo_hydro_metadata (novomodelo/readers.py) no longer reads
-    # any bus id from hydros.json at all, so it is
-    # indifferent to this shape.
     hydros = {
         "hydros": [
             hydro_with_group(
-                0,
-                0,
-                name="H0",
-                generation={
-                    "productivity_mw_per_m3s": 0.9,  # embedded (lowest priority)
-                    "max_turbined_m3s": 100.0,
-                },
-                reservoir={},
+                0, 0, name="H0", generation={"max_turbined_m3s": 100.0}, reservoir={}
             ),
             hydro_with_group(
-                1,
-                0,
-                name="H1",
-                generation={
-                    "productivity_mw_per_m3s": 0.9,  # embedded (must NOT win)
-                    "max_turbined_m3s": 100.0,
-                },
-                reservoir={},
+                1, 0, name="H1", generation={"max_turbined_m3s": 100.0}, reservoir={}
             ),
         ]
     }
@@ -86,8 +64,8 @@ def _build_case(case_dir: Path) -> None:
 
 
 def test_resolve_cascade_is_per_hydro(tmp_path: Path) -> None:
-    """hydro 0 -> parquet (0.5); hydro 1 -> production_models (0.7), NOT the
-    embedded 0.9 (proving the fallback is per-hydro, not whole-dict)."""
+    """hydro 0 -> parquet (0.5); hydro 1 -> production_models (0.7): the
+    fallback is per-hydro, not whole-dict."""
     case_dir = tmp_path / "case"
     _build_case(case_dir)
     with (case_dir / "system" / "hydros.json").open(encoding="utf-8") as f:
@@ -110,6 +88,5 @@ def test_dashboard_and_comparator_agree_on_productivity(tmp_path: Path) -> None:
         assert (
             comparator[hid]["productivity_mw_per_m3s"] == dashboard[hid]["productivity"]
         )
-    # And specifically the canonical values, not the embedded 0.9.
     assert dashboard[1]["productivity"] == 0.7
     assert comparator[1]["productivity_mw_per_m3s"] == 0.7

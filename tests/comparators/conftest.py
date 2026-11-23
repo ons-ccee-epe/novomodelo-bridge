@@ -61,7 +61,7 @@ def _patch_aligned_frames(
     # ``build_decomp_dataset`` also calls
     # ``read_novomodelo_bus_aggregates`` directly (outside ``_read_aligned_frames``).
     # Unlike the other novomodelo readers it does NOT degrade to empty on a missing
-    # case -- it raises ``NovomodeloPartitionMissingError`` for the pre-0.13
+    # case -- it raises ``NovomodeloPartitionMissingError`` for a missing
     # ``hydro_bus_generation`` partition, which a bare ``tmp_path`` always
     # trips. Stub it here too, so every fixture that does not care about
     # the Energy Balance metadata (the vast majority) keeps working

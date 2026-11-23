@@ -1,9 +1,7 @@
 """Parsed the source model case — read each input file once, cache the result.
 
 ``NewaveFiles`` resolves the *paths* of a source-model case; this module adds the
-parsing layer on top. Converters used to take ``NewaveFiles`` and each re-parse the
-files they needed, so a single conversion re-read ``dger.dat`` ~26×, ``confhd.dat``
-~27×, ``hidr.dat`` ~18×, and so on.
+parsing layer on top, so a conversion parses each input file once.
 
 :class:`NewaveCase` wraps a :class:`~novomodelo_bridge.newave.files.NewaveFiles` and
 exposes one :func:`functools.cached_property` per input file. The first access

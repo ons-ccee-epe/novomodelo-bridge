@@ -260,7 +260,7 @@ class TestAnticipatedCommitmentSeeding:
     """``convert_initial_conditions`` writes real adterm MW, clamped to bounds.
 
     Novomodelo (>= 0.7.0) honours non-zero pre-horizon seeds, so the committed MW is
-    passed through (no longer zeroed); only out-of-bounds values are clamped.
+    passed through; only out-of-bounds values are clamped.
     """
 
     def _id_map(self) -> NewaveIdMap:
