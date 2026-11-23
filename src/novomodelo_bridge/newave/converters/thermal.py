@@ -27,6 +27,7 @@ from novomodelo_bridge.core.diagnostics import (
     format_stage_ranges,
     unreadable_file_diagnostic,
 )
+from novomodelo_bridge.core.inflow_windows import month_window
 from novomodelo_bridge.core.pandas_utils import as_int, as_timestamp
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
@@ -194,10 +195,7 @@ def _apply_maint_to_capacity(
         for stage_idx, stage_start in enumerate(stage_dates):
             _, days_in_month = calendar.monthrange(stage_start.year, stage_start.month)
             # First day of the following month (exclusive upper bound).
-            if stage_start.month == 12:
-                stage_end = date(stage_start.year + 1, 1, 1)
-            else:
-                stage_end = date(stage_start.year, stage_start.month + 1, 1)
+            _, stage_end = month_window(stage_start.year, stage_start.month)
 
             maint_start_date = start_dt.date()
             maint_end_date = end_dt.date()

@@ -212,15 +212,11 @@ def read_anticipated_dispatch(
     patamar = case.patamar
     # Need the case's calendar start to weight by the right month's blocks.
     horizon = case.horizon
-    start_month = horizon.start_month
-    start_year = horizon.start_year
     # Mirror the temporal converter's horizon calculation.
-    study_months = horizon.study_months
-    pos_months = horizon.pos_months
-    n_stages_total = study_months + pos_months
+    n_stages_total = horizon.study_months + horizon.pos_months
 
     block_fractions = _block_fractions_by_stage(
-        patamar, start_year, start_month, n_stages_total
+        patamar, horizon.start_year, horizon.start_month, n_stages_total
     )
 
     result: dict[int, AnticipatedDispatch] = {}

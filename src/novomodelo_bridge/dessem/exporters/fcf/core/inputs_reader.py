@@ -131,7 +131,6 @@ class CaseInputs:
 
 
 def _load_json(path: Path) -> Any:
-    """Load JSON from a file with proper error handling."""
     if not path.is_file():
         raise InputReadError(f"Novomodelo input file not found: {path}")
     try:
@@ -152,7 +151,6 @@ def _require(obj: Any, key: str, dotted: str) -> Any:
 
 
 def _require_list(obj: Any, key: str, dotted: str) -> list[Any]:
-    """Require a list value."""
     value = _require(obj, key, dotted)
     if not isinstance(value, list):
         raise InputReadError(f"{dotted} must be a list, got {type(value).__name__}")
@@ -160,7 +158,6 @@ def _require_list(obj: Any, key: str, dotted: str) -> list[Any]:
 
 
 def _require_str(obj: Any, key: str, dotted: str) -> str:
-    """Require a string value."""
     value = _require(obj, key, dotted)
     if not isinstance(value, str):
         raise InputReadError(f"{dotted} must be str, got {type(value).__name__}")
@@ -198,7 +195,6 @@ def _require_iso_date(obj: Any, key: str, dotted: str) -> date:
 
 
 def _require_bool(obj: Any, key: str, dotted: str) -> bool:
-    """Require a boolean value."""
     value = _require(obj, key, dotted)
     if type(value) is not bool:
         raise InputReadError(f"{dotted} must be bool, got {type(value).__name__}")
@@ -206,7 +202,6 @@ def _require_bool(obj: Any, key: str, dotted: str) -> bool:
 
 
 def _read_blocks(raw_stage: Any, stage_dotted: str) -> tuple[BlockInfo, ...]:
-    """Read load blocks from a stage object."""
     blocks = _require_list(raw_stage, "blocks", f"{stage_dotted}.blocks")
     return tuple(
         BlockInfo(
@@ -311,7 +306,6 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
 
 
 def _read_thermals(path: Path) -> tuple[ThermalInfo, ...]:
-    """Read thermals.json."""
     if not path.exists():
         return ()
     raw = _load_json(path)
@@ -348,7 +342,6 @@ def _read_thermals(path: Path) -> tuple[ThermalInfo, ...]:
 
 
 def _read_buses(path: Path) -> tuple[BusInfo, ...]:
-    """Read buses.json."""
     raw = _load_json(path)
     return tuple(
         BusInfo(

@@ -397,7 +397,7 @@ def _emit_import_diagnostics(
     the cut carries a GNL block.
     """
     summary = summarize_cut_families(cuts)
-    lag_months = max(
+    deepest_lag = max(
         (depth for depth, n in enumerate(summary.lag_nonzero_by_depth, 1) if n),
         default=0,
     )
@@ -411,7 +411,7 @@ def _emit_import_diagnostics(
                 f"The boundary cost-to-go has {dx.counted(summary.n_active_cuts, 'cut')}, "
                 "pricing the end-of-study storage of "
                 f"{dx.counted(summary.storage_nonzero_plants, 'plant')} and up to "
-                f"{dx.counted(lag_months, 'month')} of past inflows."
+                f"{dx.counted(deepest_lag, 'month')} of past inflows."
             ),
             notes=[
                 "Plants with a nonzero inflow term, by lag: "

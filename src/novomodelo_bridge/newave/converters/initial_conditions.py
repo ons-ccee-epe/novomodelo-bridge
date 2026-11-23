@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 import pandas as pd
 
@@ -14,6 +13,7 @@ from novomodelo_bridge.core.diagnostics import (
     Severity,
     emit,
 )
+from novomodelo_bridge.core.inflow_windows import month_window
 from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.converters.anticipated import read_anticipated_dispatch
 from novomodelo_bridge.newave.converters.hydro import (
@@ -54,8 +54,7 @@ def _delivery_window(start_year: int, start_month: int, k: int) -> tuple[str, st
     total = (start_month - 1) + k
     year = start_year + total // 12
     month = total % 12 + 1
-    start = date(year, month, 1)
-    end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    start, end = month_window(year, month)
     return start.isoformat(), end.isoformat()
 
 

@@ -406,8 +406,7 @@ class _Page:
         self.outputs()
         self.source_index()
         self.backlog()
-        text = "\n".join(self.lines).rstrip() + "\n"
-        return text
+        return "\n".join(self.lines).rstrip() + "\n"
 
 
 def render(lineage: Lineage) -> str:

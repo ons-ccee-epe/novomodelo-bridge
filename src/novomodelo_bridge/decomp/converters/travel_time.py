@@ -116,7 +116,7 @@ def _defluence_windows(
     while remaining > 0:
         span = min(week_days, remaining)
         window_start = cursor - timedelta(days=span)
-        flow = flows[index] if index < len(flows) else (flows[-1] if flows else 0.0)
+        flow = flows[min(index, len(flows) - 1)] if flows else 0.0
         windows.append(
             {
                 "hydro_id": hydro_id,

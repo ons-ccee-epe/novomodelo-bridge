@@ -1109,8 +1109,9 @@ def _cadastro_overrides_diagnostic(
 def _convert_config_and_stages(
     artifacts: DecompCaseArtifacts, writer: CaseWriter
 ) -> None:
-    """Write ``config.json`` and ``stages.json``, carrying the deck's CVaR risk
-    measure onto every stage, and store both dicts on *artifacts*."""
+    """Write ``config.json`` and build the ``stages.json`` dict, carrying the
+    deck's CVaR risk measure onto every stage, and store both dicts on
+    *artifacts*; the boundary write site writes ``stages.json``."""
     case = artifacts.case
     # DECOMP risk aversion (CVaR): resolve the AR register / FCF-header CVaR
     # into a per-stage novomodelo risk measure, emitted uniformly across all stages

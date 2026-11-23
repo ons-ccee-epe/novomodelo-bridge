@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import shutil
@@ -212,10 +213,8 @@ class TestConvertNewaweCasePipeline:
         }
 
         fake_id_map = MagicMock()
-        # Use ExitStack for correct LIFO teardown to avoid mock leakage.
-        import contextlib
-
         patches = _all_converter_patches(fake_id_map)
+        # Use ExitStack for correct LIFO teardown to avoid mock leakage.
         with contextlib.ExitStack() as stack:
             for p in patches:
                 stack.enter_context(p)
@@ -267,8 +266,6 @@ class TestConvertNewaweCasePipeline:
 
     def test_dry_run_does_not_call_write_table(self, tmp_path: Path) -> None:
         """``dry_run=True`` writes nothing yet records the would-write paths."""
-        import contextlib
-
         from novomodelo_bridge.core.conversion import ConversionReport
         from novomodelo_bridge.newave.pipeline import convert_newave_case
 
@@ -299,8 +296,6 @@ class TestConvertNewaweCasePipeline:
 class TestOptionalLinesAndThermals:
     @staticmethod
     def _run(tmp_path: Path, *, thermals: list, lines: list) -> Path:
-        import contextlib
-
         from novomodelo_bridge.newave.pipeline import convert_newave_case
 
         src = _make_fake_newave_dir(tmp_path)
@@ -371,8 +366,6 @@ class TestEmissionCheckWiring:
         """A hydro_bounds row above the plant's declared max_turbined_m3s is
         clamped back to the declaration and reported as a note, so the
         convert verdict stays "ok" instead of erroring on novomodelo rule 43."""
-        import contextlib
-
         from novomodelo_bridge.cli.verdict import _convert_status
         from novomodelo_bridge.core.diagnostics import Severity
         from novomodelo_bridge.newave.pipeline import convert_newave_case
@@ -450,8 +443,6 @@ class TestEmissionCheckWiring:
         """novomodelo holds a non-filling plant's storage floor as a bound, so a
         VMINT above the reservoir would leave the stage with no solution: the
         conversion stops before writing, naming modif.dat."""
-        import contextlib
-
         from novomodelo_bridge.core.errors import FieldParseError
         from novomodelo_bridge.newave.pipeline import convert_newave_case
 

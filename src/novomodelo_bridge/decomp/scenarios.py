@@ -139,9 +139,9 @@ def _incremental_context(
     (:func:`novomodelo_bridge.decomp.converters.cadastro.topology_varies_diagnostic`).
     """
     converted = set(id_map.hydro_codes)
-    station_by_code: dict[int, str] = {}
-    for code in id_map.hydro_codes:
-        station_by_code[code] = str(effective.inflow_gauge(code, 0))
+    station_by_code: dict[int, str] = {
+        code: str(effective.inflow_gauge(code, 0)) for code in id_map.hydro_codes
+    }
     parents: dict[int, list[int]] = {code: [] for code in id_map.hydro_codes}
     for code in id_map.hydro_codes:
         downstream = _downstream_in(effective, code, converted)

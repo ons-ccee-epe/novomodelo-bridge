@@ -144,6 +144,12 @@ def _flatten_terminal_fan(case_dir: Path, variant_dir: Path) -> None:
         handle.write("\n")
 
 
+def _terminal_int(terminal: dict, key: str, output_dir: Path) -> int:
+    if key not in terminal:
+        raise RuntimeError(f"checkpoint at {output_dir} terminal pool has no {key}")
+    return int(terminal[key])
+
+
 def bootstrap_terminal_manifest(case_dir: Path, *, work_dir: Path) -> TerminalManifest:
     """Run novomodelo for 1 iteration on a single-terminal-leaf variant of
     ``case_dir`` and read its terminal manifest.
@@ -236,26 +242,16 @@ def bootstrap_terminal_manifest(case_dir: Path, *, work_dir: Path) -> TerminalMa
             f"checkpoint at {output_dir} has an empty terminal entity_manifest"
         )
 
-    if "node_id" not in terminal:
-        raise RuntimeError(f"checkpoint at {output_dir} terminal pool has no node_id")
-    node_id = int(terminal["node_id"])
+    node_id = _terminal_int(terminal, "node_id", output_dir)
     if node_id == -1:
         raise RuntimeError(
             f"checkpoint at {output_dir} terminal pool node_id is -1, the "
             "shared-pool sentinel (no real single node)"
         )
 
-    if "graph_stage_id" not in terminal:
-        raise RuntimeError(
-            f"checkpoint at {output_dir} terminal pool has no graph_stage_id"
-        )
-    graph_stage_id = int(terminal["graph_stage_id"])
+    graph_stage_id = _terminal_int(terminal, "graph_stage_id", output_dir)
 
-    if "priced_state_date" not in terminal:
-        raise RuntimeError(
-            f"checkpoint at {output_dir} terminal pool has no priced_state_date"
-        )
-    priced_state_date = int(terminal["priced_state_date"])
+    priced_state_date = _terminal_int(terminal, "priced_state_date", output_dir)
     if priced_state_date == UNDATED:
         raise RuntimeError(
             f"checkpoint at {output_dir} terminal pool priced_state_date is the "

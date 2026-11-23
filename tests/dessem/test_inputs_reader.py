@@ -1,4 +1,4 @@
-"""Tests for dessem/exporters/fcf/inputs_reader.py."""
+"""Tests for dessem/exporters/fcf/core/inputs_reader.py."""
 
 import json
 import shutil

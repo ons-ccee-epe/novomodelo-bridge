@@ -30,6 +30,7 @@ from novomodelo_bridge.dessem.exporters.fcf.content.audit_binary_mirror import (
 from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
     CutInput,
     node_and_iteration,
+    storage_coefficients,
     write_cortdeco,
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.cross_check import (
@@ -90,6 +91,7 @@ from novomodelo_bridge.dessem.exporters.fcf.core.mapper import (
 )
 from novomodelo_bridge.dessem.exporters.fcf.core.reader import (
     PolicyFormatError,
+    PolicyManifest,
     StageCutPool,
     nodes_by_pool,
     read_policy,
@@ -692,7 +694,7 @@ def _write_failure_manifest(
 
 
 def _assemble_mapcut_header(
-    manifest_data: Any,
+    manifest: PolicyManifest,
     pools: dict,
     trunk_pool_ids: tuple[int, ...],
     inputs: CaseInputs,
@@ -707,11 +709,7 @@ def _assemble_mapcut_header(
     travel_time: tuple[TravelTimePlant, ...],
 ) -> MapcutHeader:
     """Assemble the mapcut header from all sources."""
-    from novomodelo_bridge.dessem.exporters.fcf.core.reader import PolicyManifest
 
-    manifest: PolicyManifest = manifest_data
-
-    # Calculate derived quantities
     n_nodes = len(trunk_pool_ids)
     numero_cortes = sum(
         pools[pid].populated_count - pools[pid].warm_start_count
@@ -722,13 +720,10 @@ def _assemble_mapcut_header(
 
     patamares_gnl = tuple(n_patamares for _ in gnl_thermals)
 
-    # Discount factors
     factors = discount_factors(inputs.stages, inputs.annual_discount_rate)
 
-    # Head indices
     heads = cut_head_indices(numero_cortes, n_nodes, numero_cenarios)
 
-    # Get date from first stage
     start_date = inputs.stages[0].start_date
     dia = int(start_date[8:10])
     mes = int(start_date[5:7])
@@ -773,10 +768,6 @@ def _assemble_cuts(
     gnl_deliveries: GnlDeliveries,
 ) -> list[list[CutInput]]:
     """Assemble cut inputs from pools."""
-    from novomodelo_bridge.dessem.exporters.fcf.core.cortdeco_writer import (
-        storage_coefficients,
-    )
-
     cuts: list[list[CutInput]] = []
     for pool_id in trunk_pool_ids:
         pool = pools[pool_id]

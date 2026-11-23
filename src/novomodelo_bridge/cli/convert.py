@@ -398,9 +398,6 @@ def _import_decomp_boundary_fcf(
     # step (and its deck discovery). With it on, the deck's own FC records
     # (or the cortes* glob) locate the cut files; a deck that declares none
     # converts without a boundary FCF, before the capability probe can fail.
-    # The single `DecompCase` built here is handed to the importer below, so
-    # the deck is discovered (and, on first attribute access, parsed) once
-    # for the FCF step rather than the importer re-discovering it itself.
     if args.no_fcf:
         return []
     case = DecompCase.from_directory(args.src)
@@ -499,7 +496,6 @@ def _conclude_decomp_conversion(
             console=err_console,
         )
 
-    # Emit the --json verdict now (after validation has populated ``summary``).
     if args.json_output:
         _emit_convert_json(
             build_verdict(

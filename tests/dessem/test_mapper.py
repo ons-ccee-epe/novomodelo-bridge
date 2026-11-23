@@ -1,4 +1,4 @@
-"""Tests for dessem/exporters/fcf/mapper.py."""
+"""Tests for dessem/exporters/fcf/core/mapper.py."""
 
 import json
 import logging

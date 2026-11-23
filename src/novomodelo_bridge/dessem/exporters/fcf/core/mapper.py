@@ -6,6 +6,7 @@ documented and revertible. Nothing here performs I/O.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 from collections.abc import Collection, Mapping, Sequence
@@ -570,8 +571,6 @@ def first_node_per_stage(manifest: PolicyManifest) -> tuple[int, ...]:
         raise MappingError(
             f"node ids must be contiguous 0..{len(node_ids) - 1}; got {node_ids[:8]}..."
         )
-
-    import itertools
 
     stage_sequence = [node.stage_id for node in manifest.nodes]
     for prev_stage, next_stage in itertools.pairwise(stage_sequence):

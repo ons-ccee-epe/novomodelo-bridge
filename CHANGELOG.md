@@ -18,8 +18,8 @@ links are cobre-bridge's.
 
 - **BREAKING: `convert newave` and `convert decomp` write
   `boundary_conditions.json`** and the post-study lists of `stages.json`, not
-  `initial_conditions.json` and `post_study_stages.json`. Update readers of
-  the old files; results do not change.
+  `initial_conditions.json` and `post_study_stages.json`. Run the case on the
+  novomodelo release that reads them, update old readers; results hold.
 - **`export dessem` reads a case holding `boundary_conditions.json` or the
   deprecated `initial_conditions.json`**, and refuses a case holding both.
   Delete the one you do not use.
