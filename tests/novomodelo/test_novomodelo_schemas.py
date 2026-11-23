@@ -27,8 +27,14 @@ _CANONICAL_PREFIX = (
 )
 
 
-def test_schema_urls_has_sixteen_entries() -> None:
-    assert len(novomodelo_schemas.SCHEMA_URLS) == 16
+def test_schema_urls_has_seventeen_entries() -> None:
+    assert len(novomodelo_schemas.SCHEMA_URLS) == 17
+
+
+def test_schema_url_for_boundary_conditions() -> None:
+    assert novomodelo_schemas.schema_url_for("boundary_conditions.json").endswith(
+        "/boundary_conditions.schema.json"
+    )
 
 
 def test_schema_url_for_hit() -> None:
