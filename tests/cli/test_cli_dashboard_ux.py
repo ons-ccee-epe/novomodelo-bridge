@@ -1,8 +1,7 @@
 """Tier-1 CLI-UX tests for ``dashboard``.
 
-Locks in the ``dashboard`` migration from ``SimpleNamespace`` to the typed
-``DashboardArgs``: the no-simulation-output early exit now routes through
-``_fail`` (a ``--json`` error envelope instead of empty stdout),
+Pins the typed ``DashboardArgs`` path: the no-simulation-output early exit
+routes through ``_fail`` (a ``--json`` error envelope instead of empty stdout),
 the two human status lines are suppressed under ``--quiet`` while
 the dashboard file is still written, and ``--no-color`` reaches every
 console ``_run_dashboard`` builds. Imports no novomodelo; the dashboard build

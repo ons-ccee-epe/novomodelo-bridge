@@ -60,8 +60,7 @@ def _case(
 ) -> DecompCase:
     """A ``DecompCase`` pre-filled with *dadger* (unused by
     ``append_iv_se_line``, which never reads it) and *calendar* (defaults to
-    ``_calendar()``, matching the raw ``calendar``/``start`` every test here
-    used to pass directly)."""
+    ``_calendar()``)."""
     return make_decomp_case(
         Path("unused"), dadger=dadger, calendar=calendar or _calendar()
     )
@@ -298,7 +297,7 @@ class TestItaipu60HzCapacity:
 
 
 class TestItaipuWithRi:
-    """AC 1+2: Itaipu (66) operated with an ``RI`` register -- the IV-SE
+    """Itaipu (66) operated with an ``RI`` register -- the IV-SE
     line (sized off the 60 Hz group's own generation ceiling) plus Itaipu's
     own SE bus's ``carga_ande`` addition, both computed exactly the way
     ``pipeline.py`` assembles them."""
@@ -406,7 +405,7 @@ class TestItaipuWithRi:
 
 
 class TestItaipuNoRi:
-    """AC 3: Itaipu operated but no ``RI`` register -- the line is still
+    """Itaipu operated but no ``RI`` register -- the line is still
     present (sized to the unbounded sentinel), but SE carries only its own
     ``DP`` demand (``read_carga_ande`` returns ``{}``, so ``pipeline.py``
     builds no ``extra_bus_loads``)."""
@@ -462,7 +461,7 @@ class TestItaipuNoRi:
 
 
 class TestNoItaipu:
-    """AC 4: a deck that never operates Itaipu (66) -- no IV-SE line, and
+    """A deck that never operates Itaipu (66) -- no IV-SE line, and
     the ``IV`` bus load stays zero, exactly like today."""
 
     def test_itaipu_operated_gate_is_false(self) -> None:

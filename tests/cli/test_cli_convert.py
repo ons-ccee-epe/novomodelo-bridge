@@ -2381,10 +2381,7 @@ class TestCliInProcess:
     ) -> None:
         """The importer runs inside a ``dx.collect()`` sink,
         so a ``Diagnostic`` it emits — here the GNL anticipated-ring
-        deviation — reaches the ``--json`` verdict's ``diagnostics`` array.
-        This test fails against the pre-sink CLI (no ``dx.collect()``
-        wrapping ``import_boundary_fcf``), proving the previously deferred gap
-        is closed."""
+        deviation — reaches the ``--json`` verdict's ``diagnostics`` array."""
         from novomodelo_bridge.core import diagnostics as dx
         from novomodelo_bridge.core.conversion import ConversionReport
 
@@ -2636,9 +2633,8 @@ class TestCliInProcess:
         ``..._reach_json``, but without ``--json`` and with
         ``--diagnostics-json`` — the importer's ``Diagnostic`` (captured by
         the ``dx.collect()`` sink) must reach the sidecar file too, not just
-        the ``--json`` stdout verdict. This test fails against the pre-fix
-        CLI, where the sidecar is written BEFORE the boundary-FCF block runs
-        and therefore only ever contains ``report.diagnostics``."""
+        the ``--json`` stdout verdict, so the sidecar is written after the
+        boundary-FCF block runs."""
         from novomodelo_bridge.core import diagnostics as dx
         from novomodelo_bridge.core.conversion import ConversionReport
 

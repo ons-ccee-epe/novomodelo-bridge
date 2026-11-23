@@ -406,8 +406,8 @@ def compute_max_prodtacum_sin(case: NewaveCase) -> float | None:
     moves — and the per-plant productivity is taken at the **maximum height** (vol_max),
     i.e. The source model's ``produtibilidade_acumulada_calculo_altura_maxima``. On the
     example case this returns ≈ 6.4458, matching pmo's "PENALIDADE POR VIOLACAO DOS
-    OUTROS USOS" (19 149.55 → implied 6.4371) and Pmo's 6.4420; the legacy 65%-reference
-    accumulated max was 6.3542 (~1.4% low).
+    OUTROS USOS" (19 149.55 → implied 6.4371) and Pmo's 6.4420; the 65%-reference
+    accumulated max is 6.3542 (~1.4% low).
 
     Falls back to ``None`` when the source model files cannot be read (mocked tests).
     """

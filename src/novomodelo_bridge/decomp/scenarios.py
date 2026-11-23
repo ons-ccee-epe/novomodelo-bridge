@@ -23,8 +23,8 @@ The tree is emitted node-natively: every stage draws its openings from
 probabilities on the ``policy_graph`` (see ``temporal.convert_stages``). Under
 the identity stochastic convention (μ = 0, σ = 1, order 0) the standardized
 noise equals the natural value. ``terminal_fan_probabilities`` supplies those
-fan weights; ``convert_scenario_probabilities`` remains a validation view for
-``check decomp`` and is no longer written to the case directory.
+fan weights; ``convert_scenario_probabilities`` is a validation view for
+``check decomp`` and is not written to the case directory.
 """
 
 from __future__ import annotations
@@ -896,10 +896,10 @@ def convert_scenario_probabilities(
 ) -> pa.Table:
     """Per-(stage, scenario) probability view for validation.
 
-    Trunk rows carry probability 1.0; validated to sum to 1 per stage. No
-    longer written to the case directory (the terminal weights now live on
-    the ``policy_graph`` transitions); ``check decomp`` still uses this to
-    validate the deck's probability table.
+    Trunk rows carry probability 1.0; validated to sum to 1 per stage. Not
+    written to the case directory (the terminal weights live on the
+    ``policy_graph`` transitions); ``check decomp`` uses this to validate the
+    deck's probability table.
     """
     prob = vazoes.probabilidades
     if prob is None or prob.empty:

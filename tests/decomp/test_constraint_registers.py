@@ -244,11 +244,10 @@ def test_re_thermal_only_single_term_lowers_to_generation_bound() -> None:
 
 
 def test_re_thermal_only_no_double_emission() -> None:
-    """The same FT-only census never reaches ``emit_re_generics``: once the
-    reader moves it to ``to_bounds``, the generic emitter's ``to_generic``
-    filter no longer sees it, so it emits nothing (no special-casing needed
-    in ``constraints.py`` — the split moving out of ``to_generic`` is the
-    whole mechanism)."""
+    """The same FT-only census never reaches ``emit_re_generics``: the reader
+    moves it to ``to_bounds``, so the generic emitter's ``to_generic`` filter
+    does not see it and it emits nothing (no special-casing in
+    ``constraints.py`` — the reader's split is the whole mechanism)."""
     dadger = _FakeDadger(
         re=_decl((10, 1, 2)),
         ft=_ft((10, 1, 5, 1.0, 1)),
@@ -345,11 +344,11 @@ def test_hq_qbom_single_lowers_to_pumping_bound() -> None:
 
 
 def test_hq_qbom_no_double_emission() -> None:
-    """The same QBOM-only census never reaches ``emit_rhq_rhv_generics``:
-    once the reader moves it to ``to_bounds``, the generic emitter's
-    ``to_generic`` filter (``family in ("HQ", "HV")``) no longer sees it, so
-    it returns ``None`` (no special-casing needed in ``constraints.py`` —
-    the split moving out of ``to_generic`` is the whole mechanism)."""
+    """The same QBOM-only census never reaches ``emit_rhq_rhv_generics``: the
+    reader moves it to ``to_bounds``, so the generic emitter's ``to_generic``
+    filter (``family in ("HQ", "HV")``) does not see it and it returns ``None``
+    (no special-casing in ``constraints.py`` — the reader's split is the whole
+    mechanism)."""
     dadger = _FakeDadger(
         hq=_decl((5, 1, 1)),
         cq=_coeff((5, 30, 1.0, 1, "QBOM"), tipo=True),

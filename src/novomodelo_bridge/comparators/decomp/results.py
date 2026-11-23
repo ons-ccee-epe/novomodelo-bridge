@@ -289,10 +289,9 @@ def _scenario_mean(
     instead of a plain mean: the monthly scenario-fan stage's openings are
     not equiprobable, so the source model's own tree probabilities give the
     correct expected value there. ``None``, an empty frame, or a *frame*
-    that carries no ``cenario`` column of its own each keep the existing
-    unweighted ``.mean()`` behaviour verbatim -- every pre-existing caller is
-    unaffected by this parameter's default. Otherwise *frame* is left-joined
-    onto *probabilities* by ``[key, "cenario"]`` (both sides cast to
+    that carries no ``cenario`` column of its own each keep the plain
+    unweighted ``.mean()``. Otherwise *frame* is left-joined onto
+    *probabilities* by ``[key, "cenario"]`` (both sides cast to
     ``Int64`` first, so a dtype mismatch never breaks the join); a scenario
     absent from *probabilities* defaults to weight ``1.0`` (``fill_null``)
     rather than being dropped, and each present column becomes the

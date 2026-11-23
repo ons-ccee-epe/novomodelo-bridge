@@ -14,21 +14,16 @@ Semantics pinned against the reference manual (§4.5.11):
   stages;
 - a plant with an explicit defluence window in the flow-constraint family
   (``HQ``/``LQ``/``CQ`` on QDEF) **co-applies** that window with its
-  ``RQ``/``UH`` default rather than either one replacing the other (user
-  ruling, 2026-08-09): both constraints hold on the same ``(hydro, stage,
-  block)`` cell, so this module still emits the ``RQ``/``UH`` contribution
-  unconditionally, and the accumulator (``bounds_accumulator.resolve`` /
+  ``RQ``/``UH`` default rather than either one replacing the other: both
+  constraints hold on the same ``(hydro, stage, block)`` cell, so this module
+  emits the ``RQ``/``UH`` contribution unconditionally, and the accumulator (``bounds_accumulator.resolve`` /
   :func:`~novomodelo_bridge.decomp.bounds_accumulator.intersect`) composes it
   with the RHQ ``QDEF``-derived ``outflow`` contribution
   (``single_term_bounds.single_term_bound_contributions``) via
   max-of-lowers/min-of-uppers — the tighter side of each source wins, never
-  one source displacing the other. A prior version of this module instead
-  *skipped* the ``RQ``/``UH`` contribution for any plant with a ``CQ``
-  ``QDEF`` window — encoding the wrong "the window replaces the default"
-  reading of the reference manual instead of the correct "both apply,
-  tighter wins" one; that skip was correctly retired once the accumulator's
-  ``intersect`` could express the co-apply composition directly instead of
-  this module approximating it via a skip;
+  one source displacing the other. Skipping the ``RQ``/``UH`` contribution for
+  a plant with a ``CQ`` ``QDEF`` window would encode the wrong "the window
+  replaces the default" reading of the reference manual;
 - the ``RQ``/``UH`` minimum-outflow default is released for a run-of-river
   plant from the cascade headwater down to — but excluding — the first
   reservoir, to avoid infeasibility on a stage/scenario with zero inflow.

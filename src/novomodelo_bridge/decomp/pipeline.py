@@ -1456,8 +1456,7 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
             ncs_stats,
             entity_column="ncs_id",
             value_in="mean",
-            # novomodelo's clean break (0.14) removed the legacy ``value`` alias for
-            # the NCS availability column; the sole accepted spelling is now
+            # novomodelo reads the NCS availability column only as
             # ``availability_factor`` (external inflow/load keep value_m3s/value_mw).
             value_out="availability_factor",
             scenario_counts=scenario_counts,
@@ -1662,7 +1661,7 @@ def _resolve_line_bounds(
     line_bounds: pa.Table, block_counts: dict[int, int]
 ) -> pa.Table:
     """*line_bounds* resolved to one row per ``(line, stage, block)`` cell."""
-    # Line bounds now route through the same BoundContribution -> resolve()
+    # Line bounds route through the same BoundContribution -> resolve()
     # primitive as hydro/thermal/pumping in `_resolve_bounds`: a colliding
     # pair of contributions on the direct/reverse axis intersects (or
     # loud-fails on a genuine conflict) instead of one silently overwriting
@@ -1988,14 +1987,14 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     availability_values = hydro_conv.convert_hydro_group_availability(
         case, id_map, effective=effective, turbine_limits=turbine_limits
     )
-    # Every per-entity bound — the legacy RQ/UH minimum-outflow, the per-stage
+    # Every per-entity bound — the RQ/UH minimum-outflow, the per-stage
     # storage envelope, a split plant's turbined-flow limit and available
     # power, the CT thermal
     # generation bounds, and the RE/RHQ/RHV single-term special-constraint
     # bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
-    # exactly ONE resolve() + build_bound_tables() pass, so a new special
-    # constraint colliding with a legacy bound on the same (entity, stage,
+    # exactly ONE resolve() + build_bound_tables() pass, so a special
+    # constraint colliding with another bound on the same (entity, stage,
     # block) cell correctly intersects instead of producing the
     # two-rows-same-column parquet novomodelo rejects.
     contribs = [
@@ -2203,7 +2202,7 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     contract_bounds_table = contracts_conv.convert_contract_bounds(
         case, contracts=contracts
     )
-    # Contract power bounds now route through the same BoundContribution ->
+    # Contract power bounds route through the same BoundContribution ->
     # resolve() primitive as the hydro/thermal/pumping/line bounds in
     # `_resolve_bounds`; price_per_mwh is not a bound axis (it rides its own
     # side-table, per bounds_accumulator's own AXES docstring), so it is

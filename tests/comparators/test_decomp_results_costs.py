@@ -1,12 +1,8 @@
 """Cost-frame tests for ``comparators.decomp.results``.
 
-Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
-the DECOMP-side NPV/cost frames, scenario probabilities and
-probability-weighting, the union of source-model and Novomodelo cost rows, and the
-Overview tab's cost sections in ``build_decomp_dataset``. The remaining
-concern bands (network, energy balance, performance, hydro/thermal detail,
-productivity, FPHA, REE, evaporation, constraints, CLI) stay in the mega file
-pending their own carve.
+Covers the DECOMP-side NPV/cost frames, scenario probabilities and
+probability-weighting, the union of source-model and Novomodelo cost rows, and
+the Overview tab's cost sections in ``build_decomp_dataset``.
 """
 
 from __future__ import annotations
@@ -1027,7 +1023,7 @@ class TestScenarioWeightingIntegration:
     `_scenario_probabilities` built from (mocked) relato/relato2 reports,
     threaded through a real ``_*_side`` fold (`_bus_side`, one of this
     module's physical-variable call sites) -- probability-weights the fan
-    stage, and degrades to the pre-existing unweighted mean when no
+    stage, and degrades to the unweighted mean when no
     probability source is available at all."""
 
     def _bus_codes(self) -> dict[int, int]:
@@ -1066,8 +1062,8 @@ class TestScenarioWeightingIntegration:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """A bare deck (no relato/relato2 at all) -- `_scenario_probabilities`
-        degrades to empty, and `_bus_side` must reproduce the exact
-        pre-existing unweighted-mean value on the fan stage."""
+        degrades to empty, and `_bus_side` reproduces the exact
+        unweighted-mean value on the fan stage."""
         monkeypatch.setattr(
             "novomodelo_bridge.comparators.decomp.results.read_dec_oper_sist",
             lambda *_a, **_k: _bus_fan_stage_frame(),

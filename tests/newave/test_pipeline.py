@@ -91,8 +91,8 @@ class TestConvertNewaweCasePipeline:
             assert f.exists(), f"Expected output file not found: {f}"
 
     def test_exchange_factors_json_is_not_written(self, tmp_path: Path) -> None:
-        """The per-block exchange factors are folded into line_bounds.parquet
-        (novomodelo decision 10); the pipeline must not write the deleted file."""
+        """The per-block exchange factors are folded into line_bounds.parquet;
+        the pipeline writes no exchange_factors.json."""
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "novomodelo_case"
 
@@ -100,12 +100,12 @@ class TestConvertNewaweCasePipeline:
 
         assert not (dst / "constraints" / "exchange_factors.json").exists()
 
-    def test_load_factors_and_ncs_factors_still_byte_identical(
+    def test_load_factors_and_ncs_factors_written_verbatim(
         self, tmp_path: Path
     ) -> None:
         """``load_factors.json`` and ``non_controllable_factors.json`` are
-        untouched by the exchange-factors migration (which draws the line at
-        authored-vs-sampled data; deleting these by analogy would be wrong)."""
+        written verbatim; only the exchange factors fold into
+        ``line_bounds.parquet``."""
         src = _make_fake_newave_dir(tmp_path)
         dst = tmp_path / "novomodelo_case"
 

@@ -58,15 +58,6 @@ from novomodelo_bridge.newave.converters.hydro.overrides import (
     read_cadastro as read_cadastro,
 )
 from novomodelo_bridge.newave.converters.hydro.productivity import (
-    _compute_integrated_productivity as _compute_integrated_productivity,
-)
-from novomodelo_bridge.newave.converters.hydro.productivity import (
-    _compute_productivity as _compute_productivity,
-)
-from novomodelo_bridge.newave.converters.hydro.productivity import (
-    _equivalent_productivity as _equivalent_productivity,
-)
-from novomodelo_bridge.newave.converters.hydro.productivity import (
     _fpha_computed_config as _fpha_computed_config,
 )
 from novomodelo_bridge.newave.converters.hydro.productivity import (
