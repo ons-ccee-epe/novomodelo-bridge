@@ -35,7 +35,7 @@ $ novomodelo-bridge dashboard [OPTIONS] {case_dir}
 
 **Arguments**:
 
-* `case_dir`: Path to the Novomodelo case directory.  [required]
+* `case_dir <path>`: Path to the Novomodelo case directory.  [required]
 
 **Options**:
 
@@ -79,8 +79,8 @@ $ novomodelo-bridge convert newave [OPTIONS] {src} {dst}
 
 **Arguments**:
 
-* `src`: Path to the NEWAVE case directory.  [required]
-* `dst`: Path to the output Novomodelo case directory.  [required]
+* `src <path>`: Path to the NEWAVE case directory.  [required]
+* `dst <path>`: Path to the output Novomodelo case directory.  [required]
 
 **Options**:
 
@@ -113,8 +113,8 @@ $ novomodelo-bridge convert decomp [OPTIONS] {src} {dst}
 
 **Arguments**:
 
-* `src`: Path to the DECOMP deck directory.  [required]
-* `dst`: Path to the output Novomodelo case directory.  [required]
+* `src <path>`: Path to the DECOMP deck directory.  [required]
+* `dst <path>`: Path to the output Novomodelo case directory.  [required]
 
 **Options**:
 
@@ -173,8 +173,8 @@ $ novomodelo-bridge compare decomp [OPTIONS] {decomp_dir} {novomodelo_output_dir
 
 **Arguments**:
 
-* `decomp_dir`: Path to the DECOMP deck directory (deck + dec_oper_*.csv result files, all directly in it).  [required]
-* `novomodelo_output_dir`: Path to the Novomodelo output directory.  [required]
+* `decomp_dir <path>`: Path to the DECOMP deck directory (deck + dec_oper_*.csv result files, all directly in it).  [required]
+* `novomodelo_output_dir <path>`: Path to the Novomodelo output directory.  [required]
 
 **Options**:
 
@@ -203,8 +203,8 @@ $ novomodelo-bridge compare newave [OPTIONS] {newave_dir} {novomodelo_output_dir
 
 **Arguments**:
 
-* `newave_dir`: Path to the NEWAVE case directory (case + MEDIAS-*.CSV result files, all directly in it).  [required]
-* `novomodelo_output_dir`: Path to the Novomodelo output directory.  [required]
+* `newave_dir <path>`: Path to the NEWAVE case directory (case + MEDIAS-*.CSV result files, all directly in it).  [required]
+* `novomodelo_output_dir <path>`: Path to the Novomodelo output directory.  [required]
 
 **Options**:
 
@@ -249,7 +249,7 @@ $ novomodelo-bridge check newave [OPTIONS] {src}
 
 **Arguments**:
 
-* `src`: Path to the NEWAVE case directory.  [required]
+* `src <path>`: Path to the NEWAVE case directory.  [required]
 
 **Options**:
 
@@ -275,7 +275,7 @@ $ novomodelo-bridge check decomp [OPTIONS] {src}
 
 **Arguments**:
 
-* `src`: Path to the DECOMP deck directory.  [required]
+* `src <path>`: Path to the DECOMP deck directory.  [required]
 
 **Options**:
 
@@ -336,8 +336,8 @@ $ novomodelo-bridge export dessem [OPTIONS] {decomp_dir} {case_dir}
 
 **Arguments**:
 
-* `decomp_dir`: Path to the DECOMP deck directory the case was converted from.  [required]
-* `case_dir`: Path to the solved Novomodelo case directory.  [required]
+* `decomp_dir <path>`: Path to the DECOMP deck directory the case was converted from.  [required]
+* `case_dir <path>`: Path to the solved Novomodelo case directory.  [required]
 
 **Options**:
 
