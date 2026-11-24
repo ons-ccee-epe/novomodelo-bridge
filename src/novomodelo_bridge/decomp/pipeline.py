@@ -153,6 +153,8 @@ class DecompCaseArtifacts:
     deficit_cost: float | None = None
     fpha_codes: set[int] | None = None
     turbine_limits: hydro_conv.TurbineLimits | None = None
+    #: `(bus_id, {stage_index: [MW per block]})` of the `RI` ANDE load.
+    ande_bus_load: tuple[int, dict[int, list[float]]] | None = None
     # Populated by `_resolve_bounds`.
     census: constraint_registers.ConstraintCensus | None = None
     pumping_ids: dict[int, int] | None = None
@@ -1423,6 +1425,7 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     if ande is not None:
         ande_submarket, carga_ande = ande
         ande_bus = id_map.bus_id(ande_submarket)
+        artifacts.ande_bus_load = (ande_bus, carga_ande)
         extra_bus_loads = {
             (ande_bus, stage_index): values
             for stage_index, values in carga_ande.items()
@@ -2454,11 +2457,29 @@ def _emit_libs_electrical_generics(
     )
 
 
+def _emit_itaipu_ande_generic(
+    artifacts: DecompCaseArtifacts, shared: _SharedEmitterInputs
+) -> GenericConstraintResult | None:
+    """Itaipu's 50 Hz generation held at or above the `RI` ANDE load, or
+    `None` when the deck carries no ANDE load."""
+    if artifacts.ande_bus_load is None:
+        return None
+    bus_id, carga_ande = artifacts.ande_bus_load
+    return constraints_conv.emit_itaipu_ande_generic(
+        artifacts.id_map.hydro_id(hydro_conv._ITAIPU_CODE),
+        bus_id,
+        carga_ande,
+        big_m=shared.big_m,
+        allocator=shared.allocator,
+    )
+
+
 def _write_generic_constraints(
     writer: CaseWriter,
     id_map: DecompIdMap,
     special_generics: list[constraints_conv.DecompGenericResult],
     libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None,
+    ande_generic: GenericConstraintResult | None,
 ) -> None:
     """Write the generic constraints with their bounds, and the scalar
     parameters their expressions reference."""
@@ -2470,6 +2491,8 @@ def _write_generic_constraints(
         and libs_electrical_result.generic is not None
     ):
         emitted.append(libs_electrical_result.generic)
+    if ande_generic is not None:
+        emitted.append(ande_generic)
     generic_constraints = [
         constraint for result in emitted for constraint in result.constraints
     ]
@@ -2541,7 +2564,7 @@ def _emit_and_write(
     """The ``step("Writing outputs")`` phase: run the post-emission self-checks
     (``emission_checks.run_and_gate``) before any constraint parquet is
     written, write the bound parquets, emit the RE -> RHQ/RHV -> RHE ->
-    LIBs-electrical generic constraints over one shared
+    LIBs-electrical -> RI ANDE generic constraints over one shared
     :class:`ConstraintIdAllocator`, write the generic-constraint artifacts and
     scalar parameters, emit the detection diagnostics, and return the
     :class:`~novomodelo_bridge.core.conversion.ConversionReport` built from
@@ -2639,7 +2662,11 @@ def _emit_and_write(
             hydros_dict=hydros_dict,
         )
 
-    _write_generic_constraints(writer, id_map, special_generics, libs_electrical_result)
+    # Last, so the ids of the deck's own restrictions do not move.
+    ande_generic = _emit_itaipu_ande_generic(artifacts, shared)
+    _write_generic_constraints(
+        writer, id_map, special_generics, libs_electrical_result, ande_generic
+    )
     _emit_constraint_detection_diagnostics(
         case, libs_electrical_model, libs_electrical_result
     )

@@ -23,6 +23,10 @@ links are cobre-bridge's.
 - **`dashboard` and `compare` read only the outputs of the paired novomodelo
   release.** Outputs and cases an older novomodelo wrote no longer load; run
   the case again with the paired release.
+- **`convert decomp` keeps Itaipu's 50 Hz generation at or above the ANDE
+  load, as DECOMP does:** the generic constraint `RI_ANDE` in
+  `constraints/generic_constraints.json` holds it there. Results change where
+  the `RI` 50 Hz minimum is below the ANDE load; reconvert DECOMP cases.
 
 ## [0.21.0] - 2026-11-16
 
