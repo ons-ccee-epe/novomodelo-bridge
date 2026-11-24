@@ -353,11 +353,16 @@ def load_ncs_bus_map(case_dir: Path) -> dict[int, int]:
 def load_hydro_metadata(
     case_dir: Path, *, bus_map: dict[int, int] | None = None
 ) -> dict[int, dict]:
-    """Return hydro_id -> {bus_id, bus_ids, name, vol_max, vol_min, max_gen_mw, ...}.
+    """Return hydro_id -> {bus_id, bus_ids, name, vol_max, vol_min, max_gen_mw,
+    min_spillage_m3s, max_spillage_m3s, ...}.
 
     ``bus_ids`` lists every bus the plant's ``unit_groups`` sit at, and
     ``bus_id`` is the plant's *bus_map* entry, absent when it has none.
     *bus_map* defaults to :func:`load_hydro_bus_map`.
+
+    ``min_spillage_m3s`` and ``max_spillage_m3s`` are the entity-level
+    spillage limits from ``hydros.json``; each is ``None`` when the plant
+    carries no value for it.
 
     Productivity comes from :func:`resolve_hydro_productivities`.
     """
@@ -373,6 +378,9 @@ def load_hydro_metadata(
     for h in hydros:
         gen = h["generation"]
         res = h["reservoir"]
+        spill = h.get("spillage") or {}
+        min_spill = spill.get("min_spillage_m3s")
+        max_spill = spill.get("max_spillage_m3s")
         prod = productivities.get(h["id"]) or 0
         max_turbined = gen["max_turbined_m3s"]
         bus_id = bus_map.get(h["id"])
@@ -386,6 +394,8 @@ def load_hydro_metadata(
             "max_turbined": max_turbined,
             "productivity": prod,
             "downstream_id": h.get("downstream_id"),
+            "min_spillage_m3s": None if min_spill is None else float(min_spill),
+            "max_spillage_m3s": None if max_spill is None else float(max_spill),
         }
         if bus_id is not None:
             entry["bus_id"] = bus_id

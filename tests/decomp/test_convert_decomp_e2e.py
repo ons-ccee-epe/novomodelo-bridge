@@ -130,6 +130,47 @@ def test_decomp_mini_deck_converts_and_validates(
 
 
 @requires_novomodelo_python
+def test_uh_spillage_ceiling_reaches_hydros_and_validates(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    import novomodelo.io  # tier-2: guarded import inside the body, never module scope
+
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    hydros = {
+        h["name"]: h
+        for h in json.loads((dst / "system" / "hydros.json").read_text())["hydros"]
+    }
+    guarapiranga, lajes = hydros["GUARAPIRANGA"], hydros["LAJES"]
+    assert guarapiranga["spillage"] == {
+        "min_spillage_m3s": None,
+        "max_spillage_m3s": 500.0,
+    }
+
+    rows = pq.read_table(dst / "constraints" / "hydro_bounds.parquet").to_pylist()
+    assert [
+        r
+        for r in rows
+        if r["hydro_id"] == guarapiranga["id"] and r["max_spillage_m3s"] is not None
+    ] == []
+
+    lajes_rows = [r for r in rows if r["hydro_id"] == lajes["id"]]
+    first_stage_blocks = [
+        r for r in lajes_rows if r["stage_id"] == 0 and r["block_id"] is not None
+    ]
+    assert first_stage_blocks
+    assert {r["max_spillage_m3s"] for r in first_stage_blocks} == {300.0}
+    assert {r["stage_id"] for r in lajes_rows if r["max_spillage_m3s"] is not None} == {
+        0
+    }
+
+    result = novomodelo.io.validate(str(dst))
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+@requires_novomodelo_python
 def test_differing_ct_cvus_case_validates(
     decomp_mini_deck: Path, tmp_path: Path
 ) -> None:

@@ -315,7 +315,7 @@ def _build_hydro_json(
                 round(float(t + sp), 4) for t, sp in zip(turb, spill)
             ]
 
-        # hydro_bounds: storage and turbined/spillage/outflow min/max
+        # hydro_bounds: storage and turbined/outflow min/max
         if hid in hb_index:
             hb_stages = hb_index[hid]
             bound_cols = [
@@ -323,8 +323,6 @@ def _build_hydro_json(
                 ("max_storage_hm3", "stor_max"),
                 ("min_turbined_m3s", "turb_min"),
                 ("max_turbined_m3s", "turb_max"),
-                ("min_spillage_m3s", "spill_min"),
-                ("max_spillage_m3s", "spill_max"),
                 ("min_outflow_m3s", "outflow_min"),
                 ("max_outflow_m3s", "outflow_max"),
             ]
@@ -339,12 +337,30 @@ def _build_hydro_json(
                 "stor_max",
                 "turb_min",
                 "turb_max",
-                "spill_min",
-                "spill_max",
                 "outflow_min",
                 "outflow_max",
             ]:
                 entry[key] = []
+
+        # Spillage: the entity value from hydros.json holds at every stage a
+        # hydro_bounds row does not replace it. Both lines are drawn from
+        # arrays, or neither is.
+        spill_cols = [
+            ("min_spillage_m3s", "spill_min"),
+            ("max_spillage_m3s", "spill_max"),
+        ]
+        no_spill_source = hid not in hb_index and all(
+            meta.get(col) is None for col, _ in spill_cols
+        )
+        for col, key in spill_cols:
+            entry[key] = (
+                []
+                if no_spill_source
+                else [
+                    _stage_bound(hb_index.get(hid, {}), s, col, meta.get(col))
+                    for s in stages
+                ]
+            )
 
         # lp_bounds: generation min/max (bound_type_code 6=min, 7=max)
         if hid in lp_index:
@@ -362,6 +378,20 @@ def _build_hydro_json(
         hydro_data[str(hid)] = entry
 
     return hydro_data, xdates
+
+
+def _stage_bound(
+    hb_stages: dict[int, dict], stage: int, col: str, fallback: float | None
+) -> float:
+    """The *col* value of the plant's ``hydro_bounds`` row at *stage*.
+
+    A missing row or a null cell (``None`` or ``NaN``) falls through to
+    *fallback*, and to 0 when that is ``None`` too.
+    """
+    value = hb_stages.get(stage, {}).get(col)
+    if value is None or pd.isna(value):
+        value = fallback
+    return round(float(0 if value is None else value), 4)
 
 
 def _var_short(var: str) -> str:

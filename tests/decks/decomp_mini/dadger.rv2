@@ -164,7 +164,7 @@ UH  257   1        82.00               1
 & SANTA BRANCA
 UH  122   1        44.20               1
 & LAJES
-UH  124   1        95.21               1
+UH  124   1        95.21               1                       400.00
 & ILHA DOS POMBOS
 UH  130   1         0.00               1
 & NILO PECANHA
@@ -193,7 +193,7 @@ UH  108   1         0.00               1
 & PEDREIRA
 UH  109   1         0.00               1
 & GUARAPIRANGA
-UH  117   1        92.06               1
+UH  117   1        92.06               1                       500.00
 & BILLINGS
 UH  118   1        80.45               1
 & HENRY BORDEN
@@ -5210,6 +5210,13 @@ LQ  258   1      4000.00             4000.00             4000.00
 LQ  258   3      6000.00             5731.35             5610.39
 LQ  258   4      8000.00             8000.00             8000.00
 CQ  258   1   314         1.0     QDEF
+&
+&-124- LAJES
+& Vazao vertida maxima de 300 m3/s no estagio 1
+&
+HQ  259   1    1
+LQ  259   1                 300.00              300.00              300.00
+CQ  259   1   124         1.0     QVER
 &
 &-------------------------------------------------------------------------------------------
 &       BLOCO 37 *** ACOPLAMENTO DE COMPLEXOS DO NEWAVE ***
