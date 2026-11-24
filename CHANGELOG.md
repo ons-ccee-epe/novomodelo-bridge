@@ -14,6 +14,8 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-24
+
 Pairs the bridge with the **novomodelo 0.22.0** release and pins
 `novomodelo-python` to it; convert NEWAVE and DECOMP cases again and run
 novomodelo on them, as both releases change the results.
@@ -27,12 +29,11 @@ novomodelo on them, as both releases change the results.
 
 ### Changed
 
-- **`convert newave` treats negative inflows as NEWAVE does:** the converted
-  `config.json` sets the `truncation` method, which zeroes them in the LP at
-  no cost, in place of `truncation_with_penalty`. Results change; reconvert
-  NEWAVE cases.
+- **`convert newave` zeroes negative inflows at no cost:** the converted
+  `config.json` sets the `truncation` method in place of
+  `truncation_with_penalty`. Results change; reconvert NEWAVE cases.
 - **`convert decomp` keeps Itaipu's 50 Hz generation at or above the ANDE
-  load, as DECOMP does:** the generic constraint `RI_ANDE` in
+  load:** the generic constraint `RI_ANDE` in
   `constraints/generic_constraints.json` holds it there. Results change where
   the `RI` 50 Hz minimum is below the ANDE load; reconvert DECOMP cases.
 - **`dashboard` and `compare` read only the outputs of the paired novomodelo
@@ -46,8 +47,8 @@ novomodelo on them, as both releases change the results.
 
 - **BREAKING: `convert newave` no longer writes
   `scenarios/inflow_seasonal_stats.parquet`.** Novomodelo fits the inflow
-  statistics from the history, and they now match NEWAVE's; read them from
-  `output/stochastic/`. Results change; reconvert NEWAVE cases.
+  statistics from the history; read them from `output/stochastic/`. Results
+  change; reconvert NEWAVE cases.
 
 ## [0.21.0] - 2026-11-16
 
