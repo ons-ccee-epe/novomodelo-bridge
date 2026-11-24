@@ -827,19 +827,14 @@ def test_chart_cost_bar_error_bars_omitted_when_nan() -> None:
 
 
 # ---------------------------------------------------------------------------
-# comparators.charts golden-string parity
+# comparators.charts golden HTML
 #
-# These tests guard that re-pointing the per-stage / percentile-band
-# aggregation in ``novomodelo_bridge.comparators.charts`` onto the analyze-layer
-# primitives (``analyze.aggregate_percentile_band`` /
-# ``per_stage_sum_from_results`` / ``per_stage_sum_from_frame``) leaves the
-# rendered HTML character-for-character identical.
-#
-# The golden files under ``tests/golden/`` were captured from the LEGACY
-# (pre-re-point) ``charts.py`` on the fixtures below. The only non-deterministic
-# part of the output is the random ``chart-<hex>`` div id emitted by
-# ``plotly_div`` (a fresh uuid per render, unrelated to the payload); it is
-# normalised away by ``_strip_chart_id`` before comparison so the assertion
+# Each test renders a ``novomodelo_bridge.comparators.charts`` chart (per-stage
+# sums and percentile bands from the analyze layer) on the fixtures below and
+# compares it to its golden file under ``tests/golden/``. The only
+# non-deterministic part of the output is the random ``chart-<hex>`` div id
+# emitted by ``plotly_div`` (a fresh uuid per render, unrelated to the payload);
+# it is normalised away by ``_strip_chart_id`` before comparison so the assertion
 # tests the numeric/structural payload only. Regenerate via
 # ``scripts/regen-goldens.sh``.
 # ---------------------------------------------------------------------------
@@ -955,15 +950,12 @@ def test_system_comparison_chart_html_matches_golden(
 
 
 # ---------------------------------------------------------------------------
-# per-bus roll-up + per-plant percentile golden-string parity
+# per-bus roll-up + per-plant percentile golden HTML
 #
-# Guards that re-pointing the per-bus aggregation (hydro_per_bus_chart,
-# hydro_slack_per_bus_chart) and the per-plant percentile extraction
-# (_enrich_with_percentiles, used by the hydro/thermal detail tabs) onto the
-# analyze-layer functions leaves the rendered HTML character-for-character
-# identical. The golden files were captured from the LEGACY (pre-re-point)
-# charts.py on the fixtures below; the random chart-<hex> div id is normalised
-# away by _strip_chart_id before comparison.
+# The per-bus charts (hydro_per_bus_chart, hydro_slack_per_bus_chart) and the
+# hydro/thermal detail tabs (per-plant percentiles from _enrich_with_percentiles),
+# rendered on the fixtures below and compared to their golden files; the random
+# chart-<hex> div id is normalised away by _strip_chart_id before comparison.
 # ---------------------------------------------------------------------------
 
 
@@ -1069,14 +1061,10 @@ def detail_novomodelo_hydro() -> pl.DataFrame:
     )
 
 
-# read_novomodelo_hydro_metadata no longer carries a plant
-# "bus_id"; the per-bus roll-up now sources the plant->bus label
-# from "bus_ids" (see analyze._bus_name_lookups), merged onto hydro_meta by
-# the results-comparison orchestrator from the hydro_bus_generation
-# partition. ``per_bus_hydro_meta`` uses the "bus_ids" shape,
-# one bus per plant (0->100, 1->101, 2->199), so every plant here
-# still resolves to exactly the bus it did under the legacy "bus_id" shape --
-# a value-preserving migration that renders the byte-identical golden HTML.
+# The per-bus roll-up takes the plant->bus label from "bus_ids" (see
+# analyze._bus_name_lookups), merged onto hydro_meta by the results-comparison
+# orchestrator from the hydro_bus_generation partition. ``per_bus_hydro_meta``
+# puts each plant on one bus (0->100, 1->101, 2->199).
 def test_hydro_per_bus_chart_html_matches_golden(
     per_bus_results: list[ResultComparison],
     per_bus_hydro_pct: pl.DataFrame,
@@ -1272,15 +1260,14 @@ def test_build_thermal_detail_tab_html_matches_golden(
 
 
 # ---------------------------------------------------------------------------
-# system/network draw-only golden-string parity
+# system/network golden HTML
 #
-# Guards that re-pointing the Novomodelo-sum + the source-model-SIN fold
-# (novomodelo_aggregate_chart), the per-bus grouping + per-eid percentile lookup
-# (system_per_bus_chart), and the spillage nw/cb lookups (system_spillage_energy_chart)
-# onto the analyze-layer functions (novomodelo_sum_and_newave_sin / bus_groups_and_pct /
-# spillage_lookups) leaves the rendered HTML character-for-character identical. The
-# golden files were captured from the LEGACY (pre-re-point) charts.py on the fixtures
-# below; the random chart-<hex> div id is normalised away by _strip_chart_id.
+# The Novomodelo-sum + source-model-SIN fold (novomodelo_aggregate_chart), the
+# per-bus grouping + per-eid percentile lookup (system_per_bus_chart) and the
+# spillage nw/cb lookups (system_spillage_energy_chart), all from the analyze layer
+# (novomodelo_sum_and_newave_sin / bus_groups_and_pct / spillage_lookups), rendered
+# on the fixtures below and compared to their golden files; the random chart-<hex>
+# div id is normalised away by _strip_chart_id.
 # ---------------------------------------------------------------------------
 
 
@@ -1409,17 +1396,13 @@ def test_system_spillage_energy_chart_html_matches_golden(
 
 
 # ---------------------------------------------------------------------------
-# build_comparison_report dataset-seam golden parity
+# build_comparison_report golden HTML
 #
-# Guards that re-pointing ``build_comparison_report`` onto the
-# ``ComparisonDataset`` seam (it now takes the dataset plus explicit
-# ``results``/``pct`` keyword params) leaves the rendered HTML
-# character-for-character identical to the pre-change output.
-#
-# The golden ``tests/golden/build_comparison_report_full.html`` was captured
-# from the LEGACY ``build_comparison_report(results, pctiles)`` call on the
-# fixtures below; the random ``chart-<hex>`` div id and the plotly.js CDN
-# version are normalised by ``_strip_chart_id`` before comparison.
+# The full report ``build_comparison_report`` renders from a
+# ``ComparisonDataset`` built on the fixtures below, compared to
+# ``tests/golden/build_comparison_report_full.html``; the random ``chart-<hex>``
+# div id and the plotly.js CDN version are normalised by ``_strip_chart_id``
+# before comparison.
 # ---------------------------------------------------------------------------
 
 
@@ -1516,7 +1499,7 @@ def _report_fixture_pct() -> PercentileData:
 
 
 def test_build_comparison_report_dataset_golden() -> None:
-    """The dataset seam renders byte-identically to the legacy signature."""
+    """The report built from the dataset matches its golden HTML."""
     from novomodelo_bridge.comparators.analyze import build_results_dataset
     from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
@@ -1530,15 +1513,13 @@ def test_build_comparison_report_dataset_golden() -> None:
 
 
 # ---------------------------------------------------------------------------
-# per-tab metadata-drain golden parity
+# Overview / System / Energy-Balance / Network tab golden HTML
 #
-# Guards that re-pointing the Overview / System / Energy-Balance / Network tab
-# blocks of ``build_comparison_report`` to read their frame/dict/list/int args
-# from ``dataset.metadata`` named keys (instead of the monolithic ``pct``
-# object) leaves each tab's rendered HTML character-for-character identical. The
-# golden files were captured from the LEGACY (pre-re-point) report_builder on
-# the shared ``_report_fixture_results`` / ``_report_fixture_pct`` fixtures; the
-# random ``chart-<hex>`` div id is normalised away by ``_strip_chart_id``.
+# Each of these ``build_comparison_report`` tabs reads its frame/dict/list/int
+# args from ``dataset.metadata`` named keys; rendered on the shared
+# ``_report_fixture_results`` / ``_report_fixture_pct`` fixtures, it is compared
+# to its golden file. The random ``chart-<hex>`` div id is normalised away by
+# ``_strip_chart_id``.
 # ---------------------------------------------------------------------------
 
 
@@ -1564,7 +1545,7 @@ def _extract_tab_content(html: str, tab_id: str) -> str:
     ],
 )
 def test_report_tab_matches_golden(tab_id: str, golden_name: str) -> None:
-    """Each migrated tab renders byte-identically after the metadata drain."""
+    """Each tab renders byte-identically to its golden HTML."""
     from novomodelo_bridge.comparators.analyze import build_results_dataset
     from novomodelo_bridge.comparators.report_builder import build_comparison_report
 
@@ -1579,15 +1560,13 @@ def test_report_tab_matches_golden(tab_id: str, golden_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Hydro Operation / Hydro Details metadata-drain golden parity
+# Hydro Operation / Hydro Details tab golden HTML
 #
-# Guards that re-pointing the Hydro Operation and Hydro Details tab blocks of
-# ``build_comparison_report`` to read their frame/dict/int args from
-# ``dataset.metadata`` named keys (instead of the monolithic ``pct`` object)
-# leaves each tab's rendered HTML character-for-character identical. The golden
-# files were captured from the LEGACY (pre-re-point) report_builder on the
-# shared ``_report_fixture_results`` / ``_report_fixture_pct`` fixtures; the
-# random ``chart-<hex>`` div id is normalised away by ``_strip_chart_id``.
+# Both ``build_comparison_report`` tabs read their frame/dict/int args from
+# ``dataset.metadata`` named keys; rendered on the shared
+# ``_report_fixture_results`` / ``_report_fixture_pct`` fixtures, each is compared
+# to its golden file. The random ``chart-<hex>`` div id is normalised away by
+# ``_strip_chart_id``.
 # ---------------------------------------------------------------------------
 
 
@@ -1614,16 +1593,13 @@ def test_report_hydro_tab_matches_golden(tab_id: str, golden_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Thermal Operation / Thermal Details / Productivity drain parity
+# Thermal Operation / Thermal Details / Productivity tab golden HTML
 #
-# Guards that re-pointing the Thermal Operation, Thermal Details and
-# Productivity tab blocks of ``build_comparison_report`` to read their frame
-# args from ``dataset.metadata`` named keys (``thermal`` /
-# ``productivity_detail``) instead of the monolithic ``pct`` object leaves each
-# tab's rendered HTML character-for-character identical. The golden files were
-# captured from the LEGACY (pre-re-point) report_builder on the shared
-# ``_report_fixture_results`` / ``_report_fixture_pct`` fixtures; the random
-# ``chart-<hex>`` div id is normalised away by ``_strip_chart_id``.
+# These ``build_comparison_report`` tabs read their frame args from
+# ``dataset.metadata`` named keys (``thermal`` / ``productivity_detail``);
+# rendered on the shared ``_report_fixture_results`` / ``_report_fixture_pct``
+# fixtures, each is compared to its golden file. The random ``chart-<hex>`` div
+# id is normalised away by ``_strip_chart_id``.
 # ---------------------------------------------------------------------------
 
 
@@ -1653,17 +1629,15 @@ def test_report_thermal_productivity_tab_matches_golden(
 
 
 # ---------------------------------------------------------------------------
-# Constraints / Performance metadata-drain golden parity
+# Constraints / Performance tab golden HTML
 #
-# Guards that re-pointing the Constraints and Performance tab blocks of
-# ``build_comparison_report`` to read their frame/list/int/float/dict args from
-# ``dataset.metadata`` named keys (``gc_constraints`` / ``gc_bounds`` /
+# Both ``build_comparison_report`` tabs read their frame/list/int/float/dict args
+# from ``dataset.metadata`` named keys (``gc_constraints`` / ``gc_bounds`` /
 # ``gc_lhs_newave`` / ``gc_lhs_novomodelo`` / ``nw_max_stage`` / ``nw_tim_iterations``
-# / ``nw_tim_stages`` / ``novomodelo_training_seconds`` / ``novomodelo_iteration_timing``)
-# instead of the monolithic ``pct`` object leaves each tab's rendered HTML
-# character-for-character identical. The goldens were captured from the LEGACY
-# (pre-re-point) report_builder on the ``_constraints_perf_fixture_pct`` fixture
-# below; the random ``chart-<hex>`` div id is normalised by ``_strip_chart_id``.
+# / ``nw_tim_stages`` / ``novomodelo_training_seconds`` / ``novomodelo_iteration_timing``);
+# rendered on the ``_constraints_perf_fixture_pct`` fixture below, each is compared
+# to its golden file. The random ``chart-<hex>`` div id is normalised by
+# ``_strip_chart_id``.
 # ---------------------------------------------------------------------------
 
 
@@ -1792,13 +1766,12 @@ def test_build_comparison_report_empty_dataset_has_all_tabs() -> None:
 # facet_grid subplot-domain helper
 #
 # These tests pin the `facet_grid` / `FacetPanel` helper in
-# `novomodelo_bridge.ui.html.plotly` to the legacy gap-based subplot-domain
-# arithmetic hand-copied across `comparators.charts`. They assert the exact
-# domain pairs for the representative call sites (the 2-column grids, the
-# single-column spillage stack, and the unclamped performance stack including
-# the intentional `-0.0`), re-derive the legacy formula inline as an oracle for
-# `n` in range(1, 8), and confirm `FacetPanel` is immutable. This is a pure-add
-# guard for re-pointing the chart functions onto `facet_grid`.
+# `novomodelo_bridge.ui.html.plotly` to the gap-based subplot-domain arithmetic
+# the `comparators.charts` facets use. They assert the exact domain pairs for the
+# representative call sites (the 2-column grids, the single-column spillage
+# stack, and the unclamped performance stack including the intentional `-0.0`),
+# re-derive the formula inline as an oracle for `n` in range(1, 8), and confirm
+# `FacetPanel` is immutable.
 # ---------------------------------------------------------------------------
 
 
@@ -1830,7 +1803,7 @@ def test_facet_grid_single_col_spillage() -> None:
 
 
 def test_facet_grid_single_col_unclamped_preserves_neg_zero() -> None:
-    """The unclamped performance stack preserves the legacy -0.0 y-domain low."""
+    """The unclamped performance stack keeps the -0.0 y-domain low."""
     from novomodelo_bridge.ui.html.plotly import facet_grid
 
     panels = facet_grid(2, ncols=1, row_gap=0.10, min_row_h=0.0)
@@ -1844,7 +1817,7 @@ def test_facet_grid_single_col_unclamped_preserves_neg_zero() -> None:
 
 @pytest.mark.parametrize("n", range(1, 8))
 def test_facet_grid_matches_inline_formula(n: int) -> None:
-    """facet_grid(n) matches the legacy inline formula panel-by-panel."""
+    """facet_grid(n) matches the inline gap-based formula panel-by-panel."""
     from novomodelo_bridge.ui.html.plotly import facet_grid
 
     ncols = 2

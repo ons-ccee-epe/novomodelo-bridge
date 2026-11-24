@@ -181,19 +181,19 @@ def _chart_training_mini(conv: pd.DataFrame) -> go.Figure | None:
 
     Args:
         conv: Convergence DataFrame with columns ``iteration``,
-            ``lower_bound``, ``upper_bound_mean``, and optionally
+            ``lower_bound``, ``upper_bound``, and optionally
             ``upper_bound_std``.
 
     Returns:
         A :class:`plotly.graph_objects.Figure`, or ``None`` when *conv* is
         empty or the required columns are absent.
     """
-    required = {"iteration", "lower_bound", "upper_bound_mean"}
+    required = {"iteration", "lower_bound", "upper_bound"}
     if conv.empty or not required.issubset(conv.columns):
         return None
 
     iters = conv["iteration"]
-    ub_mean = conv["upper_bound_mean"]
+    ub_mean = conv["upper_bound"]
     ub_color = COLORS["upper_bound"]
 
     fig = go.Figure()

@@ -149,6 +149,14 @@ not allow, and as unsupported when it is in another one, since DECOMP tells
 the two plants apart by subsystem and the conversion tells thermals apart by
 number alone.
 
+DECOMP takes the ANDE load of the deck's `RI` register out of Itaipu's 50 Hz
+generation before that generation reaches the submarket, so the 50 Hz units
+alone serve the ANDE load. The case adds the load to the demand of Itaipu's
+submarket, where the 50 Hz units sit, and the generic constraint `RI_ANDE`
+holds their generation at or above it in each stage and patamar, at the
+penalty of the `RE` constraints. Without it, the submarket's other plants
+could serve the ANDE load wherever the `RI` 50 Hz minimum is below it.
+
 Incremental inflows are converted as the inflow file gives them, negative
 values included. DECOMP reports a negative incremental inflow as zero in its
 operation output; Novomodelo's water balance removes that water unless its priced

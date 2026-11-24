@@ -1,10 +1,10 @@
 """Console==dataset parity regression tests.
 
-The compare-data-layer migration's central invariant is single-source-of-truth:
-every number on the console must trace back to ONE ``ComparisonDataset`` analysis
+The compare data layer's central invariant is single-source-of-truth: every
+number on the console must trace back to ONE ``ComparisonDataset`` analysis
 (``dataset.summary`` rows / ``dataset.metadata`` counts), never to a second,
-independently computed path. The historical bug this guards against was a
-two-path divergence where console and HTML aggregated separately and drifted.
+independently computed path where console and HTML would aggregate separately
+and drift.
 
 This module renders the dataset-driven console printers, parses the numbers back
 out of the rendered text, and asserts those parsed cells equal the cells produced

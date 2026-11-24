@@ -1,10 +1,7 @@
 """Energy Balance tab tests for ``comparators.decomp.results``.
 
-Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
-the System tab's novomodelo bus percentile metadata and the Energy
-Balance frames feeding ``build_decomp_dataset``. The remaining concern bands
-(network, costs, performance, hydro/thermal detail, productivity, FPHA, REE,
-evaporation, constraints, CLI) stay in the mega file pending their own carve.
+Covers the System tab's novomodelo bus percentile metadata and the Energy
+Balance frames feeding ``build_decomp_dataset``.
 """
 
 from __future__ import annotations

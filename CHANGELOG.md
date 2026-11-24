@@ -16,12 +16,24 @@ links are cobre-bridge's.
 
 ### Added
 
-#### DECOMP
-
 - **`convert decomp` writes `VL`, `VU` and `VA` as `tailrace_flow` in
   `system/hydros.json`**, and `check decomp` reports them, with `tailrace-*`
   warnings for records it drops or merges. Results change for decks with
   these records; reconvert them.
+
+### Changed
+
+- **`convert newave` treats negative inflows as NEWAVE does:** the converted
+  `config.json` sets the `truncation` method, which zeroes them in the LP at
+  no cost, in place of `truncation_with_penalty`. Results change; reconvert
+  NEWAVE cases.
+- **`dashboard` and `compare` read only the outputs of the paired novomodelo
+  release.** Outputs and cases an older novomodelo wrote no longer load; run
+  the case again with the paired release.
+- **`convert decomp` keeps Itaipu's 50 Hz generation at or above the ANDE
+  load, as DECOMP does:** the generic constraint `RI_ANDE` in
+  `constraints/generic_constraints.json` holds it there. Results change where
+  the `RI` 50 Hz minimum is below the ANDE load; reconvert DECOMP cases.
 
 ## [0.21.0] - 2026-11-16
 

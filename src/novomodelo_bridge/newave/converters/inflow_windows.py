@@ -1,4 +1,4 @@
-"""Windowed inflow emission (Novomodelo >= 0.13 input shapes).
+"""Windowed inflow emission.
 
 Builds the two windowed inflow inputs of the unified representation:
 
@@ -10,10 +10,7 @@ Builds the two windowed inflow inputs of the unified representation:
   preceding the study start).
 
 Values are incremental m³/s, produced by the same posto-mapping and
-upstream-subtraction helpers the point-dated emitters use. The pipeline
-switches to these emitters when the Novomodelo dependency pin moves to the
-windowed schema; until then the module is additive and unused by
-``convert``.
+upstream-subtraction helpers the point-dated emitters use.
 """
 
 from __future__ import annotations
@@ -35,7 +32,7 @@ from novomodelo_bridge.newave.converters.stochastic import (
 from novomodelo_bridge.newave.horizon import study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 
-# Parquet schema for the windowed past-inflow history (Novomodelo >= 0.13).
+# Parquet schema for the windowed past-inflow history.
 INFLOW_HISTORY_WINDOW_SCHEMA = pa.schema(
     [
         pa.field("hydro_id", pa.int32()),

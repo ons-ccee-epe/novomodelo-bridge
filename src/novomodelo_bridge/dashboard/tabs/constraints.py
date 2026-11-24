@@ -564,7 +564,7 @@ def _add_type_filter_and_row_attrs(
 
     Post-processes the HTML string returned by ``build_constraints_summary_table()``
     to add ``data-type`` and ``data-cid`` attributes to each ``<tr>`` in the
-    tbody, without modifying the legacy ``constraints.py`` module.
+    tbody.
 
     Args:
         constraints: Constraint dicts in the same order as the table rows.

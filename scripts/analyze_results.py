@@ -77,8 +77,7 @@ def report_overview(case_dir: Path) -> None:
     print(f"  Iterations:   {int(last['iteration'])}")
     print(f"  Lower bound:  {last['lower_bound']:.4e}")
     print(
-        f"  Upper bound:  {last['upper_bound_mean']:.4e} +/- "
-        f"{last['upper_bound_std']:.4e}"
+        f"  Upper bound:  {last['upper_bound']:.4e} +/- {last['upper_bound_std']:.4e}"
     )
     print(f"  Gap:          {last['gap_percent']:.2f}%")
     print()

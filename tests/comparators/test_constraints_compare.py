@@ -32,7 +32,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_generic_constraints,
     read_novomodelo_resolved_generic_constraints,
 )
-from tests.conftest import write_generic_constraint_echo
+from tests.conftest import hydro_with_group, write_generic_constraint_echo
 
 _NOVOMODELO_INPUT_DIR = (
     Path(__file__).parent.parent
@@ -84,8 +84,16 @@ def _write_case(tmp_path: Path) -> tuple[Path, Path]:
         json.dumps(
             {
                 "hydros": [
-                    {"id": 0, "reservoir": {"min_storage_hm3": 100.0}},
-                    {"id": 1, "reservoir": {"min_storage_hm3": 50.0}},
+                    hydro_with_group(
+                        0,
+                        0,
+                        reservoir={"min_storage_hm3": 100.0, "max_storage_hm3": 500.0},
+                    ),
+                    hydro_with_group(
+                        1,
+                        0,
+                        reservoir={"min_storage_hm3": 50.0, "max_storage_hm3": 500.0},
+                    ),
                 ]
             }
         ),

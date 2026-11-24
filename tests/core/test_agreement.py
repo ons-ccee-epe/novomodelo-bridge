@@ -97,7 +97,7 @@ class TestPolicyRows:
         ("entity_type", "variable"),
         [
             ("convergence", "lower_bound"),
-            ("convergence", "upper_bound_mean"),
+            ("convergence", "upper_bound"),
             ("hydro", "water_value_per_hm3"),
         ],
     )

@@ -103,13 +103,13 @@ def _chart_convergence_hero(conv: pd.DataFrame) -> go.Figure:
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # Upper bound std band (drawn first so it appears under lines). novomodelo 0.14
+    # Upper bound std band (drawn first so it appears under lines). novomodelo
     # leaves ``upper_bound_std`` NULL for an exact (enumerated) upper bound, so a
     # missing std collapses the band to a zero width — the line still renders
     # instead of vanishing into NaN.
     ub_std = conv["upper_bound_std"].fillna(0.0)
-    ub_upper = conv["upper_bound_mean"] + ub_std
-    ub_lower = conv["upper_bound_mean"] - ub_std
+    ub_upper = conv["upper_bound"] + ub_std
+    ub_lower = conv["upper_bound"] - ub_std
 
     fig.add_trace(
         go.Scatter(
@@ -142,7 +142,7 @@ def _chart_convergence_hero(conv: pd.DataFrame) -> go.Figure:
     fig.add_trace(
         go.Scatter(
             x=iters,
-            y=conv["upper_bound_mean"].tolist(),
+            y=conv["upper_bound"].tolist(),
             name="Upper Bound",
             mode="lines",
             line={"color": COLORS["upper_bound"], "width": 2},
@@ -320,9 +320,9 @@ def _chart_cut_activity_heatmap(
     if cut_selection.empty:
         return "<p>No cut selection data available.</p>"
 
-    cs = cut_selection[cut_selection["stage"] > 0]
+    cs = cut_selection[cut_selection["stage_id"] > 0]
     pivot = cs.pivot_table(
-        index="stage", columns="iteration", values="cuts_active_after", aggfunc="sum"
+        index="stage_id", columns="iteration", values="cuts_active_after", aggfunc="sum"
     )
 
     # Sample every 2nd iteration for large iteration counts
@@ -377,7 +377,7 @@ def _chart_cut_deactivation_heatmap(
         return "<p>No cut selection data available.</p>"
 
     pivot = cut_selection.pivot_table(
-        index="stage", columns="iteration", values="cuts_deactivated", aggfunc="sum"
+        index="stage_id", columns="iteration", values="cuts_deactivated", aggfunc="sum"
     )
 
     # Sample every 2nd iteration for large iteration counts

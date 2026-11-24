@@ -36,7 +36,6 @@ from novomodelo_bridge.core.productivity import (
     equivalent_productivity,
     evaluate_cota,
     fpha_spillage_fit_max_m3s,
-    integrated_productivity,
     mean_cota,
     stored_energy_productivity,
 )
@@ -68,14 +67,6 @@ from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 
 _LOG = logging.getLogger(__name__)
-
-# The point / PRODT / integrated productivity functions now live in the
-# presentation-free ``novomodelo_bridge.core.productivity`` domain module. These aliases
-# keep hydro.py's many internal callers (and tests that import the private
-# names) working; external modules import the public names directly.
-_compute_productivity = compute_productivity
-_equivalent_productivity = equivalent_productivity
-_compute_integrated_productivity = integrated_productivity
 
 # --- FPHA (hydro production function) emission ---------------------------------
 #
@@ -156,13 +147,13 @@ def compute_prodt_sin_mean(case: NewaveCase) -> float:
     R$/MWh penalties to the flow/volume domain (pmo.dat "PENALIDADE POR VIOLACAO
     DE VAZAO MINIMA" etc.). Two conventions matter and are matched here:
 
-    - the per-plant productivity is **PRODT** (:func:`_equivalent_productivity`),
+    - the per-plant productivity is **PRODT** (:func:`equivalent_productivity`),
       not the 65%-reference point value used for energy; and
     - the mean is over **all** existing non-fictitious plants **including** those
       with zero PRODT — no ``ρ > 0`` filter and no fictitious-cascade fold-in.
 
     On the example case this returns ≈ 0.6299, matching pmo's penalty-implied ρ
-    (0.6294) to 0.06%; the legacy 65%-reference mean was 0.656 (~4% high).
+    (0.6294) to 0.06%; the 65%-reference mean is 0.656 (~4% high).
     """
     cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
 
@@ -172,7 +163,7 @@ def compute_prodt_sin_mean(case: NewaveCase) -> float:
     for _, row in existing.iterrows():
         code = int(row["codigo_usina"])
         if code in cadastro.index:
-            prodt.append(_equivalent_productivity(cadastro.loc[code]))
+            prodt.append(equivalent_productivity(cadastro.loc[code]))
     return sum(prodt) / len(prodt) if prodt else 1.0
 
 
@@ -186,11 +177,9 @@ def compute_per_stage_prodt_sin_mean(case: NewaveCase) -> list[float]:
     the decimal wiggle pmo.dat shows on the VAZMIN / TURBMN / TURBMX penalties
     (820.53…821.78). PRODT ignores VOLREF_SAZ, so only CFUGA/CMONT move it.
 
-    Returns ``[]`` when the horizon can't be read (mocked-pipeline unit tests).
+    Returns ``[]`` when the case has no existing plants.
     """
     total_stages = _total_study_stages(case)
-    if total_stages <= 0:
-        return []
 
     cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
     existing = case.active_hydros
@@ -210,7 +199,7 @@ def compute_per_stage_prodt_sin_mean(case: NewaveCase) -> list[float]:
         hreg = cadastro.loc[code]
         series = _per_stage_equivalent_productivities(
             hreg,
-            _equivalent_productivity(hreg),
+            equivalent_productivity(hreg),
             drop_by_plant.get(code, []),
             case,
             total_stages,
@@ -630,7 +619,7 @@ def _per_stage_equivalent_productivities(
     such override get a flat list at ``base_prodt``.
     """
     return _per_stage_drop_series(
-        hreg, base_prodt, drop_overrides, case, total_stages, _equivalent_productivity
+        hreg, base_prodt, drop_overrides, case, total_stages, equivalent_productivity
     )
 
 
@@ -711,7 +700,7 @@ def _per_stage_productivities(
             values.append(base_productivity)
         else:
             values.append(
-                _compute_productivity(
+                compute_productivity(
                     hreg,
                     canal_fuga_override=active_cfuga,
                     cmont_override=active_cmont,
@@ -802,7 +791,7 @@ def convert_hydro_energy_productivity(
         except KeyError:
             continue
         hreg = cadastro.loc[newave_code]
-        legacy_base = _compute_productivity(hreg)
+        base_productivity = compute_productivity(hreg)
         resolution = fict_cascade.get(newave_code)
         fict_extra = resolution.fict_rho_sum if resolution is not None else 0.0
         overrides = plants_with_drop_overrides.get(newave_code, [])
@@ -813,12 +802,12 @@ def convert_hydro_energy_productivity(
         if not overrides and not plant_seasonal:
             hydro_ids.append(hydro_id)
             stage_ids.append(None)
-            equiv_prods.append(legacy_base + fict_extra)
+            equiv_prods.append(base_productivity + fict_extra)
             integrated_prods.append(stored_base + fict_extra)
         else:
             per_stage = _per_stage_productivities(
                 hreg,
-                legacy_base,
+                base_productivity,
                 overrides,
                 case,
                 total_stages,
@@ -852,109 +841,3 @@ def convert_hydro_energy_productivity(
             ),
         }
     )
-
-
-def compute_per_stage_own_productivities(
-    case: NewaveCase,
-) -> dict[int, list[float]]:
-    """Return ``{plant_code: [own ρ_eq per stage]}`` for every existing plant.
-
-    Per-stage own productivity reflects MODIF.DAT CFUGA / CMONT temporal
-    overrides — for stages before any override the value is the base
-    polynomial-integrated productivity; for later stages it picks up the
-    effective tailrace / forebay overrides as they take effect. Plants
-    without any temporal overrides return a flat list of length
-    ``total_stages``.
-
-    Keys are the source model plant codes (not Novomodelo ids) since cascade traversal in
-    ``compute_accumulated_productivities`` works in the source-model-code space.
-    """
-    total_stages = _total_study_stages(case)
-    if total_stages <= 0:
-        return {}
-
-    cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
-
-    confhd_df = case.hydro_plants
-    existing = case.active_hydros
-    confhd_codes = [int(r["codigo_usina"]) for _, r in existing.iterrows()]
-
-    temporal_overrides = _extract_temporal_overrides(case, confhd_codes)
-    plants_with_drop_overrides = {
-        code: [o for o in overrides if o["type"] in ("CFUGA", "CMONT")]
-        for code, overrides in temporal_overrides.items()
-        if any(o["type"] in ("CFUGA", "CMONT") for o in overrides)
-    }
-
-    seasonal_volref = seasonal_useful_volumes(case)
-
-    # FICT-cascade fold-in: per-stage ρ_eq must already include any FICT
-    # contribution so that the per-stage ρ_acum used by VminOP and EARM
-    # accounting matches the topology rewired into ``hydros.json``.
-    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
-
-    fict_cascade = resolve_cascade(
-        confhd_df, cadastro, fictitious=case.fictitious_codes
-    )
-
-    result: dict[int, list[float]] = {}
-    for plant_code in confhd_codes:
-        if plant_code not in cadastro.index:
-            continue
-        hreg = cadastro.loc[plant_code]
-        legacy_base = _compute_productivity(hreg)
-        resolution = fict_cascade.get(plant_code)
-        fict_extra = resolution.fict_rho_sum if resolution is not None else 0.0
-        overrides = plants_with_drop_overrides.get(plant_code, [])
-        plant_seasonal = seasonal_volref.get(plant_code)
-        per_stage = _per_stage_productivities(
-            hreg,
-            legacy_base,
-            overrides,
-            case,
-            total_stages,
-            seasonal_volref_by_month=plant_seasonal,
-        )
-        result[plant_code] = [v + fict_extra for v in per_stage]
-    return result
-
-
-def compute_base_productivities(
-    case: NewaveCase, id_map: NewaveIdMap
-) -> dict[int, float]:
-    """Return ``{hydro_id: base_productivity_mw_per_m3s}`` for every hydro.
-
-    The base productivity is the value `_compute_productivity` returns with no
-    CFUGA/CMONT overrides applied — i.e. the productivity used when the case
-    has no temporal overrides for that plant. Consumers that previously read
-    ``hydros_dict[i]["generation"]["productivity_mw_per_m3s"]`` should call
-    this instead now that productivity has moved out of `hydros.json`.
-    """
-    cadastro = _apply_permanent_overrides(case.hidr.cadastro, case)
-
-    confhd_df = case.hydro_plants
-    existing = case.active_hydros
-
-    # FICT-cascade fold-in — keep this in lockstep with the other productivity
-    # helpers so every downstream consumer sees the same effective ρ_eq.
-    from novomodelo_bridge.newave.converters.fict_cascade import resolve_cascade
-
-    fict_cascade = resolve_cascade(
-        confhd_df, cadastro, fictitious=case.fictitious_codes
-    )
-
-    result: dict[int, float] = {}
-    for _, row in existing.iterrows():
-        newave_code = int(row["codigo_usina"])
-        if newave_code not in cadastro.index:
-            continue
-        try:
-            hydro_id = id_map.hydro_id(newave_code)
-        except KeyError:
-            continue
-        base = _compute_productivity(cadastro.loc[newave_code])
-        resolution = fict_cascade.get(newave_code)
-        if resolution is not None:
-            base += resolution.fict_rho_sum
-        result[hydro_id] = base
-    return result

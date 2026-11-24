@@ -286,12 +286,12 @@ def test_ft_thermal_two_block_emits_per_block_contributions(
     assert by_block[1].upper == 200.0
 
 
-def test_re_hydro_regression_still_family_hydro(
+def test_re_single_hydro_generation_is_family_hydro(
     id_map: DecompIdMap, effective: EffectiveCadastro
 ) -> None:
-    """Regression: a single-hydro-generation RE (the pre-existing ``FU``
-    path) still lowers to a ``family="hydro"`` contribution now that the RE
-    branch discriminates on the term variable rather than assuming hydro."""
+    """A single-hydro-generation RE (the ``FU`` path) lowers to a
+    ``family="hydro"`` contribution: the RE branch discriminates on the term
+    variable."""
     record = _re_record(
         constraint_id=32,
         coefficient=1.0,

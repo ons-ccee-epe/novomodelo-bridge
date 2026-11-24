@@ -260,6 +260,43 @@ def test_rhv_volume_tipos_write_stage_level_generic_rows(
         assert {(r["bound_lower"], r["bound_upper"]) for r in own} == {sides}
 
 
+def test_itaipu_50hz_generation_is_held_at_or_above_the_ande_load(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    hydros = json.loads((dst / "system" / "hydros.json").read_text(encoding="utf-8"))[
+        "hydros"
+    ]
+    (itaipu,) = [h for h in hydros if h["name"] == "ITAIPU"]
+    group_50hz_bus = itaipu["unit_groups"][0]["bus_id"]
+    document = json.loads(
+        (dst / "constraints" / "generic_constraints.json").read_text(encoding="utf-8")
+    )
+    (ande,) = [c for c in document["constraints"] if c["name"] == "RI_ANDE"]
+    assert ande["expression"] == (
+        f"hydro_generation({itaipu['id']}, bus={group_50hz_bus})"
+    )
+    assert ande["id"] == max(c["id"] for c in document["constraints"])
+
+    rows = [
+        row
+        for row in pq.read_table(
+            dst / "constraints" / "generic_constraint_bounds.parquet"
+        ).to_pylist()
+        if row["constraint_id"] == ande["id"]
+    ]
+    # The deck's RI carga_ande: estágio 1 forward-filled to stage 2, estágio 4 on stage 3.
+    weekly, monthly = [3954.0, 3760.0, 3178.5], [3505.0, 3332.0, 2817.5]
+    assert [(r["stage_id"], r["block_id"], r["bound_lower"]) for r in rows] == [
+        (stage_id, block_id, load)
+        for stage_id, loads in enumerate([weekly, weekly, weekly, monthly])
+        for block_id, load in enumerate(loads)
+    ]
+    assert all(r["bound_upper"] is None for r in rows)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "digits"), [({"float_digits": 4}, 4), ({}, 15)], ids=["4", "default"]
 )

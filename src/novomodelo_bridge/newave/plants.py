@@ -15,8 +15,8 @@ REE/subsystem reduction (no generating posto-mate left) is **not** fictitious an
 in the LP as a ρ=0 routing/regulation reservoir. This unifies "is it fictitious" with
 "should we keep an orphaned twin" into one rule.
 
-These helpers are the one home for that filter (historically copy-pasted at ~13
-sites). They are pure functions over an already-read ``Confhd.usinas`` DataFrame
+These helpers are the one home for that filter. They are pure functions over an
+already-read ``Confhd.usinas`` DataFrame
 plus the ``Hidr.cadastro`` (for the productivity test); they do **not** read
 files. :func:`fictitious_codes` classifies; the case computes it once
 (``NewaveCase.fictitious_codes``) and every other helper takes that set.

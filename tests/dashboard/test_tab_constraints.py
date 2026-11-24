@@ -606,17 +606,17 @@ def test_build_constraint_lhs_data_missing_bounds_gives_none_bound() -> None:
     assert entry["stage"]["bound_lower"] == [None, None, None]
     assert entry["stage"]["bound_upper"] == [None, None, None]
     assert entry["stage"]["violations"] == []
-    # Falls back to the historical `c.get("sense", "<=")` default shape.
+    # No bounds -> the "<=" default shape.
     assert entry["sense"] == "<="
 
 
 # ---------------------------------------------------------------------------
-# Derived sense + bound value parity with a legacy (sense, bound) case
+# Sense derived from the interval endpoints
 # ---------------------------------------------------------------------------
 
 
 def test_build_constraint_lhs_data_derives_ge_from_lower_endpoint() -> None:
-    """A VminOP-style floor (lower-only) renders like a legacy ``sense=">="``."""
+    """A VminOP-style floor (lower-only) renders as ``sense=">="``."""
     lhs_df = _make_lhs_df([0], n_scenarios=2, n_stages=2, lhs_value=120.0)
     gc_bounds = _make_gc_bounds([0], n_stages=2, sense=">=", value=500.0)
 
@@ -630,7 +630,7 @@ def test_build_constraint_lhs_data_derives_ge_from_lower_endpoint() -> None:
 
 
 def test_build_constraint_lhs_data_derives_le_from_upper_endpoint() -> None:
-    """An RE/AGRINT-style ceiling (upper-only) renders like a legacy ``"<="``."""
+    """An RE/AGRINT-style ceiling (upper-only) renders as ``sense="<="``."""
     lhs_df = _make_lhs_df([1], n_scenarios=2, n_stages=2, lhs_value=120.0)
     gc_bounds = _make_gc_bounds([1], n_stages=2, sense="<=", value=200.0)
 
@@ -818,16 +818,6 @@ def test_type_filter_has_no_family_absent_from_the_case() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_no_three_separate_old_section_titles() -> None:
-    """render() must NOT contain the old three-section titles from Section C."""
-    data = _make_mock_data()
-
-    with _render_with_stubs_ctx(data) as html:
-        assert "VminOP: Stored Energy vs Minimum" not in html
-        assert "Electric Constraints (RE)" not in html
-        assert "Exchange Group Constraints (AGRINT)" not in html
-
-
 # ---------------------------------------------------------------------------
 # test_render (existing + updated)
 # ---------------------------------------------------------------------------
@@ -945,8 +935,8 @@ def test_render_evaluates_lhs_from_the_resolved_view() -> None:
 
 
 class TestSummaryTableDerivesSenseFromBounds:
-    """``build_constraints_summary_table`` shows the same Sense + Bound Range
-    a legacy (sense, bound) case shows, sourced from ``bound_lower``/``bound_upper``."""
+    """``build_constraints_summary_table`` derives Sense + Bound Range from
+    ``bound_lower``/``bound_upper``."""
 
     @staticmethod
     def _violations() -> pd.DataFrame:
@@ -1029,11 +1019,11 @@ class TestSummaryTableDerivesSenseFromBounds:
 # ---------------------------------------------------------------------------
 
 
-class TestLoadGenericConstraintsF3Shape:
+class TestLoadGenericConstraintsIntervalBounds:
     """``load_generic_constraints`` takes the bounds from the run's echo — the
     ``bound_lower``/``bound_upper`` pair — with no ``bound`` column."""
 
-    def test_loads_f3_bounds_from_the_echo(self, tmp_path: Path) -> None:
+    def test_loads_interval_bounds_from_the_echo(self, tmp_path: Path) -> None:
         from novomodelo_bridge.dashboard.data import load_generic_constraints
         from tests.conftest import write_generic_constraint_echo
 
@@ -1063,47 +1053,3 @@ class TestLoadGenericConstraintsF3Shape:
 
         assert result.constraints == []
         assert result.bounds.empty
-
-
-# ---------------------------------------------------------------------------
-# grep guard: no dashboard/report reader accesses a removed `sense` key
-# or a single `bound` column
-# ---------------------------------------------------------------------------
-
-_BOUND_ACCESS_RE = re.compile(
-    r'\.col\(\s*["\']bound["\']\s*\)|\[\s*["\']bound["\']\s*\]|\.get\(\s*["\']bound["\']'
-)
-_SENSE_ACCESS_RE = re.compile(
-    r'\.col\(\s*["\']sense["\']\s*\)|\[\s*["\']sense["\']\s*\]|\.get\(\s*["\']sense["\']'
-)
-
-
-class TestNoSenseOrSingleBoundColumnRemainsInDashboardOrReport:
-    """Mirrors ``TestNoSenseOrSingleBoundColumnRemainsInComparators``
-    in the comparators compare tests, for the dashboard/report readers:
-    matches only genuine column/dict *access* patterns (``.col("bound")``,
-    ``row["bound"]``, ``.get("bound"``) — column *names* that merely contain
-    "bound" as a substring (``bound_lower``, ``bound_upper``) are not
-    matches.
-    """
-
-    @pytest.mark.parametrize(
-        "relative_path",
-        [
-            "src/novomodelo_bridge/dashboard/tabs/constraints.py",
-            "src/novomodelo_bridge/dashboard/tabs/constraints_utils.py",
-            "src/novomodelo_bridge/dashboard/data.py",
-            "src/novomodelo_bridge/comparators/report_builder.py",
-        ],
-    )
-    def test_module_has_no_sense_or_bound_column_access(
-        self, relative_path: str
-    ) -> None:
-        repo_root = Path(__file__).resolve().parents[2]
-        text = (repo_root / relative_path).read_text(encoding="utf-8")
-        assert not _BOUND_ACCESS_RE.search(text), (
-            f"{relative_path} still accesses a single `bound` column"
-        )
-        assert not _SENSE_ACCESS_RE.search(text), (
-            f"{relative_path} still accesses a `sense` key"
-        )

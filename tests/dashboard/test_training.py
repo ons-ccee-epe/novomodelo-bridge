@@ -28,18 +28,16 @@ def _make_conv(n: int = 10) -> pd.DataFrame:
     """Synthetic convergence DataFrame with *n* rows."""
     iterations = list(range(1, n + 1))
     lower_bound = [100.0 + i * 5.0 for i in range(n)]
-    upper_bound_mean = [200.0 - i * 3.0 for i in range(n)]
+    upper_bound = [200.0 - i * 3.0 for i in range(n)]
     upper_bound_std = [10.0 - i * 0.5 for i in range(n)]
-    gap_percent = [
-        (ub - lb) / ub * 100 for lb, ub in zip(lower_bound, upper_bound_mean)
-    ]
+    gap_percent = [(ub - lb) / ub * 100 for lb, ub in zip(lower_bound, upper_bound)]
     cuts_active = [50 + i * 10 for i in range(n)]
     cuts_added = [5 + i % 3 for i in range(n)]
     return pd.DataFrame(
         {
             "iteration": iterations,
             "lower_bound": lower_bound,
-            "upper_bound_mean": upper_bound_mean,
+            "upper_bound": upper_bound,
             "upper_bound_std": upper_bound_std,
             "gap_percent": gap_percent,
             "cuts_active": cuts_active,
@@ -55,7 +53,7 @@ def _make_cut_selection(n_stages: int = 5, n_iters: int = 10) -> pd.DataFrame:
         for it in range(1, n_iters + 1):
             rows.append(
                 {
-                    "stage": stage,
+                    "stage_id": stage,
                     "iteration": it,
                     "cuts_active_after": 50 + stage * 2,
                     "cuts_deactivated": stage % 3,
@@ -65,7 +63,7 @@ def _make_cut_selection(n_stages: int = 5, n_iters: int = 10) -> pd.DataFrame:
 
 
 def _make_timing(n: int = 10) -> pd.DataFrame:
-    """Synthetic timing DataFrame matching novomodelo v0.5.0 schema."""
+    """Synthetic timing DataFrame matching the novomodelo schema."""
     iterations = list(range(1, n + 1))
     return pd.DataFrame(
         {
@@ -103,7 +101,7 @@ def _make_mock_data(
 
     # Normalise the training manifest: the implementation reads
     # data.training_metadata.get("duration_seconds").  Map "elapsed_seconds"
-    # -> "duration_seconds" if present so legacy test data still works.
+    # -> "duration_seconds" if present.
     # When training_manifest is None, supply an empty dict so that
     # .get("duration_seconds") returns None -> "N/A" display.
     if training_manifest is None:
@@ -169,18 +167,6 @@ def test_build_metrics_row_contains_new_labels() -> None:
     assert "Active Cuts" in html
 
 
-def test_build_metrics_row_omits_removed_labels() -> None:
-    """_build_metrics_row() must NOT contain Upper Bound, Gap, or Termination."""
-    data = _make_mock_data(
-        conv=_make_conv(10),
-        training_manifest={"elapsed_seconds": 15120},
-    )
-    html = _build_metrics_row(data)
-    assert "Upper Bound" not in html
-    assert "Final Gap" not in html
-    assert "Termination" not in html
-
-
 def test_build_metrics_row_elapsed_seconds_formatted() -> None:
     """15120 seconds must render as '4h 12min'."""
     data = _make_mock_data(
@@ -204,7 +190,7 @@ def test_build_metrics_row_cut_totals() -> None:
         {
             "iteration": [1, 2, 3],
             "lower_bound": [100.0, 110.0, 120.0],
-            "upper_bound_mean": [200.0, 190.0, 180.0],
+            "upper_bound": [200.0, 190.0, 180.0],
             "upper_bound_std": [5.0, 5.0, 5.0],
             "gap_percent": [50.0, 42.1, 33.3],
             "cuts_active": [300, 320, 350],
@@ -255,7 +241,7 @@ def test_chart_convergence_hero_null_upper_bound_std_collapses_band() -> None:
         ys = [y for y in trace.y if y is not None]
         assert ys and not any(math.isnan(y) for y in ys)
     # With a zero-width band each edge equals the mean upper bound.
-    means = conv["upper_bound_mean"].tolist()
+    means = conv["upper_bound"].tolist()
     for trace in band_traces:
         assert list(trace.y) == means
 

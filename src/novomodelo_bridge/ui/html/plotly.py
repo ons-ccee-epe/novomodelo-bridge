@@ -38,10 +38,8 @@ class FacetPanel:
 
     ``x_domain``/``y_domain`` are 2-element ``list[float]`` ``[lo, hi]`` Plotly
     axis-domain fractions, rounded to the helper's ``ndigits``. They are lists
-    (not tuples) because ``list[float]`` matches the Plotly layout-dict
-    expectation and preserves type identity with the legacy inline
-    ``[round(x0, 3), round(x1, 3)]`` list literals fed into
-    ``layout["xaxis"]["domain"]`` (this is a type-identity concern, NOT a
+    (not tuples) because ``list[float]`` is the type the Plotly layout dict's
+    ``layout["xaxis"]["domain"]`` takes (a type concern, NOT a
     JSON-serialization difference: ``json.dumps`` emits tuples and lists alike).
     """
 
@@ -62,14 +60,13 @@ def facet_grid(
 ) -> list[FacetPanel]:
     """Compute Plotly subplot domains for an ``n``-panel faceted grid.
 
-    Reproduces the gap-based small-multiples layout arithmetic that the chart
-    functions in ``comparators.charts`` hand-copy: ``nrows`` rows of ``ncols``
+    Computes the gap-based small-multiples layout arithmetic for the chart
+    functions in ``comparators.charts``: ``nrows`` rows of ``ncols``
     columns, with ``row_gap``/``col_gap`` fractional gaps between panels and a
     ``min_row_h`` floor on row height. Returns one :class:`FacetPanel` per panel
     in index order (``0..n-1``); ``n == 0`` returns ``[]``.
 
-    The arithmetic and rounding are byte-identical to the legacy inline code:
-    intermediates are never rounded, only the final domain lists are rounded to
+    Intermediates are never rounded: only the final domain lists are rounded to
     ``ndigits``, and the single ``max(..., min_row_h)`` clamp covers both the
     clamped grids (``min_row_h=0.001``) and the unclamped vertical-stack chart
     (``min_row_h=0.0``). The ``-0.0`` that ``round`` can yield is preserved.

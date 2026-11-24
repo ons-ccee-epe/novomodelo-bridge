@@ -3,7 +3,7 @@
 ``compare decomp`` writes its
 machine-readable artifacts through the same shared
 :func:`novomodelo_bridge.comparators.export.write_artifacts` entry point as
-``compare newave`` — there is no DECOMP-specific writer any more. This module
+``compare newave`` — there is no DECOMP-specific writer. This module
 exercises that shared path against a DECOMP-shaped
 :class:`~novomodelo_bridge.comparators.dataset.ComparisonDataset` (built the way
 ``build_decomp_dataset`` builds one), focusing on the one thing worth

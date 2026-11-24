@@ -817,12 +817,6 @@ def import_boundary_fcf(
 
     ensure_writer_binding()
 
-    # No explicit inflow-lag depth is supplied to the bootstrap: novomodelo sizes the
-    # HydroInflowLag state block from the case's own PAR(p) model order (the same
-    # autoregressive structure the boundary cuts' pi_qafl terms derive from), so
-    # the terminal manifest already carries the slots the mapper places those
-    # terms onto. The former state_space.inflow_lag_depth override was redundant
-    # with that sizing and is rejected by novomodelo >= 0.14.
     manifest = bootstrap_terminal_manifest(case_dir, work_dir=work_dir)
     coupling = _read_deck_coupling(case_dir, case, cortesh, cuts)
     # The DECOMP case has no PAR(p) model, so the bootstrap manifest carries no

@@ -256,11 +256,10 @@ class TestConvertHydros:
             assert group["min_turbined_m3s"] == pytest.approx(gen["min_turbined_m3s"])
             assert group["max_turbined_m3s"] == pytest.approx(gen["max_turbined_m3s"])
 
-    def test_output_never_regresses_to_the_0_12_shape(self, tmp_path) -> None:
+    def test_output_has_unit_groups_and_no_top_level_bus_id(self, tmp_path) -> None:
         """The real converter output has no top-level ``bus_id`` and a
-        non-empty ``unit_groups`` on every plant — the shape novomodelo 0.13's
-        ``hydros.schema.json`` requires (decisions 13/14), never the 0.12
-        shape asserted in ``TestLegacyHydroShapeRejectedBy013``."""
+        non-empty ``unit_groups`` on every plant — the shape novomodelo's
+        ``hydros.schema.json`` requires."""
         case = _hydro_case(tmp_path)
         from novomodelo_bridge.newave.converters.hydro import convert_hydros
 
@@ -736,9 +735,8 @@ class TestConvertHydrosDownstreamFict:
             FICT.USINA (code=2, jusante=3)       ← carries the energy cascade
             USINA_B (code=3, jusante=0)          ← real downstream
 
-        After the FICT-cascade fix, USINA_A's downstream_id must point to
-        USINA_B (novomodelo id=1), not None as in the pre-fix behavior.  The
-        7-char name match is ``USINA A`` (after the FICT. prefix) matching
+        USINA_A's downstream_id points to USINA_B (novomodelo id=1), not
+        None.  The 7-char name match is ``USINA A`` (after the FICT. prefix) matching
         ``USINA_A``'s first-7-char key — pure prefix equality.
         """
         confhd_df = pd.DataFrame(
@@ -959,47 +957,24 @@ class TestBuildMirrorUnitGroup:
             build_mirror_unit_group("PLANT", 2, 0.0, 100.0, 0.0, 50.0)  # ty: ignore[missing-argument,too-many-positional-arguments] positional call is the point
 
 
-class TestLegacyHydroShapeRejectedBy013:
-    """Document the exact shape 0.12 produced — a hydro dict
-    with a top-level ``bus_id`` and no ``unit_groups`` — and that no converter
-    emits it anymore.
-
-    novomodelo 0.13's ``hydros.schema.json`` rejects that shape on load:
-    ``additionalProperties: false`` denies the stray top-level ``bus_id``,
-    and ``unit_groups`` is a required, non-empty array. This test asserts the
-    *shape difference* only — it does not load either dict into novomodelo or a
-    jsonschema validator (the tier-2 schema tests under ``tests/novomodelo/`` own
-    real schema loads).
+class TestHydroWithGroupHelperShape:
+    """The shared ``hydro_with_group`` test helper builds the shape novomodelo's
+    ``hydros.schema.json`` requires: no top-level ``bus_id``
+    (``additionalProperties: false``) and a non-empty ``unit_groups`` array.
+    This asserts the shape only — the tier-2 schema tests under
+    ``tests/novomodelo/`` own real schema loads.
     """
 
-    def test_0_12_shape_has_top_level_bus_id_and_no_unit_groups(self) -> None:
-        """The exact shape 0.12 emitted for a hydro plant."""
-        legacy_0_12_hydro = {
-            "id": 0,
-            "name": "PLANT",
-            "bus_id": 3,
-            "generation": {
-                "min_generation_mw": 0.0,
-                "max_generation_mw": 50.0,
-                "min_turbined_m3s": 0.0,
-                "max_turbined_m3s": 100.0,
-            },
-        }
+    def test_helper_has_unit_groups_and_no_top_level_bus_id(self) -> None:
+        """The helper satisfies the invariant
+        ``TestConvertHydros.test_output_has_unit_groups_and_no_top_level_bus_id``
+        pins against the real converter output: no top-level ``bus_id``, one
+        mirror ``unit_groups`` entry."""
+        hydro = hydro_with_group(0, bus_id=3)
 
-        assert "bus_id" in legacy_0_12_hydro
-        assert "unit_groups" not in legacy_0_12_hydro
-
-    def test_0_13_shape_has_neither(self) -> None:
-        """The shape every converter emits today — via the shared test helper,
-        so this pins the helper to the same invariant the real converters
-        satisfy (no top-level ``bus_id``, one mirror ``unit_groups`` entry).
-        ``TestConvertHydros.test_output_never_regresses_to_the_0_12_shape``
-        pins the same invariant against the real converter output."""
-        modern_hydro = hydro_with_group(0, bus_id=3)
-
-        assert "bus_id" not in modern_hydro
-        assert len(modern_hydro["unit_groups"]) == 1
-        assert modern_hydro["unit_groups"][0]["bus_id"] == 3
+        assert "bus_id" not in hydro
+        assert len(hydro["unit_groups"]) == 1
+        assert hydro["unit_groups"][0]["bus_id"] == 3
 
 
 class TestExpansionPlantAdmission:

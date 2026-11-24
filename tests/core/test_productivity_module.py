@@ -1,4 +1,4 @@
-"""Tests for the extracted productivity domain module."""
+"""Tests for the productivity domain module."""
 
 from __future__ import annotations
 
@@ -52,20 +52,8 @@ def _hreg(**overrides: object) -> pd.Series:
     return pd.Series(defaults)
 
 
-def test_hydro_aliases_point_to_public_functions() -> None:
-    from novomodelo_bridge.newave.converters.hydro import (
-        _compute_integrated_productivity,
-        _compute_productivity,
-        _equivalent_productivity,
-    )
-
-    assert _compute_productivity is compute_productivity
-    assert _equivalent_productivity is equivalent_productivity
-    assert _compute_integrated_productivity is integrated_productivity
-
-
 def test_constraints_and_fict_cascade_import_public_names() -> None:
-    # Cross-boundary callers must no longer reach into hydro privates.
+    # Cross-boundary callers import the public names, not hydro privates.
     import novomodelo_bridge.newave.converters.constraints as c
     import novomodelo_bridge.newave.converters.fict_cascade as fc
 

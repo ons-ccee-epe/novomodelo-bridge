@@ -429,9 +429,8 @@ def _import_decomp_boundary_fcf(
                 args.dst,
                 case,
                 work_dir=Path(work_dir),
-                # Never None: a None cost_scale_factor triggers novomodelo's
-                # legacy 1e6 scaling — the source cuts are authored in
-                # novomodelo's native scale already.
+                # The mapped cuts are already in currency units; novomodelo
+                # refuses a pool with no cost_scale_factor.
                 cost_scale_factor=1.0,
                 config=config,
                 initial_conditions=initial_conditions,

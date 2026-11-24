@@ -1,12 +1,9 @@
 """Core kernels + dataset-build tests for ``comparators.decomp.results``.
 
-First carve out of the legacy ``test_decomp_results_compare.py`` mega file:
-the pure-function kernels (``_stage_rows``/``_scenario_mean``/
+Covers the pure-function kernels (``_stage_rows``/``_scenario_mean``/
 ``_map_entities``/``_result_comparisons``/``_bus_side``) plus
 ``build_decomp_dataset``'s base dataset-assembly, shared-case-build, and
-single-parse tests. The remaining concern bands (network, energy balance,
-costs, performance, productivity, FPHA, REE, evaporation, constraints, CLI)
-stay in the mega file pending their own carve.
+single-parse tests.
 """
 
 from __future__ import annotations
@@ -551,9 +548,8 @@ class TestBusSideExcludesTranshipment:
     source model's system results table. The code -> id mapping ``_bus_side``
     builds its rows from (``{code: id_map.bus_id(code) for code in
     id_map.bus_codes}``) only ever holds values in ``range(len(bus_codes))``,
-    one short of ``transhipment_bus_id`` -- so this is a pre-existing
-    structural guarantee, not a new filter. This test pins that guarantee
-    down as a regression guard rather than changing behaviour."""
+    one short of ``transhipment_bus_id`` -- a structural guarantee, not a
+    filter, which this test pins."""
 
     def test_bus_side_never_emits_the_transhipment_bus_id(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

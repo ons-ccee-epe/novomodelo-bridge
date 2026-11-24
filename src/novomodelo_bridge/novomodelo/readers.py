@@ -295,7 +295,7 @@ def read_novomodelo_resolved_generic_constraints(
     the case has generic constraints.
     """
     min_storage = {
-        hid: float(meta.get("min_storage_hm3") or 0.0)
+        hid: meta["min_storage_hm3"]
         for hid, meta in read_novomodelo_hydro_metadata(novomodelo_output_dir).items()
     }
     constraints = read_novomodelo_generic_constraints(novomodelo_case_dir)
@@ -364,7 +364,7 @@ _HYDRO_BUS_GENERATION_SCHEMA: dict[str, type[pl.DataType]] = {
 
 
 def read_novomodelo_hydro_bus_generation(novomodelo_output_dir: Path) -> pl.LazyFrame:
-    """Scan novomodelo 0.13's ``simulation/hydro_bus_generation/`` partition.
+    """Scan novomodelo's ``simulation/hydro_bus_generation/`` partition.
 
     Partition layout: ``simulation/hydro_bus_generation/scenario_id=NNNN/data.parquet``.
     Returns a LazyFrame with the seven physical columns novomodelo writes —
@@ -389,17 +389,16 @@ def read_novomodelo_hydro_bus_generation(novomodelo_output_dir: Path) -> pl.Lazy
     Absence vs. present-but-empty
     -------------------------------------------------
     Unlike every other reader in this module, this one does **not** treat a
-    missing partition as "nothing to report": the compare layer switches to
-    this partition with no fallback, so absence means the output itself
-    predates the partition, not that there is no hydro-bus generation.
+    missing partition as "nothing to report": the compare layer reads this
+    partition with no fallback, so absence means the run did not write it,
+    not that there is no hydro-bus generation.
 
     Raises
     ------
     NovomodeloPartitionMissingError
         If ``simulation/hydro_bus_generation/`` does not exist under
         *novomodelo_output_dir*. The message names the missing directory and
-        states that the partition is produced by novomodelo >= 0.13.0, telling
-        the caller to re-run novomodelo rather than trust an empty result.
+        tells the caller to re-run novomodelo rather than trust an empty result.
 
     A directory that exists but holds no scenario parquet files is a
     different, legitimate state — real, if odd — and is propagated as an
@@ -410,9 +409,8 @@ def read_novomodelo_hydro_bus_generation(novomodelo_output_dir: Path) -> pl.Lazy
     sim_dir = novomodelo_output_dir / "simulation" / "hydro_bus_generation"
     if not sim_dir.is_dir():
         raise NovomodeloPartitionMissingError(
-            f"Novomodelo output partition not found: {sim_dir}. The "
-            "hydro_bus_generation partition is produced by novomodelo >= 0.13.0; "
-            "this output directory may predate that novomodelo version.",
+            f"Novomodelo output partition not found: {sim_dir}. The run did "
+            "not write the hydro_bus_generation partition the comparison reads.",
             path=str(sim_dir),
         )
 
@@ -519,7 +517,6 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     ]
 
     available = set(lf.collect_schema().names())
-    id_col = "hydro_id" if "hydro_id" in available else "entity_id"
 
     avail_flow = [c for c in flow_cols if c in available]
     avail_stage = [c for c in stage_cols if c in available]
@@ -542,7 +539,7 @@ def read_novomodelo_hydro_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     try:
         result = (
             _scenario_stage_means(
-                lf, id_col, avail_flow, avail_stage, block_hours, weights
+                lf, "hydro_id", avail_flow, avail_stage, block_hours, weights
             )
             .sort("entity_id", "stage_id")
             .collect(engine="streaming")
@@ -784,8 +781,7 @@ def _load_hydro_reservoir_flag(novomodelo_output_dir: Path) -> dict[int, bool]:
     """
     out: dict[int, bool] = {}
     for h in read_novomodelo_hydros(novomodelo_output_dir):
-        max_stor = (h.get("reservoir") or {}).get("max_storage_hm3", 0) or 0
-        out[h["id"]] = max_stor > 0
+        out[h["id"]] = h["reservoir"]["max_storage_hm3"] > 0
     return out
 
 
@@ -824,15 +820,12 @@ def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame
     required = {
         "spillage_m3s",
         "equivalent_productivity_mw_per_m3s",
+        "hydro_id",
         "stage_id",
         "block_id",
         "scenario_id",
     }
     if not required.issubset(available):
-        return empty
-
-    id_col = "hydro_id" if "hydro_id" in available else "entity_id"
-    if id_col not in available:
         return empty
 
     is_reservoir = _load_hydro_reservoir_flag(novomodelo_output_dir)
@@ -846,7 +839,7 @@ def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame
 
     flag_df = pl.DataFrame(
         {
-            id_col: list(is_reservoir.keys()),
+            "hydro_id": list(is_reservoir.keys()),
             "category": ["reservoir" if v else "rorov" for v in is_reservoir.values()],
         }
     )
@@ -859,7 +852,7 @@ def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame
                     * pl.col("equivalent_productivity_mw_per_m3s")
                 ).alias("spill_mw")
             )
-            .join(flag_df.lazy(), on=id_col)
+            .join(flag_df.lazy(), on="hydro_id")
             .group_by(["scenario_id", "stage_id", "block_id", "category"])
             .agg(pl.col("spill_mw").sum())
             .join(block_hours.lazy(), on=["stage_id", "block_id"])
@@ -903,28 +896,36 @@ def read_novomodelo_spillage_energy(novomodelo_output_dir: Path) -> pl.DataFrame
     ).sort("stage_id")
 
 
+_ITERATION_TIMING_SCHEMA = pl.Schema(
+    {
+        "iteration": pl.Int64,
+        "time_forward_ms": pl.Float64,
+        "time_backward_ms": pl.Float64,
+        "time_total_ms": pl.Float64,
+    }
+)
+
+
 def read_novomodelo_iteration_timing(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Return per-iteration wall-clock from ``training/convergence.parquet``.
 
     Columns: ``iteration`` (Int64), ``time_forward_ms``,
-    ``time_backward_ms``, ``time_total_ms`` (Float64). Missing timing columns are filled
-    with nulls; empty DataFrame when the parquet is absent. Separate from
-    :func:`read_novomodelo_convergence` which only surfaces the bound columns the source
-    model pmo.dat can be compared against.
+    ``time_backward_ms``, ``time_total_ms`` (Float64); empty DataFrame when the
+    parquet is absent. Separate from :func:`read_novomodelo_convergence` which
+    only surfaces the bound columns the source model pmo.dat can be compared
+    against.
     """
-    empty = pl.DataFrame(
-        schema={
-            "iteration": pl.Int64,
-            "time_forward_ms": pl.Float64,
-            "time_backward_ms": pl.Float64,
-            "time_total_ms": pl.Float64,
-        }
-    )
+    empty = pl.DataFrame(schema=_ITERATION_TIMING_SCHEMA)
     conv_path = novomodelo_output_dir / "training" / "convergence.parquet"
     if not conv_path.exists():
         return empty
     try:
-        df = pl.read_parquet(conv_path)
+        return (
+            pl.read_parquet(conv_path)
+            .select(_ITERATION_TIMING_SCHEMA.names())
+            .sort("iteration")
+            .cast(_ITERATION_TIMING_SCHEMA)
+        )
     except Exception as exc:
         emit(
             report_file_unreadable_diagnostic(
@@ -936,22 +937,6 @@ def read_novomodelo_iteration_timing(novomodelo_output_dir: Path) -> pl.DataFram
             logger=_LOG,
         )
         return empty
-    keep = ["iteration", "time_forward_ms", "time_backward_ms", "time_total_ms"]
-    avail = [c for c in keep if c in df.columns]
-    if "iteration" not in avail:
-        return empty
-    out = df.select(avail).sort("iteration")
-    for col in ("time_forward_ms", "time_backward_ms", "time_total_ms"):
-        if col not in out.columns:
-            out = out.with_columns(pl.lit(None).cast(pl.Float64).alias(col))
-    return out.cast(
-        {
-            "iteration": pl.Int64,
-            "time_forward_ms": pl.Float64,
-            "time_backward_ms": pl.Float64,
-            "time_total_ms": pl.Float64,
-        }
-    )
 
 
 def read_novomodelo_training_duration(novomodelo_output_dir: Path) -> float:
@@ -969,10 +954,8 @@ def read_novomodelo_training_metadata(novomodelo_output_dir: Path) -> dict:
 
     Tries ``case_dir_for(novomodelo_output_dir) / "output" / "training"``,
     falling back to ``novomodelo_output_dir`` then ``novomodelo_output_dir.parent``
-    (each with a ``training/metadata.json`` suffix) -- the single candidate
-    search every caller now shares, replacing the two divergent searches
-    ``export._read_novomodelo_version`` and ``dashboard.load_output_metadata``
-    used to run separately, and which could resolve different files.
+    (each with a ``training/metadata.json`` suffix) -- the one candidate
+    search every caller shares.
     Returns ``{}`` on an absent file, unparseable JSON, or a non-dict
     payload.
     """
@@ -1009,15 +992,10 @@ def read_novomodelo_training_metadata(novomodelo_output_dir: Path) -> dict:
 def novomodelo_software_version(training_metadata: dict) -> str | None:
     """Return the Novomodelo version a ``training/metadata.json`` dict records.
 
-    Reads ``software_version``; outputs written by Novomodelo 0.17 and earlier carry
-    the version as ``novomodelo_version`` instead. Returns ``None`` when neither key
-    holds a string.
+    Reads ``software_version``; returns ``None`` when it holds no string.
     """
-    for key in ("software_version", "cobre_version"):
-        value = training_metadata.get(key)
-        if isinstance(value, str):
-            return value
-    return None
+    value = training_metadata.get("software_version")
+    return value if isinstance(value, str) else None
 
 
 def read_novomodelo_line_means(novomodelo_output_dir: Path) -> pl.DataFrame:
@@ -1039,12 +1017,13 @@ def read_novomodelo_line_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     available = set(lf.collect_schema().names())
     if "net_flow_mw" not in available:
         return empty
-    id_col = "line_id" if "line_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
     weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
         result = (
-            _scenario_stage_means(lf, id_col, ["net_flow_mw"], [], block_hours, weights)
+            _scenario_stage_means(
+                lf, "line_id", ["net_flow_mw"], [], block_hours, weights
+            )
             .sort("entity_id", "stage_id")
             .collect(engine="streaming")
         )
@@ -1072,7 +1051,6 @@ def _bus_net_import_per_scenario(novomodelo_output_dir: Path) -> pl.LazyFrame | 
     available = set(lf.collect_schema().names())
     if "net_flow_mw" not in available:
         return None
-    id_col = "line_id" if "line_id" in available else "entity_id"
     ends = pl.LazyFrame(
         {
             "entity_id": [int(line["id"]) for line in lines],
@@ -1086,7 +1064,7 @@ def _bus_net_import_per_scenario(novomodelo_output_dir: Path) -> pl.LazyFrame | 
         },
     )
     flows = _weighted_scenario_values(
-        lf, id_col, ["net_flow_mw"], [], _load_block_hours(novomodelo_output_dir)
+        lf, "line_id", ["net_flow_mw"], [], _load_block_hours(novomodelo_output_dir)
     ).join(ends, on="entity_id", how="inner")
     inflow = flows.select(
         "scenario_id",
@@ -1155,11 +1133,12 @@ def read_novomodelo_line_percentiles(novomodelo_output_dir: Path) -> pl.DataFram
     available = set(lf.collect_schema().names())
     if "net_flow_mw" not in available:
         return pl.DataFrame()
-    id_col = "line_id" if "line_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
     weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
-        per_sc = _weighted_scenario_values(lf, id_col, ["net_flow_mw"], [], block_hours)
+        per_sc = _weighted_scenario_values(
+            lf, "line_id", ["net_flow_mw"], [], block_hours
+        )
         return _compute_percentiles(per_sc, ["net_flow_mw"], weights)
     except Exception as exc:
         raise NovomodeloReadError(
@@ -1516,14 +1495,13 @@ def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:
         )
         return empty
 
-    id_col = "thermal_id" if "thermal_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
     weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
 
     try:
         result = (
             _scenario_stage_means(
-                lf, id_col, ["generation_mw"], [], block_hours, weights
+                lf, "thermal_id", ["generation_mw"], [], block_hours, weights
             )
             .sort("entity_id", "stage_id")
             .collect(engine="streaming")
@@ -1576,13 +1554,12 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
         )
         return empty
 
-    id_col = "bus_id" if "bus_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
     weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
 
     try:
         result = (
-            _scenario_stage_means(lf, id_col, value_cols, [], block_hours, weights)
+            _scenario_stage_means(lf, "bus_id", value_cols, [], block_hours, weights)
             .sort("entity_id", "stage_id")
             .collect(engine="streaming")
         )
@@ -1702,7 +1679,6 @@ def read_novomodelo_hydro_percentiles(novomodelo_output_dir: Path) -> pl.DataFra
         "incremental_inflow_energy_mw",
     ]
     available = set(lf.collect_schema().names())
-    id_col = "hydro_id" if "hydro_id" in available else "entity_id"
     avail_flow = [c for c in flow_cols if c in available]
     avail_stage = [c for c in stage_cols if c in available]
     all_vars = avail_flow + avail_stage
@@ -1713,7 +1689,7 @@ def read_novomodelo_hydro_percentiles(novomodelo_output_dir: Path) -> pl.DataFra
     weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(
-            lf, id_col, avail_flow, avail_stage, block_hours
+            lf, "hydro_id", avail_flow, avail_stage, block_hours
         )
         return _compute_percentiles(per_sc, all_vars, weights)
     except Exception as exc:
@@ -1733,12 +1709,11 @@ def read_novomodelo_thermal_percentiles(novomodelo_output_dir: Path) -> pl.DataF
     if "generation_mw" not in available:
         return pl.DataFrame()
 
-    id_col = "thermal_id" if "thermal_id" in available else "entity_id"
     block_hours = _load_block_hours(novomodelo_output_dir)
     weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
         per_sc = _weighted_scenario_values(
-            lf, id_col, ["generation_mw"], [], block_hours
+            lf, "thermal_id", ["generation_mw"], [], block_hours
         )
         return _compute_percentiles(per_sc, ["generation_mw"], weights)
     except Exception as exc:
@@ -1756,7 +1731,6 @@ def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame
         return pl.DataFrame()
 
     available = set(lf.collect_schema().names())
-    id_col = "bus_id" if "bus_id" in available else "entity_id"
     flow_cols = [c for c in ["spot_price", "deficit_mw"] if c in available]
     if not flow_cols:
         return pl.DataFrame()
@@ -1764,7 +1738,7 @@ def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame
     block_hours = _load_block_hours(novomodelo_output_dir)
     weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
     try:
-        per_sc = _weighted_scenario_values(lf, id_col, flow_cols, [], block_hours)
+        per_sc = _weighted_scenario_values(lf, "bus_id", flow_cols, [], block_hours)
         percentiles = _compute_percentiles(per_sc, flow_cols, weights)
         net_import = _bus_net_import_per_scenario(novomodelo_output_dir)
         if net_import is None:
@@ -1820,7 +1794,6 @@ def _agg_bus_level_vars(
     if not bus_avail:
         return None
 
-    bid_col = "bus_id" if "bus_id" in avail else "entity_id"
     if block_hours is not None:
         bh = block_hours.lazy()
         weighted_means = [
@@ -1829,17 +1802,15 @@ def _agg_bus_level_vars(
         ]
         bus_sc = (
             bus_lf.join(bh, on=["stage_id", "block_id"])
-            .group_by(["scenario_id", bid_col, "stage_id"])
+            .group_by(["scenario_id", "bus_id", "stage_id"])
             .agg(weighted_means)
-            .rename({bid_col: "bus_id"})
             .collect(engine="streaming")
         )
     else:
         bus_sc = (
             bus_lf.filter(pl.col("block_id") == 0)
-            .group_by(["scenario_id", bid_col, "stage_id"])
+            .group_by(["scenario_id", "bus_id", "stage_id"])
             .agg([pl.col(c).mean() for c in bus_avail])
-            .rename({bid_col: "bus_id"})
             .collect(engine="streaming")
         )
     return bus_sc, bus_avail
@@ -1895,7 +1866,7 @@ def _agg_hydro_bus_generation(
     novomodelo_output_dir: Path,
     block_hours: pl.DataFrame | None,
 ) -> pl.DataFrame:
-    """Aggregate hydro generation by bus from the 0.13 partition.
+    """Aggregate hydro generation by bus from the ``hydro_bus_generation`` partition.
 
     The partition already carries ``bus_id`` per row, so — unlike
     thermal/NCS — no plant→bus map or join is needed here.
@@ -1907,8 +1878,7 @@ def _agg_hydro_bus_generation(
     gives the bus/stage/scenario total energy with NO re-weighting.
     Dividing that total by the stage's total hours converts it back into
     the same hours-weighted mean-MW figure the thermal/NCS branches
-    compute, so ``hydro_gen_mw`` stays comparable to them and to the
-    pre-migration plant-keyed total.
+    compute, so ``hydro_gen_mw`` stays comparable to them.
 
     Without ``stages.json`` there is no stage-hours denominator to
     convert the energy total back to a power figure, so this branch
@@ -2000,13 +1970,13 @@ def read_novomodelo_bus_aggregates(
     load, deficit, and excess by bus, then computes p10/p50/p90 across
     scenarios.
 
-    Hydro generation is read from novomodelo 0.13's
+    Hydro generation is read from novomodelo's
     ``simulation/hydro_bus_generation/`` partition (see
     :func:`read_novomodelo_hydro_bus_generation`), which carries ``bus_id`` per
-    row directly. Hydros no longer carry a plant-level ``bus_id`` in
-    ``system/hydros.json``, so unlike thermal/NCS there is no plant→bus map
-    for hydro; a missing partition is a real operational state (the output
-    predates novomodelo 0.13), not "no hydro generation", and propagates
+    row directly. ``system/hydros.json`` carries no plant-level ``bus_id``,
+    so unlike thermal/NCS there is no plant→bus map
+    for hydro; a missing partition is a real operational state (the run did not
+    write it), not "no hydro generation", and propagates
     :class:`~novomodelo_bridge.core.errors.NovomodeloPartitionMissingError` to the caller
     rather than degrading to zero.
 
@@ -2101,7 +2071,7 @@ def read_novomodelo_cost_breakdown(
         return {}
 
     # Sum every individual cost component (the canonical set, so no column is
-    # silently dropped — contract_cost used to be missing here). The aggregate
+    # silently dropped). The aggregate
     # roll-ups (hydro_violation_cost, total/immediate/future) are excluded.
     cost_cols = list(NOVOMODELO_COST_COMPONENT_COLUMNS)
 
@@ -2241,10 +2211,8 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
 
     ``anticipated_thermal_cost`` is the GNL forward-committed thermal fuel that Novomodelo
     books on the decision-stage commitment column (part of ``immediate_cost`` but
-    excluded from ``thermal_cost``); it was added to Novomodelo's costs schema after 0.8.0.
+    excluded from ``thermal_cost``).
     ``thermal_cost_total`` is the whole thermal generation cost, GNL at commitment.
-    Pre-anticipation runs lack the column → it reads as 0 and
-    ``thermal_cost_total == thermal_cost``.
 
     Novomodelo's costs table is one row per ``(scenario_id, stage_id, block_id)``;
     we sum block-level immediate_cost / thermal_cost / anticipated_thermal_cost
@@ -2268,24 +2236,17 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
     if lf is None:
         return empty
 
-    available = set(lf.collect_schema().names())
-    if "stage_id" not in available:
-        return empty
-    if not any(c in available for c in _ALL_COLS):
-        return empty
-
+    # future_cost is a per-stage quantity replicated across blocks; ``max``
+    # collapses without double-counting.
     agg_exprs: list[pl.Expr] = [
-        pl.col(c).sum().alias(c) for c in _SUM_COLS if c in available
+        *(pl.col(c).sum().alias(c) for c in _SUM_COLS),
+        pl.col("future_cost").max().alias("future_cost"),
     ]
-    if "future_cost" in available:
-        # future_cost is a per-stage quantity replicated across blocks;
-        # ``max`` collapses without double-counting.
-        agg_exprs.append(pl.col("future_cost").max().alias("future_cost"))
 
     try:
         weights = read_novomodelo_scenario_weights(novomodelo_output_dir)
         per_sc = weights.attach(lf.group_by(["scenario_id", "stage_id"]).agg(agg_exprs))
-        mean_cols = [weights.mean(c) for c in _ALL_COLS if c in available]
+        mean_cols = [weights.mean(c) for c in _ALL_COLS]
         df = per_sc.group_by("stage_id").agg(mean_cols).sort("stage_id").collect()
     except Exception as exc:
         raise NovomodeloReadError(
@@ -2293,40 +2254,31 @@ def read_novomodelo_stage_costs(novomodelo_output_dir: Path) -> pl.DataFrame:
             f"{novomodelo_output_dir / 'simulation' / 'costs'}"
         ) from exc
 
-    # Ensure all columns are present even if one was missing in the schema
-    # (e.g. anticipated_thermal_cost on pre-anticipation Novomodelo runs).
-    for c in _ALL_COLS:
-        if c not in df.columns:
-            df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias(c))
-    # Null anticipated (old runs) counts as 0.
     df = df.with_columns(
-        (
-            pl.col("thermal_cost").fill_null(0.0)
-            + pl.col("anticipated_thermal_cost").fill_null(0.0)
-        ).alias("thermal_cost_total")
+        (pl.col("thermal_cost") + pl.col("anticipated_thermal_cost")).alias(
+            "thermal_cost_total"
+        )
     )
     return df.select(["stage_id", *_OUT_COLS]).cast(
         {"stage_id": pl.Int64, **{c: pl.Float64 for c in _OUT_COLS}}
     )
 
 
+_CONVERGENCE_SCHEMA: dict[str, type[pl.DataType]] = {
+    "iteration": pl.Int64,
+    "lower_bound": pl.Float64,
+    "upper_bound": pl.Float64,
+}
+
+
 def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
     """Read Novomodelo convergence data from training output.
 
     Returns DataFrame with columns: ``iteration`` (Int64),
-    ``lower_bound`` (Float64), ``upper_bound_mean`` (Float64).
-
-    The upper-bound column is read from novomodelo's ``upper_bound`` (0.14) or the
-    legacy ``upper_bound_mean``; either maps to the canonical
-    ``upper_bound_mean`` returned here.
+    ``lower_bound`` (Float64), ``upper_bound`` (Float64), as
+    ``training/convergence.parquet`` names them.
     """
-    empty = pl.DataFrame(
-        schema={
-            "iteration": pl.Int64,
-            "lower_bound": pl.Float64,
-            "upper_bound_mean": pl.Float64,
-        }
-    )
+    empty = pl.DataFrame(schema=_CONVERGENCE_SCHEMA)
 
     conv_path = novomodelo_output_dir / "training" / "convergence.parquet"
     if not conv_path.exists():
@@ -2348,122 +2300,62 @@ def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
             f"Failed to read convergence.parquet: {conv_path}"
         ) from exc
 
-    # Map columns to standard names.  Prefer exact matches first to avoid
-    # collisions (e.g. "upper_bound_std" overwriting "upper_bound_mean").
-    col_map: dict[str, str] = {}
-    cols_lower = {col: col.lower() for col in df.columns}
-
-    # Exact matches (highest priority).
-    for col, lower in cols_lower.items():
-        if lower == "iteration":
-            col_map[col] = "iteration"
-        elif lower == "lower_bound":
-            col_map[col] = "lower_bound"
-        elif lower == "upper_bound_mean":
-            col_map[col] = "upper_bound_mean"
-
-    # novomodelo 0.14 renamed the statistical upper-bound column
-    # "upper_bound_mean" -> "upper_bound" (alongside a nullable
-    # "upper_bound_std" and a new "upper_bound_kind" tag).  Accept the new
-    # spelling as an exact match into our canonical "upper_bound_mean" slot,
-    # but only when the legacy column is absent, and via an exact compare so
-    # the prefix-sharing "upper_bound_std"/"upper_bound_kind" never claim it.
-    if "upper_bound_mean" not in col_map.values():
-        for col, lower in cols_lower.items():
-            if lower == "upper_bound":
-                col_map[col] = "upper_bound_mean"
-                break
-
-    # Fuzzy fallback for columns not yet mapped.
-    for col, lower in cols_lower.items():
-        if col in col_map:
-            continue
-        if "iteration" not in col_map.values() and ("iter" in lower):
-            col_map[col] = "iteration"
-        elif "lower_bound" not in col_map.values() and (
-            "lower" in lower or "zinf" in lower
-        ):
-            col_map[col] = "lower_bound"
-        elif "upper_bound_mean" not in col_map.values() and (
-            "upper_mean" in lower or "zsup" in lower
-        ):
-            col_map[col] = "upper_bound_mean"
-
-    if "iteration" not in col_map.values():
-        df = df.with_row_index("iteration")
-        col_map["iteration"] = "iteration"
-
-    if (
-        "lower_bound" not in col_map.values()
-        or "upper_bound_mean" not in col_map.values()
-    ):
+    missing = [c for c in _CONVERGENCE_SCHEMA if c not in df.columns]
+    if missing:
         emit(
             report_file_unreadable_diagnostic(
                 "output/training/convergence.parquet",
                 conv_path,
                 "the report leaves out the training convergence.",
-                f"no lower and upper bound columns among {', '.join(df.columns)}",
+                f"no {', '.join(missing)} column among {', '.join(df.columns)}",
             ),
             logger=_LOG,
         )
         return empty
 
-    inv_map = {v: k for k, v in col_map.items()}
-    return df.select(
-        pl.col(inv_map["iteration"]).cast(pl.Int64).alias("iteration"),
-        pl.col(inv_map["lower_bound"]).cast(pl.Float64).alias("lower_bound"),
-        pl.col(inv_map["upper_bound_mean"]).cast(pl.Float64).alias("upper_bound_mean"),
-    )
+    return df.select([pl.col(c).cast(t) for c, t in _CONVERGENCE_SCHEMA.items()])
 
 
 def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
-    """Read hydro metadata from Novomodelo system JSON files.
+    """Read hydro metadata from ``system/hydros.json``.
 
-    Reads ``hydros.json`` and ``hydro_production_models.json``.
-    Productivity now lives per-(hydro, stage) in
-    ``hydro_production_models.json`` on novomodelo HEAD. We surface the
-    first ``stage_ranges`` entry's value as ``productivity_mw_per_m3s`` for
-    backward compatibility with comparator/dashboard callers.
+    Productivity comes from :func:`resolve_hydro_productivities` and is
+    surfaced as ``productivity_mw_per_m3s``.
 
     Returns ``{entity_id: {"name": str, "productivity_mw_per_m3s": float | None,
     "min_storage_hm3": float, ...}}``.
 
     This reader's job is plant *physics* (productivity, storage, outflow/
-    generation bounds) — it does **not** carry a plant-level bus id. Hydros
-    no longer carry a plant-level ``bus_id`` in ``system/hydros.json`` under
-    novomodelo 0.13; the compare layer's plant->bus label is
-    re-sourced from the ``simulation/hydro_bus_generation/`` partition via
-    :func:`read_novomodelo_hydro_bus_labels` instead. Removing the key here
-    (rather than leaving it ``None``) makes a stale caller expecting it
-    break visibly (``KeyError``) instead of silently degrading to an empty
-    bus map.
+    generation bounds) — it does **not** carry a plant-level bus id:
+    ``system/hydros.json`` has none, and the compare layer's plant->bus label
+    comes from the ``simulation/hydro_bus_generation/`` partition via
+    :func:`read_novomodelo_hydro_bus_labels`. Omitting the key (rather than
+    setting it ``None``) makes a caller expecting it fail with ``KeyError``
+    instead of silently degrading to an empty bus map.
     """
     hydros_path, hydros = _read_hydros_json(novomodelo_output_dir)
     if hydros_path is None or not hydros:
         return {}
 
-    # Productivity resolution is shared with the dashboard via the single
-    # canonical cascade in novomodelo_io so the two products never report a
-    # different ρ for the same plant (see resolve_hydro_productivities).
+    # Shared with the dashboard so the two never report a different ρ for the
+    # same plant.
     productivities = resolve_hydro_productivities(hydros_path.parent.parent, hydros)
 
     result: dict[int, dict] = {}
     for hydro in hydros:
         entity_id = hydro["id"]
-        name = str(hydro.get("name", f"hydro_{entity_id}"))
-
         prod = productivities.get(entity_id)
 
-        reservoir = hydro.get("reservoir", {}) or {}
-        outflow = hydro.get("outflow", {}) or {}
-        generation = hydro.get("generation", {}) or {}
+        reservoir = hydro["reservoir"]
+        outflow = hydro["outflow"]
+        generation = hydro["generation"]
 
         result[entity_id] = {
-            "name": name,
+            "name": hydro["name"],
             "productivity_mw_per_m3s": float(prod) if prod is not None else None,
-            "min_storage_hm3": float(reservoir.get("min_storage_hm3", 0.0) or 0.0),
-            "max_storage_hm3": float(reservoir.get("max_storage_hm3", 0.0) or 0.0),
-            "min_outflow_m3s": float(outflow.get("min_outflow_m3s", 0.0) or 0.0),
+            "min_storage_hm3": float(reservoir["min_storage_hm3"]),
+            "max_storage_hm3": float(reservoir["max_storage_hm3"]),
+            "min_outflow_m3s": float(outflow["min_outflow_m3s"]),
             # ``max_outflow_m3s`` is typically null in novomodelo cases — leave as
             # None so the dashboard can skip the dashed line.
             "max_outflow_m3s": (
@@ -2471,10 +2363,10 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
                 if outflow.get("max_outflow_m3s") is not None
                 else None
             ),
-            "min_turbined_m3s": float(generation.get("min_turbined_m3s", 0.0) or 0.0),
-            "max_turbined_m3s": float(generation.get("max_turbined_m3s", 0.0) or 0.0),
-            "min_generation_mw": float(generation.get("min_generation_mw", 0.0) or 0.0),
-            "max_generation_mw": float(generation.get("max_generation_mw", 0.0) or 0.0),
+            "min_turbined_m3s": float(generation["min_turbined_m3s"]),
+            "max_turbined_m3s": float(generation["max_turbined_m3s"]),
+            "min_generation_mw": float(generation["min_generation_mw"]),
+            "max_generation_mw": float(generation["max_generation_mw"]),
             # Deliberately no "bus_id" key: see the docstring above.
         }
 
@@ -2484,12 +2376,12 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
 def read_novomodelo_hydro_bus_labels(
     novomodelo_output_dir: Path,
 ) -> dict[int, frozenset[int]]:
-    """Derive the plant -> bus *label* map from the 0.13 hydro_bus_generation partition.
+    """Derive the plant -> bus *label* map from the ``hydro_bus_generation`` partition.
 
-    ``read_novomodelo_hydro_metadata`` no longer carries a plant-level ``bus_id`` —
-    this is the correct re-source for the compare layer's
-    plant->bus label: it reads :func:`read_novomodelo_hydro_bus_generation` and
-    collapses it to the distinct ``(hydro_id, bus_id)`` pairs.
+    ``read_novomodelo_hydro_metadata`` carries no plant-level ``bus_id``; this is
+    the compare layer's source for the plant->bus label: it reads
+    :func:`read_novomodelo_hydro_bus_generation` and collapses it to the distinct
+    ``(hydro_id, bus_id)`` pairs.
 
     Returns ``{hydro_id: frozenset(bus_id, ...)}``. A plant with a single bus
     (every real deck today) maps to a one-element ``frozenset``; a plant
@@ -2620,16 +2512,16 @@ def read_novomodelo_productivity_detail(novomodelo_output_dir: Path) -> dict[int
             else None
         )
 
-        reservoir = hydro.get("reservoir") or {}
+        reservoir = hydro["reservoir"]
         spec = hydro.get("specific_productivity_mw_per_m3s_per_m")
 
         result[hid] = {
-            "name": str(hydro.get("name", f"hydro_{hid}")),
+            "name": hydro["name"],
             "specific_productivity": float(spec) if spec is not None else None,
             "tailwater_m": tailwater_m,
             "losses_m": losses_m,
-            "vmin_hm3": float(reservoir.get("min_storage_hm3", 0.0) or 0.0),
-            "vmax_hm3": float(reservoir.get("max_storage_hm3", 0.0) or 0.0),
+            "vmin_hm3": float(reservoir["min_storage_hm3"]),
+            "vmax_hm3": float(reservoir["max_storage_hm3"]),
         }
 
     return result
@@ -2850,7 +2742,7 @@ def read_novomodelo_buses(novomodelo_output_dir: Path) -> list[dict]:
 def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
     """``{thermal id: {"name": str}}`` from :func:`read_novomodelo_thermals`."""
     return {
-        t["id"]: {"name": str(t.get("name", f"thermal_{t['id']}"))}
+        t["id"]: {"name": t["name"]}
         for t in read_novomodelo_thermals(novomodelo_output_dir)
     }
 
@@ -2865,7 +2757,7 @@ def read_novomodelo_bus_metadata(novomodelo_output_dir: Path) -> dict[int, dict]
     load_bus_ids = read_novomodelo_load_bus_ids(novomodelo_output_dir)
     return {
         b["id"]: {
-            "name": str(b.get("name", f"bus_{b['id']}")),
+            "name": b["name"],
             "has_load": b["id"] in load_bus_ids,
         }
         for b in buses

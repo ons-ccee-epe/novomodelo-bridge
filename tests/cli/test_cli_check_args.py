@@ -1,9 +1,9 @@
-"""Unit tests for the check-family CLI args migration.
+"""Unit tests for the check-family CLI args.
 
-Tier 1 — pure Python, imports no novomodelo. Locks in the migration of
-``_run_check``/``_run_decomp_check`` from ``SimpleNamespace`` to the typed
-``CheckArgs``, and the ``--no-color``-aware console split between the
-checklist (stdout) and diagnostics (stderr) it now threads through
+Tier 1 — pure Python, imports no novomodelo. Pins ``_run_check``/
+``_run_decomp_check`` taking the typed ``CheckArgs``, and the
+``--no-color``-aware console split between the checklist (stdout) and
+diagnostics (stderr) it threads through
 :func:`novomodelo_bridge.ui.console.render_checklist`.
 """
 

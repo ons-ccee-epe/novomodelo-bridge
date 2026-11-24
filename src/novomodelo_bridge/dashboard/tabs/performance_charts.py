@@ -155,7 +155,7 @@ def _solve_time_heatmap(solver_train: pd.DataFrame, phase: str, title: str) -> s
         return f"<p>No {phase} solver data available.</p>"
 
     pivot = sub.pivot_table(
-        index="iteration", columns="stage", values="solve_time_ms", aggfunc="sum"
+        index="iteration", columns="stage_id", values="solve_time_ms", aggfunc="sum"
     )
     stages = sorted(pivot.columns.tolist())
     iters = sorted(pivot.index.tolist())
@@ -213,7 +213,7 @@ def chart_simplex_by_stage(solver_train: pd.DataFrame) -> str:
     if bwd.empty:
         return "<p>No backward solver data available.</p>"
 
-    avg = bwd.groupby("stage")["simplex_iterations"].mean().sort_index()
+    avg = bwd.groupby("stage_id")["simplex_iterations"].mean().sort_index()
     stages = [str(s) for s in avg.index.tolist()]
     values = avg.values.tolist()
 
@@ -387,7 +387,7 @@ def chart_basis_reuse(solver_train: pd.DataFrame) -> str:
     offered["reuse_rate"] = (
         1.0 - offered["basis_consistency_failures"] / offered["basis_offered"]
     )
-    avg_reuse = offered.groupby("stage")["reuse_rate"].mean().sort_index()
+    avg_reuse = offered.groupby("stage_id")["reuse_rate"].mean().sort_index()
     stages = [str(s) for s in avg_reuse.index.tolist()]
     values = avg_reuse.values.tolist()
 
@@ -453,7 +453,7 @@ def chart_solver_time_per_stage(solver_train: pd.DataFrame) -> str:
         "basis_set_time_ms",
     ]
     bw["overhead_ms"] = bw[overhead_cols].sum(axis=1)
-    grouped = bw.groupby("stage")[["solve_time_ms", "overhead_ms"]].mean()
+    grouped = bw.groupby("stage_id")[["solve_time_ms", "overhead_ms"]].mean()
     stages = sorted(grouped.index)
     fig = go.Figure()
     fig.add_trace(
@@ -527,7 +527,7 @@ def chart_set_bounds_by_stage(solver_train: pd.DataFrame) -> str:
     if solver_train.empty or "set_bounds_time_ms" not in solver_train.columns:
         return "<p>No set_bounds data.</p>"
     bw = solver_train[solver_train["phase"] == "backward"]
-    avg = bw.groupby("stage")["set_bounds_time_ms"].mean()
+    avg = bw.groupby("stage_id")["set_bounds_time_ms"].mean()
     stages = sorted(avg.index)
     fig = go.Figure(
         go.Bar(
@@ -555,7 +555,7 @@ def chart_cost_per_simplex_iter(solver_train: pd.DataFrame) -> str:
 
     bwd = solver_train[
         (solver_train["phase"] == "backward")
-        & (solver_train["stage"] >= 0)
+        & (solver_train["stage_id"] >= 0)
         & (solver_train["simplex_iterations"] > 0)
     ]
     if bwd.empty:
@@ -565,7 +565,7 @@ def chart_cost_per_simplex_iter(solver_train: pd.DataFrame) -> str:
         bwd.assign(
             us_per_iter=bwd["solve_time_ms"] * 1000.0 / bwd["simplex_iterations"]
         )
-        .groupby("stage")["us_per_iter"]
+        .groupby("stage_id")["us_per_iter"]
         .mean()
         .sort_index()
     )
@@ -1127,12 +1127,12 @@ def chart_retry_level_heatmap(retry_histogram: pd.DataFrame) -> str:
     """
     if retry_histogram.empty:
         return "<p>No retry histogram data available.</p>"
-    required = {"stage", "retry_level", "count"}
+    required = {"stage_id", "retry_level", "count"}
     if not required.issubset(retry_histogram.columns):
         return "<p>retry_histogram.parquet missing expected columns.</p>"
 
     pivot = retry_histogram.pivot_table(
-        index="stage",
+        index="stage_id",
         columns="retry_level",
         values="count",
         aggfunc="sum",
@@ -1185,12 +1185,14 @@ def chart_cut_count_per_stage(
     iter_to_use = (
         int(cut_selection["iteration"].max()) if iteration is None else int(iteration)
     )
-    snap = cut_selection[cut_selection["iteration"] == iter_to_use].sort_values("stage")
+    snap = cut_selection[cut_selection["iteration"] == iter_to_use].sort_values(
+        "stage_id"
+    )
     if snap.empty:
         return f"<p>No cut selection data for iteration {iter_to_use}.</p>"
 
-    stages = snap["stage"].tolist()
-    populated = snap["cuts_populated"].tolist()
+    stages = snap["stage_id"].tolist()
+    populated = snap["cuts_in_pool"].tolist()
     active = snap["cuts_active_after"].tolist()
 
     fig = go.Figure()
@@ -1229,7 +1231,7 @@ def _pick_highlight_stages(cut_selection: pd.DataFrame, n: int = 8) -> list[int]
         return []
     last_iter = int(cut_selection["iteration"].max())
     snap = cut_selection[cut_selection["iteration"] == last_iter]
-    top = snap.nlargest(n, "cuts_active_after")["stage"].tolist()
+    top = snap.nlargest(n, "cuts_active_after")["stage_id"].tolist()
     return sorted(int(s) for s in top)
 
 
@@ -1261,7 +1263,7 @@ def chart_active_cuts_growth_by_stage(cut_selection: pd.DataFrame) -> str:
 
     fig = go.Figure()
     for i, stage in enumerate(highlight):
-        sub = cut_selection[cut_selection["stage"] == stage].sort_values("iteration")
+        sub = cut_selection[cut_selection["stage_id"] == stage].sort_values("iteration")
         if sub.empty:
             continue
         fig.add_trace(
@@ -1326,7 +1328,7 @@ def _per_stage_metric_multi_iter(
     if solver_train.empty:
         return None
     sub = solver_train[
-        (solver_train["phase"] == phase) & (solver_train["stage"] >= 0)
+        (solver_train["phase"] == phase) & (solver_train["stage_id"] >= 0)
     ].copy()
     if sub.empty:
         return None
@@ -1354,15 +1356,15 @@ def _per_stage_metric_multi_iter(
         else:
             raise ValueError(f"unsupported metric {metric!r}")
         by_stage = (
-            snap.groupby("stage")[ycol]
+            snap.groupby("stage_id")[ycol]
             .agg(agg)
             .reset_index()
             .dropna()
-            .sort_values("stage")
+            .sort_values("stage_id")
         )
         fig.add_trace(
             go.Scatter(
-                x=by_stage["stage"].tolist(),
+                x=by_stage["stage_id"].tolist(),
                 y=by_stage[ycol].tolist(),
                 name=label,
                 mode="lines+markers",
@@ -1436,15 +1438,15 @@ def chart_cuts_vs_solve_time_scatter(
     if solver_train.empty or cut_selection.empty:
         return "<p>Requires both solver and cut selection data.</p>"
     bwd = solver_train[
-        (solver_train["phase"] == "backward") & (solver_train["stage"] >= 0)
+        (solver_train["phase"] == "backward") & (solver_train["stage_id"] >= 0)
     ].copy()
     if bwd.empty:
         return "<p>No backward solver data available.</p>"
 
     bwd["ms_per_lp"] = bwd["solve_time_ms"] / bwd["lp_solves"].replace(0, pd.NA)
     merged = bwd.merge(
-        cut_selection[["iteration", "stage", "cuts_active_after"]],
-        on=["iteration", "stage"],
+        cut_selection[["iteration", "stage_id", "cuts_active_after"]],
+        on=["iteration", "stage_id"],
         how="inner",
     ).dropna(subset=["ms_per_lp", "cuts_active_after"])
     if merged.empty:
@@ -1454,7 +1456,7 @@ def chart_cuts_vs_solve_time_scatter(
     # ``cuts_active_after`` and ``stage`` are constant within a group, so the
     # only aggregation is over the solve-time distribution — turning millions
     # of raw markers into one point per group.
-    summary = merged.groupby(["iteration", "stage"], as_index=False, sort=True).agg(
+    summary = merged.groupby(["iteration", "stage_id"], as_index=False, sort=True).agg(
         cuts=("cuts_active_after", "first"),
         med=("ms_per_lp", "median"),
         q1=("ms_per_lp", lambda s: s.quantile(0.25)),
@@ -1465,7 +1467,7 @@ def chart_cuts_vs_solve_time_scatter(
     # precision and rounding compresses the JSON payload.
     x_vals = summary["cuts"].astype(int).tolist()
     y_vals = summary["med"].round(2).tolist()
-    stage_vals = summary["stage"].astype(int).tolist()
+    stage_vals = summary["stage_id"].astype(int).tolist()
     iter_vals = summary["iteration"].astype(int).tolist()
     err_plus = (summary["q3"] - summary["med"]).round(2).clip(lower=0).tolist()
     err_minus = (summary["med"] - summary["q1"]).round(2).clip(lower=0).tolist()
@@ -1534,7 +1536,7 @@ def chart_forward_basis_set_vs_stage0_cuts(
         .sum()
         .sort_values("iteration")
     )
-    stage0 = cut_selection[cut_selection["stage"] == 0].sort_values("iteration")
+    stage0 = cut_selection[cut_selection["stage_id"] == 0].sort_values("iteration")
     if stage0.empty:
         return "<p>No stage-0 cut selection data.</p>"
 
@@ -1626,7 +1628,7 @@ def chart_convergence_vs_wall_time(conv: pd.DataFrame, timing: pd.DataFrame) -> 
     fig.add_trace(
         go.Scatter(
             x=cum_s,
-            y=conv["upper_bound_mean"].tolist(),
+            y=conv["upper_bound"].tolist(),
             name="Upper bound (mean)",
             mode="lines",
             line={"color": COLORS["upper_bound"], "width": 2},
@@ -1652,7 +1654,7 @@ def _backward_per_opening_frame(solver_train: pd.DataFrame) -> pd.DataFrame:
     if solver_train.empty:
         return solver_train.iloc[0:0]
     bwd = solver_train[
-        (solver_train["phase"] == "backward") & solver_train["opening"].notna()
+        (solver_train["phase"] == "backward") & solver_train["opening_index"].notna()
     ]
     return bwd.copy()
 
@@ -1670,7 +1672,9 @@ def _backward_opening_0_split(solver_train: pd.DataFrame) -> pd.DataFrame:
     if bwd.empty:
         return bwd
     opening_class = (
-        bwd["opening"].astype(int).where(bwd["opening"].astype(int) == 0, other=-1)
+        bwd["opening_index"]
+        .astype(int)
+        .where(bwd["opening_index"].astype(int) == 0, other=-1)
     )
     bwd = bwd.assign(
         opening_class=opening_class.map({0: "opening_0", -1: "opening_rest"})
@@ -1697,7 +1701,9 @@ def _opening_0_vs_rest_by_stage(
         return f"<p>Column {metric!r} not in solver data.</p>"
 
     agg = (
-        split.groupby(["stage", "opening_class"])[metric].mean().unstack(fill_value=0.0)
+        split.groupby(["stage_id", "opening_class"])[metric]
+        .mean()
+        .unstack(fill_value=0.0)
     )
     stages = sorted(agg.index.tolist())
     fig = go.Figure()
@@ -1785,7 +1791,7 @@ def chart_backward_opening_0_share(solver_train: pd.DataFrame) -> str:
     totals = split.groupby("opening_class").agg(
         solve_time_ms=("solve_time_ms", "sum"),
         simplex_iterations=("simplex_iterations", "sum"),
-        n_lps=("opening", "size"),
+        n_lps=("opening_index", "size"),
     )
     if "opening_0" not in totals.index:
         return "<p>No opening 0 rows available.</p>"
@@ -1797,7 +1803,7 @@ def chart_backward_opening_0_share(solver_train: pd.DataFrame) -> str:
         else pd.Series({"solve_time_ms": 0.0, "simplex_iterations": 0, "n_lps": 0})
     )
 
-    openings_max = int(split["opening"].max()) + 1
+    openings_max = int(split["opening_index"].max()) + 1
     rows: list[tuple[str, float, float, str]] = [
         (
             "LP solves",
@@ -1883,10 +1889,10 @@ def _box_stats_by_stage(bwd: pd.DataFrame, value_col: str) -> pd.DataFrame:
     """
     if value_col not in bwd.columns:
         return pd.DataFrame(
-            columns=["stage", "q1", "median", "q3", "lowerfence", "upperfence"]
+            columns=["stage_id", "q1", "median", "q3", "lowerfence", "upperfence"]
         )
     grouped = (
-        bwd.groupby("stage")[value_col]
+        bwd.groupby("stage_id")[value_col]
         .agg(
             q1=lambda s: float(s.quantile(0.25)),
             median=lambda s: float(s.median()),
@@ -1895,7 +1901,7 @@ def _box_stats_by_stage(bwd: pd.DataFrame, value_col: str) -> pd.DataFrame:
             upperfence="max",
         )
         .reset_index()
-        .sort_values("stage")
+        .sort_values("stage_id")
     )
     return grouped
 
@@ -1922,7 +1928,7 @@ def chart_backward_per_opening_solve_time(solver_train: pd.DataFrame) -> str:
     if stats.empty:
         return "<p>No backward per-opening data available.</p>"
 
-    stage_labels = [str(int(s)) for s in stats["stage"]]
+    stage_labels = [str(int(s)) for s in stats["stage_id"]]
     fig = go.Figure(
         go.Box(
             x=stage_labels,
@@ -1971,7 +1977,7 @@ def chart_backward_per_opening_simplex(solver_train: pd.DataFrame) -> str:
     if stats.empty:
         return "<p>No backward per-opening data available.</p>"
 
-    stage_labels = [str(int(s)) for s in stats["stage"]]
+    stage_labels = [str(int(s)) for s in stats["stage_id"]]
     fig = go.Figure(
         go.Box(
             x=stage_labels,

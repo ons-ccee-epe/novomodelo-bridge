@@ -104,12 +104,11 @@ SUMMARY_SCHEMA: dict[str, type[pl.DataType]] = {
 class RenderInputs:
     """Typed render-input side-table for the HTML report builder.
 
-    Replaces the untyped ``metadata`` grab-bag: every field is one of the
-    non-tidy artifacts ``report_builder.build_comparison_report`` reads —
-    percentile-band frames, cost/name dicts, and the raw ``results`` list.
-    Each field's empty default reproduces the legacy ``_meta_*`` accessors'
-    empty-on-miss behaviour, so an absent input renders the same "No data"
-    fallback as before, never a ``KeyError``/``AttributeError``.
+    Every field is one of the non-tidy artifacts
+    ``report_builder.build_comparison_report`` reads — percentile-band frames,
+    cost/name dicts, and the raw ``results`` list. Each field defaults to
+    empty, so an absent input renders the "No data" fallback, never a
+    ``KeyError``/``AttributeError``.
 
     ``results`` is typed under ``TYPE_CHECKING`` so this module stays a leaf:
     it never imports ``results.py`` at runtime (see the module docstring).
@@ -418,6 +417,13 @@ def _metadata_from_json(view: Mapping[str, object]) -> dict[str, object]:
                 )
                 raise TypeError(msg)
             columns = value.get("columns")
+            if not isinstance(columns, dict):
+                type_name = type(columns).__name__
+                msg = (
+                    f"metadata key {key!r} frame 'columns' must be a mapping, "
+                    f"got {type_name}"
+                )
+                raise TypeError(msg)
             meta[key] = _build_polars_frame(records, columns)
         else:
             meta[key] = value
@@ -510,20 +516,19 @@ def _render_from_json(view: Mapping[str, object]) -> RenderInputs:
     return RenderInputs(**raw)  # ty: ignore[invalid-argument-type]
 
 
-def _build_polars_frame(records: list[object], columns: object) -> pl.DataFrame:
+def _build_polars_frame(records: list[object], columns: dict) -> pl.DataFrame:
     """Rebuild a polars frame from records, preserving schema when empty.
 
     Args:
         records: The ``records`` payload (a list of row dicts).
-        columns: The ``columns`` map (column-name -> polars dtype-name), or
-            ``None`` for legacy wrappers without a schema.
+        columns: The ``columns`` map (column-name -> polars dtype-name).
 
     Returns:
-        The reconstructed polars frame. When ``records`` is empty and
-        ``columns`` is a mapping, an explicitly-schemed empty frame is built so
-        column names and dtypes survive; otherwise the records drive inference.
+        The reconstructed polars frame. When ``records`` is empty, an
+        explicitly-schemed empty frame is built so column names and dtypes
+        survive; otherwise the records drive inference.
     """
-    if not records and isinstance(columns, dict):
+    if not records:
         schema = {name: getattr(pl, dtype_name) for name, dtype_name in columns.items()}
         return pl.DataFrame(schema=schema)
     return pl.DataFrame(records)
