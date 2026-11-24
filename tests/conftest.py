@@ -21,6 +21,7 @@ make_case``.
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import json
 import logging
@@ -94,6 +95,33 @@ requires_writer_binding = pytest.mark.skipif(
         "requires a novomodelo-python wheel exposing the write_policy_checkpoint "
         "writer binding"
     ),
+)
+
+_TAILRACE_FLOW_CASE = Path(__file__).parent / "fixtures" / "novomodelo_tailrace_flow"
+
+
+@functools.cache
+def has_tailrace_flow() -> bool:
+    """Whether the installed novomodelo wheel accepts a hydro ``tailrace_flow``.
+
+    Probes by validating ``tests/fixtures/novomodelo_tailrace_flow``, a trimmed copy of
+    novomodelo's ``d58-stored-energy-coefficient`` example with one ``tailrace_flow``
+    declaration; a version check cannot gate this because a wheel built from the
+    novomodelo feature branch reports the same version as the wheel that refuses the
+    key. The change that pairs the bridge with an accepting novomodelo release deletes
+    this probe, its marker and the fixture.
+    """
+    if importlib.util.find_spec("novomodelo") is None:
+        return False
+    import novomodelo.io
+
+    return bool(novomodelo.io.validate(str(_TAILRACE_FLOW_CASE))["valid"])
+
+
+# Stack on ``requires_novomodelo_python`` so a missing wheel reports its own reason.
+requires_tailrace_flow = pytest.mark.skipif(
+    condition=not has_tailrace_flow(),
+    reason="requires a novomodelo-python wheel that accepts a hydro tailrace_flow",
 )
 
 

@@ -1263,6 +1263,9 @@ reads = [
   { file = "dadger", register = "CQ" },
   { file = "dadger", register = "VI" },
   { file = "dadger", register = "EV" },
+  { file = "dadger", register = "VL" },
+  { file = "dadger", register = "VU" },
+  { file = "dadger", register = "VA" },
   { file = "hidr" },
   { file = "polinjus" },
   { file = "vazoes" },
@@ -1546,19 +1549,76 @@ summary = "Uma entrada por usina hidráulica convertida (registro `UH` com `volu
 
   [[output.field]]
   path = "hydros[].tailrace.type"
-  when = "somente para usinas FPHA cujo `canal_fuga_medio` efetivo é positivo"
+  when = "somente para usinas FPHA cujo `canal_fuga_medio` efetivo é positivo ou com registro `VL` de polinômio sem família no `polinjus`"
   from = []
   status = "constant"
-  how = "Sempre `polynomial`: o nível de jusante de reserva é um polinômio de grau zero."
+  how = "Sempre `polynomial`: de grau zero no nível de jusante de reserva, ou o polinômio do `VL` (ver `hydros[].tailrace.coefficients[]`)."
 
   [[output.field]]
   path = "hydros[].tailrace.coefficients[]"
-  when = "somente para usinas FPHA cujo `canal_fuga_medio` efetivo é positivo"
+  when = "somente para usinas FPHA cujo `canal_fuga_medio` efetivo é positivo ou com registro `VL` de polinômio sem família no `polinjus`"
   from = [
     { file = "hidr", item = "canal_fuga_medio" },
     { file = "dadger", register = "AC", item = "JUSMED" },
+    { file = "dadger", register = "VL", item = "coeficiente_a0 … coeficiente_a4" },
   ]
-  how = "Lista com um único coeficiente: o nível médio do canal de fuga efetivo (`AC JUSMED` aplicado) do estágio inicial, em metros. É o nível de jusante de reserva que o Novomodelo usa quando a usina não tem família em `system/tailrace_curves.parquet`."
+  how = "Lista com um único coeficiente: o nível médio do canal de fuga efetivo (`AC JUSMED` aplicado) do estágio inicial, em metros. É o nível de jusante de reserva que o Novomodelo usa quando a usina não tem família em `system/tailrace_curves.parquet`. Quando a usina tem um `VL` com algum coeficiente a0 a a4 não nulo e nenhuma família no `polinjus`, a lista traz os cinco coeficientes do `VL` no lugar desse valor; com família no `polinjus`, o polinômio do `VL` é ignorado com aviso."
+
+  [[output.field]]
+  path = "hydros[].tailrace_flow.own_outflow_factor"
+  when = "somente para usinas FPHA com registro `VL`, `VU` ou `VA` e declaração diferente da padrão (fator 1.0 e listas vazias)"
+  from = [
+    { file = "dadger", register = "VL", item = "fator_impacto_defluencia" },
+    { file = "dadger", register = "VU", item = "fator_impacto_defluencia" },
+  ]
+  status = "derived"
+  how = "Fator que multiplica a defluência da própria usina na cota de jusante: o `fator_impacto_defluencia` do primeiro `VL` da usina (1.0 sem `VL`), somado aos fatores dos `VU` cuja usina influenciadora é a própria usina. Usinas que mantêm o vertimento fora do canal de fuga (`VERTJU` 0) não têm declaração, e os registros delas são ignorados com aviso."
+
+  [[output.field]]
+  path = "hydros[].tailrace_flow.outflow_influences"
+  when = "somente para usinas FPHA com declaração diferente da padrão e nenhum `VU` convertido (lista vazia)"
+  from = []
+  status = "constant"
+  how = "Lista vazia: nenhum `VU` da usina nomeia outra usina operada."
+
+  [[output.field]]
+  path = "hydros[].tailrace_flow.outflow_influences[].hydro_id"
+  when = "somente para usinas FPHA com ao menos um `VU` convertido que nomeia outra usina operada"
+  from = [ { file = "dadger", register = "VU", item = "codigo_usina_influenciadora" } ]
+  status = "derived"
+  how = "Id Novomodelo da usina influenciadora, uma entrada por usina, em ordem crescente de id. Um `VU` cuja usina influenciadora não está no caso é ignorado."
+
+  [[output.field]]
+  path = "hydros[].tailrace_flow.outflow_influences[].factor"
+  when = "somente para usinas FPHA com ao menos um `VU` convertido que nomeia outra usina operada"
+  from = [ { file = "dadger", register = "VU", item = "fator_impacto_defluencia" } ]
+  status = "derived"
+  how = "Fator da defluência da usina influenciadora na cota de jusante; `VU` repetidos da mesma usina influenciadora são somados."
+
+  [[output.field]]
+  path = "hydros[].tailrace_flow.incremental_inflow_influences"
+  when = "somente para usinas FPHA com declaração diferente da padrão e nenhum `VA` convertido (lista vazia)"
+  from = []
+  status = "constant"
+  how = "Lista vazia: nenhum `VA` da usina nomeia um posto que uma usina operada tenha."
+
+  [[output.field]]
+  path = "hydros[].tailrace_flow.incremental_inflow_influences[].hydro_id"
+  when = "somente para usinas FPHA com ao menos um `VA` convertido"
+  from = [
+    { file = "dadger", register = "VA", item = "codigo_posto_influenciador" },
+    { file = "hidr", item = "posto" },
+    { file = "dadger", register = "AC", item = "NUMPOS" },
+  ]
+  status = "derived"
+  how = "Id Novomodelo da usina operada que tem o posto do `VA` (`posto` do `hidr`, com `AC NUMPOS` do estágio inicial), em ordem crescente de id; pode ser a própria usina. Um posto que nenhuma ou mais de uma usina operada tem faz o `VA` ser ignorado com aviso."
+
+  [[output.field]]
+  path = "hydros[].tailrace_flow.incremental_inflow_influences[].factor"
+  when = "somente para usinas FPHA com ao menos um `VA` convertido"
+  from = [ { file = "dadger", register = "VA", item = "fator_impacto_incremental" } ]
+  status = "derived"
+  how = "Fator da vazão incremental da usina que tem o posto do `VA`; `VA` que mapeiam para a mesma usina são somados."
 
   [[output.field]]
   path = "hydros[].hydraulic_losses.type"
@@ -3327,21 +3387,6 @@ note = "Arquivo principal de registros do DECOMP. Os registros abaixo são os qu
   register = "TS"
   status = "unread"
   note = "Tolerâncias do solver do DECOMP. Sem contrapartida."
-
-  [[source.item]]
-  register = "VA"
-  status = "unread"
-  note = "Posto cuja vazão influencia a cota de jusante de outra usina (fator de impacto incremental). Não lido: o Novomodelo não modela influência de vazão lateral na cota de jusante."
-
-  [[source.item]]
-  register = "VL"
-  status = "unread"
-  note = "Usina que sofre influência de vazão lateral na cota de jusante (polinômio e fator de impacto). Não lido; ver `VA`."
-
-  [[source.item]]
-  register = "VU"
-  status = "unread"
-  note = "Usina cuja defluência influencia a cota de jusante de outra. Não lido; ver `VA`."
 
   [[source.item]]
   register = "CS"

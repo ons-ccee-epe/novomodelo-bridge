@@ -1338,6 +1338,15 @@ class _CadastroDadger:
     def ve(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
+    def vl(self, df: bool = False) -> pd.DataFrame | None:
+        return None
+
+    def vu(self, df: bool = False) -> pd.DataFrame | None:
+        return None
+
+    def va(self, df: bool = False) -> pd.DataFrame | None:
+        return None
+
     def ti(self, df: bool = False) -> pd.DataFrame | None:
         return None
 

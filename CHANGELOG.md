@@ -14,6 +14,13 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert decomp` writes `VL`, `VU` and `VA` as `tailrace_flow` in
+  `system/hydros.json`**, and `check decomp` reports them, with `tailrace-*`
+  warnings for records it drops or merges. Results change for decks with
+  these records; reconvert them.
+
 ### Changed
 
 - **`convert newave` treats negative inflows as NEWAVE does:** the converted

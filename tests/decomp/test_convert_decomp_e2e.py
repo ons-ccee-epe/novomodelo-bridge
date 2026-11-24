@@ -13,6 +13,7 @@ import json
 import shutil
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from idecomp.decomp import Dadger, Vazoes
@@ -42,6 +43,7 @@ from tests.conftest import (
     FloatDigitsKwargs,
     case_json_floats,
     requires_novomodelo_python,
+    requires_tailrace_flow,
     requires_writer_binding,
 )
 
@@ -73,6 +75,10 @@ _RHV_VOLUME_LINES = (
     "LV  119   1                  500.0",
     "CV  119   1     1         1.0     VBOM",
 )
+
+#: DECOMP plant codes: BELO MONTE carries a converted ``tailrace_flow``; P. ESTRELA is an
+#: FPHA plant without one.
+_BELO_MONTE, _PORTO_ESTRELA = 288, 135
 
 
 def _deck_with_lines(
@@ -173,6 +179,46 @@ def test_rhv_volume_tipo_case_validates(decomp_mini_deck: Path, tmp_path: Path) 
     result = novomodelo.io.validate(str(dst))
     assert result["valid"] is True
     assert result["errors"] == []
+
+
+@requires_novomodelo_python
+@requires_tailrace_flow
+def test_decomp_mini_tailrace_flow_runs_and_reaches_the_tailrace(
+    decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
+) -> None:
+    import novomodelo.io  # tier-2: guarded import inside the body, never module scope
+    import novomodelo.run
+
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+    assert novomodelo.io.validate(str(dst))["valid"] is True
+
+    config_path = dst / "config.json"
+    config = json.loads(config_path.read_text())
+    config["training"]["stopping_rules"] = [{"type": "iteration_limit", "limit": 2}]
+    config_path.write_text(json.dumps(config))
+
+    out = tmp_path / "out"
+    novomodelo.run.run(str(dst), output_dir=str(out))
+
+    parquets = sorted((out / "simulation" / "hydros").rglob("*.parquet"))
+    rows = pa.concat_tables(
+        [
+            pq.ParquetFile(path).read(columns=["hydro_id", "tailrace_flow_m3s"])
+            for path in parquets
+        ]
+    ).to_pylist()
+
+    def flows(code: int) -> list[float | None]:
+        hydro_id = decomp_mini_case.id_map.hydro_id(code)
+        return [r["tailrace_flow_m3s"] for r in rows if r["hydro_id"] == hydro_id]
+
+    belo_monte, porto_estrela = flows(_BELO_MONTE), flows(_PORTO_ESTRELA)
+    assert belo_monte
+    assert None not in belo_monte
+    assert max(f for f in belo_monte if f is not None) > 0
+    assert porto_estrela
+    assert None not in porto_estrela
 
 
 def test_rhv_volume_tipos_write_stage_level_generic_rows(

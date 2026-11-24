@@ -75,6 +75,7 @@ from novomodelo_bridge.decomp.converters import ncs as ncs_conv
 from novomodelo_bridge.decomp.converters import network as network_conv
 from novomodelo_bridge.decomp.converters import penalties as penalties_conv
 from novomodelo_bridge.decomp.converters import rhe_shares as rhe_shares_conv
+from novomodelo_bridge.decomp.converters import tailrace_flow as tailrace_flow_conv
 from novomodelo_bridge.decomp.converters import thermal as thermal_conv
 from novomodelo_bridge.decomp.converters import travel_time as travel_time_conv
 from novomodelo_bridge.decomp.converters.scalar_parameters import (
@@ -1309,6 +1310,17 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     stage_models = _fpha_stage_models(
         artifacts, fpha_codes, initial_volumes, turbine_limits
     )
+    fpha_stage_codes = {
+        code
+        for code, models in stage_models.items()
+        if any(m["model"] == "fpha" for m in models)
+    }
+    resolution = tailrace_flow_conv.resolve_tailrace_flow(
+        dadger,
+        effective,
+        id_map.hydro_codes,
+        tailrace_flow_conv.piecewise_tailrace_codes(case, id_map),
+    )
 
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
@@ -1356,6 +1368,13 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         turbine_limits=turbine_limits,
         travel_time_hours=travel_time_hours,
         fpha_codes=fpha_codes,
+        tailrace_flows=tailrace_flow_conv.convert_tailrace_flow(
+            resolution,
+            fpha_stage_codes,
+            id_map,
+            fpha_codes=fpha_codes,
+            effective=effective,
+        ),
     )
     # hydros.json is written after the bound tables are resolved (below): its
     # diversion channels follow the resolved diversion bounds.

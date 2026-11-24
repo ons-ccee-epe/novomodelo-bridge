@@ -83,6 +83,19 @@ is absent or does not cover the month, the last study stage's patamar hours are
 used instead, with a warning; a week that commits different MW per patamar is
 also reported.
 
+The `VL`, `VU` and `VA` registers become `tailrace_flow` in
+`system/hydros.json` on FPHA plants, so the tailrace level rises with the
+lateral flows DECOMP adds. A `VA` gauge maps to the plant whose `AC NUMPOS`
+gauge it is in the first stage. Duplicate `VU` or `VA` pairs are summed, a
+`VU` naming the plant itself is added to the plant's own outflow factor, and a
+`VA` whose gauge is the plant's own stays as a self entry. A duplicate `VL`, an
+unmapped or ambiguous gauge, a plant whose spill does not reach the tailrace
+(`AC VERTJU`) and a plant converted at constant productivity each drop the term
+with a warning. A `VU` whose influencing plant is not in the case is dropped
+without a warning. A `VL` polynomial replaces the constant tailrace only where
+no `polinjus` curve applies. The warnings carry `tailrace-*` codes in the
+`--json` output of `check decomp` and `convert decomp`.
+
 A plant's diverted flow (`QDES`) reaches its diversion target, the plant named
 by `AC DESVIO` or else by the `desvio` field of `hidr.dat`, through a Novomodelo
 diversion channel. The channel carries the `AC DESVIO` flow limit; a plant
@@ -170,9 +183,9 @@ before the optimization. The rule:
 - Itaipu's limit is plant-wide: its two frequency groups share the
   head-limited flow, and each group is also held to its own available power.
 - DECOMP raises the tailrace level by the lateral inflows of `VL` and `VU`
-  registers; the conversion leaves them out. A plant with such a register,
-  such as Itaipu or Belo Monte, may therefore turbine slightly more than
-  DECOMP allows.
+  registers; the turbined-flow limit leaves them out, although the FPHA model
+  carries them. A plant with such a register, such as Itaipu or Belo Monte,
+  may therefore turbine slightly more than DECOMP allows.
 
 Novomodelo fits the planes of the hydro production function (FPHA) itself. These
 inputs follow DECOMP:
@@ -478,8 +491,12 @@ exact production function, beside each model's fit inputs and head components.
 The exact function follows DECOMP's conventions: the forebay at the stage's
 mean storage, the tailrace at the plant's outflow plus the lateral flows of its
 `VU` and `VA` registers, read between `polinjus` families at the downstream
-plant's forebay, and the losses of `hidr.dat`. DECOMP holds the `VA` share at
-the first stage's inflow, and so does the comparison. When the run wrote
+plant's forebay, and the losses of `hidr.dat`. The `VA` share is the factor
+times the mapped plant's incremental inflow in the same stage and scenario.
+Novomodelo's planes are evaluated at the plant's own spill times its own factor,
+plus the lateral flow its converted declaration gives, using Novomodelo's own
+flows and its effective incremental inflow; a gauge link whose influencing
+incremental is missing counts as zero and is logged. When the run wrote
 `dec_desvfpha.rvN`, the table also gives the largest gap between that function
 and DECOMP's own printed value.
 

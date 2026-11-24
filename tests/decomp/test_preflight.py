@@ -249,6 +249,85 @@ class TestTreeShapeCheck:
         assert (shape.passed, shape.detail) == (True, "a terminal fan of 2 scenarios")
 
 
+_TAILRACE_LABEL = "VL/VU/VA tailrace lateral-flow records"
+_VA_BELO_MONTE = b"VA   288   288             0.07\n"
+
+
+def _deck_with_dadger_lines(
+    deck: Path, tmp_path: Path, anchor: bytes, *lines: bytes
+) -> Path:
+    copy = tmp_path / "deck"
+    shutil.copytree(deck, copy)
+    dadger = copy / "dadger.rv2"
+    text = dadger.read_bytes()
+    assert text.count(anchor) == 1
+    dadger.write_bytes(text.replace(anchor, anchor + b"".join(lines)))
+    return copy
+
+
+def _tailrace_findings(diagnostics: list[Diagnostic]) -> list[dict[str, object]]:
+    return [d.to_dict() for d in diagnostics if d.code.startswith("tailrace-")]
+
+
+class TestTailraceRecords:
+    def test_mini_deck_reports_its_records(self, decomp_mini_deck: Path) -> None:
+        result = run_decomp_preflight(decomp_mini_deck)
+
+        [item] = [c for c in result.checks if c.label == _TAILRACE_LABEL]
+        assert item.passed is True
+        assert item.detail == (
+            "4 VL, 4 VU, 1 VA records; 4 plants declare a lateral flow"
+        )
+        assert not [d for d in result.diagnostics if d.code.startswith("tailrace-")]
+
+    def test_findings_match_what_convert_decomp_reports(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        deck = _deck_with_dadger_lines(
+            decomp_mini_deck,
+            tmp_path,
+            _VA_BELO_MONTE,
+            b"VA   288   288             0.10\n",
+            b"VU   288   288             0.50\n",
+        )
+
+        report = convert_decomp_case(deck, tmp_path / "out")
+        result = run_decomp_preflight(deck)
+
+        findings = _tailrace_findings(result.diagnostics)
+        assert findings == _tailrace_findings(report.diagnostics)
+        by_code = {d["code"]: d["severity"] for d in findings}
+        assert by_code["tailrace-duplicate-influence-summed"] == "info"
+        assert by_code["tailrace-self-outflow-folded"] == "info"
+        [item] = [c for c in result.checks if c.label == _TAILRACE_LABEL]
+        assert item.detail == (
+            "4 VL, 5 VU, 2 VA records; 4 plants declare a lateral flow"
+        )
+
+    def test_a_negative_factor_fails_the_check_as_convert_decomp_refuses_it(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        deck = tmp_path / "deck"
+        shutil.copytree(decomp_mini_deck, deck)
+        dadger = deck / "dadger.rv2"
+        dadger.write_bytes(
+            dadger.read_bytes().replace(
+                _VA_BELO_MONTE, b"VA   288   288            -0.07\n"
+            )
+        )
+
+        with pytest.raises(FieldParseError) as raised:
+            convert_decomp_case(deck, tmp_path / "out")
+        result = run_decomp_preflight(deck)
+
+        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
+        [item] = [c for c in result.checks if c.label == _TAILRACE_LABEL]
+        assert (item.passed, item.detail) == (False, str(raised.value))
+        assert [
+            d.summary for d in result.diagnostics if d.severity is Severity.ERROR
+        ] == [str(raised.value)]
+
+
 class TestTabCharacterAdvisory:
     def test_tab_in_a_register_line_warns_and_one_in_a_comment_does_not(
         self, decomp_mini_deck: Path, tmp_path: Path

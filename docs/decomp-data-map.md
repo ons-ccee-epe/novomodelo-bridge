@@ -63,7 +63,10 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `dadger.rvN` › `SB` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `UE` |  |  |  |  |  |  |  |  |  | ● |  |
 | `dadger.rvN` › `UH` | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● | ● |
+| `dadger.rvN` › `VA` |  |  |  | ● |  |  |  |  |  |  |  |
 | `dadger.rvN` › `VI` |  |  |  | ● |  |  |  |  |  |  |  |
+| `dadger.rvN` › `VL` |  |  |  | ● |  |  |  |  |  |  |  |
+| `dadger.rvN` › `VU` |  |  |  | ● |  |  |  |  |  |  |  |
 | `vazoes.rvN` |  |  |  | ● | ● |  |  |  |  |  |  |
 | `hidr.dat` |  | ● |  | ● | ● | ● | ● |  |  |  |  |
 | `mlt.dat` (opcional) |  |  |  |  | ● |  |  |  |  |  |  |
@@ -346,7 +349,7 @@ Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1 ponderados
 
 ### `system/hydros.json`
 
-**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `HQ`, `LQ`, `CQ`, `VI`, `EV`), `hidr.dat`, `polinjus.csv` (opcional), `vazoes.rvN`  
+**Lê:** `dadger.rvN` (`UH`, `SB`, `CT`, `DP`, `DT`, `AC`, `MP`, `FD`, `HQ`, `LQ`, `CQ`, `VI`, `EV`, `VL`, `VU`, `VA`), `hidr.dat`, `polinjus.csv` (opcional), `vazoes.rvN`  
 **Quando:** sempre.  
 **Esquema:** [hydros.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/hydros.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/entity.py`
 
@@ -378,8 +381,15 @@ Uma entrada por usina hidráulica convertida (registro `UH` com `volume_inicial`
 | `hydros[].specific_productivity_mw_per_m3s_per_m` | `hidr.dat` › `produtibilidade_especifica`, `dadger.rvN` › `AC` › `PROESP` *(condicional: somente para usinas com `generation.model` = `fpha`)* | Produtibilidade específica efetiva do estágio inicial (`AC PROESP` aplicado), em MW/(m³/s)/m, copiada sem conversão; o Novomodelo deriva ρ_eq dela na FPHA computada. |
 | `hydros[].efficiency.type` | — *(constante; condicional: somente para usinas com `generation.model` = `fpha`)* | Sempre `constant`: o DECOMP não traz curva de rendimento por vazão ou queda. |
 | `hydros[].efficiency.value` | `hidr.dat` › `produtibilidade_especifica`, `dadger.rvN` › `AC` › `PROESP` *(condicional: somente para usinas com `generation.model` = `fpha`)* | Rendimento adimensional da turbina η = ρ_esp / 0,00981 (a produtibilidade específica já embute g/1000 × η); um valor acima de 1,0 é truncado para 1,0 com aviso. |
-| `hydros[].tailrace.type` | — *(constante; condicional: somente para usinas FPHA cujo `canal_fuga_medio` efetivo é positivo)* | Sempre `polynomial`: o nível de jusante de reserva é um polinômio de grau zero. |
-| `hydros[].tailrace.coefficients[]` | `hidr.dat` › `canal_fuga_medio`, `dadger.rvN` › `AC` › `JUSMED` *(condicional: somente para usinas FPHA cujo `canal_fuga_medio` efetivo é positivo)* | Lista com um único coeficiente: o nível médio do canal de fuga efetivo (`AC JUSMED` aplicado) do estágio inicial, em metros. É o nível de jusante de reserva que o Novomodelo usa quando a usina não tem família em `system/tailrace_curves.parquet`. |
+| `hydros[].tailrace.type` | — *(constante; condicional: somente para usinas FPHA cujo `canal_fuga_medio` efetivo é positivo ou com registro `VL` de polinômio sem família no `polinjus`)* | Sempre `polynomial`: de grau zero no nível de jusante de reserva, ou o polinômio do `VL` (ver `hydros[].tailrace.coefficients[]`). |
+| `hydros[].tailrace.coefficients[]` | `hidr.dat` › `canal_fuga_medio`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `VL` › `coeficiente_a0 … coeficiente_a4` *(condicional: somente para usinas FPHA cujo `canal_fuga_medio` efetivo é positivo ou com registro `VL` de polinômio sem família no `polinjus`)* | Lista com um único coeficiente: o nível médio do canal de fuga efetivo (`AC JUSMED` aplicado) do estágio inicial, em metros. É o nível de jusante de reserva que o Novomodelo usa quando a usina não tem família em `system/tailrace_curves.parquet`. Quando a usina tem um `VL` com algum coeficiente a0 a a4 não nulo e nenhuma família no `polinjus`, a lista traz os cinco coeficientes do `VL` no lugar desse valor; com família no `polinjus`, o polinômio do `VL` é ignorado com aviso. |
+| `hydros[].tailrace_flow.own_outflow_factor` | `dadger.rvN` › `VL` › `fator_impacto_defluencia`, `dadger.rvN` › `VU` › `fator_impacto_defluencia` *(derivado; condicional: somente para usinas FPHA com registro `VL`, `VU` ou `VA` e declaração diferente da padrão (fator 1.0 e listas vazias))* | Fator que multiplica a defluência da própria usina na cota de jusante: o `fator_impacto_defluencia` do primeiro `VL` da usina (1.0 sem `VL`), somado aos fatores dos `VU` cuja usina influenciadora é a própria usina. Usinas que mantêm o vertimento fora do canal de fuga (`VERTJU` 0) não têm declaração, e os registros delas são ignorados com aviso. |
+| `hydros[].tailrace_flow.outflow_influences` | — *(constante; condicional: somente para usinas FPHA com declaração diferente da padrão e nenhum `VU` convertido (lista vazia))* | Lista vazia: nenhum `VU` da usina nomeia outra usina operada. |
+| `hydros[].tailrace_flow.outflow_influences[].hydro_id` | `dadger.rvN` › `VU` › `codigo_usina_influenciadora` *(derivado; condicional: somente para usinas FPHA com ao menos um `VU` convertido que nomeia outra usina operada)* | Id Novomodelo da usina influenciadora, uma entrada por usina, em ordem crescente de id. Um `VU` cuja usina influenciadora não está no caso é ignorado. |
+| `hydros[].tailrace_flow.outflow_influences[].factor` | `dadger.rvN` › `VU` › `fator_impacto_defluencia` *(derivado; condicional: somente para usinas FPHA com ao menos um `VU` convertido que nomeia outra usina operada)* | Fator da defluência da usina influenciadora na cota de jusante; `VU` repetidos da mesma usina influenciadora são somados. |
+| `hydros[].tailrace_flow.incremental_inflow_influences` | — *(constante; condicional: somente para usinas FPHA com declaração diferente da padrão e nenhum `VA` convertido (lista vazia))* | Lista vazia: nenhum `VA` da usina nomeia um posto que uma usina operada tenha. |
+| `hydros[].tailrace_flow.incremental_inflow_influences[].hydro_id` | `dadger.rvN` › `VA` › `codigo_posto_influenciador`, `hidr.dat` › `posto`, `dadger.rvN` › `AC` › `NUMPOS` *(derivado; condicional: somente para usinas FPHA com ao menos um `VA` convertido)* | Id Novomodelo da usina operada que tem o posto do `VA` (`posto` do `hidr`, com `AC NUMPOS` do estágio inicial), em ordem crescente de id; pode ser a própria usina. Um posto que nenhuma ou mais de uma usina operada tem faz o `VA` ser ignorado com aviso. |
+| `hydros[].tailrace_flow.incremental_inflow_influences[].factor` | `dadger.rvN` › `VA` › `fator_impacto_incremental` *(derivado; condicional: somente para usinas FPHA com ao menos um `VA` convertido)* | Fator da vazão incremental da usina que tem o posto do `VA`; `VA` que mapeiam para a mesma usina são somados. |
 | `hydros[].hydraulic_losses.type` | `hidr.dat` › `tipo_perda`, `hidr.dat` › `perdas`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas com `generation.model` = `fpha`)* | `factor` quando `tipo_perda` = 1 e a perda efetiva (`AC PERHID` aplicado) é positiva; `constant` quando `tipo_perda` = 2 e a perda é positiva; nos demais casos `factor` com valor 0.0, porque o Novomodelo exige o bloco em toda usina FPHA. |
 | `hydros[].hydraulic_losses.value` | `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas FPHA com `hydraulic_losses.type` = `factor`)* | Fração da queda bruta perdida: `perdas`/100 quando `tipo_perda` = 1; 0.0 quando a usina não tem perda modelada. |
 | `hydros[].hydraulic_losses.value_m` | `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `dadger.rvN` › `AC` › `PERHID` *(condicional: somente para usinas FPHA com `tipo_perda` = 2 e perda positiva)* | Perda de carga constante em metros, igual ao `perdas` efetivo (`AC PERHID` aplicado). |
@@ -866,6 +876,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `PROESP` → `system/hydros.json` › `hydros[].specific_productivity_mw_per_m3s_per_m`
 - `PROESP` → `system/hydros.json` › `hydros[].efficiency.value`
 - `JUSMED` → `system/hydros.json` › `hydros[].tailrace.coefficients[]`
+- `NUMPOS` → `system/hydros.json` › `hydros[].tailrace_flow.incremental_inflow_influences[].hydro_id`
 - `PERHID` → `system/hydros.json` › `hydros[].hydraulic_losses.type`
 - `PERHID` → `system/hydros.json` › `hydros[].hydraulic_losses.value`
 - `PERHID` → `system/hydros.json` › `hydros[].hydraulic_losses.value_m`
@@ -1736,9 +1747,10 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `VA`
 
-**Estado:** não lido.
+**Estado:** convertido. **Lido por:** `system/hydros.json`.
 
-- todo o registro — *não lido.* Posto cuja vazão influencia a cota de jusante de outra usina (fator de impacto incremental). Não lido: o Novomodelo não modela influência de vazão lateral na cota de jusante.
+- `codigo_posto_influenciador` → `system/hydros.json` › `hydros[].tailrace_flow.incremental_inflow_influences[].hydro_id`
+- `fator_impacto_incremental` → `system/hydros.json` › `hydros[].tailrace_flow.incremental_inflow_influences[].factor`
 
 ### `dadger.rvN` › `VE`
 
@@ -1760,9 +1772,10 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `VL`
 
-**Estado:** não lido.
+**Estado:** convertido. **Lido por:** `system/hydros.json`.
 
-- todo o registro — *não lido.* Usina que sofre influência de vazão lateral na cota de jusante (polinômio e fator de impacto). Não lido; ver `VA`.
+- `coeficiente_a0 … coeficiente_a4` → `system/hydros.json` › `hydros[].tailrace.coefficients[]`
+- `fator_impacto_defluencia` → `system/hydros.json` › `hydros[].tailrace_flow.own_outflow_factor`
 
 ### `dadger.rvN` › `VT`
 
@@ -1772,9 +1785,11 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `VU`
 
-**Estado:** não lido.
+**Estado:** convertido. **Lido por:** `system/hydros.json`.
 
-- todo o registro — *não lido.* Usina cuja defluência influencia a cota de jusante de outra. Não lido; ver `VA`.
+- `fator_impacto_defluencia` → `system/hydros.json` › `hydros[].tailrace_flow.own_outflow_factor`
+- `codigo_usina_influenciadora` → `system/hydros.json` › `hydros[].tailrace_flow.outflow_influences[].hydro_id`
+- `fator_impacto_defluencia` → `system/hydros.json` › `hydros[].tailrace_flow.outflow_influences[].factor`
 
 ### `vazoes.rvN`
 
@@ -1915,6 +1930,7 @@ Cadastro binário das hidrelétricas, compartilhado com o NEWAVE. As colunas aba
 - `produtibilidade_especifica` → `system/hydros.json` › `hydros[].specific_productivity_mw_per_m3s_per_m`
 - `produtibilidade_especifica` → `system/hydros.json` › `hydros[].efficiency.value`
 - `canal_fuga_medio` → `system/hydros.json` › `hydros[].tailrace.coefficients[]`
+- `posto` → `system/hydros.json` › `hydros[].tailrace_flow.incremental_inflow_influences[].hydro_id`
 - `tipo_perda` → `system/hydros.json` › `hydros[].hydraulic_losses.type`
 - `perdas` → `system/hydros.json` › `hydros[].hydraulic_losses.type`
 - `perdas` → `system/hydros.json` › `hydros[].hydraulic_losses.value`
@@ -2315,9 +2331,6 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `dadger.rvN` › `QI` — *não lido.* Tempo de viagem por usina usado no cálculo da ENA. Não lido: só afeta a agregação em energia, que o Novomodelo não faz.
 - `dadger.rvN` › `RT` — *não lido.* Retirada das restrições de soleira de vertedouro e de canal de desvio. Não lido; converter exige suprimir o limite correspondente em `hydro_bounds.parquet`.
 - `dadger.rvN` › `TS` — *não lido.* Tolerâncias do solver do DECOMP. Sem contrapartida.
-- `dadger.rvN` › `VA` — *não lido.* Posto cuja vazão influencia a cota de jusante de outra usina (fator de impacto incremental). Não lido: o Novomodelo não modela influência de vazão lateral na cota de jusante.
-- `dadger.rvN` › `VL` — *não lido.* Usina que sofre influência de vazão lateral na cota de jusante (polinômio e fator de impacto). Não lido; ver `VA`.
-- `dadger.rvN` › `VU` — *não lido.* Usina cuja defluência influencia a cota de jusante de outra. Não lido; ver `VA`.
 - `dadger.rvN` › `CS` — *não lido.* Habilita a consistência de dados do DECOMP. Sem contrapartida.
 - `dadger.rvN` › `FA` — *arquivo de índice, lido para localizar os demais.* Nome do arquivo índice CSV das LIBs. Lido para localizar o índice; sem `FA`, nenhum arquivo LIBs é lido.
 - `dadger.rvN` › `FJ` — *arquivo de índice, lido para localizar os demais.* Nome do arquivo de polinômios de jusante. Lido para localizar o arquivo, sozinho ou junto da chave `HIDRELETRICA-CADASTRO-RESERVATORIO-CURVAJUSANTE` do índice; se os dois apontam arquivos diferentes, é erro.

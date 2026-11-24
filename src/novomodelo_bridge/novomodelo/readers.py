@@ -569,6 +569,7 @@ _HYDRO_BLOCK_COLUMNS = pl.Schema(
         "spillage_m3s": pl.Float64,
         "outflow_m3s": pl.Float64,
         "incremental_inflow_m3s": pl.Float64,
+        "inflow_nonnegativity_slack_m3s": pl.Float64,
         "storage_initial_hm3": pl.Float64,
         "storage_final_hm3": pl.Float64,
         "generation_mw": pl.Float64,
@@ -602,6 +603,45 @@ def read_novomodelo_hydro_block_operation(novomodelo_output_dir: Path) -> pl.Dat
             f"Failed to read the hydro simulation rows in {novomodelo_output_dir}"
         ) from exc
     return frame.select(list(_HYDRO_BLOCK_COLUMNS)).cast(_HYDRO_BLOCK_COLUMNS)
+
+
+def read_novomodelo_inflow_non_negativity_method(
+    novomodelo_output_dir: Path,
+) -> str | None:
+    """``modeling.inflow_non_negativity.method`` of the run's ``config.json``.
+
+    The file is the case directory's, else the output directory's. ``None``
+    when neither exists. A config without the key has novomodelo's default,
+    ``"truncation_with_penalty"``.
+
+    Raises:
+        NovomodeloReadError: The file is not a JSON object, or its
+            ``modeling.inflow_non_negativity.method`` is not a string.
+    """
+    for directory in (case_dir_for(novomodelo_output_dir), novomodelo_output_dir):
+        path = directory / "config.json"
+        if not path.exists():
+            continue
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise NovomodeloReadError(f"Failed to read {path}") from exc
+        try:
+            method = (
+                config.get("modeling", {})
+                .get("inflow_non_negativity", {})
+                .get("method", "truncation_with_penalty")
+            )
+        except AttributeError as exc:
+            raise NovomodeloReadError(
+                f"{path} is not a JSON object with a modeling section"
+            ) from exc
+        if not isinstance(method, str):
+            raise NovomodeloReadError(
+                f"{path}: modeling.inflow_non_negativity.method is not a string"
+            )
+        return method
+    return None
 
 
 def read_novomodelo_bus_block_prices(novomodelo_output_dir: Path) -> pl.DataFrame:
