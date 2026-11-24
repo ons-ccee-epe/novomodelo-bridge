@@ -106,9 +106,8 @@ class ResolvedBound(NamedTuple):
     """A per-(constraint, stage) interval bound reduced to one comparison-ready limit.
 
     ``value`` is the endpoint appropriate to the row's evaluated direction —
-    the number the numeric comparison and the chart plot, identical to what
-    a legacy single ``bound`` column held. ``shape`` is the direction label
-    (``">="``/``"<="``/``"=="``/``"range"``) from
+    the number the numeric comparison and the chart plot. ``shape`` is the
+    direction label (``">="``/``"<="``/``"=="``/``"range"``) from
     :func:`~novomodelo_bridge.core.generic_constraint_format.shape_from_bounds`, for
     display only.
     """
@@ -121,12 +120,11 @@ def _resolve_bound(lower: float | None, upper: float | None) -> ResolvedBound:
     """Resolve one interval bound row to a single comparison-ready limit + shape.
 
     ``>=`` (lower-only) reads ``lower``; ``<=`` (upper-only) reads ``upper``;
-    ``==`` (both equal) reads either (they agree) — this matches the legacy
-    single ``bound`` column value exactly for every constraint family this
-    comparator evaluates today (RE/AGRINT/VminOP are all single-sided). A
-    genuine two-sided ``range`` has no producer feeding this comparator; the
-    upper (ceiling) endpoint is used as the documented fallback so a future
-    band constraint degrades to one visualized limit rather than raising.
+    ``==`` (both equal) reads either (they agree). Every constraint family this
+    comparator evaluates (RE/AGRINT/VminOP) is single-sided. A genuine two-sided
+    ``range`` has no producer feeding this comparator; the upper (ceiling)
+    endpoint is used as the documented fallback so a future band constraint
+    degrades to one visualized limit rather than raising.
     """
     shape = shape_from_bounds(lower, upper)
     if shape in ("<=", "range"):

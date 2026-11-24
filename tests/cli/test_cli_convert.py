@@ -2381,10 +2381,7 @@ class TestCliInProcess:
     ) -> None:
         """The importer runs inside a ``dx.collect()`` sink,
         so a ``Diagnostic`` it emits — here the GNL anticipated-ring
-        deviation — reaches the ``--json`` verdict's ``diagnostics`` array.
-        This test fails against the pre-sink CLI (no ``dx.collect()``
-        wrapping ``import_boundary_fcf``), proving the previously deferred gap
-        is closed."""
+        deviation — reaches the ``--json`` verdict's ``diagnostics`` array."""
         from novomodelo_bridge.core import diagnostics as dx
         from novomodelo_bridge.core.conversion import ConversionReport
 
@@ -2636,9 +2633,8 @@ class TestCliInProcess:
         ``..._reach_json``, but without ``--json`` and with
         ``--diagnostics-json`` — the importer's ``Diagnostic`` (captured by
         the ``dx.collect()`` sink) must reach the sidecar file too, not just
-        the ``--json`` stdout verdict. This test fails against the pre-fix
-        CLI, where the sidecar is written BEFORE the boundary-FCF block runs
-        and therefore only ever contains ``report.diagnostics``."""
+        the ``--json`` stdout verdict, so the sidecar is written after the
+        boundary-FCF block runs."""
         from novomodelo_bridge.core import diagnostics as dx
         from novomodelo_bridge.core.conversion import ConversionReport
 
@@ -2945,9 +2941,17 @@ class TestJsonFloatDigits:
         assert mock_import.call_args.kwargs["float_digits"] == 9
 
     @pytest.mark.parametrize("track", ["newave", "decomp"])
-    @pytest.mark.parametrize("digits", ["0", "18"])
+    @pytest.mark.parametrize(
+        ("digits", "violated_bound"),
+        [("0", "greater than or equal to 1"), ("18", "less than or equal to 17")],
+    )
     def test_out_of_range_digits_is_a_usage_error(
-        self, tmp_path: Path, track: str, digits: str
+        self,
+        tmp_path: Path,
+        track: str,
+        digits: str,
+        violated_bound: str,
+        dumb_terminal: None,
     ) -> None:
         result = self._invoke(
             ["convert", track, str(tmp_path / "src"), str(tmp_path / "dst")]
@@ -2955,4 +2959,5 @@ class TestJsonFloatDigits:
         )
 
         assert result.exit_code == 2
-        assert "1<=x<=17" in result.output
+        unwrapped = " ".join(result.output.translate(str.maketrans("│|", "  ")).split())
+        assert violated_bound in unwrapped

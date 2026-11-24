@@ -20,7 +20,8 @@ slack-penalty helper, and ``slots_from_record`` (the per-record (stage,
 block) slot enumeration feeding the shared :class:`~novomodelo_bridge.core.
 generic_constraint_builder.GenericConstraintBuilder`), plus the multi-term
 ``RE`` emitter (``emit_re_generics``) and the ``RHQ``/``RHV`` emitter
-(``emit_rhq_rhv_generics``) built on top of it.
+(``emit_rhq_rhv_generics``) built on top of it. ``emit_itaipu_ande_generic``
+holds Itaipu's 50 Hz generation at or above the ``RI`` ANDE load.
 
 An ``RE`` ``FT`` term on a GNL thermal of ``dadgnl`` never reaches these
 emitters: :func:`fold_commanded_gnl_terms` moves its commanded generation into
@@ -1362,3 +1363,40 @@ def emit_rhe_generics(
     return _with_parameters(
         builder.result(), per_stage_parameters, expression_parameters
     )
+
+
+def emit_itaipu_ande_generic(
+    itaipu_id: int,
+    ande_bus_id: int,
+    carga_ande: Mapping[int, Sequence[float]],
+    *,
+    big_m: float,
+    allocator: ConstraintIdAllocator,
+) -> GenericConstraintResult | None:
+    """Itaipu's generation on the ANDE bus held at or above the ANDE load.
+
+    The source model subtracts the ``RI`` ``carga_ande`` load from the 50 Hz
+    generation it delivers to the submarket, so the 50 Hz group alone serves
+    it. The case adds the load to the bus the 50 Hz group sits on
+    (*ande_bus_id*), where any plant could serve it, so this constraint keeps
+    the group's generation there at or above the load in every stage and block
+    with a positive load, soft at *big_m* like the ``RE`` constraints.
+
+    *carga_ande* is ``{stage_index: [MW per block]}``, as
+    :func:`~novomodelo_bridge.decomp.converters.libs_electrical.read_carga_ande`
+    returns it. Returns ``None`` when no block carries a load.
+    """
+    builder = GenericConstraintBuilder(allocator)
+    builder.add(
+        name="RI_ANDE",
+        description="Itaipu 50 Hz generation serving the RI ANDE load",
+        expression=_hydro_generation_token(itaipu_id, ande_bus_id),
+        slack=soft_slack(big_m, "per_hour"),
+        slots=[
+            (stage_id, block_id, load, None)
+            for stage_id, loads in sorted(carga_ande.items())
+            for block_id, load in enumerate(loads)
+            if load > 0.0
+        ],
+    )
+    return builder.result()

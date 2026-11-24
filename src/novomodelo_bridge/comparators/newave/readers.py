@@ -218,7 +218,7 @@ def read_medias_sin(case_dir: Path) -> pl.DataFrame:
 _PMO_CONVERGENCE_SCHEMA: dict[str, type[pl.DataType]] = {
     "iteration": pl.Int64,
     "lower_bound": pl.Float64,
-    "upper_bound_mean": pl.Float64,
+    "upper_bound": pl.Float64,
     "upper_bound_best": pl.Float64,
 }
 
@@ -241,8 +241,8 @@ def read_pmo_convergence(newave_dir: Path) -> pl.DataFrame:
     """Read pmo.dat convergence table, in R$.
 
     Returns ``iteration`` (Int64) and the Float64 bounds ``lower_bound``
-    (``ZINF``), ``upper_bound_mean`` (``ZSUP ITER``, the iteration's forward
-    cost, Novomodelo's ``upper_bound_mean``) and ``upper_bound_best`` (``ZSUP``,
+    (``ZINF``), ``upper_bound`` (``ZSUP ITER``, the iteration's forward
+    cost, Novomodelo's ``upper_bound``) and ``upper_bound_best`` (``ZSUP``,
     the lowest ``ZSUP ITER`` so far, which set against Novomodelo's
     per-iteration upper bound would hide every rise).
 
@@ -275,7 +275,7 @@ def read_pmo_convergence(newave_dir: Path) -> pl.DataFrame:
         {
             "iteration": rows["iteracao"].to_numpy(),
             "lower_bound": rows["zinf"].to_numpy() * 1e6,
-            "upper_bound_mean": rows["zsup_iteracao"].to_numpy() * 1e6,
+            "upper_bound": rows["zsup_iteracao"].to_numpy() * 1e6,
             "upper_bound_best": rows["zsup"].to_numpy() * 1e6,
         },
         schema=_PMO_CONVERGENCE_SCHEMA,

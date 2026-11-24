@@ -1,31 +1,28 @@
 # Real-deck checks
 
-This page is for contributors. It catalogues the end-to-end checks that used
-to live in the test suite as tests guarded on real NEWAVE and DECOMP decks,
-explains why they were removed, and records what each one needs so it can be
-brought back in a form that runs for everyone. It also records checks that
-were only ever run by hand on a real deck.
+This page is for contributors. It catalogues the end-to-end checks that need
+a whole real NEWAVE or DECOMP deck, which no test may read, and records what
+each one needs so it can run as a test for everyone. It also records checks
+run by hand on a real deck.
 
-## Why they were removed
+## Why they are not tests
 
-The suite carried tests that skipped unless a real deck was present under the
-gitignored `example/` tree, and in some cases unless a locally built `novomodelo`
-binary sat at a fixed path under the developer's home directory. Four more
-tests read a schema and an example case from a sibling checkout of the novomodelo
-repository. None of those inputs is part of the repository, so:
+A test that reads a real deck skips unless the deck is present under the
+gitignored `example/` tree, and some also need a locally built `novomodelo`
+binary at a fixed path under the developer's home directory. None of those
+inputs is part of the repository, so:
 
-- CI never ran any of them, and on any checkout whose local decks differed
-  from the author's they skipped silently. A test that has passed on one
+- CI never runs such a test, and on any checkout whose local decks differ
+  from the author's it skips silently. A test that has passed on one
   machine at one point in time is a snapshot, not a regression guard, and a
   permanent skip reads as coverage in the tree.
-- Their pinned numbers came from decks no reviewer could open, so nobody could
-  tell whether a pin encoded correct behaviour or a bug of the day.
+- Its pinned numbers come from decks no reviewer can open, so nobody can
+  tell whether a pin encodes correct behaviour or a bug of the day.
 
-The code they exercised keeps its unit tests on synthetic inputs. What was
-lost is the check against real data, which is what this page exists to
-restore properly.
+The code these checks exercise keeps its unit tests on synthetic inputs; the
+check against real data is what this page records.
 
-## The policy now
+## The policy
 
 Every test runs from the repository alone. `tests/test_local_data_policy.py`
 fails the build if any test module builds a path into `example/` or resolves
@@ -34,22 +31,22 @@ as small excerpts under `tests/fixtures/` (NEWAVE result files, DECOMP result
 files, novomodelo's contract schema and its example case), and the synthetic
 mini-decks under `tests/decks/` drive the end-to-end conversions.
 
-The removed test bodies remain in git history. To read one:
+Each check's test code is in git history. To read one:
 
 ```bash
 git log -S"<test function name>" --oneline -- tests   # the commit that removed it
 git show <that commit>^:tests/<path to the module>    # the module as it was
 ```
 
-## What was removed, and what each check needs
+## The checks and what each needs
 
-The deck identifiers below name directories that lived under `example/` on
-the author's machine. They are not in the repository and may not exist
-anywhere any more; treat each as "a deck with these properties".
+The deck identifiers below name directories under `example/` on the author's
+machine. They are not in the repository; treat each as "a deck with these
+properties".
 
 ### A full NEWAVE case (`newave_rodada`, with its `cortesh.dat` and `cortes.dat`)
 
-| Removed check | Verified |
+| Test (in git history) | Verified |
 | --- | --- |
 | `test_rule43_regression.py` (whole module) | Converting the case yields no `hydro_bounds.parquet` row whose `max_turbined_m3s` or `max_generation_mw` exceeds the plant's declared value in `hydros.json` (novomodelo's semantic rule 43), over at least a thousand rows. The in-pipeline mirror, `check_hydro_bounds_no_raising` in `src/novomodelo_bridge/core/emission_checks.py`, keeps its unit tests in `tests/core/test_emission_checks.py`. |
 | `TestConvertLineBoundsRealDeckFidelity` in `test_convert_network.py` | Every per-block line-bound row equals the base capacity times the block factor recomputed independently from `sistema.dat` and `patamar.dat`, and the row count equals the number of genuinely differing (line, stage, block) combinations. |
@@ -57,51 +54,50 @@ anywhere any more; treat each as "a deck with these properties".
 
 ### A full DECOMP deck with its cut files (`decomp-mar-26-rv2`), plus a novomodelo binary
 
-| Removed check | Verified |
+| Test (in git history) | Verified |
 | --- | --- |
 | Three real-deck tests in `test_fcf_cortes.py` | Cut-file readers on a hybrid deck (aggregated stages then plant-space cuts): plant count after excluding fictitious plants, GNL slot width, boundary stage taken from the trailer, record count and raw column count, zero SAR columns, right-hand-side magnitude. |
 | Three end-to-end tests in `test_fcf_importer.py` | Convert plus boundary import: every anticipated plant's covered ring lane is priced and its in-study lane is not; the post-study calendar has the expected shape; `novomodelo validate` reports zero case errors; a bounded `novomodelo run <case>` loads the boundary with no panic, no empty-lag warning, and no dropped delivery; the operator command `novomodelo-bridge convert decomp` run as a subprocess authors a populated boundary and reports it in the `--json` verdict. |
 
 ### The reduced DECOMP deck (`decomp-mar-26-rv2-reduced`, a two-leaf terminal fan)
 
-| Removed check | Verified |
+| Test (in git history) | Verified |
 | --- | --- |
 | One end-to-end test in `test_fcf_importer.py` | The bootstrap resolves a real terminal node id (never the -1 sentinel), `policy.boundary.source_stage` equals that graph stage, and the already-committed months carry no dated ring slot while a signalled month does. |
 | Two tests in `test_anticipated.py` | The already-committed set derived from the `gl` records matches the prior-revision markers in `relgnl` for SANTA CRUZ; a full conversion emits the seven-stage post-study calendar, prunes the post-study thermal bounds to the signalled stages, tiles the committed windows with the deck's own MW, and keeps the lead uncapped. |
 | `test_anticipated_e2e.py` (whole module; also needs `novomodelo-python`'s checkpoint writer) | The CLI conversion with boundary import trains and simulates in-process; the anticipated-lanes output partition is populated; the post-horizon split matches the deck's declaration and the run reaches every post-study delivery. |
-| Nine result-reader tests in `tests/comparators/test_decomp_readers.py` | Each reader returns rows with the expected columns on the deck's real result files. Four of them (`dec_oper_gnl.csv`, `dec_oper_ree.csv`, `decomp.tim`, `dec_desvfpha.rvN`) now run against committed excerpts; the rest are listed under "Excerpts still to capture". |
+| Nine result-reader tests in `tests/comparators/test_decomp_readers.py` | Each reader returns rows with the expected columns on the deck's real result files. Four of them (`dec_oper_gnl.csv`, `dec_oper_ree.csv`, `decomp.tim`, `dec_desvfpha.rvN`) run against committed excerpts; the rest are listed under "Excerpts still to capture". |
 
 ### The reduced deck plus its solved novomodelo case (`novomodelo-mar-26-rv2-reduced`)
 
-| Removed check | Verified |
+| Test (in git history) | Verified |
 | --- | --- |
-| Ten tests in the former `test_decomp_full_report_smoke.py` (now `tests/comparators/test_retired_decomp_symbols.py`) | `compare decomp` builds the full multi-tab report end to end: every navigation tab is present; the energy balance, network, cost, performance, constraints, REE, evaporation, and FPHA sections render with data; the `DECOMP` reference label leaves no `NEWAVE` literal. |
+| Ten tests in `test_decomp_full_report_smoke.py` | `compare decomp` builds the full multi-tab report end to end: every navigation tab is present; the energy balance, network, cost, performance, constraints, REE, evaporation, and FPHA sections render with data; the `DECOMP` reference label leaves no `NEWAVE` literal. |
 | One test in `tests/dashboard/test_energy_balance.py` | The block-hours-weighted system spillage rate on the solved case equals a pinned value (59,001.5 m³/s at capture), guarding against summing per-block rows without weighting. |
 
 ### A DECOMP deck with electrical-constraint files (`decomp-abr-26-lpp`), plus a novomodelo binary
 
-| Removed check | Verified |
+| Test (in git history) | Verified |
 | --- | --- |
-| One test each in `test_libs_electrical_emit.py` and `test_libs_electrical_pipeline.py` | Conversion emits at least one `LIBS_ELEC_*` generic constraint with matching bound rows, the unresolved-operand census stays below the pre-fix baseline of 20, and `novomodelo validate` exits 0 on the converted case. |
+| One test each in `test_libs_electrical_emit.py` and `test_libs_electrical_pipeline.py` | Conversion emits at least one `LIBS_ELEC_*` generic constraint with matching bound rows, the unresolved-operand census stays below 20, and `novomodelo validate` exits 0 on the converted case. |
 
 ### A DECOMP deck carrying `VI` water travel time, plus a novomodelo binary
 
 | Check | Verifies |
 | --- | --- |
-| Convert a deck with at least one operated `VI` arc, then `novomodelo run` the case to convergence | The transit-bucket cut generation produces a valid policy: training converges on a non-negative gap (no lower bound driven past the upper bound), and the solved case prices the in-transit water. `novomodelo validate` alone does not exercise this — it checks the `past_defluences` coverage rule at config time but not the cut arithmetic — so this needs the solver binary, not just the validator. The emission shape is unit-tested in `test_travel_time.py` and the loadability in `test_convert_decomp_e2e.py` (tier-2, `novomodelo validate`); this whole-deck run is what closed the former novomodelo cut-generation defect (`C-travel-time`). |
+| Convert a deck with at least one operated `VI` arc, then `novomodelo run` the case to convergence | The transit-bucket cut generation produces a valid policy: training converges on a non-negative gap (no lower bound driven past the upper bound), and the solved case prices the in-transit water. `novomodelo validate` alone does not exercise this — it checks the `past_defluences` coverage rule at config time but not the cut arithmetic — so this needs the solver binary, not just the validator. The emission shape is unit-tested in `test_travel_time.py` and the loadability in `test_convert_decomp_e2e.py` (tier-2, `novomodelo validate`). |
 
-### Sibling novomodelo checkout (replaced, not removed)
+### Vendored novomodelo files
 
 Four tests in `tests/decomp/test_contracts.py` read novomodelo's
-`energy_contracts.schema.json` and its `d41-energy-contracts` example from a
-checkout under the developer's home directory. Those files are now vendored
-under `tests/fixtures/novomodelo_schemas/` and `tests/fixtures/novomodelo_d41/`, so the
-tests run everywhere. Refresh both copies from the novomodelo repository whenever
-`MIN_NOVOMODELO_VERSION` moves.
+`energy_contracts.schema.json` and its `d41-energy-contracts` example from
+copies vendored under `tests/fixtures/novomodelo_schemas/` and
+`tests/fixtures/novomodelo_d41/`, so the tests run everywhere. Refresh both
+copies from the novomodelo repository whenever `MIN_NOVOMODELO_VERSION` moves.
 
 ## Checks run by hand
 
-These were never tests. They are recorded so they can be repeated.
+These checks are run by hand and recorded so they can be repeated.
 
 ### The reduced DECOMP deck, run by DECOMP with its coupling report
 
@@ -132,7 +128,7 @@ These were never tests. They are recorded so they can be repeated.
 
 | Check | Verified |
 | --- | --- |
-| Turbined-flow limit against DECOMP's `avl_turb_max.csv` | With `IR ARQCSV`, DECOMP writes `avl_turb_max.csv`, whose `Qmax dc pl` column is the turbined-flow limit it applies to each plant on each stage. The bridge side is the sum of the plant's unit-group limits for the stage, read from `hydro_unit_group_bounds.parquet` or else the group's envelope in `hydros.json`; for Itaipu it is capped by the plant's `max_turbined_m3s` row in `hydro_bounds.parquet`. Every plant matches within 0.5% on every stage DECOMP reports, on both decks, and no fixed point fails to converge. The largest difference is Itaipu, above DECOMP's limit, because the conversion leaves its `VL` lateral inflow out of the tailrace level. Captured with DECOMP 32.0.1 in October 2026. |
+| Turbined-flow limit against DECOMP's `avl_turb_max.csv` | With `IR ARQCSV`, DECOMP writes `avl_turb_max.csv`, whose `Qmax dc pl` column is the turbined-flow limit it applies to each plant on each stage. The bridge side is the sum of the plant's unit-group limits for the stage, read from `hydro_unit_group_bounds.parquet` or else the group's envelope in `hydros.json`; for Itaipu it is capped by the plant's `max_turbined_m3s` row in `hydro_bounds.parquet`. Every plant matches within 0.5% on every stage DECOMP reports, on both decks, and no fixed point fails to converge. The largest difference is Itaipu, above DECOMP's limit, because the turbined-flow limit leaves its `VL` lateral inflow out of the tailrace level. Captured with DECOMP 32.0.1 in October 2026. |
 
 ### The reduced DECOMP deck and a monthly-stage deck, run by DECOMP with their FPHA reports
 
@@ -242,21 +238,20 @@ Captured with a novomodelo 0.21.0 build that accepts the `spillage` object, in N
 
 ## Excerpts still to capture
 
-These would restore the remaining reader checks as ordinary tests. Take the
+These would turn the remaining reader checks into ordinary tests. Take the
 file from any deck that has it, keep the header and the first few stages'
 rows, confirm the reader parses it, and commit it under
 `tests/fixtures/decomp_results/`.
 
-| Reader | File | Columns the removed test asserted |
+| Reader | File | Columns the test asserted |
 | --- | --- | --- |
 | `read_relato_costs`, `read_relato_membership` | `relato.rvN` | rows present; membership has `codigo_usina` and `codigo_ree`. The parser needs the complete report, so a head excerpt does not work; a block-wise excerpt tool or a deliberately larger fixture is required. |
 | `read_dec_estatfpha` | `dec_estatfpha.rvN` | `variavel`, `valor` |
 | `read_dec_oper_evap` | `dec_oper_evap.csv` | `evaporacao_calculada_hm3`; no `patamar` column |
 | `read_dec_oper_rhesoft` | `dec_oper_rhesoft.csv` | `codigo_restricao`, `limite_MW`, `valor_MW`, `violacao_absoluta_MW` |
 
-The removed `read_eco_fpha` check asserted only that a particular deck had no
-such file. The absent-file contract is covered synthetically, and the reader
-now also runs against a committed `eco_fpha_.rvN` excerpt.
+`read_eco_fpha` runs against a committed `eco_fpha_.rvN` excerpt, and its
+absent-file contract is covered synthetically.
 
 ## Restoring the whole-deck checks
 
@@ -276,4 +271,4 @@ runs where the data is rather than as skipped tests in the default one:
 4. Attach the deck identifier and the capture date to every pinned value, so
    a reviewer knows what the number is a fact about.
 
-Until that exists, this page is the record of what those checks proved.
+Until that suite exists, this page records what those checks verify.

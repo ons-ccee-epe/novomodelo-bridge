@@ -1,9 +1,9 @@
-"""Post-emission self-checks mirroring novomodelo 0.13's new hard validation rules.
+"""Post-emission self-checks mirroring novomodelo's hard validation rules.
 
 Both pipelines build every artifact in memory before writing the Novomodelo case
 directory. This module inspects those in-memory artifacts — the ``hydros.json``
 document, the ``thermals.json`` document, the ``stages.json`` document, and the
-``*_bounds`` Parquet tables — for the novomodelo 0.13 rules the bridge is most
+``*_bounds`` Parquet tables — for the novomodelo rules the bridge is most
 likely to violate silently, and reports a match as an ``ERROR``
 :class:`~novomodelo_bridge.core.diagnostics.Diagnostic` through the sink the pipeline
 already runs converters inside. A failure here therefore surfaces with
@@ -140,8 +140,8 @@ class BoundFamily:
     *entity_column*/``stage_id``/``block_id`` instead of treating it as a
     value column — mirroring novomodelo rule 36's own widened key ``(hydro_id,
     hydro_unit_group_id, stage_id, block_id, column)``.
-    ``None`` (the default) reproduces the three pre-existing families'
-    unchanged, single-entity-key behaviour.
+    ``None`` (the default) keys on *entity_column*, ``stage_id`` and
+    ``block_id`` alone.
     """
 
     label: str
@@ -1182,14 +1182,13 @@ def check_bound_row_uniqueness(families: Sequence[BoundFamily]) -> None:
     setting the same column at the same ``(stage, block)`` are distinct
     keys, not a collision, mirroring novomodelo rule 36's own widened key
     ``(hydro_id, hydro_unit_group_id, stage_id, block_id, column)``.
-    A family with ``group_column=None`` (the
-    three pre-existing families) is unaffected: the finding's rendered
-    ``Group ID`` column reflects whether any *actual finding* came from a
-    group-scoped family, not merely whether one was present in *families* —
-    a group family registered alongside the others but contributing no
-    finding of its own (e.g. still empty) leaves the other families'
-    findings byte-identical to before this change, even when passed
-    together in one call, exactly as the live pipeline does.
+    A family with ``group_column=None`` keys on the entity alone. The rendered
+    ``Group ID`` column appears only when an *actual finding* came from a
+    group-scoped family, not merely when one is present in *families*: a
+    group family that contributes no finding (e.g. an empty one) leaves the
+    table without the column, even when passed together with the others in
+    one call, as the live pipeline does; when the column appears, the other
+    families' rows show ``-`` there.
 
     ``block_id = None`` is a distinct key from ``Some(b)``: a stage-wide row
     and its per-block override rows are legal together — exactly what the
@@ -1342,8 +1341,8 @@ def check_bound_block_id_range(
     ``Group ID`` column appears only when an *actual finding* came from a
     group-scoped family (not merely because one was present in *families*),
     so a ``hydro_unit_group_bounds`` finding names its ``(hydro, group,
-    stage, block_id)`` row while an unrelated family's own finding stays
-    byte-identical to before this change, even in a mixed call.
+    stage, block_id)`` row while a mixed call with no such finding renders
+    without the column.
     """
     stage_block_counts = _stage_block_counts(stages)
 

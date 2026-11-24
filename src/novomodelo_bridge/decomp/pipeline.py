@@ -75,6 +75,7 @@ from novomodelo_bridge.decomp.converters import ncs as ncs_conv
 from novomodelo_bridge.decomp.converters import network as network_conv
 from novomodelo_bridge.decomp.converters import penalties as penalties_conv
 from novomodelo_bridge.decomp.converters import rhe_shares as rhe_shares_conv
+from novomodelo_bridge.decomp.converters import tailrace_flow as tailrace_flow_conv
 from novomodelo_bridge.decomp.converters import thermal as thermal_conv
 from novomodelo_bridge.decomp.converters import travel_time as travel_time_conv
 from novomodelo_bridge.decomp.converters.scalar_parameters import (
@@ -153,6 +154,8 @@ class DecompCaseArtifacts:
     deficit_cost: float | None = None
     fpha_codes: set[int] | None = None
     turbine_limits: hydro_conv.TurbineLimits | None = None
+    #: `(bus_id, {stage_index: [MW per block]})` of the `RI` ANDE load.
+    ande_bus_load: tuple[int, dict[int, list[float]]] | None = None
     # Populated by `_resolve_bounds`.
     census: constraint_registers.ConstraintCensus | None = None
     pumping_ids: dict[int, int] | None = None
@@ -1307,6 +1310,17 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     stage_models = _fpha_stage_models(
         artifacts, fpha_codes, initial_volumes, turbine_limits
     )
+    fpha_stage_codes = {
+        code
+        for code, models in stage_models.items()
+        if any(m["model"] == "fpha" for m in models)
+    }
+    resolution = tailrace_flow_conv.resolve_tailrace_flow(
+        dadger,
+        effective,
+        id_map.hydro_codes,
+        tailrace_flow_conv.piecewise_tailrace_codes(case, id_map),
+    )
 
     productivity = hydro_conv.convert_energy_productivity(
         effective, id_map, initial_volumes
@@ -1354,6 +1368,13 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
         turbine_limits=turbine_limits,
         travel_time_hours=travel_time_hours,
         fpha_codes=fpha_codes,
+        tailrace_flows=tailrace_flow_conv.convert_tailrace_flow(
+            resolution,
+            fpha_stage_codes,
+            id_map,
+            fpha_codes=fpha_codes,
+            effective=effective,
+        ),
     )
     # hydros.json is written after the bound tables are resolved (below): its
     # diversion channels follow the resolved diversion bounds.
@@ -1423,6 +1444,7 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     if ande is not None:
         ande_submarket, carga_ande = ande
         ande_bus = id_map.bus_id(ande_submarket)
+        artifacts.ande_bus_load = (ande_bus, carga_ande)
         extra_bus_loads = {
             (ande_bus, stage_index): values
             for stage_index, values in carga_ande.items()
@@ -1456,8 +1478,7 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
             ncs_stats,
             entity_column="ncs_id",
             value_in="mean",
-            # novomodelo's clean break (0.14) removed the legacy ``value`` alias for
-            # the NCS availability column; the sole accepted spelling is now
+            # novomodelo reads the NCS availability column only as
             # ``availability_factor`` (external inflow/load keep value_m3s/value_mw).
             value_out="availability_factor",
             scenario_counts=scenario_counts,
@@ -1662,7 +1683,7 @@ def _resolve_line_bounds(
     line_bounds: pa.Table, block_counts: dict[int, int]
 ) -> pa.Table:
     """*line_bounds* resolved to one row per ``(line, stage, block)`` cell."""
-    # Line bounds now route through the same BoundContribution -> resolve()
+    # Line bounds route through the same BoundContribution -> resolve()
     # primitive as hydro/thermal/pumping in `_resolve_bounds`: a colliding
     # pair of contributions on the direct/reverse axis intersects (or
     # loud-fails on a genuine conflict) instead of one silently overwriting
@@ -1988,14 +2009,14 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     availability_values = hydro_conv.convert_hydro_group_availability(
         case, id_map, effective=effective, turbine_limits=turbine_limits
     )
-    # Every per-entity bound — the legacy RQ/UH minimum-outflow, the per-stage
+    # Every per-entity bound — the RQ/UH minimum-outflow, the per-stage
     # storage envelope, a split plant's turbined-flow limit and available
     # power, the CT thermal
     # generation bounds, and the RE/RHQ/RHV single-term special-constraint
     # bounds — is collected as
     # bounds_accumulator.BoundContribution objects and resolved through
-    # exactly ONE resolve() + build_bound_tables() pass, so a new special
-    # constraint colliding with a legacy bound on the same (entity, stage,
+    # exactly ONE resolve() + build_bound_tables() pass, so a special
+    # constraint colliding with another bound on the same (entity, stage,
     # block) cell correctly intersects instead of producing the
     # two-rows-same-column parquet novomodelo rejects. The UH spillage
     # ceiling is the exception: hydros.json carries it, so it is added below
@@ -2212,7 +2233,7 @@ def _convert_constraints(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> 
     contract_bounds_table = contracts_conv.convert_contract_bounds(
         case, contracts=contracts
     )
-    # Contract power bounds now route through the same BoundContribution ->
+    # Contract power bounds route through the same BoundContribution ->
     # resolve() primitive as the hydro/thermal/pumping/line bounds in
     # `_resolve_bounds`; price_per_mwh is not a bound axis (it rides its own
     # side-table, per bounds_accumulator's own AXES docstring), so it is
@@ -2464,11 +2485,29 @@ def _emit_libs_electrical_generics(
     )
 
 
+def _emit_itaipu_ande_generic(
+    artifacts: DecompCaseArtifacts, shared: _SharedEmitterInputs
+) -> GenericConstraintResult | None:
+    """Itaipu's 50 Hz generation held at or above the `RI` ANDE load, or
+    `None` when the deck carries no ANDE load."""
+    if artifacts.ande_bus_load is None:
+        return None
+    bus_id, carga_ande = artifacts.ande_bus_load
+    return constraints_conv.emit_itaipu_ande_generic(
+        artifacts.id_map.hydro_id(hydro_conv._ITAIPU_CODE),
+        bus_id,
+        carga_ande,
+        big_m=shared.big_m,
+        allocator=shared.allocator,
+    )
+
+
 def _write_generic_constraints(
     writer: CaseWriter,
     id_map: DecompIdMap,
     special_generics: list[constraints_conv.DecompGenericResult],
     libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None,
+    ande_generic: GenericConstraintResult | None,
 ) -> None:
     """Write the generic constraints with their bounds, and the scalar
     parameters their expressions reference."""
@@ -2480,6 +2519,8 @@ def _write_generic_constraints(
         and libs_electrical_result.generic is not None
     ):
         emitted.append(libs_electrical_result.generic)
+    if ande_generic is not None:
+        emitted.append(ande_generic)
     generic_constraints = [
         constraint for result in emitted for constraint in result.constraints
     ]
@@ -2551,7 +2592,7 @@ def _emit_and_write(
     """The ``step("Writing outputs")`` phase: run the post-emission self-checks
     (``emission_checks.run_and_gate``) before any constraint parquet is
     written, write the bound parquets, emit the RE -> RHQ/RHV -> RHE ->
-    LIBs-electrical generic constraints over one shared
+    LIBs-electrical -> RI ANDE generic constraints over one shared
     :class:`ConstraintIdAllocator`, write the generic-constraint artifacts and
     scalar parameters, emit the detection diagnostics, and return the
     :class:`~novomodelo_bridge.core.conversion.ConversionReport` built from
@@ -2649,7 +2690,11 @@ def _emit_and_write(
             hydros_dict=hydros_dict,
         )
 
-    _write_generic_constraints(writer, id_map, special_generics, libs_electrical_result)
+    # Last, so the ids of the deck's own restrictions do not move.
+    ande_generic = _emit_itaipu_ande_generic(artifacts, shared)
+    _write_generic_constraints(
+        writer, id_map, special_generics, libs_electrical_result, ande_generic
+    )
     _emit_constraint_detection_diagnostics(
         case, libs_electrical_model, libs_electrical_result
     )

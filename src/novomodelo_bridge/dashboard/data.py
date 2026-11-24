@@ -1,9 +1,7 @@
 """Dashboard data layer — loading helpers and DashboardData dataclass.
 
-All data loading previously performed inside ``build_dashboard()`` is
-consolidated here into ``DashboardData.load(case_dir)``.  Chart functions
-receive a single ``DashboardData`` instance instead of a long list of
-individual arguments.
+``DashboardData.load(case_dir)`` loads every input the dashboard renders;
+chart functions receive that single ``DashboardData`` instance.
 """
 
 from __future__ import annotations
@@ -84,7 +82,7 @@ def load_names(case_dir: Path) -> dict[tuple[str, int], str]:
     names: dict[tuple[str, int], str] = {}
     for entity, read in _ENTITY_READERS.items():
         for item in read(case_dir / "output"):
-            names[(entity, item["id"])] = item.get("name", str(item["id"]))
+            names[(entity, item["id"])] = item["name"]
     return names
 
 
@@ -278,7 +276,7 @@ def load_hydro_bus_map(
     ungrouped_rows: list[list[object]] = []
     split_rows: list[list[object]] = []
     for h in hydros:
-        name = h.get("name", str(h["id"]))
+        name = h["name"]
         bus_ids = _unit_group_bus_ids(h)
         if bus_ids is None:
             ungrouped_rows.append([h["id"], name])
@@ -336,18 +334,11 @@ def load_thermal_metadata(case_dir: Path) -> dict[int, dict]:
     """Return thermal_id -> {bus_id, max_mw, cost_per_mwh} metadata."""
     result = {}
     for t in read_novomodelo_thermals(case_dir / "output"):
-        # v0.4.3+: scalar cost_per_mwh; legacy: cost_segments array.
-        if "cost_per_mwh" in t:
-            cost = float(t["cost_per_mwh"])
-        else:
-            segments = t.get("cost_segments", [])
-            cost = float(segments[0]["cost_per_mwh"]) if segments else 0.0
-        cap = t.get("generation", {}).get("max_mw", 0.0)
         result[t["id"]] = {
             "bus_id": t["bus_id"],
-            "max_mw": cap,
-            "cost_per_mwh": cost,
-            "name": t.get("name", str(t["id"])),
+            "max_mw": t["generation"]["max_mw"],
+            "cost_per_mwh": float(t["cost_per_mwh"]),
+            "name": t["name"],
         }
     return result
 
@@ -373,11 +364,7 @@ def load_hydro_metadata(
     spillage limits from ``hydros.json``; each is ``None`` when the plant
     carries no value for it.
 
-    Productivity is read from ``hydro_energy_productivity.parquet`` (the
-    novomodelo productivity-resolution-rules contract). Falls back through
-    ``hydro_production_models.json`` and then the deprecated
-    ``hydros.json:generation.productivity_mw_per_m3s`` field so older
-    converted cases still render.
+    Productivity comes from :func:`resolve_hydro_productivities`.
     """
     hydros = read_novomodelo_hydros(case_dir / "output")
     if not hydros:
@@ -389,20 +376,20 @@ def load_hydro_metadata(
     productivities = resolve_hydro_productivities(case_dir, hydros)
     result = {}
     for h in hydros:
-        gen = h.get("generation") or {}
-        res = h.get("reservoir") or {}
+        gen = h["generation"]
+        res = h["reservoir"]
         spill = h.get("spillage") or {}
         min_spill = spill.get("min_spillage_m3s")
         max_spill = spill.get("max_spillage_m3s")
         prod = productivities.get(h["id"]) or 0
-        max_turbined = gen.get("max_turbined_m3s", 0)
+        max_turbined = gen["max_turbined_m3s"]
         bus_id = bus_map.get(h["id"])
         entry: dict = {
-            "name": h.get("name", str(h["id"])),
+            "name": h["name"],
             "bus_ids": _unit_group_bus_ids(h) or [],
-            "vol_max": res.get("max_storage_hm3", 0),
-            "vol_min": res.get("min_storage_hm3", 0),
-            "max_gen_mw": gen.get("max_generation_mw", 0),
+            "vol_max": res["max_storage_hm3"],
+            "vol_min": res["min_storage_hm3"],
+            "max_gen_mw": gen["max_generation_mw"],
             "max_gen_physical": prod * max_turbined,
             "max_turbined": max_turbined,
             "productivity": prod,
@@ -505,12 +492,11 @@ def _compute_lp_load(
 def _aggregate_timing_by_iteration(timing_raw: pd.DataFrame) -> pd.DataFrame:
     """Collapse the multi-row-per-iteration timing shape.
 
-    Newer novomodelo (``training/timing/iterations.parquet``) emits one
+    ``training/timing/iterations.parquet`` holds one
     rank-aggregated row plus N per-worker rows per iteration — per-worker
     rows only carry fwd/bwd wall + setup, rank rows carry everything else.
     ``SUM(col) GROUP BY iteration`` reconstructs the single-row totals that
-    the single-row chart code expects. Legacy frames (no ``rank``/
-    ``worker_id`` columns) pass through unchanged.
+    the single-row chart code expects.
 
     The sum semantics are correct for the rank-only columns (one contributing
     row per iteration) and for the aggregate per-worker CPU columns
@@ -521,8 +507,6 @@ def _aggregate_timing_by_iteration(timing_raw: pd.DataFrame) -> pd.DataFrame:
     overwrite those two columns with true wall-clock values.
     """
     if timing_raw.empty:
-        return timing_raw
-    if "rank" not in timing_raw.columns and "worker_id" not in timing_raw.columns:
         return timing_raw
     numeric_cols = [c for c in timing_raw.columns if c.endswith("_ms")]
     if not numeric_cols:
@@ -548,9 +532,7 @@ def _correct_wall_times_from_convergence(
     the forward / backward entry points in novomodelo ``training.rs``).
 
     No-op when ``conv`` is empty, lacks the required columns, or ``timing``
-    is empty — the legacy single-row-per-iteration format reaches this path
-    with already-correct values, so overwriting with identical numbers is a
-    safe default.
+    is empty.
     """
     if timing.empty or conv.empty:
         return timing
@@ -865,9 +847,8 @@ def load_scenario_inputs(case_dir: Path) -> ScenarioInputs:
 class SolverPerformance:
     """Training/simulation solver timing and diagnostics (optional)."""
 
-    # ``timing`` is aggregated to one row per iteration for backward
-    # compatibility with older chart code. ``timing_raw`` retains the
-    # multi-row-per-iteration view from newer novomodelo outputs, where each
+    # ``timing`` is aggregated to one row per iteration for the charts.
+    # ``timing_raw`` retains the multi-row-per-iteration view, where each
     # iteration has one rank-aggregated row (``worker_id`` NULL) and N
     # per-worker rows (``worker_id`` populated) — see
     # ``build_worker_timing_records`` in novomodelo-sddp training_output.rs.
@@ -881,51 +862,17 @@ class SolverPerformance:
     lp_bounds: pd.DataFrame
 
 
-#: Renames novomodelo 0.14's canonical diagnostic-output axes back to the pre-0.14
-#: spellings the dashboard's chart layer was written against, applied at this
-#: single load choke point (mirroring
-#: :func:`novomodelo_bridge.novomodelo.readers.read_novomodelo_convergence`).
-_OUTPUT_COLUMN_ALIASES: dict[str, str] = {
-    "stage_id": "stage",
-    "opening_index": "opening",
-    "upper_bound": "upper_bound_mean",
-    "cuts_in_pool": "cuts_populated",
-}
-
-
 def _cut_selection_per_stage(cut_selection: pd.DataFrame) -> pd.DataFrame:
-    """One ``cut_selection`` row per ``(iteration, stage)``, summing its pools.
+    """One ``cut_selection`` row per ``(iteration, stage_id)``, summing its pools.
 
     novomodelo writes one row per row pool, and a stage of a scenario tree has one
     pool per node; the charts read one row per stage. A column novomodelo leaves
     null where no selection pass ran stays null when every pool is null.
     """
-    if cut_selection.empty or "pool_id" not in cut_selection.columns:
+    if cut_selection.empty:
         return cut_selection
     counts = cut_selection.drop(columns=["pool_id", "node_id"], errors="ignore")
-    return counts.groupby(["iteration", "stage"], as_index=False).sum(min_count=1)
-
-
-def _normalize_output_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Rename novomodelo 0.14 canonical diagnostic columns to the dashboard's names.
-
-    A 0.14 column is renamed only when its legacy target is absent, so a
-    pre-0.14 frame (legacy names already present) is returned unchanged, and a
-    frame that shares a source name for a different concept it keeps canonical
-    elsewhere (e.g. ``bounds.parquet``'s ``stage_id``) is deliberately NOT run
-    through here. The ``-1`` -> ``NULL`` marker change needs no handling: a null
-    stage/opening reaches pandas as ``NaN``, and the chart layer's
-    ``stage >= 0`` filters drop those rows exactly as they dropped the old
-    ``-1`` rows, while its ``opening.notna()`` checks rely on the null directly.
-    """
-    if df.empty:
-        return df
-    rename = {
-        src: dst
-        for src, dst in _OUTPUT_COLUMN_ALIASES.items()
-        if src in df.columns and dst not in df.columns
-    }
-    return df.rename(columns=rename) if rename else df
+    return counts.groupby(["iteration", "stage_id"], as_index=False).sum(min_count=1)
 
 
 def load_training_convergence(case_dir: Path) -> pd.DataFrame:
@@ -934,7 +881,7 @@ def load_training_convergence(case_dir: Path) -> pd.DataFrame:
     path = case_dir / "output" / "training" / "convergence.parquet"
     if not path.exists():
         return pd.DataFrame()
-    return _normalize_output_columns(pq.read_table(path).to_pandas())
+    return pq.read_table(path).to_pandas()
 
 
 def _scaling_report_problem(data: dict) -> str | None:
@@ -967,7 +914,7 @@ def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerform
     solver_train_path = (
         case_dir / "output" / "training" / "solver" / "iterations.parquet"
     )
-    solver_train = _normalize_output_columns(
+    solver_train = (
         pq.read_table(solver_train_path).to_pandas()
         if solver_train_path.exists()
         else pd.DataFrame()
@@ -975,7 +922,7 @@ def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerform
     sim_solver_path = (
         case_dir / "output" / "simulation" / "solver" / "iterations.parquet"
     )
-    solver_sim = _normalize_output_columns(
+    solver_sim = (
         pq.read_table(sim_solver_path).to_pandas()
         if sim_solver_path.exists()
         else pd.DataFrame()
@@ -988,12 +935,10 @@ def load_solver_performance(case_dir: Path, conv: pd.DataFrame) -> SolverPerform
     )
     cs_path = case_dir / "output" / "training" / "cut_selection" / "iterations.parquet"
     cut_selection = _cut_selection_per_stage(
-        _normalize_output_columns(
-            pq.read_table(cs_path).to_pandas() if cs_path.exists() else pd.DataFrame()
-        )
+        pq.read_table(cs_path).to_pandas() if cs_path.exists() else pd.DataFrame()
     )
     retry_path = case_dir / "output" / "training" / "solver" / "retry_histogram.parquet"
-    retry_histogram = _normalize_output_columns(
+    retry_histogram = (
         pq.read_table(retry_path).to_pandas() if retry_path.exists() else pd.DataFrame()
     )
     bounds_path = case_dir / "output" / "training" / "dictionaries" / "bounds.parquet"
@@ -1268,10 +1213,9 @@ class DashboardData:
     Holds the eight ``load_*``-produced sub-structs verbatim (``temporal``,
     ``entities``, ``simulation``, ``scenario``, ``performance``,
     ``stochastic``, ``metadata``, ``gc``) plus the handful of values derived
-    at load time that belong to none of them. Every historical flat
-    ``data.<field>`` name a tab module reads is exposed as a read-only
-    ``@property`` forwarding to its sub-struct, so tab code keeps working
-    unchanged. Populated via ``DashboardData.load(case_dir)``.
+    at load time that belong to none of them. Each flat ``data.<field>`` name a
+    tab module reads is a read-only ``@property`` forwarding to its sub-struct.
+    Populated via ``DashboardData.load(case_dir)``.
     """
 
     case_dir: Path
@@ -1309,7 +1253,7 @@ class DashboardData:
 
         Thin orchestrator: each cohesive section is read by a dedicated
         ``load_*`` loader returning a sub-struct, which :class:`DashboardData`
-        holds directly (see the flat-field ``@property`` shims below). Only
+        holds directly (see the flat-field ``@property`` pass-throughs below). Only
         ``stages.json`` is required: :func:`_read_stages` raises
         ``NovomodeloOutputError`` when it is absent or unusable. Every other
         file is optional: an absent one falls back to an empty DataFrame /
@@ -1379,9 +1323,8 @@ class DashboardData:
         )
 
     # ---------------------------------------------------------------------------
-    # Flat-field shims — read-only pass-throughs onto the held sub-structs
-    # above, preserved so every existing tab module keeps reading
-    # ``data.<field>`` without change.
+    # Flat-field pass-throughs — read-only ``@property`` views onto the held
+    # sub-structs above, for the ``data.<field>`` names the tab modules read.
     # ---------------------------------------------------------------------------
 
     @property

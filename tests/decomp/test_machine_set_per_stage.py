@@ -1,11 +1,9 @@
-"""Tests for migrating capacity/availability consumers onto the
-per-stage-effective machine-set view.
+"""Tests for the capacity/availability consumers' per-stage-effective
+machine-set view.
 
 The entity/mirror-group capacity converter (``convert_hydros``) and
 the per-group per-stage availability overlay
-(``convert_hydro_group_availability``) used to read the machine-set
-overrides through a date-blind ``_read_ac_machine_overrides``/
-``_AcOverrides`` pair. This migration re-sources both consumers onto
+(``convert_hydro_group_availability``) read the machine set through
 ``EffectiveCadastro``'s per-stage-effective ``machine_conjunto_count``/
 ``machine_set`` accessors, so a plant whose machine set changes
 mid-horizon gets the correct per-stage capacity — a fixture no real deck
@@ -98,8 +96,7 @@ def _uh_frame() -> pd.DataFrame:
 class _StubDadger:
     """Never carries an ``AC`` machine-configuration override: both
     consumers under test source the machine set from ``EffectiveCadastro``
-    exclusively now, never from the deck — the whole point of the
-    migration. ``mp``/``fd`` default to ``None`` (no register at all, the overlay's
+    exclusively, never from the deck. ``mp``/``fd`` default to ``None`` (no register at all, the overlay's
     own ``1.0``-factor default); pass a frame to exercise the MP/FD path.
     """
 

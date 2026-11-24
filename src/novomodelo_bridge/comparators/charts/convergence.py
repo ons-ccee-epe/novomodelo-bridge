@@ -58,10 +58,10 @@ def convergence_chart(
     even when Novomodelo convergence is empty. Each bound is drawn over the
     iterations where it is present. The source model's ``upper_bound_best``
     (its printed ZSUP, the lowest upper bound so far) is paired with Novomodelo's
-    running minimum, never with Novomodelo's per-iteration ``upper_bound_mean``.
+    running minimum, never with Novomodelo's per-iteration ``upper_bound``.
     """
     source_best = _bounds(nw_conv, "upper_bound_best")
-    novomodelo_upper = _bounds(novomodelo_conv, "upper_bound_mean")
+    novomodelo_upper = _bounds(novomodelo_conv, "upper_bound")
     series = [
         (
             _bounds(nw_conv, "lower_bound"),
@@ -69,7 +69,7 @@ def convergence_chart(
             {"color": COLOR_NEWAVE},
         ),
         (
-            _bounds(nw_conv, "upper_bound_mean"),
+            _bounds(nw_conv, "upper_bound"),
             f"{reference_label} ZSUP ITER",
             {"color": COLOR_NEWAVE, "dash": "dash"},
         ),

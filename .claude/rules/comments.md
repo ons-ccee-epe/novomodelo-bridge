@@ -143,9 +143,10 @@ When in doubt, **delete** and put the thought in the commit message.
 - **N4 — No plan/workstream leakage** in `src/`, `README.md`, `CHANGELOG.md`,
   or `docs/`. No `epic`/`ticket`/`sprint` vocabulary, no `ticket-NNN`/`epic-NN`
   ids, no acceptance-criteria tags. When a banned token is a trailing tag on a
-  contract line, amputate the tag, keep the invariant. Plan refs in **test
-  names** stay allowed (identifiers join with `_`, which the gate's word
-  boundaries respect). Gate: `scripts/ci/check_no_plan_leaks.py`.
+  contract line, amputate the tag, keep the invariant. **Test names** state the
+  property the test pins (`test_converted_restrictions_follow_the_links`),
+  never an acceptance-criterion, ticket or epic id; the gate scans prose, so
+  review checks the names. Gate: `scripts/ci/check_no_plan_leaks.py`.
 - **N5 — No banners fencing groups inside one long function** — extract a
   function. Dividers between top-level sections of a large module are fine.
 - **N6 — No duplicated source-of-truth in prose** — a mirror restates the

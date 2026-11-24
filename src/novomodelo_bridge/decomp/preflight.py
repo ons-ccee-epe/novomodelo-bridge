@@ -18,6 +18,7 @@ mirror, never a substitute.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -56,6 +57,10 @@ from novomodelo_bridge.decomp.converters.cadastro import (
     ac_registers_present,
     topology_varies_diagnostic,
 )
+from novomodelo_bridge.decomp.converters.tailrace_flow import (
+    piecewise_tailrace_codes,
+    resolve_tailrace_flow,
+)
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
     discover_decomp_files,
@@ -72,6 +77,7 @@ if TYPE_CHECKING:
         CadastroResolutionReport,
         EffectiveCadastro,
     )
+    from novomodelo_bridge.decomp.converters.tailrace_flow import TailraceRegisters
     from novomodelo_bridge.decomp.id_map import DecompIdMap
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
@@ -100,6 +106,7 @@ def _verdict(
 _CALENDAR_LABEL = "Operative calendar (operative weeks, then whole months)"
 _DEFICIT_LABEL = "Deficit cost is one full-depth CD curve per subsystem"
 _TREE_SHAPE_LABEL = "Tree shape is a trunk with one terminal fan"
+_TAILRACE_LABEL = "VL/VU/VA tailrace lateral-flow records"
 
 
 def _typed_failure_diagnostics(exc: Exception) -> list[Diagnostic]:
@@ -350,6 +357,41 @@ def _ac_coverage(
         diagnostics.append(varies_diagnostic)
 
     return checks, diagnostics
+
+
+def _tailrace_records(
+    dadger: TailraceRegisters,
+    effective: EffectiveCadastro,
+    case: DecompCase,
+    id_map: DecompIdMap,
+) -> tuple[CheckItem, list[Diagnostic]]:
+    """Report the ``VL``, ``VU`` and ``VA`` records of the deck and the findings
+    ``convert decomp`` raises for them, from the same resolver.
+
+    Always returns exactly one passing summary :class:`CheckItem`: the findings
+    never block conversion. ``tailrace-constant-productivity-omitted`` is not
+    reported, since it needs the per-stage production models only the
+    conversion builds.
+
+    Raises
+    ------
+    FieldParseError
+        When a record carries a negative or non-finite factor, as conversion does.
+    """
+    resolution = resolve_tailrace_flow(
+        dadger, effective, id_map.hydro_codes, piecewise_tailrace_codes(case, id_map)
+    )
+    counts = Counter(register for register, _ in resolution.records)
+    detail = (
+        f"{counts['VL']} VL, {counts['VU']} VU, {counts['VA']} VA records; "
+        f"{len(resolution.declarations)} plants declare a lateral flow"
+        if resolution.records
+        else "no VL, VU or VA records"
+    )
+    return (
+        CheckItem(label=_TAILRACE_LABEL, passed=True, detail=detail),
+        list(resolution.diagnostics),
+    )
 
 
 def _special_constraint_coverage(
@@ -711,6 +753,19 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             cov_checks, cov_diags = _ac_coverage(dadger, effective, cadastro_report)
             checks.extend(cov_checks)
             diagnostics.extend(cov_diags)
+
+            try:
+                tailrace_check, tailrace_diags = _tailrace_records(
+                    dadger, effective, case, id_map
+                )
+            except FieldParseError as exc:
+                checks.append(
+                    CheckItem(label=_TAILRACE_LABEL, passed=False, detail=str(exc))
+                )
+                diagnostics.append(diagnostic_from_exception(exc, context=_CONTEXT))
+            else:
+                checks.append(tailrace_check)
+                diagnostics.extend(tailrace_diags)
 
         libs_long_form, electrical_checks, electrical_diags = _libs_electrical_read(
             case, calendar

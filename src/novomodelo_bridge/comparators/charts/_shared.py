@@ -65,10 +65,10 @@ def _aggregate_percentile_traces(
     consistent with the mean line which only covers entities matched between the source
     model and Novomodelo.
     """
-    # Guard mirrors the legacy early-return: no band when the percentile frame
-    # is missing/empty or lacks the variable's p10/p90 columns. ``stages`` being
-    # empty is NOT such a case — it still yields (empty) band traces, exactly as
-    # before, so the check is on the band source, not the returned lists.
+    # No band when the percentile frame is missing/empty or lacks the variable's
+    # p10/p90 columns. Empty ``stages`` is not such a case — it still yields
+    # (empty) band traces, so the check is on the band source, not the returned
+    # lists.
     if pct_df is None or pct_df.is_empty():
         return []
     if (

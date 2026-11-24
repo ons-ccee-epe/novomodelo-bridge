@@ -178,10 +178,8 @@ def _calendar():
 
 
 def _case(dadger: object, hidr: pd.DataFrame | None = None) -> DecompCase:
-    """A ``DecompCase`` pre-filled with *dadger*/*hidr* and ``_calendar()`` —
-    the calendar's own stage-0 start date (2026-07-18) matches the raw
-    ``start_date``/``date(2026, 7, 18)`` every test here used to pass
-    directly."""
+    """A ``DecompCase`` pre-filled with *dadger*/*hidr* and ``_calendar()``,
+    whose stage-0 start date is 2026-07-18."""
     parsed = {"dadger": dadger, "calendar": _calendar()}
     if hidr is not None:
         parsed["hidr"] = hidr
@@ -237,9 +235,8 @@ def _hidr_frame() -> pd.DataFrame:
 
 def _no_override_effective(hidr: pd.DataFrame, n_stages: int = 1) -> EffectiveCadastro:
     """Empty-override view of *hidr*: falls through to the base scalar at
-    every stage (outer envelope == base, stage-0 == base) — the
-    regression fixture: reservoir/initial-storage output must be
-    byte-identical to the pre-layer base-registry reads.
+    every stage (outer envelope == base, stage-0 == base), so
+    reservoir/initial-storage output equals the base-registry reads.
     """
     return EffectiveCadastro(base=hidr, n_stages=n_stages, stage_varying={})
 
@@ -924,30 +921,15 @@ class TestItaipuBusRelabel:
             )
 
 
-def test_deferred_note_excludes_head_productivity(caplog) -> None:
-    """The head/productivity ``AC``
-    family (``PROESP``/``PERHID``/``JUSMED``/``COTVOL``) has a live consumer
-    (``_equivalent_productivity_mw_per_m3s``), so it was never listed as
-    deferred. The blanket, hand-maintained "deferred hydro fidelity" warning
-    is retired entirely — deck-aware, per-family
-    ``AC`` coverage now lives in ``check decomp``. The module docstring names
-    ``VI`` travel time as converted and still names the genuinely-unconverted
-    evaporation/tailrace families (``COTVAZ``/``COTARE``/``COFEVA``), pointing
-    at ``check decomp`` for their per-deck coverage.
+def test_hydro_module_doc_points_unconverted_families_at_check_decomp() -> None:
+    """The module docstring names ``VI`` travel time as converted and the
+    unconverted evaporation/tailrace families (``COTVAZ``/``COTARE``/``COFEVA``),
+    pointing at ``check decomp`` for their per-deck coverage. The
+    head/productivity ``AC`` family (``PROESP``/``PERHID``/``JUSMED``/``COTVOL``)
+    has a live consumer (``_equivalent_productivity_mw_per_m3s``) and is not
+    listed.
     """
     import novomodelo_bridge.decomp.converters.hydro as hydro_module
-
-    hidr = _hidr_frame()
-    with caplog.at_level(
-        logging.WARNING, logger="novomodelo_bridge.decomp.converters.hydro.entity"
-    ):
-        convert_hydros(
-            _case(_StubDadger(uh=_uh_frame()), hidr),
-            _ID_MAP,
-            effective=_no_override_effective(hidr),
-            turbine_limits=flat_turbine_limits(_ID_MAP, 3),
-        )
-    assert not any("deferred hydro fidelity" in r.message for r in caplog.records)
 
     docstring = hydro_module.__doc__
     assert docstring is not None
@@ -960,10 +942,10 @@ def test_deferred_note_excludes_head_productivity(caplog) -> None:
 
 class TestEffectiveCadastroSourcing:
     """The entity ``reservoir`` block and the initial-storage
-    start volume are re-sourced off the per-stage-effective cadastro layer.
+    start volume are sourced from the per-stage-effective cadastro layer.
     """
 
-    def test_no_override_matches_the_pre_layer_base_registry_reads(self) -> None:
+    def test_no_override_matches_the_base_registry_reads(self) -> None:
         """An ``EffectiveCadastro`` with no stage-varying volumes reduces to
         the base registry scalars everywhere, so the reservoir block and the
         initial storage volume equal the base-registry reads."""

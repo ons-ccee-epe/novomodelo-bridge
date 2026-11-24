@@ -188,18 +188,6 @@ def test_read_novomodelo_version_reads_version(tmp_path: Path) -> None:
     assert _read_novomodelo_version(novomodelo_output_dir) == "0.7.0"
 
 
-def test_read_novomodelo_version_reads_the_pre_software_key(tmp_path: Path) -> None:
-    case_dir = tmp_path / "case"
-    novomodelo_output_dir = case_dir / "output"
-    training_dir = novomodelo_output_dir / "training"
-    training_dir.mkdir(parents=True)
-    (training_dir / "metadata.json").write_text(
-        json.dumps({"cobre_version": "0.6.0"}), encoding="utf-8"
-    )
-
-    assert _read_novomodelo_version(novomodelo_output_dir) == "0.6.0"
-
-
 def test_read_novomodelo_version_malformed_json_returns_none(tmp_path: Path) -> None:
     novomodelo_output_dir = tmp_path / "output"
     training_dir = novomodelo_output_dir / "training"

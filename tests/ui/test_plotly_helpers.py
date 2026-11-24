@@ -160,9 +160,8 @@ def test_add_mean_p50_band_empty_df_is_noop() -> None:
     assert len(result.data) == 0
 
 
-def test_band_fill_and_line_match_legacy_literals() -> None:
-    """BAND_FILL/BAND_LINE equal the pre-unification band colour literals that
-    charts/_shared.py and add_mean_p50_band's fillcolor computation produced."""
+def test_band_fill_and_line_colour_literals() -> None:
+    """BAND_FILL is the translucent band fill and BAND_LINE the invisible band edge."""
     assert BAND_FILL == "rgba(74,144,184,0.15)"
     assert BAND_LINE == "rgba(255,255,255,0)"
 

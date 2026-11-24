@@ -166,7 +166,7 @@ def build_entity_alignment(
         line_id = int(line["id"])
         src_bus = int(line["source_bus_id"])
         tgt_bus = int(line["target_bus_id"])
-        line_name = str(line.get("name", f"line_{line_id}"))
+        line_name = line["name"]
 
         nw_de = bus_id_to_nw.get(src_bus)
         nw_para = bus_id_to_nw.get(tgt_bus)

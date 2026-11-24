@@ -1,11 +1,8 @@
 """Hydro/Thermal detail tab tests for ``comparators.decomp.results``.
 
-Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
-the hydro bus-id merge helper and the Hydro/Thermal detail tabs'
+Covers the hydro bus-id merge helper and the Hydro/Thermal detail tabs'
 ``build_decomp_dataset`` rows, plus the hydro slack-aggregate chart's
-robustness guard on decomp-shaped input. The remaining concern bands
-(network, energy balance, costs, performance, productivity, FPHA, REE,
-evaporation, constraints, CLI) stay in the mega file pending their own carve.
+robustness guard on decomp-shaped input.
 """
 
 from __future__ import annotations

@@ -7,8 +7,7 @@ one August monthly stage), mirroring the calendar shape the source model's
 operative weeks and months produce, and against a January study whose first
 week starts in the previous December. ``mes`` is exercised in its real
 representation — a 3-letter Portuguese month-abbreviation string, with an
-empty string for a blank month, and ``semana``/``ano`` as floats or NaN —
-plus a synthetic int/float ``mes`` back-compat case.
+empty string for a blank month, and ``semana``/``ano`` as floats or NaN.
 """
 
 from __future__ import annotations
@@ -52,21 +51,6 @@ def test_string_month_blank_semana_is_monthly_stage(
     calendar: list[OperativeStage],
 ) -> None:
     assert resolve_effective_stage("AGO", None, 2026.0, calendar) == 2
-
-
-def test_int_month_matches_string_month_resolution(
-    calendar: list[OperativeStage],
-) -> None:
-    """Synthetic int/float ``mes`` callers stay supported (back-compat)."""
-    assert resolve_effective_stage(7, 1, 2026, calendar) == resolve_effective_stage(
-        "JUL", 1.0, 2026.0, calendar
-    )
-    assert resolve_effective_stage(
-        7.0, 2.0, 2026.0, calendar
-    ) == resolve_effective_stage("JUL", 2.0, 2026.0, calendar)
-    assert resolve_effective_stage(8, None, 2026, calendar) == resolve_effective_stage(
-        "AGO", None, 2026.0, calendar
-    )
 
 
 def test_semana_clamps_to_monthly_stage(calendar: list[OperativeStage]) -> None:

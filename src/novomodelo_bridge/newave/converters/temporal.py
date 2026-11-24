@@ -493,7 +493,7 @@ def _historical_years_from_shist(
       − horizon_years``: the last historical year is taken to be
       ``ano_inicio_estudo − 1`` and the scenario must fit inside it.
 
-    When ``shist.dat`` is absent, fall back to the pre-existing default of
+    When ``shist.dat`` is absent, fall back to the default of
     ``{from: ano_inicial_historico + 1, to: ano_inicio_estudo - 1}`` so the
     output remains valid even for cases that ship without an Shist file.
     """
@@ -504,8 +504,13 @@ def _historical_years_from_shist(
 
     shist = case.shist
     if shist is None:
-        logger.debug("shist.dat not found; using legacy default historical range.")
         ano_ini_hist: int = int(dger.ano_inicial_historico or 1931)
+        logger.debug(
+            "shist.dat not found; historical years default to %d-%d "
+            "(ano_inicial_historico + 1 to ano_inicio_estudo - 1).",
+            ano_ini_hist + 1,
+            ano_inicio - 1,
+        )
         return {"from": ano_ini_hist + 1, "to": ano_inicio - 1}
 
     if shist.varredura == 0:

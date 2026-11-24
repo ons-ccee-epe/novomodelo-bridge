@@ -190,7 +190,7 @@ def required_inflow_lag_depth(summary: CutFamilySummary) -> int:
     PAR(p) model for novomodelo to infer the depth from, so the depth must be carried
     in the boundary checkpoint itself (novomodelo's programmatic inflow-lag-depth
     bootstrap via ``write_policy_checkpoint(inflow_lag_depth=N)``).
-    It is never written to ``config.json`` (novomodelo 0.14 retired that user field).
+    It is not written to ``config.json``, which has no such field.
 
     Returns ``0`` when no cut carries a nonzero lag coefficient — the boundary
     prices no inflow-lag state, so no slots need reserving.

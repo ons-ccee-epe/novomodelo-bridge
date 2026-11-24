@@ -27,7 +27,6 @@ from novomodelo_bridge.dashboard.data import (
     DashboardData,
     _cut_selection_per_stage,
     _load_policy_metadata,
-    _normalize_output_columns,
     load_temporal_context,
 )
 from tests.conftest import (
@@ -77,13 +76,8 @@ def _tree_policy_graph() -> dict[str, Any]:
 
 
 class TestLoadTemporalContextAbsentLinesJson:
-    """``lines.json`` degrades to an empty line set, not a crash.
-
-    Before this read was routed through
-    ``novomodelo_readers.read_novomodelo_lines``, an absent ``system/lines.json``
-    crashed ``load_temporal_context`` with an unguarded ``json.load`` on a
-    missing path -- the one sanctioned behaviour change the reader-failure
-    contract makes (an input that previously had no valid output)."""
+    """``lines.json`` degrades to an empty line set, not a crash: the read goes
+    through ``novomodelo_readers.read_novomodelo_lines``."""
 
     def test_absent_lines_json_yields_empty_line_meta(self, tmp_path: Path) -> None:
         case_dir = tmp_path / "case"
@@ -337,14 +331,21 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
                     0,
                     name="HYDRO_A",
                     reservoir={"max_storage_hm3": 5000.0, "min_storage_hm3": 100.0},
-                    generation={
-                        "max_generation_mw": 1000.0,
-                        "productivity_mw_per_m3s": 0.08,
-                        "max_turbined_m3s": 12000.0,
-                    },
+                    max_generation_mw=1000.0,
+                    max_turbined_m3s=12000.0,
                 )
             ]
         },
+    )
+    pq.write_table(
+        pa.table(
+            {
+                "hydro_id": pa.array([0], pa.int32()),
+                "stage_id": pa.array([None], pa.int32()),
+                "equivalent_productivity_mw_per_m3s": pa.array([0.08], pa.float64()),
+            }
+        ),
+        case / "system" / "hydro_energy_productivity.parquet",
     )
     _write_json(case / "system" / "buses.json", {"buses": [{"id": 0, "name": "SE"}]})
     _write_json(
@@ -407,7 +408,7 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
         {
             "iteration": pa.array([1, 2], type=pa.int32()),
             "lower_bound": pa.array([1.0e9, 1.1e9], type=pa.float64()),
-            "upper_bound_mean": pa.array([1.5e9, 1.4e9], type=pa.float64()),
+            "upper_bound": pa.array([1.5e9, 1.4e9], type=pa.float64()),
             "upper_bound_std": pa.array([1.0e7, 9.0e6], type=pa.float64()),
             "gap_percent": pa.array([33.3, 21.4], type=pa.float64()),
             "cuts_added": pa.array([10, 8], type=pa.int32()),
@@ -702,7 +703,7 @@ def _build_training_only_case(tmp_path: Path) -> Path:
         {
             "iteration": pa.array([1], type=pa.int32()),
             "lower_bound": pa.array([1.0e9], type=pa.float64()),
-            "upper_bound_mean": pa.array([1.2e9], type=pa.float64()),
+            "upper_bound": pa.array([1.2e9], type=pa.float64()),
             "upper_bound_std": pa.array([1.0e7], type=pa.float64()),
             "gap_percent": pa.array([16.7], type=pa.float64()),
             "cuts_added": pa.array([10], type=pa.int32()),
@@ -902,8 +903,7 @@ class TestSimulationOnlyCase:
 
 def _add_partial_stochastic_dir(case_dir: Path) -> None:
     """Write ``output/stochastic/`` with every file present except
-    ``inflow_ar_coefficients.parquet`` -- the no-PAR/DECOMP-shaped fit shape
-    that used to crash ``load_stochastic_data``."""
+    ``inflow_ar_coefficients.parquet`` -- the no-PAR/DECOMP-shaped fit."""
     stochastic_dir = case_dir / "output" / "stochastic"
     stochastic_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1164,24 +1164,22 @@ class TestCutSelectionPerStage:
 
     @staticmethod
     def _frame() -> pd.DataFrame:
-        return _normalize_output_columns(
-            pd.DataFrame(
-                {
-                    "iteration": [3, 3, 3],
-                    "pool_id": [0, 1, 2],
-                    "stage_id": [1, 1, 2],
-                    "node_id": [4, 5, None],
-                    "cuts_in_pool": [10, 6, 8],
-                    "cuts_active_after": [7, 5, 8],
-                    "cuts_deactivated": [None, None, 2],
-                }
-            )
+        return pd.DataFrame(
+            {
+                "iteration": [3, 3, 3],
+                "pool_id": [0, 1, 2],
+                "stage_id": [1, 1, 2],
+                "node_id": [4, 5, None],
+                "cuts_in_pool": [10, 6, 8],
+                "cuts_active_after": [7, 5, 8],
+                "cuts_deactivated": [None, None, 2],
+            }
         )
 
     def test_pools_of_a_stage_are_summed(self) -> None:
         result = _cut_selection_per_stage(self._frame())
-        assert result["stage"].tolist() == [1, 2]
-        assert result["cuts_populated"].tolist() == [16, 8]
+        assert result["stage_id"].tolist() == [1, 2]
+        assert result["cuts_in_pool"].tolist() == [16, 8]
         assert result["cuts_active_after"].tolist() == [12, 8]
         assert "pool_id" not in result.columns
         assert "node_id" not in result.columns
@@ -1191,6 +1189,6 @@ class TestCutSelectionPerStage:
         assert pd.isna(result["cuts_deactivated"].iloc[0])
         assert result["cuts_deactivated"].iloc[1] == 2
 
-    def test_a_frame_without_pools_is_returned_unchanged(self) -> None:
-        frame = pd.DataFrame({"iteration": [1], "stage": [0], "cuts_populated": [3]})
+    def test_an_empty_frame_is_returned_unchanged(self) -> None:
+        frame = pd.DataFrame()
         assert _cut_selection_per_stage(frame) is frame

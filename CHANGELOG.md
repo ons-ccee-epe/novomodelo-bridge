@@ -14,14 +14,29 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert decomp` writes `VL`, `VU` and `VA` as `tailrace_flow` in
+  `system/hydros.json`**, and `check decomp` reports them, with `tailrace-*`
+  warnings for records it drops or merges. Results change for decks with
+  these records; reconvert them.
+
 ### Changed
 
-#### DECOMP
-
+- **`convert newave` treats negative inflows as NEWAVE does:** the converted
+  `config.json` sets the `truncation` method, which zeroes them in the LP at
+  no cost, in place of `truncation_with_penalty`. Results change; reconvert
+  NEWAVE cases.
+- **`convert decomp` keeps Itaipu's 50 Hz generation at or above the ANDE
+  load, as DECOMP does:** the generic constraint `RI_ANDE` in
+  `constraints/generic_constraints.json` holds it there. Results change where
+  the `RI` 50 Hz minimum is below the ANDE load; reconvert DECOMP cases.
+- **`dashboard` and `compare` read only the outputs of the paired novomodelo
+  release.** Outputs and cases an older novomodelo wrote no longer load; run
+  the case again with the paired release.
 - **`convert decomp` writes each plant's `UH` spill ceiling to
-  `system/hydros.json`** (`spillage.max_spillage_m3s`) and keeps it in
-  `constraints/hydro_bounds.parquet` only where an RHQ `QVER` bound also
-  applies. Results are unchanged.
+  `system/hydros.json`** and keeps it in `constraints/hydro_bounds.parquet` only
+  where an RHQ `QVER` bound also applies. Results are unchanged.
 
 ## [0.21.0] - 2026-11-16
 

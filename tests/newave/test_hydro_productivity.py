@@ -200,7 +200,7 @@ def _make_hreg(overrides: dict) -> pd.Series:
     """Build a minimal plant cadastro row (pd.Series) for unit tests.
 
     Provides sensible defaults for all columns consumed by
-    ``_compute_productivity``.  Pass ``overrides`` to customise
+    ``compute_productivity``.  Pass ``overrides`` to customise
     individual fields.
     """
     defaults: dict = {
@@ -212,7 +212,7 @@ def _make_hreg(overrides: dict) -> pd.Series:
         "canal_fuga_medio": 250.0,
         "tipo_regulacao": "M",
         "tipo_perda": 1,
-        "perdas": 5.0,  # percentage — divided by 100 in _compute_productivity
+        "perdas": 5.0,  # percentage — divided by 100 in compute_productivity
         "a0_volume_cota": 300.0,
         "a1_volume_cota": 0.1,
         "a2_volume_cota": 0.0,
@@ -224,17 +224,17 @@ def _make_hreg(overrides: dict) -> pd.Series:
 
 
 # ---------------------------------------------------------------------------
-# _compute_productivity unit tests
+# compute_productivity unit tests
 # ---------------------------------------------------------------------------
 
 
 class TestComputeProductivity:
-    """Unit tests for the ``_compute_productivity`` helper."""
+    """Unit tests for the ``compute_productivity`` helper."""
 
     def test_monthly_regulated_linear_polynomial(self) -> None:
         """tipo_regulacao='M': poly evaluated at 65% useful storage (the source model
         ``produtibilidade_altura_65`` convention)."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -259,12 +259,12 @@ class TestComputeProductivity:
         # result = 0.009 * 112.575 = 1.013175
         v_65_height = 300.0 + 0.1 * (100.0 + 0.65 * (1000.0 - 100.0))
         expected = 0.009 * (1.0 - 5.0 / 100.0) * (v_65_height - 250.0)
-        result = _compute_productivity(hreg)
+        result = compute_productivity(hreg)
         assert result == pytest.approx(expected)
 
     def test_run_of_river_point_evaluation(self) -> None:
         """tipo_regulacao='D': evaluates poly at volume_referencia."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -286,12 +286,12 @@ class TestComputeProductivity:
         # adjusted_drop = 100.0 * (1 - 5.0/100) = 95.0
         # result = 0.009 * 95.0 = 0.855
         expected = 0.009 * (1.0 - 5.0 / 100.0) * (350.0 - 250.0)
-        result = _compute_productivity(hreg)
+        result = compute_productivity(hreg)
         assert result == pytest.approx(expected)
 
     def test_multiplicative_loss(self) -> None:
         """tipo_perda=1: adjusted_drop = net_drop * (1 - perdas/100)."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -311,12 +311,12 @@ class TestComputeProductivity:
         # net_drop = (300 + 50) - 250 = 100.0
         # adjusted = 100.0 * (1 - 10.0/100) = 90.0
         expected = 0.009 * 90.0
-        result = _compute_productivity(hreg)
+        result = compute_productivity(hreg)
         assert result == pytest.approx(expected)
 
     def test_additive_loss(self) -> None:
         """tipo_perda=2: adjusted_drop = net_drop - perdas."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -336,12 +336,12 @@ class TestComputeProductivity:
         # net_drop = 350.0 - 250.0 = 100.0
         # adjusted = 100.0 - 3.5 = 96.5
         expected = 0.009 * 96.5
-        result = _compute_productivity(hreg)
+        result = compute_productivity(hreg)
         assert result == pytest.approx(expected)
 
     def test_no_loss(self) -> None:
         """tipo_perda=0 (or unknown): no loss applied, adjusted_drop = net_drop."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -361,12 +361,12 @@ class TestComputeProductivity:
         # tipo_perda=0 -> no loss applied, perdas value ignored
         # net_drop = 350.0 - 250.0 = 100.0
         expected = 0.009 * 100.0
-        result = _compute_productivity(hreg)
+        result = compute_productivity(hreg)
         assert result == pytest.approx(expected)
 
     def test_equal_volumes_fallback(self) -> None:
         """tipo_regulacao='M' with vmin == vmax: v_65 collapses to that point."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -386,21 +386,21 @@ class TestComputeProductivity:
         )
         # vmin == vmax: v_65 = 500.0; poly(500) = 350.0; net_drop = 100.0
         expected = 0.009 * 100.0
-        result = _compute_productivity(hreg)
+        result = compute_productivity(hreg)
         assert result == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------
-# _compute_productivity with override parameters
+# compute_productivity with override parameters
 # ---------------------------------------------------------------------------
 
 
 class TestComputeProductivityOverrides:
-    """Unit tests for ``_compute_productivity`` with canal_fuga/cmont overrides."""
+    """Unit tests for ``compute_productivity`` with canal_fuga/cmont overrides."""
 
     def test_canal_fuga_override_replaces_base(self) -> None:
         """canal_fuga_override replaces canal_fuga_medio in the net drop calc."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -416,14 +416,14 @@ class TestComputeProductivityOverrides:
         )
         # poly(500) = 300 + 50 = 350
         # With override canal_fuga=260: net_drop = 350 - 260 = 90
-        base = _compute_productivity(hreg)  # uses 250 -> drop 100
-        overridden = _compute_productivity(hreg, canal_fuga_override=260.0)
+        base = compute_productivity(hreg)  # uses 250 -> drop 100
+        overridden = compute_productivity(hreg, canal_fuga_override=260.0)
         assert base == pytest.approx(0.009 * 100.0)
         assert overridden == pytest.approx(0.009 * 90.0)
 
     def test_cmont_override_replaces_polynomial_height(self) -> None:
         """cmont_override bypasses the polynomial and uses the supplied height."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -438,12 +438,12 @@ class TestComputeProductivityOverrides:
             }
         )
         # cmont=380 overrides polynomial; net_drop = 380 - 250 = 130
-        result = _compute_productivity(hreg, cmont_override=380.0)
+        result = compute_productivity(hreg, cmont_override=380.0)
         assert result == pytest.approx(0.009 * 130.0)
 
     def test_both_overrides_together(self) -> None:
         """canal_fuga_override and cmont_override can both be active."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -458,14 +458,14 @@ class TestComputeProductivityOverrides:
             }
         )
         # cmont=400, canal_fuga=260 -> net_drop = 400 - 260 = 140
-        result = _compute_productivity(
+        result = compute_productivity(
             hreg, canal_fuga_override=260.0, cmont_override=400.0
         )
         assert result == pytest.approx(0.009 * 140.0)
 
     def test_no_overrides_matches_original_behaviour(self) -> None:
         """With no overrides, M-plant ρ comes from poly evaluated at 65% storage."""
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
+        from novomodelo_bridge.core.productivity import compute_productivity
 
         hreg = _make_hreg(
             {
@@ -483,7 +483,7 @@ class TestComputeProductivityOverrides:
         # v_65 = 100 + 0.65 * 900 = 685; poly(685) = 368.5; net_drop = 118.5
         v_65_height = 300.0 + 0.1 * (100.0 + 0.65 * (1000.0 - 100.0))
         expected = 0.009 * (1.0 - 5.0 / 100.0) * (v_65_height - 250.0)
-        assert _compute_productivity(hreg) == pytest.approx(expected)
+        assert compute_productivity(hreg) == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------
@@ -502,64 +502,64 @@ def _make_cmont_rec(month: int, year: int, nivel: float) -> MagicMock:
 
 
 class TestEquivalentProductivity:
-    """Unit tests for ``_equivalent_productivity`` (the source model PRODT)."""
+    """Unit tests for ``equivalent_productivity`` (the source model PRODT)."""
 
     def test_linear_polynomial_uses_mean_head(self) -> None:
         """h(v)=a0+a1·v → mean head over [vmin,vmax] = a0 + a1·(vmin+vmax)/2."""
-        from novomodelo_bridge.newave.converters.hydro import _equivalent_productivity
+        from novomodelo_bridge.core.productivity import equivalent_productivity
 
         hreg = _make_hreg({})  # a0=300, a1=0.1, vmin=100, vmax=1000, cfuga=250
         # mean head = 300 + 0.1·550 = 355 ; net = 105 ; ·0.95 loss ; ·0.009 pesp
-        assert _equivalent_productivity(hreg) == pytest.approx(
+        assert equivalent_productivity(hreg) == pytest.approx(
             0.009 * (355.0 - 250.0) * 0.95
         )
 
     def test_differs_from_point_reference(self) -> None:
         """PRODT (mean over range) ≠ the 65%-volume point productivity."""
-        from novomodelo_bridge.newave.converters.hydro import (
-            _compute_productivity,
-            _equivalent_productivity,
+        from novomodelo_bridge.core.productivity import (
+            compute_productivity,
+            equivalent_productivity,
         )
 
         # Non-linear forebay curve so the average over [vmin,vmax] differs from
         # the value at the 65% reference point.
         hreg = _make_hreg({"a2_volume_cota": 1e-4})
-        assert _equivalent_productivity(hreg) != pytest.approx(
-            _compute_productivity(hreg)
+        assert equivalent_productivity(hreg) != pytest.approx(
+            compute_productivity(hreg)
         )
 
     def test_run_of_river_uses_point_head(self) -> None:
         """Vmax == Vmin → head evaluated at Vmin (no integral)."""
-        from novomodelo_bridge.newave.converters.hydro import _equivalent_productivity
+        from novomodelo_bridge.core.productivity import equivalent_productivity
 
         hreg = _make_hreg({"volume_minimo": 500.0, "volume_maximo": 500.0})
         # h(500) = 300 + 0.1·500 = 350 ; net 100 ; ·0.95 ; ·0.009
-        assert _equivalent_productivity(hreg) == pytest.approx(
+        assert equivalent_productivity(hreg) == pytest.approx(
             0.009 * (350.0 - 250.0) * 0.95
         )
 
     def test_canal_fuga_override(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro import _equivalent_productivity
+        from novomodelo_bridge.core.productivity import equivalent_productivity
 
         hreg = _make_hreg({})
-        assert _equivalent_productivity(
+        assert equivalent_productivity(
             hreg, canal_fuga_override=300.0
         ) == pytest.approx(0.009 * (355.0 - 300.0) * 0.95)
 
     def test_cmont_override_pins_forebay(self) -> None:
         """CMONT pins the upstream level → head = cmont − cfuga (no integral)."""
-        from novomodelo_bridge.newave.converters.hydro import _equivalent_productivity
+        from novomodelo_bridge.core.productivity import equivalent_productivity
 
         hreg = _make_hreg({})
-        assert _equivalent_productivity(hreg, cmont_override=400.0) == pytest.approx(
+        assert equivalent_productivity(hreg, cmont_override=400.0) == pytest.approx(
             0.009 * (400.0 - 250.0) * 0.95
         )
 
     def test_zero_polynomial_returns_zero(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro import _equivalent_productivity
+        from novomodelo_bridge.core.productivity import equivalent_productivity
 
         hreg = _make_hreg({f"a{i}_volume_cota": 0.0 for i in range(5)})
-        assert _equivalent_productivity(hreg) == 0.0
+        assert equivalent_productivity(hreg) == 0.0
 
 
 class TestProductivitySinMeans:
@@ -600,10 +600,8 @@ class TestProductivitySinMeans:
         self, tmp_path: Path
     ) -> None:
         """Mean over EX, non-FICT plants present in cadastro; others excluded."""
-        from novomodelo_bridge.newave.converters.hydro import (
-            _equivalent_productivity,
-            compute_prodt_sin_mean,
-        )
+        from novomodelo_bridge.core.productivity import equivalent_productivity
+        from novomodelo_bridge.newave.converters.hydro import compute_prodt_sin_mean
 
         cadastro = self._cadastro(
             {
@@ -653,8 +651,8 @@ class TestProductivitySinMeans:
             result = compute_prodt_sin_mean(case)
 
         expected = (
-            _equivalent_productivity(cadastro.loc[1])
-            + _equivalent_productivity(cadastro.loc[2])
+            equivalent_productivity(cadastro.loc[1])
+            + equivalent_productivity(cadastro.loc[2])
         ) / 2
         assert result == pytest.approx(expected)
 
@@ -683,8 +681,8 @@ class TestProductivitySinMeans:
         self, tmp_path: Path
     ) -> None:
         """No CFUGA/CMONT override → every stage equals the constant SIN mean."""
+        from novomodelo_bridge.core.productivity import equivalent_productivity
         from novomodelo_bridge.newave.converters.hydro import (
-            _equivalent_productivity,
             compute_per_stage_prodt_sin_mean,
         )
 
@@ -715,8 +713,8 @@ class TestProductivitySinMeans:
             per_stage = compute_per_stage_prodt_sin_mean(case)
 
         base = (
-            _equivalent_productivity(cadastro.loc[1])
-            + _equivalent_productivity(cadastro.loc[2])
+            equivalent_productivity(cadastro.loc[1])
+            + equivalent_productivity(cadastro.loc[2])
         ) / 2
         assert len(per_stage) == 4
         assert all(v == pytest.approx(base) for v in per_stage)
@@ -726,8 +724,8 @@ class TestProductivitySinMeans:
     ) -> None:
         """A plant carrying a CFUGA override drifts; the SIN mean tracks it per
         stage."""
+        from novomodelo_bridge.core.productivity import equivalent_productivity
         from novomodelo_bridge.newave.converters.hydro import (
-            _equivalent_productivity,
             compute_per_stage_prodt_sin_mean,
         )
 
@@ -763,8 +761,8 @@ class TestProductivitySinMeans:
         ):
             per_stage = compute_per_stage_prodt_sin_mean(case)
 
-        b1 = _equivalent_productivity(cadastro.loc[1])
-        b2 = _equivalent_productivity(cadastro.loc[2])
+        b1 = equivalent_productivity(cadastro.loc[1])
+        b2 = equivalent_productivity(cadastro.loc[2])
         expected = [
             (b1 + b2) / 2,
             (b1 * 1.02 + b2) / 2,
@@ -774,10 +772,10 @@ class TestProductivitySinMeans:
 
     def test_max_prodtacum_sin_picks_cascade_max(self, tmp_path: Path) -> None:
         """Accumulated productivity peaks at the head of the longest cascade."""
+        from novomodelo_bridge.core.productivity import compute_productivity
         from novomodelo_bridge.newave.converters.constraints import (
             compute_max_prodtacum_sin,
         )
-        from novomodelo_bridge.newave.converters.hydro import _compute_productivity
 
         # Cascade A(1) → B(2) → terminal; C(3) standalone.
         cadastro = self._cadastro({1: {}, 2: {}, 3: {}})
@@ -817,25 +815,22 @@ class TestProductivitySinMeans:
         def own(code: int) -> float:
             hreg = cadastro.loc[code]
             useful = float(hreg["volume_maximo"]) - float(hreg["volume_minimo"])
-            return _compute_productivity(hreg, useful_volume_override=useful)
+            return compute_productivity(hreg, useful_volume_override=useful)
 
         acc_a = own(1) + own(2)  # A accumulates B downstream
         assert result == pytest.approx(max(acc_a, own(2), own(3)))
 
-    def test_max_prodtacum_sin_returns_none_on_read_error(self, tmp_path: Path) -> None:
-        """Unreadable the source model inputs → None (soft fallback for mocked
-        pipelines)."""
+    def test_max_prodtacum_sin_propagates_read_error(self, tmp_path: Path) -> None:
         from novomodelo_bridge.newave.converters.constraints import (
             compute_max_prodtacum_sin,
         )
 
         case = make_case(tmp_path)
-        # Drop the conftest default hidr so accessing ``case.hidr`` triggers the
-        # patched ``Hidr.read`` (this test exercises the read-error fallback).
         case.__dict__.pop("hidr", None)
         with patch("novomodelo_bridge.newave.case.Hidr") as mh:
             mh.read.side_effect = OSError("no file")
-            assert compute_max_prodtacum_sin(case) is None
+            with pytest.raises(OSError, match="no file"):
+                compute_max_prodtacum_sin(case)
 
 
 class TestConvertProductionModels:
@@ -1140,7 +1135,7 @@ class TestConvertHydroEnergyProductivity:
         assert len(b_rows) == 1
         assert b_rows[0]["stage_id"] is None
 
-        # USINA_A is tipo_regulacao="M", so _compute_productivity evaluates the
+        # USINA_A is tipo_regulacao="M", so compute_productivity evaluates the
         # cota polynomial at v_65 = vmin + 0.65·useful = 100 + 0.65·900 = 685.
         # h(685) = 300 + 0.1·685 = 368.5.  CFUGA overrides canal_fuga from
         # cadastro's 50.0 to 60.0 starting at stage 3.
@@ -1203,12 +1198,12 @@ class TestConvertHydroEnergyProductivity:
             expected = 0.9 * ((300.0 + 0.1 * (100.0 + useful)) - 50.0)
             assert by_stage[stage] == pytest.approx(expected)
 
-    def test_seasonal_volref_all_zero_row_falls_back_to_legacy(
+    def test_seasonal_volref_all_zero_row_falls_back_to_altura_65(
         self, tmp_path: Path
     ) -> None:
         """All-zero volref_saz row is the source model's "no seasonal reference"
         sentinel:
-        emit a single null-stage row with the legacy altura_65 productivity."""
+        emit a single null-stage row with the altura_65 productivity."""
         volref_df = pd.DataFrame(
             {
                 "codigo_usina": [1] * 12 + [2] * 12,
@@ -1236,7 +1231,7 @@ class TestConvertHydroEnergyProductivity:
         assert len(rows) == 2
         for r in rows:
             assert r["stage_id"] is None
-        # Both fall back to altura_65 legacy default.
+        # Both fall back to the altura_65 default.
         a_row = next(r for r in rows if r["hydro_id"] == 0)
         assert a_row["equivalent_productivity_mw_per_m3s"] == pytest.approx(0.9 * 318.5)
 
@@ -1244,7 +1239,7 @@ class TestConvertHydroEnergyProductivity:
         self, tmp_path: Path
     ) -> None:
         """A zero entry within a row that has some non-zero months means
-        "operate at vol_min" for that month — distinct from the legacy
+        "operate at vol_min" for that month — distinct from the altura_65
         fallback used for an entirely all-zero row."""
         # USINA_A: month 1 = 0 (V=vmin); month 2 = 500 (V=vmin+500); rest = 0.
         # Plant is kept because at least one month is non-zero.
@@ -1412,10 +1407,9 @@ class TestConvertHydroEnergyProductivity:
         assert [by_stage[s] for s in range(3, 12)] == pytest.approx([override] * 9)
 
     def test_other_override_columns_are_null(self, tmp_path: Path) -> None:
-        """reference_outflow_m3s / ρ_esp columns remain NULL.
-
-        The retired ``reference_volume_hm3`` column must no longer be emitted;
-        V_ref now lives in ``hydro_production_models.json``.
+        """reference_outflow_m3s / ρ_esp columns are NULL, and no
+        ``reference_volume_hm3`` column is emitted: V_ref lives in
+        ``hydro_production_models.json``.
         """
         case = self._base_case(tmp_path)
 
@@ -1496,7 +1490,7 @@ class TestParseFphaPlaneReductionDiagnostics:
 
     def test_no_sink_fallback_logs_one_warning(self, tmp_path: Path, caplog) -> None:
         """With no active collect() sink, emit() degrades to a single logging
-        record — the pre-migration caplog contract keeps working."""
+        record."""
         import logging
 
         from novomodelo_bridge.newave.converters.hydro import (

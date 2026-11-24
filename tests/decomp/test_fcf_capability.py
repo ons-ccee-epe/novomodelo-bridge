@@ -57,7 +57,7 @@ def test_remediation_has_no_repo_internal_references() -> None:
 def test_ensure_boundary_fcf_capability_raises_when_wheel_lacks_writer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 1 -- an installed-but-incapable wheel (no `write_policy_checkpoint`
+    """An installed-but-incapable wheel (no `write_policy_checkpoint`
     attribute, mirroring `test_decomp_fcf_bootstrap.py`'s own
     `ensure_writer_binding` test convention) raises with the remediation
     text, chained from the underlying `AttributeError`.
@@ -76,7 +76,7 @@ def test_ensure_boundary_fcf_capability_raises_when_wheel_lacks_writer(
 def test_ensure_boundary_fcf_capability_raises_when_novomodelo_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 1 (variant) -- novomodelo entirely absent raises the same remediation,
+    """Novomodelo entirely absent raises the same remediation,
     chained from `ModuleNotFoundError`. Setting the `sys.modules` entry to
     `None` (rather than deleting it) forces the import to fail even in an
     environment where novomodelo is genuinely installed, the same trick
@@ -95,7 +95,7 @@ def test_ensure_boundary_fcf_capability_raises_when_novomodelo_absent(
 def test_ensure_boundary_fcf_capability_raises_when_slot_interval_start_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 3 -- a wheel that writes and reloads fine, and whose reloaded pool
+    """A wheel that writes and reloads fine, and whose reloaded pool
     carries every self-describing field (`priced_state_date` included), but
     whose reloaded terminal manifest slot lacks `interval_start` (a novomodelo that
     predates the dated per-slot schema) still raises -- proving the probe
@@ -139,7 +139,7 @@ def test_ensure_boundary_fcf_capability_raises_when_slot_interval_start_missing(
 def test_ensure_boundary_fcf_capability_raises_when_priced_state_date_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 3 (pool-date variant) -- a wheel whose reloaded terminal pool omits
+    """A wheel whose reloaded terminal pool omits
     `priced_state_date` (a novomodelo that predates the dated self-describing
     checkpoint) still raises -- proving the probe checks the pool's date the
     boundary loader selects a source against, not merely the slot-level fields.
@@ -181,7 +181,7 @@ def test_ensure_boundary_fcf_capability_raises_when_priced_state_date_missing(
 def test_ensure_boundary_fcf_capability_raises_when_season_manifest_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 3 (metadata variant) -- a wheel whose reloaded pool and slot are fully
+    """A wheel whose reloaded pool and slot are fully
     formed but whose reloaded metadata omits `season_manifest` (a novomodelo
     predating the season-manifest round-trip) still raises -- proving the probe
     checks the study-global season descriptor the boundary loader's
@@ -225,7 +225,7 @@ def test_ensure_boundary_fcf_capability_raises_when_season_manifest_missing(
 def test_ensure_boundary_fcf_capability_raises_when_cost_scale_factor_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 2 (failure variant) -- a wheel that writes and reloads fine, but
+    """A wheel that writes and reloads fine, but
     whose reloaded terminal pool omits `cost_scale_factor` (a wheel that drops
     the self-describing fields on reload) still raises -- proving the probe
     checks the pool-level fields, not merely the slot-level date.
@@ -265,7 +265,7 @@ def test_ensure_boundary_fcf_capability_raises_when_cost_scale_factor_missing(
 def test_capability_module_imports_with_novomodelo_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC 4 -- no module-scope `import novomodelo`: forcing `import novomodelo` to
+    """No module-scope `import novomodelo`: forcing `import novomodelo` to
     raise `ModuleNotFoundError` and reloading the already-imported module
     must not raise.
     """
@@ -281,7 +281,7 @@ def test_capability_module_imports_with_novomodelo_absent(
 def test_ensure_boundary_fcf_capability_passes_against_installed_wheel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC 2 -- against the installed (checkpoint-capable) wheel, the guard
+    """Against the installed (checkpoint-capable) wheel, the guard
     passes silently and writes only under a temporary directory: forcing
     `tempfile.gettempdir()` to resolve under `tmp_path` and asserting
     nothing is left behind afterward (the probe's own `TemporaryDirectory`

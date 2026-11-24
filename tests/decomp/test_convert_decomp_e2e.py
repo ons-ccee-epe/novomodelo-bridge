@@ -13,6 +13,7 @@ import json
 import shutil
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from idecomp.decomp import Dadger, Vazoes
@@ -42,6 +43,7 @@ from tests.conftest import (
     FloatDigitsKwargs,
     case_json_floats,
     requires_novomodelo_python,
+    requires_tailrace_flow,
     requires_writer_binding,
 )
 
@@ -73,6 +75,10 @@ _RHV_VOLUME_LINES = (
     "LV  119   1                  500.0",
     "CV  119   1     1         1.0     VBOM",
 )
+
+#: DECOMP plant codes: BELO MONTE carries a converted ``tailrace_flow``; P. ESTRELA is an
+#: FPHA plant without one.
+_BELO_MONTE, _PORTO_ESTRELA = 288, 135
 
 
 def _deck_with_lines(
@@ -216,6 +222,46 @@ def test_rhv_volume_tipo_case_validates(decomp_mini_deck: Path, tmp_path: Path) 
     assert result["errors"] == []
 
 
+@requires_novomodelo_python
+@requires_tailrace_flow
+def test_decomp_mini_tailrace_flow_runs_and_reaches_the_tailrace(
+    decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
+) -> None:
+    import novomodelo.io  # tier-2: guarded import inside the body, never module scope
+    import novomodelo.run
+
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+    assert novomodelo.io.validate(str(dst))["valid"] is True
+
+    config_path = dst / "config.json"
+    config = json.loads(config_path.read_text())
+    config["training"]["stopping_rules"] = [{"type": "iteration_limit", "limit": 2}]
+    config_path.write_text(json.dumps(config))
+
+    out = tmp_path / "out"
+    novomodelo.run.run(str(dst), output_dir=str(out))
+
+    parquets = sorted((out / "simulation" / "hydros").rglob("*.parquet"))
+    rows = pa.concat_tables(
+        [
+            pq.ParquetFile(path).read(columns=["hydro_id", "tailrace_flow_m3s"])
+            for path in parquets
+        ]
+    ).to_pylist()
+
+    def flows(code: int) -> list[float | None]:
+        hydro_id = decomp_mini_case.id_map.hydro_id(code)
+        return [r["tailrace_flow_m3s"] for r in rows if r["hydro_id"] == hydro_id]
+
+    belo_monte, porto_estrela = flows(_BELO_MONTE), flows(_PORTO_ESTRELA)
+    assert belo_monte
+    assert None not in belo_monte
+    assert max(f for f in belo_monte if f is not None) > 0
+    assert porto_estrela
+    assert None not in porto_estrela
+
+
 def test_rhv_volume_tipos_write_stage_level_generic_rows(
     decomp_mini_deck: Path, tmp_path: Path
 ) -> None:
@@ -253,6 +299,43 @@ def test_rhv_volume_tipos_write_stage_level_generic_rows(
         assert [r["stage_id"] for r in own] == [0, 1, 2, 3]
         assert all(r["block_id"] is None for r in own)
         assert {(r["bound_lower"], r["bound_upper"]) for r in own} == {sides}
+
+
+def test_itaipu_50hz_generation_is_held_at_or_above_the_ande_load(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    dst = tmp_path / "converted"
+    convert_decomp_case(decomp_mini_deck, dst, force=True)
+
+    hydros = json.loads((dst / "system" / "hydros.json").read_text(encoding="utf-8"))[
+        "hydros"
+    ]
+    (itaipu,) = [h for h in hydros if h["name"] == "ITAIPU"]
+    group_50hz_bus = itaipu["unit_groups"][0]["bus_id"]
+    document = json.loads(
+        (dst / "constraints" / "generic_constraints.json").read_text(encoding="utf-8")
+    )
+    (ande,) = [c for c in document["constraints"] if c["name"] == "RI_ANDE"]
+    assert ande["expression"] == (
+        f"hydro_generation({itaipu['id']}, bus={group_50hz_bus})"
+    )
+    assert ande["id"] == max(c["id"] for c in document["constraints"])
+
+    rows = [
+        row
+        for row in pq.read_table(
+            dst / "constraints" / "generic_constraint_bounds.parquet"
+        ).to_pylist()
+        if row["constraint_id"] == ande["id"]
+    ]
+    # The deck's RI carga_ande: estágio 1 forward-filled to stage 2, estágio 4 on stage 3.
+    weekly, monthly = [3954.0, 3760.0, 3178.5], [3505.0, 3332.0, 2817.5]
+    assert [(r["stage_id"], r["block_id"], r["bound_lower"]) for r in rows] == [
+        (stage_id, block_id, load)
+        for stage_id, loads in enumerate([weekly, weekly, weekly, monthly])
+        for block_id, load in enumerate(loads)
+    ]
+    assert all(r["bound_upper"] is None for r in rows)
 
 
 @pytest.mark.parametrize(

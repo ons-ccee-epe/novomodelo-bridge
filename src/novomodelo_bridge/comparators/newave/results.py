@@ -662,14 +662,14 @@ def _compare_convergence(
         out: dict[int, dict[str, float]] = {}
         for row in df.iter_rows(named=True):
             lb = row["lower_bound"]
-            ub = row["upper_bound_mean"]
+            ub = row["upper_bound"]
             # Skip iterations where either bound is missing — robust against
             # pmo.dat layouts that inewave parses partially (NaNs in tail rows).
             if lb is None or ub is None:
                 continue
             out[int(row["iteration"])] = {
                 "lower_bound": float(lb),
-                "upper_bound_mean": float(ub),
+                "upper_bound": float(ub),
             }
         return out
 
@@ -677,7 +677,7 @@ def _compare_convergence(
     novomodelo_lookup = _load(novomodelo_conv)
 
     for it in sorted(set(nw_lookup) & set(novomodelo_lookup)):
-        for var in ("lower_bound", "upper_bound_mean"):
+        for var in ("lower_bound", "upper_bound"):
             nw_val = nw_lookup[it][var]
             novomodelo_val = novomodelo_lookup[it][var]
             results.append(
@@ -877,7 +877,7 @@ def _read_entity_metadata(
     nw_hydro_names, nw_thermal_names, nw_bus_names = read_reference_names(case)
     novomodelo_hydro_meta = read_novomodelo_hydro_metadata(novomodelo_output_dir)
     # ``read_novomodelo_hydro_metadata`` carries plant physics only;
-    # merge in the plant->bus *label* from the 0.13 hydro_bus_generation
+    # merge in the plant->bus *label* from the hydro_bus_generation
     # partition so ``dataset.metadata["novomodelo_hydro_meta"]`` -- the single
     # channel report_builder.py already threads into the per-bus hydro chart
     # helpers -- keeps carrying a bus label without those callers changing.

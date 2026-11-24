@@ -60,11 +60,8 @@ class ConversionManifest(ProvenanceManifest):
     input_files: list[dict[str, object]] = field(default_factory=list)
     diagnostics_summary: dict[str, int] = field(default_factory=dict)
     diagnostics: list[dict[str, object]] = field(default_factory=list)
-    # Minimum novomodelo version the converted output requires. ``convert`` sets it on
-    # every case (all system entities now carry ``operational_start_date``, added
-    # in novomodelo 0.10.0). Defaults to ``None`` so an older manifest that predates the
-    # field round-trips through ``from_json`` unchanged. Appended last so existing
-    # positional construction stays unchanged.
+    # Minimum novomodelo version the converted output requires; ``convert`` sets it
+    # on every case.
     min_novomodelo_version: str | None = None
 
     _NOT_FOUND_LABEL: ClassVar[str] = "Conversion manifest"
@@ -154,11 +151,7 @@ def _write_conversion_manifest(
         "stages": report.stage_count,
     }
     run_diagnostics = report.diagnostics if diagnostics is None else diagnostics
-    # Record the minimum novomodelo version the output requires. Every converted case
-    # now emits a ``training.parallelism.backward_scheduler`` block (novomodelo 0.12.0+),
-    # ``operational_start_date`` on all system entities (novomodelo 0.10.0+), and a
-    # mandatory hydro ``unit_groups`` array with the top-level ``bus_id`` removed
-    # (novomodelo 0.13.0+), so the output is only loadable by novomodelo >= MIN_NOVOMODELO_VERSION.
+    # The output is only loadable by novomodelo >= MIN_NOVOMODELO_VERSION.
     manifest = ConversionManifest.create(
         command,
         src,

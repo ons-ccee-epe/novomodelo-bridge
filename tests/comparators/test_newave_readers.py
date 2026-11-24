@@ -189,13 +189,13 @@ class TestPmoConvergence:
             {
                 "iteration": 1,
                 "lower_bound": pytest.approx(555.1e6),
-                "upper_bound_mean": pytest.approx(580.4e6),
+                "upper_bound": pytest.approx(580.4e6),
                 "upper_bound_best": pytest.approx(580.4e6),
             },
             {
                 "iteration": 2,
                 "lower_bound": pytest.approx(560.2e6),
-                "upper_bound_mean": pytest.approx(586.0e6),
+                "upper_bound": pytest.approx(586.0e6),
                 "upper_bound_best": pytest.approx(580.4e6),
             },
         ]
@@ -221,7 +221,7 @@ class TestPmoConvergence:
         assert row == {
             "iteration": 1,
             "lower_bound": pytest.approx(214.9923938220e6),
-            "upper_bound_mean": pytest.approx(4016521.0626873286e6),
+            "upper_bound": pytest.approx(4016521.0626873286e6),
             "upper_bound_best": pytest.approx(4016521.0626873286e6),
         }
 

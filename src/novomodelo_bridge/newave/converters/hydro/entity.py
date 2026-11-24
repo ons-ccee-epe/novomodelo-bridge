@@ -448,8 +448,7 @@ def _generation_caps(
     context: _HydroContext,
 ) -> _GenerationCaps:
     """Generation parameters. Productivity lives in
-    ``hydro_production_models.json`` on novomodelo HEAD; callers that need
-    the per-hydro base value call ``compute_base_productivities``.
+    ``hydro_production_models.json``.
     Turbined cap: the source model's engolimento, _operational_caps.
     Generation cap: rated installed power Σ n·p_nom = the FPHA GHmax the
     fit clamps at; the available power below it is a per-stage

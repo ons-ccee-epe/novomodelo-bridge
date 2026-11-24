@@ -1,12 +1,8 @@
 """Performance tab tests for ``comparators.decomp.results``.
 
-Second carve out of the legacy ``test_decomp_results_compare.py`` mega file:
-the convergence frame, TIM stages/iterations, the max-stage guard,
+Covers the convergence frame, TIM stages/iterations, the max-stage guard,
 the forward/backward split chart's column-robustness guard, and the
-Performance tab's ``build_decomp_dataset`` rows. The remaining concern bands
-(network, energy balance, costs, hydro/thermal detail, productivity, FPHA,
-REE, evaporation, constraints, CLI) stay in the mega file pending their own
-carve.
+Performance tab's ``build_decomp_dataset`` rows.
 """
 
 from __future__ import annotations
@@ -62,12 +58,12 @@ def _novomodelo_convergence_fixture() -> pl.DataFrame:
         {
             "iteration": [1, 2, 3],
             "lower_bound": [95.0, 145.0, 178.0],
-            "upper_bound_mean": [520.0, 310.0, 192.0],
+            "upper_bound": [520.0, 310.0, 192.0],
         },
         schema={
             "iteration": pl.Int64,
             "lower_bound": pl.Float64,
-            "upper_bound_mean": pl.Float64,
+            "upper_bound": pl.Float64,
         },
     )
 
@@ -75,14 +71,14 @@ def _novomodelo_convergence_fixture() -> pl.DataFrame:
 class TestDecompConvergenceFrame:
     """``_decomp_convergence_frame`` -- renames the source
     model's ``relato.convergencia`` onto the canonical ``iteration``/
-    ``lower_bound``/``upper_bound_mean``/``upper_bound_best`` schema, so
+    ``lower_bound``/``upper_bound``/``upper_bound_best`` schema, so
     ``convergence_chart`` can read both sides without a source-specific
     branch."""
 
     _CANONICAL_SCHEMA = {
         "iteration": pl.Int64,
         "lower_bound": pl.Float64,
-        "upper_bound_mean": pl.Float64,
+        "upper_bound": pl.Float64,
         "upper_bound_best": pl.Float64,
     }
 
@@ -117,7 +113,7 @@ class TestDecompConvergenceFrame:
 
         frame = _decomp_convergence_frame(tmp_path)
 
-        assert frame["upper_bound_mean"].null_count() == frame.height
+        assert frame["upper_bound"].null_count() == frame.height
 
     def test_gap_and_timing_columns_are_not_carried_over(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -192,7 +188,7 @@ class TestBuildDecompDatasetConvergence:
         assert nw_conv.columns == [
             "iteration",
             "lower_bound",
-            "upper_bound_mean",
+            "upper_bound",
             "upper_bound_best",
         ]
         assert nw_conv["iteration"].to_list() == [1, 2, 3]
@@ -215,12 +211,12 @@ class TestBuildDecompDatasetConvergence:
         assert novomodelo_conv.columns == [
             "iteration",
             "lower_bound",
-            "upper_bound_mean",
+            "upper_bound",
         ]
         assert novomodelo_conv["lower_bound"].to_list() == pytest.approx(
             [95.0, 145.0, 178.0]
         )
-        assert novomodelo_conv["upper_bound_mean"].to_list() == pytest.approx(
+        assert novomodelo_conv["upper_bound"].to_list() == pytest.approx(
             [520.0, 310.0, 192.0]
         )
 
@@ -264,7 +260,7 @@ class TestBuildDecompDatasetConvergence:
         assert nw_conv.columns == [
             "iteration",
             "lower_bound",
-            "upper_bound_mean",
+            "upper_bound",
             "upper_bound_best",
         ]
 

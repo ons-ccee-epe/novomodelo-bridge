@@ -6,7 +6,7 @@ with paths under a tmp dir (no filesystem access). ``make_case`` wraps it in a
 slots, so a converter under test reads the supplied mock objects instead of
 parsing files. ``make_decomp_files``/``make_decomp_case`` are the DECOMP-track
 twins, wrapping a :class:`~novomodelo_bridge.decomp.case.DecompCase`.
-``hydro_with_group`` builds a 0.13-shaped ``hydros.json`` hydro
+``hydro_with_group`` builds a ``hydros.json`` hydro
 dict (no top-level ``bus_id``, one mirror ``unit_groups`` entry) for tests that
 hand-build a hydro fixture rather than calling a converter. ``_FakeDadger``
 is a decomp-side test double returning preset DataFrames for register
@@ -21,6 +21,7 @@ make_case``.
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import json
 import logging
@@ -94,6 +95,33 @@ requires_writer_binding = pytest.mark.skipif(
         "requires a novomodelo-python wheel exposing the write_policy_checkpoint "
         "writer binding"
     ),
+)
+
+_TAILRACE_FLOW_CASE = Path(__file__).parent / "fixtures" / "novomodelo_tailrace_flow"
+
+
+@functools.cache
+def has_tailrace_flow() -> bool:
+    """Whether the installed novomodelo wheel accepts a hydro ``tailrace_flow``.
+
+    Probes by validating ``tests/fixtures/novomodelo_tailrace_flow``, a trimmed copy of
+    novomodelo's ``d58-stored-energy-coefficient`` example with one ``tailrace_flow``
+    declaration; a version check cannot gate this because a wheel built from the
+    novomodelo feature branch reports the same version as the wheel that refuses the
+    key. The change that pairs the bridge with an accepting novomodelo release deletes
+    this probe, its marker and the fixture.
+    """
+    if importlib.util.find_spec("novomodelo") is None:
+        return False
+    import novomodelo.io
+
+    return bool(novomodelo.io.validate(str(_TAILRACE_FLOW_CASE))["valid"])
+
+
+# Stack on ``requires_novomodelo_python`` so a missing wheel reports its own reason.
+requires_tailrace_flow = pytest.mark.skipif(
+    condition=not has_tailrace_flow(),
+    reason="requires a novomodelo-python wheel that accepts a hydro tailrace_flow",
 )
 
 
@@ -392,26 +420,23 @@ def hydro_with_group(
     max_turbined_m3s: float = 100.0,
     **extra: Any,
 ) -> dict[str, Any]:
-    """Build a 0.13-shaped ``hydros.json`` hydro dict for tests.
+    """Build a ``hydros.json`` hydro dict for tests.
 
-    Matches the shape every converter now emits (novomodelo decisions 13/14 →
-    §7.6, §7.8, via
+    Matches the shape every converter emits (via
     :func:`novomodelo_bridge.core.hydro_units.build_mirror_unit_group`): no
     top-level ``bus_id`` and a single seven-field mirror ``unit_groups``
     entry whose four bounds equal this dict's own ``generation`` envelope
     (novomodelo rule 41's mirror invariant).
 
     Use this wherever a test needs "some hydro on bus N" rather than a
-    real converter output — it replaces a hand-rolled seven-field group
-    literal duplicated across test modules.
+    real converter output.
 
     Parameters
     ----------
     hydro_id:
         The Novomodelo 0-based hydro id.
     bus_id:
-        The plant's bus id (relocated into ``unit_groups[0].bus_id``; no
-        longer emitted at the top level).
+        The plant's bus id, written to ``unit_groups[0].bus_id``.
     name:
         The plant name. Defaults to ``f"HYDRO_{hydro_id}"``.
     min_generation_mw, max_generation_mw, min_turbined_m3s, max_turbined_m3s:
@@ -425,6 +450,8 @@ def hydro_with_group(
     hydro: dict[str, Any] = {
         "id": hydro_id,
         "name": plant_name,
+        "reservoir": {"min_storage_hm3": 0.0, "max_storage_hm3": 1000.0},
+        "outflow": {"min_outflow_m3s": 0.0, "max_outflow_m3s": None},
         "generation": {
             "min_generation_mw": min_generation_mw,
             "max_generation_mw": max_generation_mw,
@@ -853,8 +880,16 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:
             return_value={"production_models": []},
         ),
         patch(
-            "novomodelo_bridge.newave.pipeline.hydro_conv.compute_base_productivities",
-            return_value={},
+            "novomodelo_bridge.newave.pipeline.hydro_conv.compute_prodt_sin_mean",
+            return_value=1.0,
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.hydro_conv.compute_per_stage_prodt_sin_mean",
+            return_value=[],
+        ),
+        patch(
+            "novomodelo_bridge.newave.pipeline.constraints_conv.compute_max_prodtacum_sin",
+            return_value=1.0,
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.convert_hydro_energy_productivity",

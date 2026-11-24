@@ -194,7 +194,7 @@ class TestNonFixaPenalizationWarning:
 
     def test_non_fixa_no_sink_fallback_logs_one_warning(self, caplog) -> None:
         """With no active collect() sink, emit() degrades to a single logging
-        record — the pre-migration caplog contract keeps working."""
+        record."""
         import logging
 
         with caplog.at_level(logging.WARNING):
@@ -289,49 +289,39 @@ class TestIntegratedProductivity:
     """
 
     def test_closed_form_average_for_linear_polynomial(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro import (
-            _compute_integrated_productivity,
-        )
+        from novomodelo_bridge.core.productivity import integrated_productivity
 
         cadastro = _make_cadastro()
         # PLANT_A: h(V) = 300 + 0.1·V. vmin=100, vmax=1000. Average h over
         # [100, 1000] = 300 + 0.1·550 = 355. Drop = 355 - cf=200 = 155.
         # ρ = ρ_esp · 155 = 0.01 · 155 = 1.55.
-        result = _compute_integrated_productivity(cadastro.loc[1])
+        result = integrated_productivity(cadastro.loc[1])
         assert result == pytest.approx(0.01 * (300.0 + 0.1 * 550.0 - 200.0))
 
     def test_canal_fuga_override(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro import (
-            _compute_integrated_productivity,
-        )
+        from novomodelo_bridge.core.productivity import integrated_productivity
 
         cadastro = _make_cadastro()
-        result = _compute_integrated_productivity(
-            cadastro.loc[1], canal_fuga_override=180.0
-        )
+        result = integrated_productivity(cadastro.loc[1], canal_fuga_override=180.0)
         # Same average h=355, new drop = 355 - 180 = 175.
         assert result == pytest.approx(0.01 * (355.0 - 180.0))
 
     def test_cmont_override_collapses_to_constant_drop(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro import (
-            _compute_integrated_productivity,
-        )
+        from novomodelo_bridge.core.productivity import integrated_productivity
 
         cadastro = _make_cadastro()
         # CMONT supplies the upstream level directly; the polynomial is
         # bypassed. drop = cmont - canal_fuga_medio = 360 - 200 = 160.
-        result = _compute_integrated_productivity(cadastro.loc[1], cmont_override=360.0)
+        result = integrated_productivity(cadastro.loc[1], cmont_override=360.0)
         assert result == pytest.approx(0.01 * (360.0 - 200.0))
 
     def test_run_of_river_uses_point_value(self) -> None:
-        from novomodelo_bridge.newave.converters.hydro import (
-            _compute_integrated_productivity,
-        )
+        from novomodelo_bridge.core.productivity import integrated_productivity
 
         cadastro = _make_cadastro().copy()
         # Collapse PLANT_A to run-of-river by setting vmax = vmin.
         cadastro.loc[1, "volume_maximo"] = cadastro.loc[1, "volume_minimo"]
-        result = _compute_integrated_productivity(cadastro.loc[1])
+        result = integrated_productivity(cadastro.loc[1])
         # h(100) = 300 + 0.1·100 = 310. Drop = 310 - 200 = 110.
         assert result == pytest.approx(0.01 * (310.0 - 200.0))
 
@@ -339,9 +329,7 @@ class TestIntegratedProductivity:
         """For h(V) = a0 + a1·V + a2·V² the integrated average over
         [vmin, vmax] is a0 + a1·(vmin+vmax)/2 + a2·(vmax³−vmin³)/(3·(vmax−vmin)).
         Verify the closed-form matches that formula on a quadratic case."""
-        from novomodelo_bridge.newave.converters.hydro import (
-            _compute_integrated_productivity,
-        )
+        from novomodelo_bridge.core.productivity import integrated_productivity
 
         cadastro = _make_cadastro().copy()
         cadastro.loc[1, "a2_volume_cota"] = 1e-5  # tiny quadratic term
@@ -352,7 +340,7 @@ class TestIntegratedProductivity:
             + a1 * (vmin + vmax) / 2.0
             + a2 * (vmax**3 - vmin**3) / (3.0 * (vmax - vmin))
         )
-        result = _compute_integrated_productivity(cadastro.loc[1])
+        result = integrated_productivity(cadastro.loc[1])
         assert result == pytest.approx(0.01 * (expected_avg_h - 200.0))
 
 
@@ -979,13 +967,10 @@ class TestConvertElectricConstraints:
     def test_bounds_schema_matches_canonical_generic_bounds_schema(
         self, tmp_path: Path
     ) -> None:
-        """NEWAVE's emitted bounds table now shares the canonical
-        ``GENERIC_BOUNDS_SCHEMA`` (``constraint_id``/``stage_id`` non-nullable)
-        instead of the legacy bare-``pa.table`` schema (all-nullable) — both
-        tracks route through the same ``GenericConstraintBuilder``, so NEWAVE
-        now matches DECOMP's schema strictness. This is a deliberate,
-        data-safe tightening (neither column is ever actually null on either
-        track), pinned here so it stays intentional rather than drifting."""
+        """NEWAVE's emitted bounds table has the canonical
+        ``GENERIC_BOUNDS_SCHEMA`` (``constraint_id``/``stage_id`` non-nullable),
+        the schema DECOMP emits too: both tracks route through the same
+        ``GenericConstraintBuilder``."""
         case, id_map = _make_electric_re_case(tmp_path)
 
         result = convert_electric_constraints(case, id_map, block_loads={})
@@ -1626,8 +1611,8 @@ def _make_minimal_case(
     """Return a ``NewaveCase`` with minimal inputs for AGRINT tests.
 
     ``patamar`` points to a missing path so ``case.patamar`` reads it via the
-    real ``Patamar.read`` and yields ``numero_patamares=None`` (→ 1 patamar),
-    matching the legacy ``NewaveFiles`` behaviour. A parsed ``dger`` reader can
+    real ``Patamar.read`` and yields ``numero_patamares=None`` (→ 1 patamar).
+    A parsed ``dger`` reader can
     be pre-injected so ``case.dger`` returns it without touching disk.
     """
     files = make_nw_files(tmp_path, agrint=agrint)
@@ -2173,7 +2158,7 @@ class TestConstraintResultTypes:
         r = GenericConstraintResult([{"id": 0}], bounds)
         assert r.constraints == [{"id": 0}]
         assert r.bounds is bounds
-        constraints, b = r  # legacy unpack
+        constraints, b = r  # NamedTuple unpack
         assert constraints == [{"id": 0}]
 
 

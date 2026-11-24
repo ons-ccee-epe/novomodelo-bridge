@@ -232,7 +232,7 @@ def _past_anticipated_commitments(case: NewaveCase, id_map: NewaveIdMap) -> list
             for k, (s, v) in enumerate(zip(seeded, dispatch.values_mw))
             if abs(s - v) > 1e-9
         )
-        # novomodelo 0.14 takes past_anticipated_commitments as windowed records
+        # past_anticipated_commitments are windowed records
         # {thermal_id, start_date, end_date, value_mw}, one per leading delivery
         # stage, tiling the plant's lead horizon exactly (strict full coverage,
         # zero-MW stages written explicitly — a missing lead stage is rejected).

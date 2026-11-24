@@ -360,12 +360,10 @@ def _ia_zero_block_frame() -> pd.DataFrame:
 
 
 class TestConvertLinesZeroCapability:
-    """novomodelo decision 10 makes ``direct_mw = 0.0`` an ordinary bound; the
-    ``raise`` this replaced only ever fired on a zero-limit round-trip that
-    no longer exists (see the capability-gain comment at ``convert_lines``,
-    ``decomp/network.py``). No current deck exercises a zero IA limit
-    (measured: zero zeros in both production decks' ``IA`` records), so
-    this synthetic fixture pins the new capability."""
+    """``direct_mw = 0.0`` is an ordinary novomodelo bound, so ``convert_lines``
+    converts a zero IA limit like any other. No current deck exercises a zero IA
+    limit (measured: zero zeros in both production decks' ``IA`` records), so
+    this synthetic fixture pins it."""
 
     def test_zero_block_limit_converts_without_raising(self) -> None:
         calendar = _calendar_rv3()
