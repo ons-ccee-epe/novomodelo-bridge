@@ -1,7 +1,9 @@
 """Unit tests for Itaipu's per-frequency ``RI`` generation limits: the floors
 (``convert_itaipu_frequency_min_generation``), the ceilings
-(``convert_itaipu_frequency_max_generation``) and their merge into the
-per-group availability (``itaipu_frequency_group_values``).
+(``convert_itaipu_frequency_max_generation``), their merge into the
+per-group availability (``itaipu_frequency_group_values``), and the generic
+constraint holding the 50 Hz group at or above the ANDE load
+(``emit_itaipu_ande_generic``).
 
 Tier 1 — pure Python, no optional dependency and no ``example/`` deck. The
 ``RI`` register is faked as a small pandas frame; the calendar is the same
@@ -17,6 +19,8 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from novomodelo_bridge.core.generic_constraint_builder import ConstraintIdAllocator
+from novomodelo_bridge.decomp.converters.constraints import emit_itaipu_ande_generic
 from novomodelo_bridge.decomp.converters.hydro import (
     convert_itaipu_frequency_max_generation,
     convert_itaipu_frequency_min_generation,
@@ -339,3 +343,74 @@ class TestItaipuFrequencyGroupValues:
             itaipu_frequency_group_values(
                 _case(_ri_with_maxima()), _id_map(), availability
             )
+
+
+class TestEmitItaipuAndeGeneric:
+    def test_floors_the_ande_bus_generation_at_the_load_per_block(self) -> None:
+        result = emit_itaipu_ande_generic(
+            5,
+            0,
+            {0: [3954.0, 3760.0, 3178.5], 1: [3505.0, 3332.0, 2817.5]},
+            big_m=82_000.0,
+            allocator=ConstraintIdAllocator(),
+        )
+
+        assert result is not None
+        assert result.constraints == [
+            {
+                "id": 0,
+                "name": "RI_ANDE",
+                "description": "Itaipu 50 Hz generation serving the RI ANDE load",
+                "expression": "hydro_generation(5, bus=0)",
+                "slack": {
+                    "enabled": True,
+                    "penalty": 82_000.0,
+                    "penalty_basis": "per_hour",
+                },
+            }
+        ]
+        assert result.bounds.to_pylist() == [
+            {
+                "constraint_id": 0,
+                "stage_id": stage_id,
+                "block_id": block_id,
+                "bound_lower": load,
+                "bound_upper": None,
+            }
+            for stage_id, loads in enumerate(
+                [[3954.0, 3760.0, 3178.5], [3505.0, 3332.0, 2817.5]]
+            )
+            for block_id, load in enumerate(loads)
+        ]
+
+    def test_takes_the_next_id_of_the_shared_allocator(self) -> None:
+        allocator = ConstraintIdAllocator(next_id=7)
+        result = emit_itaipu_ande_generic(
+            5, 0, {0: [3954.0]}, big_m=1.0, allocator=allocator
+        )
+
+        assert result is not None
+        assert [c["id"] for c in result.constraints] == [7]
+        assert allocator.next_id == 8
+
+    def test_a_block_without_load_takes_no_row(self) -> None:
+        result = emit_itaipu_ande_generic(
+            5,
+            0,
+            {0: [3954.0, 0.0, 3178.5]},
+            big_m=1.0,
+            allocator=ConstraintIdAllocator(),
+        )
+
+        assert result is not None
+        assert [row["block_id"] for row in result.bounds.to_pylist()] == [0, 2]
+
+    def test_no_load_in_any_block_emits_nothing(self) -> None:
+        allocator = ConstraintIdAllocator()
+        assert (
+            emit_itaipu_ande_generic(
+                5, 0, {0: [0.0, 0.0], 1: [0.0]}, big_m=1.0, allocator=allocator
+            )
+            is None
+        )
+        assert allocator.next_id == 0
