@@ -14,6 +14,10 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+Pairs the bridge with the **novomodelo 0.22.0** release and pins
+`novomodelo-python` to it; convert NEWAVE and DECOMP cases again and run
+novomodelo on them, as both releases change the results.
+
 ### Added
 
 - **`convert decomp` writes `VL`, `VU` and `VA` as `tailrace_flow` in
