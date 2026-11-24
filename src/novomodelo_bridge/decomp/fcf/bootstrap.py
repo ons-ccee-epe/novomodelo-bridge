@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import shutil
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from novomodelo_bridge.core.policy_dates import UNDATED
 
@@ -144,7 +144,7 @@ def _flatten_terminal_fan(case_dir: Path, variant_dir: Path) -> None:
         handle.write("\n")
 
 
-def _terminal_int(terminal: dict, key: str, output_dir: Path) -> int:
+def _terminal_int(terminal: dict[str, Any], key: str, output_dir: Path) -> int:
     if key not in terminal:
         raise RuntimeError(f"checkpoint at {output_dir} terminal pool has no {key}")
     return int(terminal[key])
