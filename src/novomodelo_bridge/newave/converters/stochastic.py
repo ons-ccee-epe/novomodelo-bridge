@@ -42,7 +42,6 @@ from novomodelo_bridge.newave.case import NewaveCase
 from novomodelo_bridge.newave.horizon import (
     POST_STUDY_YEAR,
     history_start_year,
-    study_horizon,
     study_start,
 )
 from novomodelo_bridge.newave.id_map import NewaveIdMap
@@ -278,16 +277,6 @@ def _report_artificial_gauge(
         )
 
 
-# Parquet schema for inflow seasonal statistics.
-_INFLOW_SCHEMA = pa.schema(
-    [
-        pa.field("hydro_id", pa.int32()),
-        pa.field("stage_id", pa.int32()),
-        pa.field("mean_m3s", pa.float64()),
-        pa.field("std_m3s", pa.float64()),
-    ]
-)
-
 # Parquet schema for load seasonal statistics.
 _LOAD_SCHEMA = pa.schema(
     [
@@ -439,102 +428,6 @@ def _natural_by_posto(df_vazoes: pd.DataFrame, n_rows: int) -> dict[int, np.ndar
             continue
         natural[posto] = df_vazoes[col].to_numpy(dtype=float)[:n_rows]
     return natural
-
-
-def convert_inflow_stats(case: NewaveCase, id_map: NewaveIdMap) -> pa.Table:
-    """Convert the source model historical inflow data to Novomodelo inflow seasonal
-    statistics.
-
-    For each hydro plant and each study stage (calendar month), computes the
-    mean and standard deviation of historical monthly inflows across all
-    available years in ``vazoes.dat``.  The station-to-plant mapping comes
-    from ``confhd.dat``.
-
-    Parameters
-    ----------
-    case:
-        Parsed the source model case.
-    id_map:
-        Entity ID map produced during entity conversion.  Used to resolve the source
-        model hydro codes to 0-based Novomodelo hydro IDs.
-
-    Returns
-    -------
-    pyarrow.Table
-        Table with columns ``hydro_id`` (int32), ``stage_id`` (int32),
-        ``mean_m3s`` (float64), ``std_m3s`` (float64).  One row per
-        (hydro, stage) pair.  The number of stages equals the number of
-        months in the study horizon registered in *id_map*.
-
-    Raises
-    ------
-    FileNotFoundError
-        If ``vazoes.dat`` DataFrame is empty.
-    """
-    dger = case.dger
-    vazoes_obj = _read_vazoes(case.files.vazoes, dger)
-    df_vazoes: pd.DataFrame | None = vazoes_obj.vazoes
-
-    if df_vazoes is None or df_vazoes.empty:
-        raise FileNotFoundError("vazoes.dat not found or empty")
-
-    # Truncate to months before the study start (same window as inflow_history).
-    hist_start_year = history_start_year(dger)
-    study_start_year, study_start_month = study_start(dger)
-    n_total_rows = len(df_vazoes)
-    cutoff_months = (study_start_year - hist_start_year) * 12 + (study_start_month - 1)
-    n_rows = min(cutoff_months, n_total_rows)
-
-    if "data" in df_vazoes.columns:
-        cal_months: np.ndarray = df_vazoes["data"].dt.month.to_numpy()[:n_rows]
-    else:
-        cal_months = np.array([(i % 12) + 1 for i in range(n_rows)])
-
-    incremental = _incremental_by_hydro(
-        _case_cascade(case), id_map, _natural_by_posto(df_vazoes, n_rows)
-    )
-
-    hydro_codes = id_map.all_hydro_codes
-    study_months = _derive_study_stage_months(dger)
-
-    rows_hydro_id: list[int] = []
-    rows_stage_id: list[int] = []
-    rows_mean: list[float] = []
-    rows_std: list[float] = []
-
-    for hydro_code in hydro_codes:
-        novomodelo_hydro_id = id_map.hydro_id(hydro_code)
-        inc_series = incremental.get(novomodelo_hydro_id)
-
-        seasonal_mean: dict[int, float] = {}
-        seasonal_std: dict[int, float] = {}
-
-        for cal_month in range(1, 13):
-            mask = cal_months == cal_month
-            if inc_series is not None and mask.any():
-                vals = inc_series[mask]
-                seasonal_mean[cal_month] = float(np.nanmean(vals))
-                seasonal_std[cal_month] = float(
-                    np.nanstd(vals, ddof=1) if len(vals) > 1 else 0.0
-                )
-            else:
-                seasonal_mean[cal_month] = 0.0
-                seasonal_std[cal_month] = 0.0
-
-        for stage_id, cm in enumerate(study_months):
-            rows_hydro_id.append(novomodelo_hydro_id)
-            rows_stage_id.append(stage_id)
-            rows_mean.append(seasonal_mean[cm])
-            rows_std.append(seasonal_std[cm])
-
-    return pa.table(
-        {
-            "hydro_id": pa.array(rows_hydro_id, type=pa.int32()),
-            "stage_id": pa.array(rows_stage_id, type=pa.int32()),
-            "mean_m3s": pa.array(rows_mean, type=pa.float64()),
-            "std_m3s": pa.array(rows_std, type=pa.float64()),
-        }
-    )
 
 
 def convert_load_factors(
@@ -713,27 +606,6 @@ def convert_load_factors(
         "$schema": novomodelo_schemas.schema_url_for("scenarios/load_factors.json"),
         "load_factors": load_factors,
     }
-
-
-def _derive_study_stage_months(dger: Dger) -> list[int]:
-    """Return the ordered sequence of calendar months (1-12) for each study stage.
-
-    Parameters
-    ----------
-    dger:
-        A ``Dger`` object with ``mes_inicio_estudo``, ``ano_inicio_estudo``,
-        and ``num_anos_estudo`` attributes.
-
-    Returns
-    -------
-    list[int]
-        Calendar month (1-12) for each stage.  Length equals
-        :attr:`~novomodelo_bridge.newave.horizon.StudyHorizon.total_stages`.
-    """
-    horizon = study_horizon(dger)
-    start_month = horizon.start_month
-    total_stages = horizon.total_stages
-    return [((start_month - 1 + i) % 12) + 1 for i in range(total_stages)]
 
 
 def parse_cadical(path: Path) -> dict[tuple[int, int, int], float]:

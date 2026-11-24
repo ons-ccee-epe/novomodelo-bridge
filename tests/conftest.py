@@ -816,10 +816,6 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:
             return_value=_FAKE_IC,
         ),
         patch(
-            "novomodelo_bridge.newave.pipeline.stochastic_conv.convert_inflow_stats",
-            return_value=_FAKE_INFLOW_TABLE,
-        ),
-        patch(
             "novomodelo_bridge.newave.pipeline.stochastic_conv.convert_load_stats",
             return_value=_FAKE_LOAD_TABLE,
         ),

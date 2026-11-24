@@ -38,6 +38,13 @@ links are cobre-bridge's.
   `system/hydros.json`** and keeps it in `constraints/hydro_bounds.parquet` only
   where an RHQ `QVER` bound also applies. Results are unchanged.
 
+### Removed
+
+- **BREAKING: `convert newave` no longer writes
+  `scenarios/inflow_seasonal_stats.parquet`.** Novomodelo fits the inflow
+  statistics from the history, and they now match NEWAVE's; read them from
+  `output/stochastic/`. Results change; reconvert NEWAVE cases.
+
 ## [0.21.0] - 2026-11-16
 
 Pairs the bridge with the **novomodelo 0.21.0** release and pins

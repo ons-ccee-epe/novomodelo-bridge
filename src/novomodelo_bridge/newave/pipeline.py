@@ -168,7 +168,6 @@ class _TemporalStochasticArtifacts:
     stages: dict
     config: dict
     initial_conditions: dict
-    inflow_stats: pa.Table
     inflow_history: pa.Table
     water_withdrawal: pa.Table | None
     storage_bounds: pa.Table | None
@@ -283,8 +282,8 @@ def _convert_temporal_and_stochastic(
     case: NewaveCase, id_map: NewaveIdMap
 ) -> _TemporalStochasticArtifacts:
     """The ``step("Converting temporal & stochastic")`` phase: stages, config,
-    initial conditions, the inflow statistics and history, and the per-stage
-    hydro bound sources.
+    initial conditions, the inflow history, and the per-stage hydro bound
+    sources.
     """
     logger.debug("Converting stages")
     stages_dict = temporal_conv.convert_stages(case, id_map)
@@ -301,9 +300,6 @@ def _convert_temporal_and_stochastic(
     )
     if observation_windows:
         ic_dict["recent_observations"] = observation_windows
-
-    logger.debug("Converting inflow stats")
-    inflow_table = stochastic_conv.convert_inflow_stats(case, id_map)
 
     logger.debug("Converting inflow history from vazoes.dat")
     inflow_history_table = inflow_windows.convert_inflow_history_windows(case, id_map)
@@ -326,7 +322,6 @@ def _convert_temporal_and_stochastic(
         stages=stages_dict,
         config=config_dict,
         initial_conditions=ic_dict,
-        inflow_stats=inflow_table,
         inflow_history=inflow_history_table,
         water_withdrawal=withdrawal_table,
         storage_bounds=storage_bounds_table,
@@ -553,10 +548,6 @@ def _write_parquet_outputs(
     tailrace_table = constraints.tailrace
     if tailrace_table is not None and tailrace_table.num_rows > 0:
         writer.write_parquet("system/tailrace_curves.parquet", tailrace_table)
-
-    writer.write_parquet(
-        "scenarios/inflow_seasonal_stats.parquet", temporal.inflow_stats
-    )
 
     writer.write_parquet("scenarios/load_seasonal_stats.parquet", entities.load_stats)
 

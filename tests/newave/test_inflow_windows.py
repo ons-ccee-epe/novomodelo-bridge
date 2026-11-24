@@ -22,7 +22,6 @@ from novomodelo_bridge.newave.converters.inflow_windows import (
     convert_recent_observation_windows,
 )
 from novomodelo_bridge.newave.converters.stochastic import (
-    convert_inflow_stats,
     natural_monthly_means,
 )
 from novomodelo_bridge.newave.id_map import NewaveIdMap
@@ -450,20 +449,6 @@ class TestArtificialGauge:
         with collect() as diagnostics:
             convert_inflow_history_windows(case, _ARTIFICIAL_ID_MAP)
         assert "artificial-gauge-data-ignored" in {d.code for d in diagnostics}
-
-    @patch("novomodelo_bridge.newave.converters.stochastic.Vazoes")
-    def test_artificial_plants_get_zero_seasonal_statistics(
-        self, mock_vazoes_cls, tmp_path
-    ) -> None:
-        mock_vazoes_cls.read.return_value = _artificial_record(
-            stored_on_artificial=True
-        )
-        case = _history_case(tmp_path, confhd=_confhd_rows(_ARTIFICIAL_CASCADE))
-        stats = convert_inflow_stats(case, _ARTIFICIAL_ID_MAP).to_pandas()
-        artificial = stats[stats["hydro_id"].isin([1, 2])]
-        assert not artificial.empty
-        assert (artificial[["mean_m3s", "std_m3s"]] == 0.0).all().all()
-        assert (stats[stats["hydro_id"] == 3]["std_m3s"] > 0.0).all()
 
     def test_artificial_plants_get_zero_tendency_windows(self, tmp_path) -> None:
         vazpast = _make_vazpast_mock(postos=[1, 4])
