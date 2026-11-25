@@ -1453,7 +1453,7 @@ def chart_cuts_vs_solve_time_scatter(
         return "<p>No overlapping (iteration, stage) data.</p>"
 
     # Collapse each (iteration, stage) group to a median + p25/p75 spread.
-    # ``cuts_active_after`` and ``stage`` are constant within a group, so the
+    # ``cuts_active_after`` and ``stage_id`` are constant within a group, so the
     # only aggregation is over the solve-time distribution — turning millions
     # of raw markers into one point per group.
     summary = merged.groupby(["iteration", "stage_id"], as_index=False, sort=True).agg(

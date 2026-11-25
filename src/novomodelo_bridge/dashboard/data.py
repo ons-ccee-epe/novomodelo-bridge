@@ -69,7 +69,7 @@ def scan_entity(case_dir: Path, entity: str) -> pl.LazyFrame:
     if not sim_dir.exists() or not any(sim_dir.rglob("*.parquet")):
         return pl.LazyFrame()
     lf = pl.scan_parquet(str(sim_dir / "**" / "*.parquet"), hive_partitioning=True)
-    return without_coupling_auxiliaries(lf) if "hydro_id" in lf.collect_schema() else lf
+    return without_coupling_auxiliaries(lf)
 
 
 _ENTITY_READERS: dict[str, Callable[[Path], list[dict]]] = {

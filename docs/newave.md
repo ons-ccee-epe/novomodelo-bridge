@@ -159,7 +159,9 @@ the same output.
   zero, and an artificial plant upstream is not subtracted. `convert newave`
   lists these plants, and warns when a gauged plant sits below an artificial
   plant that has gauged plants further upstream, since their inflow may then
-  be counted twice.
+  be counted twice. A negative incremental inflow is lifted to zero at no
+  cost, as NEWAVE does, and the inflow lags of later stages keep the negative
+  value; the [NEWAVE data map](newave-data-map.md) lists the setting.
 - **Production function.** When `dger.dat` selects the hydro production
   function (FPHA), Novomodelo fits each eligible plant's planes itself. The
   converter sets the spillage range of that fit to twice the largest

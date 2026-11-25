@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 _PROBABILITY_ATOL = 1e-4
-_VAZOES = "vazoes.rvN"
+VAZOES_FILE = "vazoes.rvN"
 
 #: How far the operation and coupling inflow tables may differ, on any row, for an
 #: NW plant's inflow to be split from its downstream plant's: the rounding of the
@@ -280,7 +280,7 @@ def _paired_rows(vazoes: TreeTables) -> list[tuple[pd.Series, pd.Series]]:
                 raise FieldParseError(
                     f"the inflow file's {operation_name} row at {at} has no "
                     f"row in {coupling_name}",
-                    path=_VAZOES,
+                    path=VAZOES_FILE,
                     field=operation_name,
                 )
             pairs.append((row, coupling_rows[key]))
@@ -317,7 +317,7 @@ def split_nw_inflows(
                 f"cannot split the inflow of NW plant{plural} "
                 f"{', '.join(map(str, dormant))}: the inflow file has no "
                 f"{coupling_name} table",
-                path=_VAZOES,
+                path=VAZOES_FILE,
                 field=coupling_name,
             )
 
@@ -535,7 +535,7 @@ def _tree_values(
                 f"from 1) inflow scenario {int(row['cenario'])}, but its "
                 "probability table gives every stage before the last one a "
                 "single scenario.",
-                path=_VAZOES,
+                path=VAZOES_FILE,
                 field="cenarios_gerados cenario",
             )
         values[(stage_index, scenario_index)] = row_values(
@@ -789,7 +789,7 @@ def _reject_branching_trunk(prob: pd.DataFrame, terminal: int) -> None:
             f"(counted from 1), before its last stage {terminal}. A tree that "
             "branches before its last stage is not converted yet, so generate "
             "vazoes.rvN with a tree that branches only there.",
-            path=_VAZOES,
+            path=VAZOES_FILE,
             field="probabilidades cenario",
         )
 

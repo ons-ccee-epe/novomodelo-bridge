@@ -336,45 +336,20 @@ def _spill_lines(
     return hydro_data["0"]["spill_min"], hydro_data["0"]["spill_max"]
 
 
-def test_build_hydro_json_spill_lines_uh_only_plant_match_pre_trim() -> None:
-    """A plant whose only spillage bound is the entity ceiling draws the same
-    lines as when a stage row carried that ceiling at every stage."""
-    pre_trim_bounds = pd.DataFrame(
-        [
-            {
-                "hydro_id": 0,
-                "stage_id": stage_id,
-                "min_spillage_m3s": float("nan"),
-                "max_spillage_m3s": 500.0,
-            }
-            for stage_id in range(2)
-        ]
-    )
-
-    pre_trim = _spill_lines(_make_hydro_meta([0]), pre_trim_bounds, n_stages=2)
-    post_trim = _spill_lines(
+def test_spill_lines_draw_the_entity_ceiling_at_every_stage() -> None:
+    """A plant whose only spillage bound is the entity ceiling draws it at
+    every stage."""
+    lines = _spill_lines(
         _make_hydro_meta([0], max_spillage_m3s=500.0), pd.DataFrame(), n_stages=2
     )
 
-    assert pre_trim == ([0.0, 0.0], [500.0, 500.0])
-    assert post_trim == pre_trim
+    assert lines == ([0.0, 0.0], [500.0, 500.0])
 
 
-def test_build_hydro_json_spill_lines_partly_shared_plant_match_pre_trim() -> None:
+def test_spill_lines_take_a_stage_ceiling_where_non_null() -> None:
     """A stage row replaces the entity ceiling where it is non-null, and a
     row kept for another bound (null spillage) leaves the ceiling in place."""
-    pre_trim_bounds = pd.DataFrame(
-        [
-            {
-                "hydro_id": 0,
-                "stage_id": stage_id,
-                "min_spillage_m3s": float("nan"),
-                "max_spillage_m3s": ceiling,
-            }
-            for stage_id, ceiling in enumerate([500.0, 300.0, 500.0])
-        ]
-    )
-    post_trim_bounds = pd.DataFrame(
+    hydro_bounds = pd.DataFrame(
         [
             {
                 "hydro_id": 0,
@@ -392,14 +367,11 @@ def test_build_hydro_json_spill_lines_partly_shared_plant_match_pre_trim() -> No
         ]
     )
 
-    pre_trim = _spill_lines(_make_hydro_meta([0]), pre_trim_bounds, n_stages=3)
-    post_trim = _spill_lines(
-        _make_hydro_meta([0], max_spillage_m3s=500.0), post_trim_bounds, n_stages=3
+    lines = _spill_lines(
+        _make_hydro_meta([0], max_spillage_m3s=500.0), hydro_bounds, n_stages=3
     )
 
-    assert pre_trim[1] == [500.0, 300.0, 500.0]
-    assert post_trim == pre_trim
-    assert not any(pd.isna(v) for line in post_trim for v in line)
+    assert lines == ([0.0, 0.0, 0.0], [500.0, 300.0, 500.0])
 
 
 def test_build_hydro_json_with_lp_bounds_has_gen_keys() -> None:

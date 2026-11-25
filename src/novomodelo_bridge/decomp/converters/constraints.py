@@ -1349,11 +1349,7 @@ def emit_rhe_generics(
         expression_parameters.update(share_parameters(s for _, s in energy_shares))
 
     if rhe_shares.couplings:
-        names = {
-            code: str(name).strip()
-            for code, name in effective.base["nome_usina"].items()
-        }
-        _emit_rhe_hydraulic_coupling(rhe_shares.couplings, names)
+        _emit_rhe_hydraulic_coupling(rhe_shares.couplings, effective.plant_names())
     _emit_rhe_findings(
         no_storage=no_storage,
         default_penalty=default_penalty,

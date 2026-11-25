@@ -51,10 +51,10 @@ from novomodelo_bridge.decomp.fcf.cortes import (
     summarize_cut_families,
 )
 from novomodelo_bridge.decomp.fcf.coupling import (
-    complexo_components,
     coupling_auxiliary_lag_offsets,
     coupling_lag_offsets,
     lag_months,
+    read_complexo_components,
     resolve_couplings,
     source_only_lag_inflows,
 )
@@ -271,7 +271,7 @@ def _read_deck_coupling(
     vazoes = Vazoes.read(str(case.files.vazoes))
     plant_codes = cuts.header.plant_codes
     resolution = resolve_couplings(
-        plant_codes, case.id_map, effective, complexo_components(case.dadger)
+        plant_codes, case.id_map, effective, read_complexo_components(case.dadger)
     )
     coupled = {coupling.plant_index for coupling in resolution.couplings}
     source_only = source_only_lag_inflows(
@@ -306,10 +306,7 @@ def _read_deck_coupling(
             *recent_observations,
             *auxiliary_observation_windows(recent_observations, auxiliaries),
         ],
-        names={
-            int(code): str(name).strip()
-            for code, name in effective.base["nome_usina"].items()
-        },
+        names=effective.plant_names(),
     )
 
 
@@ -687,13 +684,14 @@ def import_boundary_fcf(
     path below — once cut files are present and the import actually proceeds,
     both are required (see the ``ValueError`` below), since patching either
     file from an absent dict would silently drop the rest of its content
-    rather than mutate it. *coupling_auxiliaries* are the auxiliary coupling
-    plants the conversion added to the case
-    (:func:`~novomodelo_bridge.decomp.fcf.coupling.plan_coupling_auxiliaries`);
-    the importer prices each on its plant's cut row.
+    rather than mutate it.
 
-    Gated on cut-file presence: if either ``case.files.cortesh`` or
-    ``case.files.cortes`` is ``None``, this is a no-op — no ``boundary/``
+    *coupling_auxiliaries* must be the auxiliary coupling plants the conversion
+    wrote into the case (``FcfInputs.coupling_auxiliaries``); each takes its
+    plant's cut row.
+
+    Gated on cut-file presence: if ``case.files.boundary_cut_files()`` is
+    ``None``, this is a no-op — no ``boundary/``
     directory is written, and ``config.json`` is left untouched. Otherwise:
 
     1. Reads the shared case's ``dadger``/``id_map`` (parsed once by the
@@ -739,7 +737,8 @@ def import_boundary_fcf(
         manifest), or the writer (``fcf/writer.py``, e.g. a mapped
         coefficient vector length mismatch).
     """
-    if case.files.cortesh is None or case.files.cortes is None:
+    cut_files = case.files.boundary_cut_files()
+    if cut_files is None:
         dx.emit(cut_files_absent_diagnostic(), logger=_LOG)
         return None
     if config is None or initial_conditions is None:
@@ -752,8 +751,9 @@ def import_boundary_fcf(
     # never runs under ``--dry-run``.
     writer = CaseWriter(case_dir, float_digits=float_digits)
 
-    cortesh = Cortesh.read(str(case.files.cortesh))
-    cuts = read_cortes(case.files.cortes, cortesh, boundary_stage=None)
+    cortesh_file, cortes_file = cut_files
+    cortesh = Cortesh.read(str(cortesh_file))
+    cuts = read_cortes(cortes_file, cortesh, boundary_stage=None)
     # `BoundaryCuts.boundary_stage` is typed `int`, but a single-stage export's
     # derived value inherits `numpy.int32` from `cortesh.ano_inicio_estudo`'s
     # own numpy dtype (confirmed against this deck) — narrow to a plain `int`

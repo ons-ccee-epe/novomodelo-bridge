@@ -86,8 +86,8 @@ from novomodelo_bridge.decomp.fcf import auxiliary as auxiliary_conv
 from novomodelo_bridge.decomp.fcf.cortes import read_cortesh, read_patamar_fractions
 from novomodelo_bridge.decomp.fcf.coupling import (
     CouplingAuxiliary,
-    complexo_components,
     plan_coupling_auxiliaries,
+    read_complexo_components,
 )
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
@@ -193,7 +193,7 @@ class FcfInputs:
     unavailable to a caller before ``convert_decomp_case`` runs, so it cannot
     be constructed ahead of the call the way an empty ``FcfInputs()`` can.
     ``convert_decomp_case`` assigns the same dict objects it wrote onto the
-    passed instance, leaving both fields ``None`` when not requested (the
+    passed instance, leaving both dicts ``None`` when not requested (the
     default) or on a failed conversion.
     """
 
@@ -1002,16 +1002,6 @@ def _discover(src: Path, *, boundary_fcf: bool) -> DecompCaseArtifacts:
         )
     tx = float(tx_register.taxa) / 100.0
 
-    coupling_auxiliaries: tuple[CouplingAuxiliary, ...] = ()
-    if (
-        boundary_fcf
-        and case.files.cortesh is not None
-        and case.files.cortes is not None
-    ):
-        coupling_auxiliaries = _plan_coupling_auxiliaries(
-            case, vazoes, effective, case.files.cortesh
-        )
-
     return DecompCaseArtifacts(
         case=case,
         id_map=id_map,
@@ -1022,7 +1012,9 @@ def _discover(src: Path, *, boundary_fcf: bool) -> DecompCaseArtifacts:
         itaipu_operated=itaipu_operated,
         fan_probabilities=fan_probabilities,
         tx=tx,
-        coupling_auxiliaries=coupling_auxiliaries,
+        coupling_auxiliaries=_plan_coupling_auxiliaries(
+            case, vazoes, effective, boundary_fcf=boundary_fcf
+        ),
     )
 
 
@@ -1030,9 +1022,14 @@ def _plan_coupling_auxiliaries(
     case: DecompCase,
     vazoes: Vazoes,
     effective: cadastro_conv.EffectiveCadastro,
-    cortesh: Path,
+    *,
+    boundary_fcf: bool,
 ) -> tuple[CouplingAuxiliary, ...]:
-    """The auxiliary coupling plants the boundary cuts need, and their note."""
+    """The auxiliary coupling plants the boundary cuts need, and their note;
+    none unless *boundary_fcf* and the deck has cut files."""
+    cut_files = case.files.boundary_cut_files()
+    if not boundary_fcf or cut_files is None:
+        return ()
     # TRACKED NOVOMODELO-GAP (C26): novomodelo's lag state follows each hydro's
     # own inflow, so a cut row's last-stage coupling inflow that differs from
     # it rides on an auxiliary plant's inflow.
@@ -1041,16 +1038,14 @@ def _plan_coupling_auxiliaries(
         effective,
         case.id_map,
         case.calendar,
-        read_cortesh(cortesh).plant_codes,
-        complexo_components(case.dadger),
+        read_cortesh(cut_files[0]).plant_codes,
+        read_complexo_components(case.dadger),
     )
     if auxiliaries:
-        names = {
-            int(code): str(name).strip()
-            for code, name in effective.base["nome_usina"].items()
-        }
         dx.emit(
-            auxiliary_conv.coupling_auxiliary_diagnostic(auxiliaries, names),
+            auxiliary_conv.coupling_auxiliary_diagnostic(
+                auxiliaries, effective.plant_names()
+            ),
             logger=_LOG,
         )
     return auxiliaries
@@ -1371,7 +1366,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     resolution = tailrace_flow_conv.resolve_tailrace_flow(
         dadger,
         effective,
-        id_map.hydro_codes,
+        id_map.operated_hydro_codes,
         tailrace_flow_conv.piecewise_tailrace_codes(case, id_map),
     )
 
@@ -1589,10 +1584,7 @@ def _read_constraint_census(
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
         diversion_codes=effective.diversions.keys(),
-        plant_names={
-            int(code): str(name).strip()
-            for code, name in effective.base["nome_usina"].items()
-        },
+        plant_names=effective.plant_names(),
         dadger_path=dadger_path,
     )
     patamar_values = constraints_conv.re_gnl_patamar_diagnostic(census, gnl_generation)

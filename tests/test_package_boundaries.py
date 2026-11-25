@@ -278,7 +278,7 @@ _TYPE_CHECKING_EDGES: frozenset[tuple[str, str]] = frozenset(
         ("cli.conversion_manifest", "newave.files"),
         ("cli.convert", "core.conversion"),
         ("cli.convert", "core.diagnostics"),
-        ("cli.convert", "decomp.fcf.coupling"),
+        ("cli.convert", "decomp.pipeline"),
         ("cli.verdict", "comparators.dataset"),
         ("cli.verdict", "comparators.verdict"),
         ("cli.verdict", "core.conversion"),

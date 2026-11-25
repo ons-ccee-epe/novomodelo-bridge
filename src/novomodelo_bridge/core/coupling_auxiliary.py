@@ -1,12 +1,8 @@
-"""Auxiliary coupling plants: the hydros a converted case adds so the boundary
-cut reads a plant's inflow on its coupling posto.
+"""Ids and names of the auxiliary coupling plants, the hydros a converted case
+adds so the boundary cuts read each plant's inflow on its coupling posto.
 
-The source model evaluates a boundary cut's inflow terms on each plant's
-coupling posto, which can differ from the inflow the case carries. A plant
-whose last-stage inflow differs that way gets one auxiliary hydro with no
-storage, turbining or generation and free spillage, whose last-stage inflow
-carries the difference. Every reader of a converted case recognizes it by
-:func:`is_coupling_auxiliary`, never by its name.
+Every reader of a converted case recognizes one by :func:`is_coupling_auxiliary`,
+never by its name.
 """
 
 from __future__ import annotations

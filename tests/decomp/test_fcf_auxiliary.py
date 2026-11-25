@@ -22,11 +22,39 @@ from novomodelo_bridge.decomp.fcf.coupling import CouplingAuxiliary
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 
 #: Plant 1 is converted; 901 and 902 are cut plants the case lacks.
-_PLANT_1 = CouplingAuxiliary(1, 1001, "ACOPL-1 A", 0, 11, 1, 20.0, (25.0, 0.0), 20.0)
-_CUT_901 = CouplingAuxiliary(
-    901, 1901, "ACOPL-901 B", 2, 901, None, 7.0, (10.0, 0.0), 7.0
+_PLANT_1 = CouplingAuxiliary(
+    plant_code=1,
+    hydro_id=1001,
+    name="ACOPL-1 A",
+    plant_index=0,
+    coupling_posto=11,
+    operation_posto=1,
+    shift_m3s=20.0,
+    terminal_inflows_m3s=(25.0, 0.0),
+    max_gap_m3s=20.0,
 )
-_CUT_902 = CouplingAuxiliary(902, 1902, "ACOPL-902", 3, 902, None, 0.0, (1.0, 2.0), 2.0)
+_CUT_901 = CouplingAuxiliary(
+    plant_code=901,
+    hydro_id=1901,
+    name="ACOPL-901 B",
+    plant_index=2,
+    coupling_posto=901,
+    operation_posto=None,
+    shift_m3s=7.0,
+    terminal_inflows_m3s=(10.0, 0.0),
+    max_gap_m3s=7.0,
+)
+_CUT_902 = CouplingAuxiliary(
+    plant_code=902,
+    hydro_id=1902,
+    name="ACOPL-902",
+    plant_index=3,
+    coupling_posto=902,
+    operation_posto=None,
+    shift_m3s=0.0,
+    terminal_inflows_m3s=(1.0, 2.0),
+    max_gap_m3s=2.0,
+)
 
 _ID_MAP = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"), hydro_codes=(1,))
 
@@ -142,6 +170,12 @@ def test_with_auxiliary_productivity_adds_a_zero_productivity_row() -> None:
     assert added["integrated_equivalent_productivity_mw_per_m3s"] == 0.0
 
 
+def test_auxiliary_production_models_hold_constant_productivity_throughout() -> None:
+    assert auxiliary_production_models((_PLANT_1,))[0]["stage_ranges"] == [
+        {"start_stage_id": 0, "end_stage_id": None, "model": "constant_productivity"}
+    ]
+
+
 def test_auxiliary_initial_entries_start_empty_with_zero_observations() -> None:
     windows = [
         {"hydro_id": 0, "start_date": "2025-12-01", "end_date": "2026-01-01"},
@@ -151,9 +185,6 @@ def test_auxiliary_initial_entries_start_empty_with_zero_observations() -> None:
 
     assert auxiliary_initial_storage((_PLANT_1,)) == [
         {"hydro_id": 1001, "value_hm3": 0.0}
-    ]
-    assert auxiliary_production_models((_PLANT_1,))[0]["stage_ranges"] == [
-        {"start_stage_id": 0, "end_stage_id": None, "model": "constant_productivity"}
     ]
     assert auxiliary_observation_windows(windows, (_PLANT_1,)) == [
         {

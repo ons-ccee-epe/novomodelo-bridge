@@ -16,8 +16,11 @@ coupling posto (``AC NPOSNW``, else the ``hidr.dat`` posto) and on the
 follows the inflow the case carries: the plant's operation inflow, except for
 the plants of an NW group that takes NEWAVE's split
 (:class:`~novomodelo_bridge.decomp.scenarios.NwInflowSplit`), which carry that
-split. The deterministic part of the difference is returned as a per-depth
-offset for the mapper to fold.
+split. Over the stages before the last one, which have a single scenario, the
+difference is returned as a per-depth offset for the mapper to fold
+(:func:`coupling_lag_offsets`). In the last stage it varies by scenario, so a
+plant whose coupling inflow differs there gets an auxiliary hydro that carries
+the difference (:func:`plan_coupling_auxiliaries`).
 """
 
 from __future__ import annotations
@@ -29,11 +32,13 @@ from novomodelo_bridge.core.coupling_auxiliary import (
     coupling_auxiliary_id,
     coupling_auxiliary_name,
 )
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.inflow_windows import month_window
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.decomp.converters.cadastro import is_reservoir
 from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
 from novomodelo_bridge.decomp.scenarios import (
+    VAZOES_FILE,
     ObservationTables,
     TreeTables,
     posto_value,
@@ -412,22 +417,30 @@ def plan_coupling_auxiliaries(
 
     Raises
     ------
+    FieldParseError
+        The inflow file has no terminal coupling fan, or one whose scenarios
+        do not pair with the terminal inflow scenarios.
     UnsupportedSourceError
-        A plant that needs one has a code of 1000 or more
-        (:func:`~novomodelo_bridge.core.coupling_auxiliary.coupling_auxiliary_id`).
+        A plant that needs one has a code
+        :func:`~novomodelo_bridge.core.coupling_auxiliary.coupling_auxiliary_id`
+        refuses.
     """
-    coupling_table = vazoes.cenarios_calculados_com_postos_artificiais
+    coupling_name = "cenarios_calculados_com_postos_artificiais"
+    coupling_table = getattr(vazoes, coupling_name)
     if coupling_table is None:
-        raise ValueError(
-            "the inflow file has no terminal coupling fan "
-            "(cenarios_calculados_com_postos_artificiais)"
+        raise FieldParseError(
+            f"the inflow file has no terminal coupling fan ({coupling_name})",
+            path=VAZOES_FILE,
+            field=coupling_name,
         )
     fan = _terminal_fan(coupling_table, len(calendar))
     carried = terminal_case_inflows(vazoes, effective, id_map, calendar)
     if len(fan) != len(carried):
-        raise ValueError(
+        raise FieldParseError(
             f"{len(fan)} terminal coupling scenarios for {len(carried)} terminal "
-            "inflow scenarios"
+            "inflow scenarios",
+            path=VAZOES_FILE,
+            field=coupling_name,
         )
     resolution = resolve_couplings(plant_codes, id_map, effective, complexo_components)
 
@@ -502,7 +515,7 @@ def coupling_auxiliary_lag_offsets(
     }
 
 
-def complexo_components(dadger: Dadger) -> dict[int, list[int]]:
+def read_complexo_components(dadger: Dadger) -> dict[int, list[int]]:
     """The deck's ``CX`` register as ``{complexo_code: [component_codes]}``.
 
     ``CX`` couples a complex of the boundary cut (absent from the DECOMP

@@ -21,7 +21,7 @@ make_case``.
 
 from __future__ import annotations
 
-import functools
+import datetime
 import importlib.util
 import json
 import logging
@@ -95,33 +95,6 @@ requires_writer_binding = pytest.mark.skipif(
         "requires a novomodelo-python wheel exposing the write_policy_checkpoint "
         "writer binding"
     ),
-)
-
-_TAILRACE_FLOW_CASE = Path(__file__).parent / "fixtures" / "novomodelo_tailrace_flow"
-
-
-@functools.cache
-def has_tailrace_flow() -> bool:
-    """Whether the installed novomodelo wheel accepts a hydro ``tailrace_flow``.
-
-    Probes by validating ``tests/fixtures/novomodelo_tailrace_flow``, a trimmed copy of
-    novomodelo's ``d58-stored-energy-coefficient`` example with one ``tailrace_flow``
-    declaration; a version check cannot gate this because a wheel built from the
-    novomodelo feature branch reports the same version as the wheel that refuses the
-    key. The change that pairs the bridge with an accepting novomodelo release deletes
-    this probe, its marker and the fixture.
-    """
-    if importlib.util.find_spec("novomodelo") is None:
-        return False
-    import novomodelo.io
-
-    return bool(novomodelo.io.validate(str(_TAILRACE_FLOW_CASE))["valid"])
-
-
-# Stack on ``requires_novomodelo_python`` so a missing wheel reports its own reason.
-requires_tailrace_flow = pytest.mark.skipif(
-    condition=not has_tailrace_flow(),
-    reason="requires a novomodelo-python wheel that accepts a hydro tailrace_flow",
 )
 
 
@@ -733,12 +706,20 @@ _FAKE_CONFIG = {
     },
 }
 _FAKE_IC = {"$schema": "http://example", "storage": [], "filling_storage": []}
-_FAKE_INFLOW_TABLE = pa.table(
+_FAKE_INFLOW_HISTORY_TABLE = pa.table(
     {
         "hydro_id": pa.array([0], type=pa.int32()),
-        "stage_id": pa.array([0], type=pa.int32()),
-        "mean_m3s": pa.array([100.0], type=pa.float64()),
-        "std_m3s": pa.array([10.0], type=pa.float64()),
+        "start_date": pa.array([datetime.date(2020, 1, 1)], type=pa.date32()),
+        "end_date": pa.array([datetime.date(2020, 2, 1)], type=pa.date32()),
+        "value_m3s": pa.array([100.0], type=pa.float64()),
+    }
+)
+_FAKE_GEOMETRY_TABLE = pa.table(
+    {
+        "hydro_id": pa.array([0], type=pa.int32()),
+        "volume_hm3": pa.array([100.0], type=pa.float64()),
+        "height_m": pa.array([300.0], type=pa.float64()),
+        "area_km2": pa.array([10.0], type=pa.float64()),
     }
 )
 _FAKE_LOAD_TABLE = pa.table(
@@ -825,7 +806,7 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.inflow_windows.convert_inflow_history_windows",
-            return_value=_FAKE_INFLOW_TABLE,
+            return_value=_FAKE_INFLOW_HISTORY_TABLE,
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.read_cadastro",
@@ -837,7 +818,7 @@ def _all_converter_patches(fake_id_map: MagicMock) -> list:
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.hydro_conv.generate_hydro_geometry",
-            return_value=_FAKE_INFLOW_TABLE,  # reuse any small pa.Table
+            return_value=_FAKE_GEOMETRY_TABLE,
         ),
         patch(
             "novomodelo_bridge.newave.pipeline.constraints_conv.convert_vminop_constraints",

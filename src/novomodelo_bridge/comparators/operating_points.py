@@ -177,18 +177,14 @@ PLANE_SCHEMA: dict[str, type[pl.DataType]] = {
     "fator_correcao": pl.Float64,
 }
 
-#: ``Q_lat`` of ``code`` sums ``factor`` times each influencer's turbined plus
-#: spilled flow at the same point; ``Q_gauge`` sums ``factor`` times each
-#: influencer's ``incremental_m3s`` there.
+#: One row per plant and influencer. A plant's ``Q_lat`` sums ``factor`` times
+#: each influencer's turbined plus spilled flow at the same point and its
+#: ``Q_gauge`` sums ``factor`` times each influencer's ``incremental_m3s`` there.
+#: The ids are source plant codes in a source model's links and novomodelo ids
+#: in a case's.
 LINK_SCHEMA: dict[str, type[pl.DataType]] = {
-    "code": pl.Int64,
+    "plant": pl.Int64,
     "influencer": pl.Int64,
-    "factor": pl.Float64,
-}
-
-INFLUENCE_SCHEMA: dict[str, type[pl.DataType]] = {
-    "novomodelo_id": pl.Int64,
-    "influencer_id": pl.Int64,
     "factor": pl.Float64,
 }
 
@@ -314,16 +310,16 @@ class CaseTailraceFlows:
     """The tailrace flow declarations of the converted case, by novomodelo id.
 
     ``own_factor`` holds the ``own_outflow_factor`` of each declaring plant;
-    ``outflow`` and ``incremental`` (:data:`INFLUENCE_SCHEMA`) hold one row per
+    ``outflow`` and ``incremental`` (:data:`LINK_SCHEMA`) hold one row per
     ``outflow_influences`` and ``incremental_inflow_influences`` entry.
     """
 
     own_factor: Mapping[int, float] = field(default_factory=dict)
     outflow: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema=INFLUENCE_SCHEMA)
+        default_factory=lambda: pl.DataFrame(schema=LINK_SCHEMA)
     )
     incremental: pl.DataFrame = field(
-        default_factory=lambda: pl.DataFrame(schema=INFLUENCE_SCHEMA)
+        default_factory=lambda: pl.DataFrame(schema=LINK_SCHEMA)
     )
 
 
@@ -741,6 +737,29 @@ def evaluate_points(points: pl.DataFrame, model: SourceProductionModel) -> pl.Da
     )
 
 
+def _influence_sum(
+    links: pl.DataFrame,
+    points: pl.DataFrame,
+    value: pl.Expr,
+    *,
+    id_column: str,
+    name: str,
+) -> pl.DataFrame:
+    """Per plant and :data:`POINT_KEYS`, ``name`` is ``Σ factor · value`` over the
+    plant's *links*, *value* read at each influencer's point.
+
+    *points* identify a plant by *id_column*, which also keys the result."""
+    at_influencer = points.select(
+        *POINT_KEYS, pl.col(id_column).alias("influencer"), value.alias("_value")
+    )
+    return (
+        links.join(at_influencer, on="influencer")
+        .group_by("plant", *POINT_KEYS)
+        .agg((pl.col("factor") * pl.col("_value")).sum().alias(name))
+        .rename({"plant": id_column})
+    )
+
+
 def _with_context(
     points: pl.DataFrame,
     links: pl.DataFrame,
@@ -751,15 +770,12 @@ def _with_context(
     downstream plant's storage at the same point.
 
     The gauge flow reads ``incremental_m3s`` only when *gauge_links* has rows."""
-    release = points.select(
-        *POINT_KEYS,
-        pl.col("code").alias("influencer"),
-        (pl.col("q_m3s") + pl.col("s_m3s")).alias("_release"),
-    )
-    lateral = (
-        links.join(release, on="influencer")
-        .group_by("code", *POINT_KEYS)
-        .agg((pl.col("factor") * pl.col("_release")).sum().alias("lateral_m3s"))
+    lateral = _influence_sum(
+        links,
+        points,
+        pl.col("q_m3s") + pl.col("s_m3s"),
+        id_column="code",
+        name="lateral_m3s",
     )
     storage = points.select(
         *POINT_KEYS,
@@ -774,17 +790,12 @@ def _with_context(
     if gauge_links.is_empty():
         frame = frame.with_columns(pl.lit(0.0).alias("gauge_m3s"))
     else:
-        incremental = points.select(
-            *POINT_KEYS,
-            pl.col("code").alias("influencer"),
-            "incremental_m3s",
-        )
-        gauge = (
-            gauge_links.join(incremental, on="influencer")
-            .group_by("code", *POINT_KEYS)
-            .agg(
-                (pl.col("factor") * pl.col("incremental_m3s")).sum().alias("gauge_m3s")
-            )
+        gauge = _influence_sum(
+            gauge_links,
+            points,
+            pl.col("incremental_m3s"),
+            id_column="code",
+            name="gauge_m3s",
         )
         frame = frame.join(gauge, on=["code", *POINT_KEYS], how="left")
     return frame.with_columns(
@@ -794,7 +805,7 @@ def _with_context(
 
 def case_tailrace_flows(novomodelo_output_dir: Path) -> CaseTailraceFlows:
     """The ``tailrace_flow`` declarations in ``system/hydros.json``; a plant
-    that omits ``own_outflow_factor`` has 1.0."""
+    that omits or nulls ``own_outflow_factor`` has 1.0."""
     own: dict[int, float] = {}
     outflow: list[tuple[int, int, float]] = []
     incremental: list[tuple[int, int, float]] = []
@@ -803,7 +814,8 @@ def case_tailrace_flows(novomodelo_output_dir: Path) -> CaseTailraceFlows:
         if not declaration:
             continue
         plant = int(hydro["id"])
-        own[plant] = float(declaration.get("own_outflow_factor", 1.0))
+        own_factor = declaration.get("own_outflow_factor")
+        own[plant] = 1.0 if own_factor is None else float(own_factor)
         for target, key in (
             (outflow, "outflow_influences"),
             (incremental, "incremental_inflow_influences"),
@@ -814,8 +826,8 @@ def case_tailrace_flows(novomodelo_output_dir: Path) -> CaseTailraceFlows:
             )
     return CaseTailraceFlows(
         own,
-        pl.DataFrame(outflow, schema=INFLUENCE_SCHEMA, orient="row"),
-        pl.DataFrame(incremental, schema=INFLUENCE_SCHEMA, orient="row"),
+        pl.DataFrame(outflow, schema=LINK_SCHEMA, orient="row"),
+        pl.DataFrame(incremental, schema=LINK_SCHEMA, orient="row"),
     )
 
 
@@ -826,7 +838,8 @@ def with_case_lateral(points: pl.DataFrame, flows: CaseTailraceFlows) -> pl.Data
     without a point contributes 0.0. Without declarations it is ``s_m3s``.
 
     Apply it to the full point frame, before :func:`evaluate_points` drops the
-    plants the production model does not cover.
+    plants the production model does not cover; :func:`evaluate_both_models`
+    does.
 
     Raises:
         ValueError: *points* lack ``incremental_m3s`` and *flows* declare an
@@ -841,7 +854,7 @@ def with_case_lateral(points: pl.DataFrame, flows: CaseTailraceFlows) -> pl.Data
     has_incremental = "incremental_m3s" in points.columns
     if not has_incremental:
         refused = sorted(
-            set(flows.incremental.get_column("novomodelo_id"))
+            set(flows.incremental.get_column("plant"))
             & set(points.get_column("novomodelo_id"))
         )
         if refused:
@@ -850,18 +863,6 @@ def with_case_lateral(points: pl.DataFrame, flows: CaseTailraceFlows) -> pl.Data
                 f"plants {refused}, but their operating points carry no "
                 "incremental_m3s."
             )
-
-    def _influence_sum(
-        influences: pl.DataFrame, value: pl.Expr, name: str
-    ) -> pl.DataFrame:
-        influencer = points.select(
-            *POINT_KEYS, pl.col("novomodelo_id").alias("influencer_id"), value
-        )
-        return (
-            influences.join(influencer, on="influencer_id")
-            .group_by("novomodelo_id", *POINT_KEYS)
-            .agg((pl.col("factor") * pl.col("_value")).sum().alias(name))
-        )
 
     keys = ["novomodelo_id", *POINT_KEYS]
     own = pl.DataFrame(
@@ -879,8 +880,10 @@ def with_case_lateral(points: pl.DataFrame, flows: CaseTailraceFlows) -> pl.Data
         .join(
             _influence_sum(
                 flows.outflow,
-                (pl.col("q_m3s") + pl.col("s_m3s")).alias("_value"),
-                "_outflow",
+                points,
+                pl.col("q_m3s") + pl.col("s_m3s"),
+                id_column="novomodelo_id",
+                name="_outflow",
             ),
             on=keys,
             how="left",
@@ -888,7 +891,11 @@ def with_case_lateral(points: pl.DataFrame, flows: CaseTailraceFlows) -> pl.Data
         )
         .join(
             _influence_sum(
-                flows.incremental, incremental.alias("_value"), "_incremental"
+                flows.incremental,
+                points,
+                incremental,
+                id_column="novomodelo_id",
+                name="_incremental",
             ),
             on=keys,
             how="left",
@@ -965,6 +972,28 @@ def with_envelopes(
             )
         )
     return pl.concat(parts)
+
+
+def evaluate_both_models(
+    source: pl.DataFrame,
+    novomodelo: pl.DataFrame,
+    model: SourceProductionModel,
+    novomodelo_planes: Mapping[tuple[int, int], pl.DataFrame],
+    novomodelo_output_dir: Path,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """``(source_eval, novomodelo_eval)``: both models' points evaluated at the
+    pairs *model* covers, the case's declared lateral flow applied to each full
+    point frame first (:func:`with_case_lateral`), and the source points
+    carrying both models' envelopes (:func:`with_envelopes`).
+
+    *novomodelo_planes* is keyed by ``(novomodelo_id, stage)``."""
+    flows = case_tailrace_flows(novomodelo_output_dir)
+    source_eval = with_envelopes(
+        evaluate_points(with_case_lateral(source, flows), model),
+        model,
+        novomodelo_planes,
+    )
+    return source_eval, evaluate_points(with_case_lateral(novomodelo, flows), model)
 
 
 def productivity_frames(

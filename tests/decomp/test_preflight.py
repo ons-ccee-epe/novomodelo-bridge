@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import shutil
 from contextlib import ExitStack
 from pathlib import Path
@@ -303,6 +304,38 @@ class TestTailraceRecords:
         assert item.detail == (
             "4 VL, 5 VU, 2 VA records; 4 plants declare a lateral flow"
         )
+
+    def test_a_dormant_plant_has_no_gauge_and_influences_no_outflow(
+        self, decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
+    ) -> None:
+        deck = _deck_with_dadger_lines(
+            decomp_mini_deck,
+            tmp_path,
+            _VA_BELO_MONTE,
+            b"VA   288   260             0.20\n",
+            b"VU   288   260             0.50\n",
+        )
+
+        report = convert_decomp_case(deck, tmp_path / "out")
+        result = run_decomp_preflight(deck)
+
+        findings = _tailrace_findings(result.diagnostics)
+        assert findings == _tailrace_findings(report.diagnostics)
+        assert [finding["code"] for finding in findings] == [
+            "tailrace-gauge-not-in-case"
+        ]
+        id_map = decomp_mini_case.id_map
+        hydros = json.loads(
+            (tmp_path / "out" / "system" / "hydros.json").read_text("utf-8")
+        )["hydros"]
+        flow = next(h for h in hydros if h["id"] == id_map.hydro_id(288))[
+            "tailrace_flow"
+        ]
+        belo_monte_only = [id_map.hydro_id(314)]
+        assert [i["hydro_id"] for i in flow["outflow_influences"]] == belo_monte_only
+        assert [
+            i["hydro_id"] for i in flow["incremental_inflow_influences"]
+        ] == belo_monte_only
 
     def test_a_negative_factor_fails_the_check_as_convert_decomp_refuses_it(
         self, decomp_mini_deck: Path, tmp_path: Path

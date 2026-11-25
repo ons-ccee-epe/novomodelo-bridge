@@ -49,8 +49,7 @@ from novomodelo_bridge.comparators.operating_points import (
     OperatingPointComparison,
     SourceProductionModel,
     StagePhysics,
-    case_tailrace_flows,
-    evaluate_points,
+    evaluate_both_models,
     flag_ties,
     head,
     masked_hydro,
@@ -59,8 +58,6 @@ from novomodelo_bridge.comparators.operating_points import (
     tie_share,
     weighted_mean,
     window_gh_max,
-    with_case_lateral,
-    with_envelopes,
 )
 from novomodelo_bridge.core.pandas_utils import as_frame
 from novomodelo_bridge.decomp.converters.cadastro import (
@@ -311,19 +308,28 @@ def _fpha_frames(
     hydraulics, links, gauge_links = _plant_hydraulics(
         case, {code for code, _ in pairs}, eff
     )
+    unfilled: list[tuple[int, int, int]] = []
     for target, plant, _ in gauge_links.iter_rows():
-        missing = source.filter(
+        n_missing = source.filter(
             (pl.col("code") == plant) & pl.col("incremental_m3s").is_null()
         ).height
-        if missing:
-            _LOG.info(
+        if n_missing:
+            unfilled.append((target, plant, n_missing))
+            _LOG.debug(
                 "VA register of plant %d: plant %d has no incremental inflow at "
-                "%d source points; its flow in the tailrace is taken as 0.0 "
-                "there in the exact production function.",
+                "%d source points.",
                 target,
                 plant,
-                missing,
+                n_missing,
             )
+    if unfilled:
+        _LOG.info(
+            "VA registers: the gauge plant has no incremental inflow at %d source "
+            "points in all (plant pairs: %d); its flow in the tailrace is taken "
+            "as 0.0 there in the exact production function.",
+            sum(n for _, _, n in unfilled),
+            len(unfilled),
+        )
     missing = sorted({code for code, _ in pairs if code not in hydraulics})
     if missing:
         _LOG.info(
@@ -357,15 +363,12 @@ def _fpha_frames(
         links=links,
         gauge_links=gauge_links,
     )
-    flows = case_tailrace_flows(novomodelo_output_dir)
-    source_eval = with_envelopes(
-        evaluate_points(with_case_lateral(source, flows), model),
-        model,
-        novomodelo_by_key,
+    source_eval, novomodelo_eval = evaluate_both_models(
+        source, novomodelo, model, novomodelo_by_key, novomodelo_output_dir
     )
     split, fit_inputs, slices = productivity_frames(
         source_eval,
-        evaluate_points(with_case_lateral(novomodelo, flows), model),
+        novomodelo_eval,
         model,
         novomodelo_by_key,
         novomodelo_output_dir,
@@ -452,6 +455,7 @@ def _plant_hydraulics(
     for code in sorted(case.id_map.operated_hydro_codes):
         plants_on_gauge[eff.inflow_gauge(code, 0)].append(code)
     gauge_rows: list[tuple[int, int, float]] = []
+    unmapped: list[tuple[int, int]] = []
     if va is not None:
         for gauge, target, factor in zip(
             va["codigo_posto_influenciador"],
@@ -461,15 +465,20 @@ def _plant_hydraulics(
         ):
             plants = plants_on_gauge.get(int(gauge), [])
             if len(plants) != 1:
-                _LOG.info(
-                    "VA register of plant %d: no single operated plant on gauge "
-                    "%d; its flow in the tailrace is left out of the exact "
-                    "production function.",
+                unmapped.append((int(target), int(gauge)))
+                _LOG.debug(
+                    "VA register of plant %d: no single operated plant on gauge %d.",
                     int(target),
                     int(gauge),
                 )
                 continue
             gauge_rows.append((int(target), plants[0], float(factor)))
+    if unmapped:
+        _LOG.info(
+            "VA registers with no single operated plant on their gauge: %d; their "
+            "flow in the tailrace is left out of the exact production function.",
+            len(unmapped),
+        )
     gauge_links = pl.DataFrame(gauge_rows, schema=LINK_SCHEMA, orient="row")
     hydraulics = {
         code: Hydraulics(

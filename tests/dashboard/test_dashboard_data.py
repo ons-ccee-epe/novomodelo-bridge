@@ -34,6 +34,7 @@ from tests.conftest import (
     requires_novomodelo_python,
     requires_writer_binding,
 )
+from tests.dashboard.conftest import write_hydro_productivity
 
 _SIMULATION_ENTITIES = (
     "buses",
@@ -337,16 +338,7 @@ def _build_full_case(tmp_path: Path, *, tree: bool) -> Path:
             ]
         },
     )
-    pq.write_table(
-        pa.table(
-            {
-                "hydro_id": pa.array([0], pa.int32()),
-                "stage_id": pa.array([None], pa.int32()),
-                "equivalent_productivity_mw_per_m3s": pa.array([0.08], pa.float64()),
-            }
-        ),
-        case / "system" / "hydro_energy_productivity.parquet",
-    )
+    write_hydro_productivity(case, {0: 0.08})
     _write_json(case / "system" / "buses.json", {"buses": [{"id": 0, "name": "SE"}]})
     _write_json(
         case / "system" / "thermals.json",

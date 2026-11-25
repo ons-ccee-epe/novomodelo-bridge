@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.core.conversion import ConversionReport
     from novomodelo_bridge.core.diagnostics import Diagnostic
-    from novomodelo_bridge.decomp.fcf.coupling import CouplingAuxiliary
+    from novomodelo_bridge.decomp.pipeline import FcfInputs
 
 
 def _handle_conversion_pipeline_failure(
@@ -385,9 +385,7 @@ def _import_decomp_boundary_fcf(
     args: ConvertArgs,
     *,
     summary: dict[str, object],
-    config: dict | None,
-    initial_conditions: dict | None,
-    coupling_auxiliaries: Sequence[CouplingAuxiliary],
+    fcf_inputs: FcfInputs,
     err_console: Console,
 ) -> list[Diagnostic]:
     """Import the deck's boundary FCF; return the importer's diagnostics.
@@ -406,7 +404,7 @@ def _import_decomp_boundary_fcf(
     if args.no_fcf:
         return []
     case = DecompCase.from_directory(args.src)
-    if case.files.cortesh is None or case.files.cortes is None:
+    if case.files.boundary_cut_files() is None:
         from novomodelo_bridge.decomp.fcf.importer import cut_files_absent_diagnostic
 
         return [cut_files_absent_diagnostic()]
@@ -434,9 +432,9 @@ def _import_decomp_boundary_fcf(
                 # The mapped cuts are already in currency units; novomodelo
                 # refuses a pool with no cost_scale_factor.
                 cost_scale_factor=1.0,
-                config=config,
-                initial_conditions=initial_conditions,
-                coupling_auxiliaries=coupling_auxiliaries,
+                config=fcf_inputs.config,
+                initial_conditions=fcf_inputs.initial_conditions,
+                coupling_auxiliaries=fcf_inputs.coupling_auxiliaries,
                 float_digits=args.json_float_digits,
             )
     except Exception as exc:
@@ -595,9 +593,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
         report,
         args,
         summary=summary,
-        config=fcf_inputs.config,
-        initial_conditions=fcf_inputs.initial_conditions,
-        coupling_auxiliaries=fcf_inputs.coupling_auxiliaries,
+        fcf_inputs=fcf_inputs,
         err_console=err_console,
     )
     combined_diagnostics = [*report.diagnostics, *boundary_diagnostics]

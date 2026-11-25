@@ -382,11 +382,10 @@ def _metadata_from_json(view: Mapping[str, object]) -> dict[str, object]:
     """Reconstruct a metadata dict from its JSON view (inverse of to-json).
 
     Entries shaped like ``{_FRAME_SENTINEL: "polars", "records": [...],
-    "columns": {name: dtype_name}}`` are rebuilt into a polars frame; all
-    other entries pass through unchanged. When ``records`` is empty and a
-    ``columns`` map is present, the frame is reconstructed *with* an explicit
-    schema so that an empty frame keeps its column names and dtypes (see
-    :func:`_metadata_to_json`).
+    "columns": {name: dtype_name}}`` are rebuilt into a polars frame from their
+    declared ``columns`` schema, so an empty frame keeps its column names and
+    dtypes (see :func:`_metadata_to_json`); all other entries pass through
+    unchanged.
 
     Args:
         view: The JSON-deserialized metadata view.
@@ -395,8 +394,9 @@ def _metadata_from_json(view: Mapping[str, object]) -> dict[str, object]:
         The reconstructed metadata side-table.
 
     Raises:
-        TypeError: If a wrapped entry is missing its ``records`` key, or declares
-            an unknown frame type; the message names the offending key.
+        TypeError: If a wrapped entry has a missing or non-list ``records``, a
+            non-mapping ``columns``, or an unknown frame type; the message names
+            the offending key.
     """
     meta: dict[str, object] = {}
     for key, value in view.items():

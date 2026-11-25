@@ -13,7 +13,6 @@ import pytest
 
 from novomodelo_bridge.comparators.fpha import dense_grid, novomodelo_plane_arrays
 from novomodelo_bridge.comparators.operating_points import (
-    INFLUENCE_SCHEMA,
     LINK_SCHEMA,
     PLANE_SCHEMA,
     CaseTailraceFlows,
@@ -313,7 +312,7 @@ def _case_points(*, incremental: bool = True) -> pl.DataFrame:
 
 
 def _influences(*rows: tuple[int, int, float]) -> pl.DataFrame:
-    return pl.DataFrame(list(rows), schema=INFLUENCE_SCHEMA, orient="row")
+    return pl.DataFrame(list(rows), schema=LINK_SCHEMA, orient="row")
 
 
 def _covering(*plants: int) -> SourceProductionModel:
@@ -438,13 +437,30 @@ class TestCaseTailraceFlows:
         assert flows.outflow.rows() == [(1, 2, 0.5), (2, 1, 0.1)]
         assert flows.incremental.rows() == [(1, 1, 0.3)]
 
+    def test_a_null_own_factor_is_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        flows = self._read(
+            monkeypatch,
+            [
+                {
+                    "id": 1,
+                    "tailrace_flow": {
+                        "own_outflow_factor": None,
+                        "outflow_influences": [{"hydro_id": 2, "factor": 0.5}],
+                    },
+                }
+            ],
+        )
+
+        assert flows.own_factor == {1: 1.0}
+        assert flows.outflow.rows() == [(1, 2, 0.5)]
+
     def test_a_case_without_declarations_has_none(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         flows = self._read(monkeypatch, [{"id": 1}, {"id": 2}])
 
         assert flows.own_factor == {}
-        assert flows.outflow.schema == INFLUENCE_SCHEMA
+        assert flows.outflow.schema == LINK_SCHEMA
         assert flows.outflow.is_empty()
         assert flows.incremental.is_empty()
 

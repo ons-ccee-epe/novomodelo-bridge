@@ -65,17 +65,13 @@ def _compute_per_stage_sin_productivities(
     These SIN-aggregate productivity constants are what the source model uses to convert
     its flow-domain hydro penalties (manual §3.24 p.87).
 
-    - ``PROD_MEDIA_SIN[s]`` = mean **PRODT** (equivalent ρ vol_min→vol_max) over
-      the existing plants. PRODT is **structural** — it does *not* track the
-      seasonal reference volume — so this is essentially **flat** across the
-      horizon. pmo.dat confirms it: the applied VAZMIN/TURBMN/TURBMX penalties
-      vary only 0.15% over the whole study (= the per-config PRODT-mean spread), not the
-      ~2% that a seasonal point-reference ρ implies. We therefore emit a constant
-      ``compute_prodt_sin_mean`` for every stage; the per-stage penalty override then
-      collapses to the base for the ρ_avg-scaled columns (correct — the source model
-      does not seasonalise these penalties). The genuinely seasonal per-plant ρ still
-      ships in ``hydro_energy_productivity.parquet`` for the *generation* model — that
-      is a separate concern from the penalty.
+    - ``PROD_MEDIA_SIN[s]`` = the stage's mean **PRODT** (equivalent ρ
+      vol_min→vol_max) over the existing plants
+      (:func:`hydro_conv.compute_per_stage_prodt_sin_mean`). PRODT is
+      **structural**: it ignores VOLREF_SAZ and moves only with CFUGA/CMONT, so
+      the series is nearly flat. pmo.dat confirms it: the applied
+      VAZMIN/TURBMN/TURBMX penalties vary only 0.15% over the whole study, not
+      the ~2% that a seasonal point-reference ρ implies.
     - ``MAX_PRODTACUM_SIN`` = max accumulated cascade ρ at **altura máxima**,
       **constant** over the horizon. It governs the DESVIO ("outros usos") and
       evaporation penalties, which pmo.dat reports as *fixed* — the max is
@@ -586,12 +582,10 @@ def _write_penalty_overrides(
             "constraints/penalty_overrides_bus.parquet", bus_penalty_table
         )
 
-    # Per-stage hydro penalty override: The source model's PROD_MEDIA_SIN /
-    # MAX_PRODTACUM_SIN shift with seasonal (VOLREF_SAZ) and temporal (CFUGA/CMONT)
-    # productivity changes, so the ρ-scaled flow-domain hydro penalties are
-    # stage-varying. Emitted sparsely (only stages/columns that differ from
-    # penalties.json), keeping the penalty conversion coherent with the per-stage ρ
-    # already shipped in system/hydro_energy_productivity.parquet.
+    # Per-stage hydro penalty override: PROD_MEDIA_SIN moves with the temporal
+    # (CFUGA/CMONT) productivity overrides, so the ρ_avg-scaled flow-domain hydro
+    # penalties vary by stage. Emitted sparsely (only stages/columns that differ
+    # from penalties.json).
     per_stage_sin = _compute_per_stage_sin_productivities(case)
     if per_stage_sin is not None:
         per_stage_rho_avg, per_stage_rho_max_acum = per_stage_sin

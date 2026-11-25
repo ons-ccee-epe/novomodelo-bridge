@@ -83,6 +83,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | `dadger.rvN` › `AC` |  | ● |  |  |  |  |  |  |
 | `dadger.rvN` › `CT` | ● | ● | ● | ● | ● | ● | ● | ● |
+| `dadger.rvN` › `CX` |  | ● |  |  |  |  |  |  |
 | `dadger.rvN` › `DP` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `DT` | ● | ● | ● | ● | ● | ● | ● | ● |
 | `dadger.rvN` › `PQ` |  |  |  |  |  | ● | ● | ● |
@@ -92,6 +93,7 @@ Uma matriz por diretório do caso. As linhas são os arquivos do deck (no DECOMP
 | `vazoes.rvN` |  | ● |  |  | ● |  |  | ● |
 | `hidr.dat` |  | ● | ● | ● | ● |  |  |  |
 | `renovaveis*` (opcional) |  |  |  |  |  | ● | ● | ● |
+| `cortesh.dat` (opcional) |  | ● |  |  |  |  |  |  |
 
 ### `constraints/`
 
@@ -258,8 +260,8 @@ Volume inicial de cada usina convertida (`UH` operada ou marcada `NW`), em hm³;
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `storage[].hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id 0-based denso das usinas convertidas (linhas `UH` com `volume_inicial` ou marcadas `NW`), atribuído na ordem crescente de `codigo_usina`. |
-| `storage[].value_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `UH` › `configuracao_newave`, `hidr.dat` › `volume_minimo, volume_maximo`, `hidr.dat` › `tipo_regulacao, volume_referencia`, `dadger.rvN` › `AC` › `VOLMIN, VOLMAX` | `volume_inicial` (% do volume útil) resolvido sobre a faixa efetiva do estágio inicial: `vmin + pct/100 · (vmax − vmin)`, com `vmin`/`vmax` do cadastro após os `AC VOLMIN`/`VOLMAX` vigentes no estágio 0, limitado à faixa. Usinas a fio d'água (`tipo_regulacao` = `D`) colapsam ao `volume_referencia` independentemente do percentual. Uma usina marcada `NW` sem `volume_inicial` conta 0 %, isto é, começa no volume mínimo (ou no `volume_referencia`, se a fio d'água); um reservatório `NW` com `volume_inicial` acima do volume mínimo é recusado. Um `volume_morto_inicial` declarado é apenas avisado, não convertido. |
+| `storage[].hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id 0-based denso das usinas convertidas (linhas `UH` com `volume_inicial` ou marcadas `NW`), atribuído na ordem crescente de `codigo_usina`. Com cortes de fronteira a importar, seguem-se as usinas auxiliares de acoplamento (ver `hydros[].id` de `system/hydros.json`), com id `1000 + codigo_usina`. |
+| `storage[].value_hm3` | `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `UH` › `configuracao_newave`, `hidr.dat` › `volume_minimo, volume_maximo`, `hidr.dat` › `tipo_regulacao, volume_referencia`, `dadger.rvN` › `AC` › `VOLMIN, VOLMAX` | `volume_inicial` (% do volume útil) resolvido sobre a faixa efetiva do estágio inicial: `vmin + pct/100 · (vmax − vmin)`, com `vmin`/`vmax` do cadastro após os `AC VOLMIN`/`VOLMAX` vigentes no estágio 0, limitado à faixa. Usinas a fio d'água (`tipo_regulacao` = `D`) colapsam ao `volume_referencia` independentemente do percentual. Uma usina marcada `NW` sem `volume_inicial` conta 0 %, isto é, começa no volume mínimo (ou no `volume_referencia`, se a fio d'água); um reservatório `NW` com `volume_inicial` acima do volume mínimo é recusado. Um `volume_morto_inicial` declarado é apenas avisado, não convertido. Uma usina auxiliar de acoplamento, sem armazenamento, entra com 0. |
 | `filling_storage` | — *(sempre nulo)* | Sempre lista vazia: o enchimento de volume morto não é convertido. |
 | `past_defluences[].hydro_id` | `dadger.rvN` › `VI` › `codigo_usina` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Id Novomodelo da usina que libera a defluência em trânsito (a de montante do arco), uma janela por período de defluência pré-estudo. |
 | `past_defluences[].start_date` | `dadger.rvN` › `VI` › `duracao`, `dadger.rvN` › `DP` › `duracao`, `dadger.rvN` › `DT` › `dia, mes, ano` *(derivado; condicional: somente quando a usina declara `VI`, está operada e tem arco de jusante)* | Início de cada janela, caminhando para trás a partir do início do estudo em passos de uma semana operativa (duração do estágio 0), com a última janela truncada no intervalo em trânsito `[início − duracao, início)`, para cobri-lo sem lacuna. |
@@ -407,11 +409,11 @@ Uma entrada por usina hidráulica convertida (registro `UH` com `volume_inicial`
 **Quando:** sempre.  
 **Esquema:** [production_models.schema.json](https://raw.githubusercontent.com/ons-ccee-epe/novomodelo/refs/heads/main/schemas/production_models.schema.json) · **Código:** `src/novomodelo_bridge/decomp/converters/hydro/productivity.py`
 
-Uma entrada por usina convertida. As usinas elegíveis, sempre operadas, recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume e na faixa de turbinamento do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas, incluindo as marcadas `NW`, recebem produtibilidade constante em um único intervalo que cobre todo o horizonte.
+Uma entrada por usina convertida. As usinas elegíveis, sempre operadas, recebem a FPHA computada pelo Novomodelo, ancorada no volume inicial, ajustada na janela de volume e na faixa de turbinamento do DECOMP e com a faixa de vertimento do ajuste tirada do `mlt.dat`; nos estágios em que o engolimento máximo da usina é nulo, recebem produtibilidade constante nula, como o DECOMP, que não monta a FPHA nesses estágios. As demais usinas, incluindo as marcadas `NW` e as usinas auxiliares de acoplamento (ver `hydros[].id` de `system/hydros.json`), recebem produtibilidade constante em um único intervalo que cobre todo o horizonte.
 
 | Campo | Origem | Transformação |
 | --- | --- | --- |
-| `production_models[].hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id Novomodelo da usina, na mesma ordem de `system/hydros.json`. |
+| `production_models[].hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id Novomodelo da usina, na mesma ordem de `system/hydros.json`, inclusive as usinas auxiliares de acoplamento (id `1000 + codigo_usina`). |
 | `production_models[].selection_mode` | — *(constante)* | Sempre `stage_ranges`: o modelo é escolhido por intervalo de estágios. |
 | `production_models[].stage_ranges[].start_stage_id` | `dadger.rvN` › `MP`, `dadger.rvN` › `FD` *(derivado)* | Primeiro estágio (0-based) do intervalo. Um intervalo por trecho de estágios consecutivos com o mesmo modelo: uma usina sem estágio de engolimento nulo tem um único intervalo, que começa em 0. |
 | `production_models[].stage_ranges[].end_stage_id` | `dadger.rvN` › `MP`, `dadger.rvN` › `FD` *(derivado)* | Último estágio (0-based, inclusivo) do intervalo; nulo no último intervalo, que fica aberto até o fim do horizonte. |
@@ -445,11 +447,11 @@ Curva volume → cota → área amostrada em 100 pontos por usina convertida com
 **Quando:** sempre.  
 **Código:** `src/novomodelo_bridge/decomp/converters/hydro/productivity.py`
 
-Uma linha padrão por usina convertida com o ρ_eq de geração ancorado no volume inicial (nulo para as usinas FPHA, cujo ρ_eq o Novomodelo calcula) e a produtibilidade de energia armazenada da própria usina, que o Novomodelo acumula na cascata para a energia armazenada da RHE; quando um `AC` faz esta última variar entre estágios, ela vai em uma linha por estágio.
+Uma linha padrão por usina convertida com o ρ_eq de geração ancorado no volume inicial (nulo para as usinas FPHA, cujo ρ_eq o Novomodelo calcula) e a produtibilidade de energia armazenada da própria usina, que o Novomodelo acumula na cascata para a energia armazenada da RHE; quando um `AC` faz esta última variar entre estágios, ela vai em uma linha por estágio. Cada usina auxiliar de acoplamento (ver `hydros[].id` de `system/hydros.json`) recebe uma linha padrão de produtibilidade nula.
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
-| `hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id Novomodelo da usina convertida. |
+| `hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id Novomodelo da usina convertida, ou da usina auxiliar de acoplamento (id `1000 + codigo_usina`). |
 | `stage_id` | `dadger.rvN` › `AC` › `estagio` *(derivado)* | Nulo na linha padrão de cada usina, que vale para todos os estágios; um estágio 0-based por linha adicional quando um `AC` faz a produtibilidade de energia armazenada variar entre estágios. A variação de queda do ρ_eq de geração entra pelo teto de engolimento em `constraints/hydro_unit_group_bounds.parquet`. |
 | `equivalent_productivity_mw_per_m3s` | `hidr.dat` › `produtibilidade_especifica`, `hidr.dat` › `a0_volume_cota..a4_volume_cota`, `hidr.dat` › `canal_fuga_medio`, `hidr.dat` › `perdas`, `hidr.dat` › `tipo_perda`, `hidr.dat` › `volume_minimo`, `hidr.dat` › `volume_maximo`, `hidr.dat` › `tipo_regulacao`, `hidr.dat` › `volume_referencia`, `dadger.rvN` › `UH` › `volume_inicial`, `dadger.rvN` › `AC` › `PROESP`, `dadger.rvN` › `AC` › `COTVOL`, `dadger.rvN` › `AC` › `JUSMED`, `dadger.rvN` › `AC` › `PERHID`, `dadger.rvN` › `AC` › `VOLMIN`, `dadger.rvN` › `AC` › `VOLMAX` | ρ_eq = ρ_esp × h_líq, com a cota de montante avaliada no volume inicial da usina (o ponto em que o DECOMP ancora a FPHA), menos `canal_fuga_medio` e a perda hidráulica (`tipo_perda` 1 = percentual, 2 = metros), queda líquida truncada em 0; todos os cadastrais são os efetivos do estágio inicial (`AC` aplicados). Polinômio cota-volume nulo gera aviso e ρ_eq = 0. Nulo nas linhas por estágio e para as usinas FPHA. |
 | `reference_outflow_m3s` | — *(sempre nulo)* | Sempre nulo: o ρ_eq é uma constante, sem vazão de referência. |
@@ -544,25 +546,25 @@ Tabela identidade (média 0, desvio 1) por usina hidráulica e estágio: sob a c
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
-| `hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id 0-based denso das usinas convertidas (registros `UH` com `volume_inicial` preenchido ou marcados `NW`), em ordem crescente de `codigo_usina`. |
+| `hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id 0-based denso das usinas convertidas (registros `UH` com `volume_inicial` preenchido ou marcados `NW`), em ordem crescente de `codigo_usina`. Com cortes de fronteira a importar, seguem-se as usinas auxiliares de acoplamento (ver `hydros[].id` de `system/hydros.json`), com id `1000 + codigo_usina` e as mesmas linhas identidade. |
 | `stage_id` | `dadger.rvN` › `DP` › `estagio` *(derivado)* | Índice 0-based do estágio do calendário operativo (`estagio` − 1); uma linha por usina e estágio. |
 | `mean_m3s` | — *(constante)* | Sempre 0.0: média nula da convenção identidade, para que a vazão externa entre sem deslocamento. |
 | `std_m3s` | — *(constante)* | Sempre 1.0: desvio unitário da convenção identidade, evitando a patologia de desvio zero no leque terminal. |
 
 ### `scenarios/external_inflow_scenarios.parquet`
 
-**Lê:** `vazoes.rvN`, `hidr.dat`, `dadger.rvN` (`SB`, `CT`, `UH`, `DP`, `DT`, `AC`)  
+**Lê:** `vazoes.rvN`, `hidr.dat`, `dadger.rvN` (`SB`, `CT`, `UH`, `DP`, `DT`, `AC`, `CX`), `cortesh.dat` (opcional)  
 **Quando:** sempre.  
 **Código:** `src/novomodelo_bridge/decomp/scenarios.py`
 
-Árvore explícita de vazões incrementais por usina: o tronco determinístico (`previsoes`, uma coluna por estágio semanal) e o leque terminal (`cenarios_gerados`, uma coluna por cenário no último estágio).
+Árvore explícita de vazões incrementais por usina: o tronco determinístico (`previsoes`, uma coluna por estágio semanal) e o leque terminal (`cenarios_gerados`, uma coluna por cenário no último estágio). Com cortes de fronteira a importar, acrescenta a vazão das usinas auxiliares de acoplamento (ver `hydros[].id` de `system/hydros.json`).
 
 | Coluna | Origem | Transformação |
 | --- | --- | --- |
 | `stage_id` | `vazoes.rvN` › `previsoes · estagio`, `vazoes.rvN` › `cenarios_gerados · estagio` *(derivado)* | `estagio` − 1. As previsões devem cobrir exatamente os estágios semanais e os cenários gerados devem estar todos no estágio terminal; caso contrário a conversão falha. |
 | `scenario_id` | `vazoes.rvN` › `cenarios_gerados · cenario` *(derivado)* | 0 em todo estágio do tronco; `cenario` − 1 no estágio terminal. |
-| `hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id 0-based denso das usinas convertidas, em ordem crescente de `codigo_usina`. |
-| `value_m3s` | `vazoes.rvN` › `previsoes · coluna do posto`, `vazoes.rvN` › `cenarios_gerados · coluna do posto`, `vazoes.rvN` › `previsoes_com_postos_artificiais · coluna do posto`, `vazoes.rvN` › `cenarios_calculados_com_postos_artificiais · coluna do posto`, `hidr.dat` › `posto`, `dadger.rvN` › `AC` › `NUMPOS · codigo_posto`, `dadger.rvN` › `AC` › `NPOSNW · codigo_posto`, `dadger.rvN` › `UH` › `configuracao_newave` | Vazão incremental lida diretamente da coluna do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, avaliado no estágio inicial), sem subtração de montante: o arquivo de vazões do DECOMP já é incremental. Um `AC NUMPOS` que varia ao longo do horizonte gera aviso e usa o posto do estágio inicial. Exceção: as usinas marcadas `NW` e a primeira usina operada a jusante de cada uma (o absorvedor) formam um grupo. Se, em toda linha pareada (`previsoes` com `previsoes_com_postos_artificiais` por `estagio`; `cenarios_gerados` com `cenarios_calculados_com_postos_artificiais` por `estagio` e `cenario`), a vazão de operação do absorvedor difere da soma das vazões de acoplamento do grupo em até 1 m³/s e cada usina `NW` tem vazão de operação de no máximo 1 m³/s em valor absoluto, o grupo divide a vazão como o NEWAVE: cada usina `NW` leva a vazão da coluna do seu posto de acoplamento (`AC NPOSNW`, senão o `posto` do `hidr`) e o absorvedor leva a própria vazão de operação menos a soma dessas vazões. Se a condição falha em alguma linha, o grupo inteiro mantém a vazão de operação e a conversão emite o aviso `decomp-nw-inflow-split-fallback`. Uma usina `NW` sem usina operada a jusante mantém a vazão de operação e consta do mesmo aviso. |
+| `hydro_id` | `dadger.rvN` › `UH` › `codigo_usina` *(derivado)* | Id 0-based denso das usinas convertidas, em ordem crescente de `codigo_usina`. Com cortes de fronteira a importar, seguem-se as usinas auxiliares de acoplamento, com id `1000 + codigo_usina`. |
+| `value_m3s` | `vazoes.rvN` › `previsoes · coluna do posto`, `vazoes.rvN` › `cenarios_gerados · coluna do posto`, `vazoes.rvN` › `previsoes_com_postos_artificiais · coluna do posto`, `vazoes.rvN` › `cenarios_calculados_com_postos_artificiais · coluna do posto`, `hidr.dat` › `posto`, `dadger.rvN` › `AC` › `NUMPOS · codigo_posto`, `dadger.rvN` › `AC` › `NPOSNW · codigo_posto`, `dadger.rvN` › `UH` › `configuracao_newave`, `cortesh.dat` › `codigos das usinas do corte`, `dadger.rvN` › `CX` › `codigo_newave, codigo_decomp` | Vazão incremental lida diretamente da coluna do posto da usina (`posto` do `hidr`, sobreposto por `AC NUMPOS` quando presente, avaliado no estágio inicial), sem subtração de montante: o arquivo de vazões do DECOMP já é incremental. Um `AC NUMPOS` que varia ao longo do horizonte gera aviso e usa o posto do estágio inicial. Exceção: as usinas marcadas `NW` e a primeira usina operada a jusante de cada uma (o absorvedor) formam um grupo. Se, em toda linha pareada (`previsoes` com `previsoes_com_postos_artificiais` por `estagio`; `cenarios_gerados` com `cenarios_calculados_com_postos_artificiais` por `estagio` e `cenario`), a vazão de operação do absorvedor difere da soma das vazões de acoplamento do grupo em até 1 m³/s e cada usina `NW` tem vazão de operação de no máximo 1 m³/s em valor absoluto, o grupo divide a vazão como o NEWAVE: cada usina `NW` leva a vazão da coluna do seu posto de acoplamento (`AC NPOSNW`, senão o `posto` do `hidr`) e o absorvedor leva a própria vazão de operação menos a soma dessas vazões. Se a condição falha em alguma linha, o grupo inteiro mantém a vazão de operação e a conversão emite o aviso `decomp-nw-inflow-split-fallback`. Uma usina `NW` sem usina operada a jusante mantém a vazão de operação e consta do mesmo aviso. Uma usina auxiliar de acoplamento leva 0 em todo estágio do tronco; no último estágio leva, por cenário, `y − x + C`: `y` é a coluna do posto de acoplamento da usina em `cenarios_calculados_com_postos_artificiais` (a vazão que a linha do corte lê), `x` a vazão que o caso carrega para ela (0 para uma usina do corte fora do caso) e `C` a menor constante que mantém o valor não negativo, descontada no RHS dos cortes. Os códigos das usinas do corte vêm do `cortesh.dat`, e os componentes do `CX` decidem qual usina leva a linha de um complexo. |
 
 ### `scenarios/load_seasonal_stats.parquet`
 
@@ -824,7 +826,7 @@ Declara, para cada usina convertida, os parâmetros calculados pelo Novomodelo `
 **Quando:** escrito por padrão pela CLI após a conversão, quando o deck declara `cortesh.dat` e `cortes*.dat` (registro `FC` ou busca por nome) e o novomodelo-python instalado passa na sonda de escrita e releitura do checkpoint; `--no-fcf` e `--dry-run` pulam a importação, e um deck sem arquivos de cortes converte sem fronteira (nota informativa)  
 **Código:** `src/novomodelo_bridge/decomp/fcf/importer.py`
 
-Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal e mapeia sobre ele cada corte, escrito pelo modelo de origem por mês médio de 730,5 h. Cada usina convertida recebe os termos da sua própria linha do corte, da linha do complexo `CX` que a contém ou, na falta das duas, da primeira usina a jusante que tenha linha (regra inferida do relato do modelo de origem, não do manual); só um reservatório (`tipo_regulacao` `M` ou `S` em `hidr.dat`) recebe o termo de armazenamento, e só pela própria linha ou pelo complexo, cobrado acima do volume mínimo efetivo. Os termos de vazão defasada são avaliados no posto de acoplamento (`AC NPOSNW`, senão o `posto` de `hidr.dat`) sobre as tabelas de `vazoes` com postos artificiais, sem desconto de média; a diferença para a vazão de operação nos estágios determinísticos e os termos de usinas do corte ausentes do caso entram como constante no RHS. No último estágio, onde variam por cenário, essa diferença e a vazão de acoplamento de cada usina do corte ausente do caso vão para uma usina auxiliar de acoplamento (ver `hydros[].id`), sem armazenamento, turbinamento nem geração e com vertimento livre, cuja vazão é a diferença somada a uma constante que a mantém não negativa, descontada no RHS; a auxiliar recebe os termos de vazão defasada da linha do corte da sua usina, e a nota `boundary-fcf-coupling-auxiliary-plants` as lista. Os termos GNL vão para o anel antecipado: cada slot é cobrado pelos preços por patamar do mês de entrega (mês contado pelo `GS`), ponderados pelas durações de patamar de `cortesh.dat`, e as entregas já comandadas (`GL` após o horizonte) entram como constante no RHS. A água ainda em trânsito para uma usina ao fim do estudo (tempo de viagem `VI`) recebe o termo de armazenamento da usina quando ela o tem e, senão, o seu primeiro termo de vazão defasada por hm³: é a regra do canal que o CEPEL documenta para a FCF do DECOMP usada pelo DESSEM; o DECOMP não valora essa água na fronteira com o NEWAVE, então o custo de fronteira difere do dele pelo valor da água em trânsito. Grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python e reescreve `config.json`, apontando `policy.boundary` (`path = "boundary"`) para o checkpoint, e `initial_conditions.json`, com as janelas `recent_observations` das observações mensais e semanais de `vazoes` nos postos de acoplamento; o caso deve ser executado com `novomodelo run <caso> --output <caso>`.
+Importa a função de custo futuro de fronteira do modelo de origem: lê o cabeçalho `cortesh.dat` e os cortes do estágio de acoplamento em `cortes*.dat`, executa uma iteração do novomodelo sobre uma cópia do caso para ler o manifesto de estados terminal e mapeia sobre ele cada corte, escrito pelo modelo de origem por mês médio de 730,5 h. Cada usina convertida recebe os termos da sua própria linha do corte, da linha do complexo `CX` que a contém ou, na falta das duas, da primeira usina a jusante que tenha linha (regra inferida do relato do modelo de origem, não do manual); só um reservatório (`tipo_regulacao` `M` ou `S` em `hidr.dat`) recebe o termo de armazenamento, e só pela própria linha ou pelo complexo, cobrado acima do volume mínimo efetivo. Os termos de vazão defasada são avaliados no posto de acoplamento (`AC NPOSNW`, senão o `posto` de `hidr.dat`) sobre as tabelas de `vazoes` com postos artificiais, sem desconto de média; a diferença para a vazão de operação nos estágios determinísticos e os termos de usinas do corte ausentes do caso entram como constante no RHS. No último estágio, onde variam por cenário, essa diferença e a vazão de acoplamento de cada usina do corte ausente do caso vão para uma usina auxiliar de acoplamento (ver `hydros[].id`), sem armazenamento, turbinamento nem geração e com vertimento livre, cuja vazão é a diferença somada a uma constante que a mantém não negativa, descontada no RHS; a auxiliar recebe os termos de vazão defasada da linha do corte da sua usina. A conversão as lista, com a maior diferença de cada uma, na nota `boundary-fcf-coupling-auxiliary-plants`. Os termos GNL vão para o anel antecipado: cada slot é cobrado pelos preços por patamar do mês de entrega (mês contado pelo `GS`), ponderados pelas durações de patamar de `cortesh.dat`, e as entregas já comandadas (`GL` após o horizonte) entram como constante no RHS. A água ainda em trânsito para uma usina ao fim do estudo (tempo de viagem `VI`) recebe o termo de armazenamento da usina quando ela o tem e, senão, o seu primeiro termo de vazão defasada por hm³: é a regra do canal que o CEPEL documenta para a FCF do DECOMP usada pelo DESSEM; o DECOMP não valora essa água na fronteira com o NEWAVE, então o custo de fronteira difere do dele pelo valor da água em trânsito. Grava `boundary/{manifest.bin, cuts/, basis/}` via novomodelo-python e reescreve `config.json`, apontando `policy.boundary` (`path = "boundary"`) para o checkpoint, e `initial_conditions.json`, com as janelas `recent_observations` das observações mensais e semanais de `vazoes` nos postos de acoplamento; o caso deve ser executado com `novomodelo run <caso> --output <caso>`.
 
 ## Índice por origem
 
@@ -1122,7 +1124,9 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 
 ### `dadger.rvN` › `CX`
 
-**Estado:** lido, não convertido. **Lido por:** `boundary/`.
+**Estado:** convertido. **Lido por:** `boundary/`, `scenarios/external_inflow_scenarios.parquet`.
+
+- `codigo_newave, codigo_decomp` → `scenarios/external_inflow_scenarios.parquet` › `value_m3s`
 
 ### `dadger.rvN` › `DA`
 
@@ -1826,7 +1830,7 @@ Para cada arquivo do deck (e, no DECOMP, cada registro): o que ele alimenta e o 
 - `probabilidades · cenario` → `scenarios/external_ncs_scenarios.parquet` › `scenario_id`
 - `probabilidades · cenario` → `scenarios/external_load_scenarios.parquet` › `scenario_id`
 - `previsoes_com_postos_artificiais` — *adiado.* Previsões incluindo os postos artificiais de acoplamento. Lidas só para dividir a vazão de um grupo de usinas marcadas `NW` como o NEWAVE a divide (`value_m3s` de `scenarios/external_inflow_scenarios.parquet`, com o aviso `decomp-nw-inflow-split-fallback` quando a divisão não vale); as colunas dos demais postos não são convertidas.
-- `cenarios_calculados_com_postos_artificiais` — *adiado.* Cenários gerados incluindo postos artificiais. Lidos só para o mesmo fim, nos estágios mensais do tronco e no leque terminal.
+- `cenarios_calculados_com_postos_artificiais` — *adiado.* Cenários gerados incluindo postos artificiais. Lidos para o mesmo fim, nos estágios mensais do tronco e no leque terminal, e, no leque terminal, para a vazão das usinas auxiliares de acoplamento (`value_m3s` de `scenarios/external_inflow_scenarios.parquet`).
 - `numero_aberturas_estagios` — *não lido.* Número de aberturas por estágio. Não lido: a forma da árvore é deduzida dos próprios cenários e das probabilidades.
 
 ### `hidr.dat`
@@ -2235,12 +2239,13 @@ Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de f
 
 ### `cortesh.dat`
 
-**Estado:** convertido. **Lido por:** `boundary/`, `initial_conditions.json`, `stages.json`.
+**Estado:** convertido. **Lido por:** `boundary/`, `initial_conditions.json`, `scenarios/external_inflow_scenarios.parquet`, `stages.json`.
 
 - `alfa_cvar, lambda_cvar` → `stages.json` › `stages[].risk_measure`
 - `alfa_cvar` → `stages.json` › `stages[].risk_measure.cvar.alpha`
 - `lambda_cvar` → `stages.json` › `stages[].risk_measure.cvar.lambda`
 - `duracoes_patamares` → `initial_conditions.json` › `past_anticipated_commitments[].value_mw`
+- `codigos das usinas do corte` → `scenarios/external_inflow_scenarios.parquet` › `value_m3s`
 
 ### `cortes*.dat`
 
@@ -2352,7 +2357,7 @@ Tudo o que o conversor deixa de fora, reunido em um só lugar. Cada item aparece
 - `hidr.dat` › `influencia_vertimento_canal_fuga` — *adiado.* Sinalizador de influência do vertimento no canal de fuga. Lido só pelo diagnóstico `fpha-spill-outside-tailrace`, que lista as usinas FPHA com sinalizador 0: nelas o DECOMP não ajusta coeficiente de vertimento, e o ajuste do Novomodelo sempre avalia as curvas de jusante sobre a defluência total.
 - `hidr.dat` › `empresa, observacao, data` — *não lido.* Metadados do cadastro (empresa, observação, data). Não lidos.
 - `vazoes.rvN` › `previsoes_com_postos_artificiais` — *adiado.* Previsões incluindo os postos artificiais de acoplamento. Lidas só para dividir a vazão de um grupo de usinas marcadas `NW` como o NEWAVE a divide (`value_m3s` de `scenarios/external_inflow_scenarios.parquet`, com o aviso `decomp-nw-inflow-split-fallback` quando a divisão não vale); as colunas dos demais postos não são convertidas.
-- `vazoes.rvN` › `cenarios_calculados_com_postos_artificiais` — *adiado.* Cenários gerados incluindo postos artificiais. Lidos só para o mesmo fim, nos estágios mensais do tronco e no leque terminal.
+- `vazoes.rvN` › `cenarios_calculados_com_postos_artificiais` — *adiado.* Cenários gerados incluindo postos artificiais. Lidos para o mesmo fim, nos estágios mensais do tronco e no leque terminal, e, no leque terminal, para a vazão das usinas auxiliares de acoplamento (`value_m3s` de `scenarios/external_inflow_scenarios.parquet`).
 - `vazoes.rvN` › `numero_aberturas_estagios` — *não lido.* Número de aberturas por estágio. Não lido: a forma da árvore é deduzida dos próprios cenários e das probabilidades.
 - `polinjus.csv` › `hidreletrica_curvajusante_polinomio` — *não lido.* Cabeçalho de polinômio por família. Não lido: os segmentos trazem os coeficientes diretamente.
 - `polinjus.csv` › `hidreletrica_curvajusante_afogamentoexplicito_padrao` — *não lido.* Habilitação padrão do tratamento de afogamento explícito. Não lida: o Novomodelo escolhe a família pela defluência de jusante sem afogamento explícito.

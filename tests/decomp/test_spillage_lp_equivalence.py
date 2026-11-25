@@ -1,10 +1,11 @@
-"""Effective spillage bounds are unchanged by trimming the ``UH`` emission.
+"""A converted ``UH`` spillage ceiling binds as a ceiling at every stage would.
 
-Replays the old emission (one base ``UH_vert`` row per declared plant and
-stage) and the new one (``convert_spillage_upper_bounds`` plus the ceiling on
-the ``hydros.json`` entity) through the real accumulator, then compares both
-with a test-local oracle of novomodelo's per-column precedence: block row,
-else stage row, else entity value, else unbounded.
+The reference puts each declared ceiling in one base ``UH_vert`` row per plant
+and stage. The conversion puts the ceiling on the ``hydros.json`` entity and
+keeps stage rows only where ``convert_spillage_upper_bounds`` finds another
+spillage contribution on the same cell. Both go through the real accumulator
+and are read with a test-local oracle of novomodelo's per-column precedence:
+block row, else stage row, else entity value, else unbounded.
 """
 
 from __future__ import annotations
@@ -46,9 +47,10 @@ def _qver(
     )
 
 
-def _old_emission(
+def _ceiling_at_every_stage(
     declared: Mapping[int, float], stages: Sequence[int]
 ) -> list[BoundContribution]:
+    """The reference: every declared ceiling as a stage row."""
     return [
         BoundContribution(
             family="hydro",
@@ -89,14 +91,16 @@ def _effective_spillage(
     return pick("min_spillage_m3s", entity_min), pick("max_spillage_m3s", entity_max)
 
 
-def _old_table(
+def _reference_table(
     declared: Mapping[int, float], others: Sequence[BoundContribution]
 ) -> pa.Table:
-    rows = resolve([*others, *_old_emission(declared, _STAGES)], _BLOCK_COUNTS)
+    rows = resolve(
+        [*others, *_ceiling_at_every_stage(declared, _STAGES)], _BLOCK_COUNTS
+    )
     return build_bound_tables(rows).hydro
 
 
-def _new_table(
+def _converted_table(
     declared: Mapping[int, float], others: Sequence[BoundContribution]
 ) -> pa.Table:
     emitted = convert_spillage_upper_bounds(declared, others)
@@ -129,7 +133,7 @@ _UH_ONLY = {_HYDRO: 100.0}
         ),
     ],
 )
-def test_trimmed_emission_keeps_effective_spillage_bounds(
+def test_entity_ceiling_and_stage_rows_give_the_same_effective_spill_bound(
     declared: dict[int, float],
     others: list[BoundContribution],
     uh_vert_stages: set[int],
@@ -137,34 +141,34 @@ def test_trimmed_emission_keeps_effective_spillage_bounds(
     emitted = convert_spillage_upper_bounds(declared, others)
     assert sorted(c.stage_id for c in emitted) == sorted(uh_vert_stages)
 
-    old = _old_table(declared, others)
-    new = _new_table(declared, others)
+    reference = _reference_table(declared, others)
+    converted = _converted_table(declared, others)
 
     for stage_id in _STAGES:
         for block_id in range(_BLOCK_COUNTS[stage_id]):
             assert _effective_spillage(
-                new, {}, declared, _HYDRO, stage_id, block_id
-            ) == _effective_spillage(old, {}, {}, _HYDRO, stage_id, block_id), (
+                converted, {}, declared, _HYDRO, stage_id, block_id
+            ) == _effective_spillage(reference, {}, {}, _HYDRO, stage_id, block_id), (
                 stage_id,
                 block_id,
             )
 
 
 def test_uh_only_hydro_has_no_spillage_row() -> None:
-    new = _new_table(_UH_ONLY, [])
+    converted = _converted_table(_UH_ONLY, [])
 
     assert [
         row
-        for row in new.to_pylist()
+        for row in converted.to_pylist()
         if row["min_spillage_m3s"] is not None or row["max_spillage_m3s"] is not None
     ] == []
 
 
-def test_qver_floor_above_uh_ceiling_still_raises() -> None:
+def test_qver_floor_above_uh_ceiling_raises() -> None:
     declared = {_HYDRO: 100.0}
     others = [_qver(0, lower=150.0)]
 
     with pytest.raises(FloorAboveCeilingError):
-        _old_table(declared, others)
+        _reference_table(declared, others)
     with pytest.raises(FloorAboveCeilingError):
-        _new_table(declared, others)
+        _converted_table(declared, others)

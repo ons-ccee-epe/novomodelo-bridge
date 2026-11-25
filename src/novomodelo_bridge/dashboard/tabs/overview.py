@@ -103,9 +103,8 @@ def _run_identity_strip(data: DashboardData) -> str:
         f"<span><strong>Solver Version:</strong> {version}</span>"
         f"<span><strong>Run Date:</strong> {run_date}</span>"
         f"<span><strong>Duration:</strong> {duration_str}</span>"
-        f"<span><strong>Hydros:</strong> {n_hydros}</span>"
-        + auxiliaries
-        + f"<span><strong>Thermals:</strong> {n_thermals}</span>"
+        f"<span><strong>Hydros:</strong> {n_hydros}</span>{auxiliaries}"
+        f"<span><strong>Thermals:</strong> {n_thermals}</span>"
         f"<span><strong>Buses:</strong> {n_buses}</span>"
         f"<span><strong>Lines:</strong> {n_lines}</span>"
         "</div>"

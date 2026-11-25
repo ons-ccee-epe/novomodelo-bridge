@@ -379,7 +379,10 @@ def _tailrace_records(
         When a record carries a negative or non-finite factor, as conversion does.
     """
     resolution = resolve_tailrace_flow(
-        dadger, effective, id_map.hydro_codes, piecewise_tailrace_codes(case, id_map)
+        dadger,
+        effective,
+        id_map.operated_hydro_codes,
+        piecewise_tailrace_codes(case, id_map),
     )
     counts = Counter(register for register, _ in resolution.records)
     detail = (
@@ -745,10 +748,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
                 )
             )
         else:
-            plant_names = {
-                int(code): str(name).strip()
-                for code, name in effective.base["nome_usina"].items()
-            }
+            plant_names = effective.plant_names()
             diversion_codes = frozenset(effective.diversions)
             cov_checks, cov_diags = _ac_coverage(dadger, effective, cadastro_report)
             checks.extend(cov_checks)

@@ -253,8 +253,8 @@ def _run_newave_comparison(args: CompareArgs) -> None:
     tolerance: float = args.tolerance
     formats = _resolve_compare_formats("compare newave", args)
 
-    # NovomodeloPartitionMissingError (output predates a partition this compare
-    # needs) is not a NovomodeloOutputError, unlike NovomodeloReadError (a
+    # NovomodeloPartitionMissingError (the run did not write a partition this
+    # compare needs) is not a NovomodeloOutputError, unlike NovomodeloReadError (a
     # malformed output file): both must stay in the ``except``, or the dropped
     # one crashes with a bare traceback instead of exit 2.
     with dx.collect() as compare_diagnostics:

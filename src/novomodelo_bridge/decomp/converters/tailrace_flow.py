@@ -129,6 +129,9 @@ def resolve_tailrace_flow(
     """
     all_records = _read_records(dadger)
     in_case = frozenset(case_codes)
+    # TRACKED NOVOMODELO-GAP (C33): own_outflow_factor scales the turbined plus
+    # spilled flow, so a plant whose spill bypasses the tailrace cannot carry its
+    # lateral flows.
     no_spill = _plants_outside_tailrace(
         effective, {r.plant for r in all_records if r.plant in in_case}
     )
@@ -299,7 +302,7 @@ def piecewise_tailrace_codes(case: DecompCase, id_map: DecompIdMap) -> frozenset
     families = as_frame_or_empty(polinjus.hidreletrica_curvajusante(df=True))
     return frozenset(
         int(code) for code in families.get("codigo_usina", ())
-    ) & frozenset(id_map.hydro_codes)
+    ) & frozenset(id_map.operated_hydro_codes)
 
 
 def convert_tailrace_flow(
@@ -475,10 +478,9 @@ def _spill_skipped_diagnostic(rows: Sequence[Sequence[object]]) -> Diagnostic:
         title=f"Lateral flows skipped for plants that spill outside the tailrace ({len(rows)})",
         summary=(
             "The listed plants keep their spilled flow out of the tailrace, "
-            "with a VERTJU of 0 in hidr.dat or in an AC VERTJU record at one "
-            "stage or more. Their VL, VU and VA records are not converted, so "
-            "their tailrace lacks the lateral flows DECOMP applies and the "
-            "results differ from DECOMP."
+            "with a VERTJU of 0 in hidr.dat. Their VL, VU and VA records are "
+            "not converted, so their tailrace lacks the lateral flows DECOMP "
+            "applies and the results differ from DECOMP."
         ),
         table=DiagnosticTable(
             columns=["Code", "Name", "Records"],

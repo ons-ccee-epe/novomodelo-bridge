@@ -320,7 +320,9 @@ def scan_simulation_entity(
 
     Returns a LazyFrame or None if the directory does not exist, which is
     no finding: novomodelo writes no partition for an entity type the case
-    lacks, and no simulation directory for a run without that phase.
+    lacks, and no simulation directory for a run without that phase. Rows of
+    coupling auxiliary plants are left out
+    (:func:`without_coupling_auxiliaries`).
 
     Parameters
     ----------
@@ -329,9 +331,6 @@ def scan_simulation_entity(
     entity:
         Entity subdirectory name (e.g., ``"hydros"``, ``"thermals"``,
         ``"buses"``).
-
-    Rows of coupling auxiliary plants are left out, by
-    :func:`without_coupling_auxiliaries`.
     """
     sim_dir = novomodelo_output_dir / "simulation" / entity
     if not sim_dir.is_dir():
@@ -346,16 +345,18 @@ def scan_simulation_entity(
         # schema eagerly so a present-but-unreadable parquet raises here —
         # the single choke point every simulation reader shares — instead of
         # leaking a raw polars error past each reader's narrower try/except.
-        schema = lf.collect_schema()
+        lf.collect_schema()
     except Exception as exc:
         raise NovomodeloReadError(f"Failed to scan parquets in {sim_dir}") from exc
 
-    return without_coupling_auxiliaries(lf) if "hydro_id" in schema else lf
+    return without_coupling_auxiliaries(lf)
 
 
 def without_coupling_auxiliaries(lf: pl.LazyFrame) -> pl.LazyFrame:
-    """*lf*, which has a ``hydro_id`` column, without the rows of the coupling
-    auxiliary plants a converted DECOMP case carries, which no deck holds."""
+    """*lf* without the rows of the coupling auxiliary plants a converted DECOMP
+    case carries, which no deck holds; a frame without ``hydro_id`` is *lf*."""
+    if "hydro_id" not in lf.collect_schema():
+        return lf
     return lf.filter(pl.col("hydro_id") < COUPLING_AUXILIARY_ID_OFFSET)
 
 
@@ -2657,9 +2658,8 @@ def _read_hydros_json(
     :func:`_read_system_list`'s contract; the conversion always writes the
     file, so its absence is noted.
 
-    The coupling auxiliary plants (:func:`is_coupling_auxiliary`) are left out
-    of the plants and only counted: no deck holds them and they carry no
-    storage or generation.
+    The coupling auxiliary plants (:func:`is_coupling_auxiliary`), which no deck
+    holds, are left out of the plants and only counted.
     """
     path, hydros = _read_system_list(
         novomodelo_output_dir,

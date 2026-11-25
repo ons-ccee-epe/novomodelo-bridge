@@ -233,3 +233,338 @@ class TestHydraulicGeneration:
 
     def test_non_positive_net_head_generates_nothing(self) -> None:
         assert hydraulic_generation_mw(0.009, 100.0, -3.0, 1000.0) == 0.0
+
+
+class TestIntegratedProductivity:
+    """The EARM-flavored *integrated* productivity used by VminOP.
+
+    The closed-form integral for ``h(V) = a0 + a1·V`` over [vmin, vmax] is
+    ``a0 + a1·(vmin+vmax)/2`` — the polynomial average over the range.
+    """
+
+    @staticmethod
+    def _plant(**overrides: object) -> pd.Series:
+        return _hreg(
+            produtibilidade_especifica=0.01,
+            canal_fuga_medio=200.0,
+            tipo_perda=0,
+            perdas=0.0,
+            **overrides,
+        )
+
+    def test_closed_form_average_for_linear_polynomial(self) -> None:
+        # h(V) = 300 + 0.1·V over [100, 1000] averages 300 + 0.1·550 = 355;
+        # drop = 355 - cf=200 = 155; ρ = 0.01 · 155 = 1.55.
+        assert integrated_productivity(self._plant()) == pytest.approx(
+            0.01 * (300.0 + 0.1 * 550.0 - 200.0)
+        )
+
+    def test_canal_fuga_override(self) -> None:
+        result = integrated_productivity(self._plant(), canal_fuga_override=180.0)
+        # Same average h=355, new drop = 355 - 180 = 175.
+        assert result == pytest.approx(0.01 * (355.0 - 180.0))
+
+    def test_cmont_override_collapses_to_constant_drop(self) -> None:
+        # CMONT supplies the upstream level directly; the polynomial is
+        # bypassed. drop = cmont - canal_fuga_medio = 360 - 200 = 160.
+        result = integrated_productivity(self._plant(), cmont_override=360.0)
+        assert result == pytest.approx(0.01 * (360.0 - 200.0))
+
+    def test_run_of_river_uses_point_value(self) -> None:
+        # Collapse the plant to run-of-river by setting vmax = vmin.
+        result = integrated_productivity(self._plant(volume_maximo=100.0))
+        # h(100) = 300 + 0.1·100 = 310. Drop = 310 - 200 = 110.
+        assert result == pytest.approx(0.01 * (310.0 - 200.0))
+
+    def test_quadratic_polynomial_uses_correct_antiderivative(self) -> None:
+        """For h(V) = a0 + a1·V + a2·V² the integrated average over
+        [vmin, vmax] is a0 + a1·(vmin+vmax)/2 + a2·(vmax³−vmin³)/(3·(vmax−vmin)).
+        Verify the closed-form matches that formula on a quadratic case."""
+        vmin, vmax = 100.0, 1000.0
+        a0, a1, a2 = 300.0, 0.1, 1e-5
+        expected_avg_h = (
+            a0
+            + a1 * (vmin + vmax) / 2.0
+            + a2 * (vmax**3 - vmin**3) / (3.0 * (vmax - vmin))
+        )
+        result = integrated_productivity(self._plant(a2_volume_cota=a2))
+        assert result == pytest.approx(0.01 * (expected_avg_h - 200.0))
+
+
+class TestComputeProductivity:
+    """Unit tests for the ``compute_productivity`` helper."""
+
+    def test_monthly_regulated_linear_polynomial(self) -> None:
+        """tipo_regulacao='M': poly evaluated at 65% useful storage (the source model
+        ``produtibilidade_altura_65`` convention)."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "M",
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "a2_volume_cota": 0.0,
+                "a3_volume_cota": 0.0,
+                "a4_volume_cota": 0.0,
+                "volume_minimo": 100.0,
+                "volume_maximo": 1000.0,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 1,
+                "perdas": 5.0,  # 5%
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # 65% of useful storage: v_65 = 100 + 0.65 * (1000 - 100) = 685.0
+        # poly(685) = 300 + 0.1 * 685 = 368.5
+        # net_drop = 368.5 - 250.0 = 118.5
+        # adjusted_drop = 118.5 * (1 - 5.0/100) = 112.575
+        # result = 0.009 * 112.575 = 1.013175
+        v_65_height = 300.0 + 0.1 * (100.0 + 0.65 * (1000.0 - 100.0))
+        expected = 0.009 * (1.0 - 5.0 / 100.0) * (v_65_height - 250.0)
+        result = compute_productivity(hreg)
+        assert result == pytest.approx(expected)
+
+    def test_run_of_river_point_evaluation(self) -> None:
+        """tipo_regulacao='D': evaluates poly at volume_referencia."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "D",
+                "volume_referencia": 500.0,
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "a2_volume_cota": 0.0,
+                "a3_volume_cota": 0.0,
+                "a4_volume_cota": 0.0,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 1,
+                "perdas": 5.0,  # 5%
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # poly(500) = 300 + 0.1*500 = 350.0
+        # net_drop = 350.0 - 250.0 = 100.0
+        # adjusted_drop = 100.0 * (1 - 5.0/100) = 95.0
+        # result = 0.009 * 95.0 = 0.855
+        expected = 0.009 * (1.0 - 5.0 / 100.0) * (350.0 - 250.0)
+        result = compute_productivity(hreg)
+        assert result == pytest.approx(expected)
+
+    def test_multiplicative_loss(self) -> None:
+        """tipo_perda=1: adjusted_drop = net_drop * (1 - perdas/100)."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "D",
+                "volume_referencia": 500.0,
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "a2_volume_cota": 0.0,
+                "a3_volume_cota": 0.0,
+                "a4_volume_cota": 0.0,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 1,
+                "perdas": 10.0,  # 10%
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # net_drop = (300 + 50) - 250 = 100.0
+        # adjusted = 100.0 * (1 - 10.0/100) = 90.0
+        expected = 0.009 * 90.0
+        result = compute_productivity(hreg)
+        assert result == pytest.approx(expected)
+
+    def test_additive_loss(self) -> None:
+        """tipo_perda=2: adjusted_drop = net_drop - perdas."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "D",
+                "volume_referencia": 500.0,
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "a2_volume_cota": 0.0,
+                "a3_volume_cota": 0.0,
+                "a4_volume_cota": 0.0,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 2,
+                "perdas": 3.5,
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # net_drop = 350.0 - 250.0 = 100.0
+        # adjusted = 100.0 - 3.5 = 96.5
+        expected = 0.009 * 96.5
+        result = compute_productivity(hreg)
+        assert result == pytest.approx(expected)
+
+    def test_no_loss(self) -> None:
+        """tipo_perda=0 (or unknown): no loss applied, adjusted_drop = net_drop."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "D",
+                "volume_referencia": 500.0,
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "a2_volume_cota": 0.0,
+                "a3_volume_cota": 0.0,
+                "a4_volume_cota": 0.0,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 0,
+                "perdas": 99.0,
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # tipo_perda=0 -> no loss applied, perdas value ignored
+        # net_drop = 350.0 - 250.0 = 100.0
+        expected = 0.009 * 100.0
+        result = compute_productivity(hreg)
+        assert result == pytest.approx(expected)
+
+    def test_equal_volumes_fallback(self) -> None:
+        """tipo_regulacao='M' with vmin == vmax: v_65 collapses to that point."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "M",
+                "volume_minimo": 500.0,
+                "volume_maximo": 500.0,
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "a2_volume_cota": 0.0,
+                "a3_volume_cota": 0.0,
+                "a4_volume_cota": 0.0,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 1,
+                "perdas": 0.0,
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # vmin == vmax: v_65 = 500.0; poly(500) = 350.0; net_drop = 100.0
+        expected = 0.009 * 100.0
+        result = compute_productivity(hreg)
+        assert result == pytest.approx(expected)
+
+
+class TestComputeProductivityOverrides:
+    """Unit tests for ``compute_productivity`` with canal_fuga/cmont overrides."""
+
+    def test_canal_fuga_override_replaces_base(self) -> None:
+        """canal_fuga_override replaces canal_fuga_medio in the net drop calc."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "D",
+                "volume_referencia": 500.0,
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 0,
+                "perdas": 0.0,
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # poly(500) = 300 + 50 = 350
+        # With override canal_fuga=260: net_drop = 350 - 260 = 90
+        base = compute_productivity(hreg)  # uses 250 -> drop 100
+        overridden = compute_productivity(hreg, canal_fuga_override=260.0)
+        assert base == pytest.approx(0.009 * 100.0)
+        assert overridden == pytest.approx(0.009 * 90.0)
+
+    def test_cmont_override_replaces_polynomial_height(self) -> None:
+        """cmont_override bypasses the polynomial and uses the supplied height."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "D",
+                "volume_referencia": 500.0,
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 0,
+                "perdas": 0.0,
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # cmont=380 overrides polynomial; net_drop = 380 - 250 = 130
+        result = compute_productivity(hreg, cmont_override=380.0)
+        assert result == pytest.approx(0.009 * 130.0)
+
+    def test_both_overrides_together(self) -> None:
+        """canal_fuga_override and cmont_override can both be active."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "D",
+                "volume_referencia": 500.0,
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 0,
+                "perdas": 0.0,
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # cmont=400, canal_fuga=260 -> net_drop = 400 - 260 = 140
+        result = compute_productivity(
+            hreg, canal_fuga_override=260.0, cmont_override=400.0
+        )
+        assert result == pytest.approx(0.009 * 140.0)
+
+    def test_no_overrides_matches_original_behaviour(self) -> None:
+        """With no overrides, M-plant ρ comes from poly evaluated at 65% storage."""
+        hreg = _hreg(
+            **{
+                "tipo_regulacao": "M",
+                "a0_volume_cota": 300.0,
+                "a1_volume_cota": 0.1,
+                "volume_minimo": 100.0,
+                "volume_maximo": 1000.0,
+                "canal_fuga_medio": 250.0,
+                "tipo_perda": 1,
+                "perdas": 5.0,  # 5%
+                "produtibilidade_especifica": 0.009,
+            }
+        )
+        # v_65 = 100 + 0.65 * 900 = 685; poly(685) = 368.5; net_drop = 118.5
+        v_65_height = 300.0 + 0.1 * (100.0 + 0.65 * (1000.0 - 100.0))
+        expected = 0.009 * (1.0 - 5.0 / 100.0) * (v_65_height - 250.0)
+        assert compute_productivity(hreg) == pytest.approx(expected)
+
+
+class TestEquivalentProductivity:
+    """Unit tests for ``equivalent_productivity`` (the source model PRODT)."""
+
+    def test_linear_polynomial_uses_mean_head(self) -> None:
+        """h(v)=a0+a1·v → mean head over [vmin,vmax] = a0 + a1·(vmin+vmax)/2."""
+        hreg = _hreg()  # a0=300, a1=0.1, vmin=100, vmax=1000, cfuga=250
+        # mean head = 300 + 0.1·550 = 355 ; net = 105 ; ·0.95 loss ; ·0.009 pesp
+        assert equivalent_productivity(hreg) == pytest.approx(
+            0.009 * (355.0 - 250.0) * 0.95
+        )
+
+    def test_differs_from_point_reference(self) -> None:
+        """PRODT (mean over range) ≠ the 65%-volume point productivity."""
+        # Non-linear forebay curve so the average over [vmin,vmax] differs from
+        # the value at the 65% reference point.
+        hreg = _hreg(**{"a2_volume_cota": 1e-4})
+        assert equivalent_productivity(hreg) != pytest.approx(
+            compute_productivity(hreg)
+        )
+
+    def test_run_of_river_uses_point_head(self) -> None:
+        """Vmax == Vmin → head evaluated at Vmin (no integral)."""
+        hreg = _hreg(**{"volume_minimo": 500.0, "volume_maximo": 500.0})
+        # h(500) = 300 + 0.1·500 = 350 ; net 100 ; ·0.95 ; ·0.009
+        assert equivalent_productivity(hreg) == pytest.approx(
+            0.009 * (350.0 - 250.0) * 0.95
+        )
+
+    def test_canal_fuga_override(self) -> None:
+        hreg = _hreg()
+        assert equivalent_productivity(
+            hreg, canal_fuga_override=300.0
+        ) == pytest.approx(0.009 * (355.0 - 300.0) * 0.95)
+
+    def test_cmont_override_pins_forebay(self) -> None:
+        """CMONT pins the upstream level → head = cmont − cfuga (no integral)."""
+        hreg = _hreg()
+        assert equivalent_productivity(hreg, cmont_override=400.0) == pytest.approx(
+            0.009 * (400.0 - 250.0) * 0.95
+        )
+
+    def test_zero_polynomial_returns_zero(self) -> None:
+        hreg = _hreg(**{f"a{i}_volume_cota": 0.0 for i in range(5)})
+        assert equivalent_productivity(hreg) == 0.0

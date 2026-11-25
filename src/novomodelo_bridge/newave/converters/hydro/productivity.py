@@ -61,7 +61,7 @@ from novomodelo_bridge.newave.converters.hydro.reference_volumes import (
     fpha_reference_volumes,
     seasonal_useful_volumes,
 )
-from novomodelo_bridge.newave.converters.stochastic import natural_monthly_means
+from novomodelo_bridge.newave.converters.inflow_windows import natural_monthly_means
 from novomodelo_bridge.newave.horizon import stage_dates_for, study_start
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas

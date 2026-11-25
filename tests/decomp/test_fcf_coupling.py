@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 from idecomp.decomp import Dadger, Vazoes
 
+from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import (
     EffectiveCadastro,
@@ -24,11 +25,11 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 from novomodelo_bridge.decomp.fcf.coupling import (
     BorrowedOwner,
     CouplingAuxiliary,
-    complexo_components,
     coupling_auxiliary_lag_offsets,
     coupling_lag_offsets,
     lag_months,
     plan_coupling_auxiliaries,
+    read_complexo_components,
     resolve_couplings,
     source_only_lag_inflows,
 )
@@ -386,17 +387,60 @@ def test_plan_coupling_auxiliaries_needs_the_terminal_coupling_fan() -> None:
     vazoes = _monthly_gap_vazoes()
     vazoes.cenarios_calculados_com_postos_artificiais = None
 
-    with pytest.raises(ValueError, match="no terminal coupling fan"):
+    with pytest.raises(FieldParseError, match="no terminal coupling fan") as raised:
         plan_coupling_auxiliaries(
             vazoes, _effective(), _id_map(1), _MONTHLY_CALENDAR, (1,), {}
         )
+
+    assert raised.value.path == "vazoes.rvN"
+    assert raised.value.field == "cenarios_calculados_com_postos_artificiais"
+
+
+def test_plan_coupling_auxiliaries_needs_a_coupling_row_per_terminal_scenario() -> None:
+    vazoes = _monthly_gap_vazoes()
+    extra = pd.DataFrame(
+        {"estagio": [2], "cenario": [3], "11": [40.0], "2": [6.0], "901": [0.0]}
+    )
+    vazoes.cenarios_calculados_com_postos_artificiais = pd.concat(
+        [vazoes.cenarios_calculados_com_postos_artificiais, extra], ignore_index=True
+    )
+
+    with pytest.raises(
+        FieldParseError, match="3 terminal coupling scenarios for 2"
+    ) as raised:
+        plan_coupling_auxiliaries(
+            vazoes, _effective(), _id_map(1), _MONTHLY_CALENDAR, (1,), {}
+        )
+
+    assert raised.value.path == "vazoes.rvN"
+    assert raised.value.field == "cenarios_calculados_com_postos_artificiais"
 
 
 def test_coupling_auxiliary_lag_offsets_give_the_shift_back_over_the_last_stage() -> (
     None
 ):
-    shifted = CouplingAuxiliary(1, 1001, "ACOPL-1", 0, 11, 1, 20.0, (25.0, 0.0), 20.0)
-    unshifted = CouplingAuxiliary(2, 1002, "ACOPL-2", 1, 2, 2, 0.0, (3.0, 1.0), 3.0)
+    shifted = CouplingAuxiliary(
+        plant_code=1,
+        hydro_id=1001,
+        name="ACOPL-1",
+        plant_index=0,
+        coupling_posto=11,
+        operation_posto=1,
+        shift_m3s=20.0,
+        terminal_inflows_m3s=(25.0, 0.0),
+        max_gap_m3s=20.0,
+    )
+    unshifted = CouplingAuxiliary(
+        plant_code=2,
+        hydro_id=1002,
+        name="ACOPL-2",
+        plant_index=1,
+        coupling_posto=2,
+        operation_posto=2,
+        shift_m3s=0.0,
+        terminal_inflows_m3s=(3.0, 1.0),
+        max_gap_m3s=3.0,
+    )
 
     offsets = coupling_auxiliary_lag_offsets((shifted, unshifted), _CALENDAR, _MONTHS)
 
@@ -591,7 +635,7 @@ def test_plan_coupling_auxiliaries_read_only_the_last_stage() -> None:
     assert auxiliaries == ()
 
 
-def testcomplexo_components_groups_components_by_complex(tmp_path: Path) -> None:
+def test_read_complexo_components_groups_components_by_complex(tmp_path: Path) -> None:
     dadger = tmp_path / "dadger.rv2"
     dadger.write_text(
         "& CX  complexo componente\n"
@@ -602,14 +646,14 @@ def testcomplexo_components_groups_components_by_complex(tmp_path: Path) -> None
         encoding="latin-1",
     )
 
-    assert complexo_components(Dadger.read(str(dadger))) == {
+    assert read_complexo_components(Dadger.read(str(dadger))) == {
         132: [147, 146],
         176: [175],
     }
 
 
-def testcomplexo_components_is_empty_without_cx_lines(tmp_path: Path) -> None:
+def test_read_complexo_components_is_empty_without_cx_lines(tmp_path: Path) -> None:
     dadger = tmp_path / "dadger.rv2"
     dadger.write_text("UH  147  10\n", encoding="latin-1")
 
-    assert complexo_components(Dadger.read(str(dadger))) == {}
+    assert read_complexo_components(Dadger.read(str(dadger))) == {}

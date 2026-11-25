@@ -24,6 +24,18 @@ links are cobre-bridge's.
   `config.json`:** a deck that trains and then simulates the historical
   series keeps the normal noise and gets a warning. Results change;
   reconvert NEWAVE cases.
+- **Installing the bridge requires `typer` 0.29.1 or newer**, the release whose
+  help and usage messages the bridge documents.
+
+### Fixed
+
+- **`convert decomp` no longer lets `NW` plants decide `VL`, `VU` and `VA`
+  records:** a `VA` whose gauge an `NW` plant shares with an operated plant is
+  kept, as in DECOMP, not dropped as ambiguous. Results change for such decks;
+  reconvert them.
+- **`compare newave` and `compare decomp` stopped with a traceback** on a case
+  whose `system/hydros.json` gives a `tailrace_flow` a null
+  `own_outflow_factor`; it now reads as 1, as in novomodelo.
 
 ## [0.22.0] - 2026-11-24
 

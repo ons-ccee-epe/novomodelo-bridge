@@ -16,6 +16,7 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 
+import pandas as pd
 import polars as pl
 import pytest
 
@@ -648,19 +649,19 @@ class TestSourceModelConventions:
         runs = _belo_monte_runs(decomp_mini_case, [_source_stage(_BELO_MONTE)])
         _belo_monte_planes(monkeypatch, 0.01)
 
-        with caplog.at_level(logging.INFO, logger=_MODULE):
+        with caplog.at_level(logging.DEBUG, logger=_MODULE):
             result = _compare(monkeypatch, tmp_path, decomp_mini_case, runs)
 
         assert result is not None
         missing = [
-            r.getMessage()
-            for r in caplog.records
-            if "has no incremental inflow" in r.getMessage()
+            r for r in caplog.records if "has no incremental inflow" in r.getMessage()
         ]
-        assert len(missing) == 1
-        assert missing[0].startswith(
+        (summary,) = [r for r in missing if r.levelno == logging.INFO]
+        assert "at 3 source points in all (plant pairs: 1)" in summary.getMessage()
+        (detail,) = [r for r in missing if r.levelno == logging.DEBUG]
+        assert detail.getMessage() == (
             f"VA register of plant {_BELO_MONTE}: plant {_PIMENTAL} has no "
-            "incremental inflow at 3 source points"
+            "incremental inflow at 3 source points."
         )
         (row,) = result.fit_inputs.iter_rows(named=True)
         assert row["source_lateral_m3s"] == pytest.approx(_Q_PIMENTAL + _S_PIMENTAL)
@@ -731,6 +732,46 @@ class TestSourceModelConventions:
             stage: set(group["gauge_m3s"])
             for (stage,), group in evaluated.partition_by("stage", as_dict=True).items()
         } == {0: {0.07 * 500.0}, 1: {0.07 * 800.0}}
+
+    def test_gauges_without_a_single_operated_plant_are_one_info_line(
+        self,
+        decomp_mini_case: DecompCase,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        case = decomp_mini_case
+        eff, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
+        unmapped = pd.DataFrame(
+            {
+                "codigo_posto_influenciador": [9001, 9002],
+                "codigo_usina_influenciada": [_BELO_MONTE, _BELO_MONTE],
+                "fator_impacto_incremental": [0.07, 0.05],
+            }
+        )
+        monkeypatch.setattr(
+            f"{_MODULE}.as_frame",
+            lambda result: (
+                unmapped
+                if "codigo_posto_influenciador" in getattr(result, "columns", ())
+                else as_frame(result)
+            ),
+        )
+
+        with caplog.at_level(logging.DEBUG, logger=_MODULE):
+            _, _, gauge_links = _plant_hydraulics(case, {_BELO_MONTE}, eff)
+
+        assert gauge_links.is_empty()
+        records = [
+            r for r in caplog.records if "no single operated plant" in r.getMessage()
+        ]
+        (summary,) = [r for r in records if r.levelno == logging.INFO]
+        assert summary.getMessage().startswith(
+            "VA registers with no single operated plant on their gauge: 2;"
+        )
+        assert [r.getMessage() for r in records if r.levelno == logging.DEBUG] == [
+            f"VA register of plant {_BELO_MONTE}: no single operated plant on gauge {g}."
+            for g in (9001, 9002)
+        ]
 
 
 class TestFitInputsAndSlices:
