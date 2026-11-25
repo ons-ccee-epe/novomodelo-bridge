@@ -14,6 +14,11 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-11-24
+
+Pairs the bridge with **novomodelo 0.22.0**, as 0.22.0 did; convert NEWAVE and
+DECOMP cases again and run novomodelo on them, as the results change.
+
 ### Changed
 
 - **`convert decomp` prices the last-stage coupling inflow of boundary cuts:**

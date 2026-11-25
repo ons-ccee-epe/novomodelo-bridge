@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "novomodelo-bridge"
-version = "0.22.0"
+version = "0.22.1"
 description = "Convert NEWAVE and DECOMP cases to Novomodelo input format and compare the results"
 readme = "README.md"
 license = "Apache-2.0"
