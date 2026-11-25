@@ -120,6 +120,7 @@ Parâmetros de treinamento e simulação do Novomodelo derivados dos flags de `d
 | `exports.states` | `dger.dat` › `impressao_estados_geracao_cortes` | `true` quando o flag vale 0 (NEWAVE grava os estados visitados na geração de cortes); qualquer outro valor mantém `false`. |
 | `exports.stochastic` | — *(constante)* | Sempre `true`: a exportação do modelo estocástico é ligada para permitir a comparação das estatísticas de afluência. |
 | `modeling.inflow_non_negativity.method` | — *(constante)* | Sempre `truncation` (a conversão DECOMP usa `penalty`), o tratamento do NEWAVE: o PL vê a afluência incremental negativa como zero, sem custo, e as defasagens mantêm o valor original. |
+| `modeling.inflow_residual.distribution` | `dger.dat` › `tipo_simulacao_final`, `dger.dat` › `tipo_execucao`, `dger.dat` › `num_forwards`, `dger.dat` › `num_aberturas`, `shist.dat` › `varredura`, `shist.dat` › `anos_inicio_simulacoes` *(condicional: somente quando o deck não é determinístico e a simulação final não é histórica)* | `lognormal_3p`, a lognormal de três parâmetros de onde o NEWAVE sorteia o ruído de afluência. Fica ausente, e vale o `normal` do Novomodelo, quando nada é sorteado (modo determinístico, ou `tipo_execucao` = 0 com simulação final histórica) e quando o treinamento é seguido de simulação final histórica (`tipo_simulacao_final` = 2), que o Novomodelo recusa combinar com `lognormal_3p`; só neste último caso a conversão emite um aviso. |
 | `simulation.enabled` | `dger.dat` › `tipo_execucao`, `dger.dat` › `tipo_simulacao_final` | `true` quando `tipo_execucao` = 0 (somente simulação); caso contrário `true` se `tipo_simulacao_final` ≠ 0. |
 | `simulation.selection.method` | — *(constante)* | Sempre `sampled`. |
 | `simulation.cut_set` | — *(constante)* | Sempre `active`: a simulação usa os cortes ativos ao fim do treinamento, os que a seleção Level-1 manteve quando a seleção de cortes está ligada e todos os gerados quando está desligada. Com `all`, a simulação carregaria também os cortes desativados pela seleção, e seus PLs ficariam maiores que os do treinamento. A janela de cortes (`janela_de_cortes` = 1 em `dger.dat`), que descarta os cortes não usados nas iterações recentes, não tem equivalente no Novomodelo: a conversão emite um aviso e mantém todos os cortes, a política exata que a janela aproxima. |
@@ -714,6 +715,10 @@ O bridge lê cerca de trinta campos (horizonte, aberturas, forwards, iterações
 - `ordem_maxima_parp` → `config.json` › `estimation.max_order`
 - `consideracao_media_anual_afluencias` → `config.json` › `estimation.order_selection`
 - `impressao_estados_geracao_cortes` → `config.json` › `exports.states`
+- `tipo_simulacao_final` → `config.json` › `modeling.inflow_residual.distribution`
+- `tipo_execucao` → `config.json` › `modeling.inflow_residual.distribution`
+- `num_forwards` → `config.json` › `modeling.inflow_residual.distribution`
+- `num_aberturas` → `config.json` › `modeling.inflow_residual.distribution`
 - `tipo_execucao` → `config.json` › `simulation.enabled`
 - `tipo_simulacao_final` → `config.json` › `simulation.enabled`
 - `num_series_sinteticas` → `config.json` › `simulation.selection.num_scenarios`
@@ -1643,6 +1648,8 @@ Lido integralmente. Uma linha inteiramente zerada é tratada como ausência de r
 
 Lido integralmente. `varredura`, `ano_inicio_varredura` e `anos_inicio_simulacoes` definem `historical_years` e o modo determinístico em `config.json`.
 
+- `varredura` → `config.json` › `modeling.inflow_residual.distribution`
+- `anos_inicio_simulacoes` → `config.json` › `modeling.inflow_residual.distribution`
 - `anos_inicio_simulacoes` → `config.json` › `simulation.selection.num_scenarios`
 - `ano_inicio_varredura` → `config.json` › `simulation.selection.num_scenarios`
 - `varredura` → `config.json` › `simulation.scenario_source.historical_years`

@@ -67,6 +67,19 @@ summary = "Parâmetros de treinamento e simulação do Novomodelo derivados dos 
   how = "Sempre `truncation` (a conversão DECOMP usa `penalty`), o tratamento do NEWAVE: o PL vê a afluência incremental negativa como zero, sem custo, e as defasagens mantêm o valor original."
 
   [[output.field]]
+  path = "modeling.inflow_residual.distribution"
+  from = [
+    { file = "dger", item = "tipo_simulacao_final" },
+    { file = "dger", item = "tipo_execucao" },
+    { file = "dger", item = "num_forwards" },
+    { file = "dger", item = "num_aberturas" },
+    { file = "shist", item = "varredura" },
+    { file = "shist", item = "anos_inicio_simulacoes" },
+  ]
+  when = "somente quando o deck não é determinístico e a simulação final não é histórica"
+  how = "`lognormal_3p`, a lognormal de três parâmetros de onde o NEWAVE sorteia o ruído de afluência. Fica ausente, e vale o `normal` do Novomodelo, quando nada é sorteado (modo determinístico, ou `tipo_execucao` = 0 com simulação final histórica) e quando o treinamento é seguido de simulação final histórica (`tipo_simulacao_final` = 2), que o Novomodelo recusa combinar com `lognormal_3p`; só neste último caso a conversão emite um aviso."
+
+  [[output.field]]
   path = "simulation.enabled"
   from = [
     { file = "dger", item = "tipo_execucao" },

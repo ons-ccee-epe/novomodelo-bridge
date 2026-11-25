@@ -473,6 +473,98 @@ class TestConvertConfig:
         result = convert_config(case)
         assert result["modeling"]["inflow_non_negativity"] == {"method": "truncation"}
 
+    @pytest.mark.parametrize(
+        ("tipo_execucao", "tipo_simulacao_final", "reamostragem"),
+        [(1, 1, 0), (1, 1, 1), (1, 0, 0), (0, 1, 1)],
+    )
+    def test_stochastic_deck_selects_the_lognormal_inflow_residual(
+        self, tmp_path, tipo_execucao: int, tipo_simulacao_final: int, reamostragem: int
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=tipo_execucao,
+            tipo_simulacao_final=tipo_simulacao_final,
+            considera_reamostragem_cenarios=reamostragem,
+        )
+        case = make_case(tmp_path, dger=dger)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+
+        assert result["modeling"]["inflow_residual"] == {"distribution": "lognormal_3p"}
+        assert "par-residual-lognormal-unavailable" not in {d.code for d in found}
+
+    def test_deterministic_deck_omits_the_inflow_residual_without_a_finding(
+        self, tmp_path
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=1,
+            tipo_simulacao_final=2,
+            num_forwards=1,
+            num_aberturas=1,
+        )
+        mock_shist = MagicMock()
+        mock_shist.varredura = 0
+        mock_shist.anos_inicio_simulacoes = [1983]
+        mock_shist.ano_inicio_varredura = 1932
+        case = make_case(tmp_path, dger=dger, shist=mock_shist)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+
+        assert "inflow_residual" not in result["modeling"]
+        assert "par-residual-lognormal-unavailable" not in {d.code for d in found}
+
+    def test_training_then_historical_final_simulation_keeps_the_normal_noise_and_warns(
+        self, tmp_path
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=1,
+            tipo_simulacao_final=2,
+            num_forwards=2,
+            num_aberturas=1,
+        )
+        mock_shist = MagicMock()
+        mock_shist.varredura = 0
+        mock_shist.anos_inicio_simulacoes = [1983]
+        mock_shist.ano_inicio_varredura = 1932
+        case = make_case(tmp_path, dger=dger, shist=mock_shist)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+
+        assert "inflow_residual" not in result["modeling"]
+        warnings = [d for d in found if d.code == "par-residual-lognormal-unavailable"]
+        assert [d.severity for d in warnings] == [Severity.WARNING]
+
+    def test_simulation_only_run_on_the_history_omits_the_residual_without_a_finding(
+        self, tmp_path
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=0,
+            tipo_simulacao_final=2,
+            num_forwards=2,
+            num_aberturas=1,
+        )
+        mock_shist = MagicMock()
+        mock_shist.varredura = 0
+        mock_shist.anos_inicio_simulacoes = [1983]
+        mock_shist.ano_inicio_varredura = 1932
+        case = make_case(tmp_path, dger=dger, shist=mock_shist)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+
+        assert "inflow_residual" not in result["modeling"]
+        assert "par-residual-lognormal-unavailable" not in {d.code for d in found}
+
     def test_iteration_limit(self, tmp_path) -> None:
         dger = _make_dger_mock(num_max_iteracoes=200)
         case = make_case(tmp_path, dger=dger)
@@ -1021,7 +1113,10 @@ class TestConvertConfig:
             result = convert_config(case)
         src = result["simulation"]["scenario_source"]
         assert src["historical_years"] == {"from": 1932, "to": 1932}
-        assert [d.code for d in found] == ["shist-range-collapsed"]
+        assert [d.code for d in found] == [
+            "shist-range-collapsed",
+            "par-residual-lognormal-unavailable",
+        ]
 
     def test_shist_empty_start_year_list_simulates_the_year_before_the_study(
         self, tmp_path
@@ -1042,7 +1137,10 @@ class TestConvertConfig:
             result = convert_config(case)
         src = result["simulation"]["scenario_source"]
         assert src["historical_years"] == [2025]
-        assert [d.code for d in found] == ["shist-start-years-empty"]
+        assert [d.code for d in found] == [
+            "shist-start-years-empty",
+            "par-residual-lognormal-unavailable",
+        ]
 
     def test_shist_absent_falls_back_to_dger_history_range(self, tmp_path) -> None:
         """When shist.dat is not in NewaveFiles, the historical years default to

@@ -20,6 +20,10 @@ links are cobre-bridge's.
   auxiliary plants `ACOPL-<code> <name>` carry it, hidden from `compare` and
   `dashboard`; a coupled plant coded 1000 or above is refused. Results change;
   reconvert. Warning `boundary-fcf-coupling-inflow-unrepresented` is removed.
+- **`convert newave` writes the lognormal inflow noise NEWAVE draws in
+  `config.json`:** a deck that trains and then simulates the historical
+  series keeps the normal noise and gets a warning. Results change;
+  reconvert NEWAVE cases.
 
 ## [0.22.0] - 2026-11-24
 

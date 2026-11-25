@@ -72,6 +72,11 @@ _FILLING_TARGET_DEFICIT_FRACTION = 0.9
 #: as zero, at no cost, and the inflow lags keep the raw value.
 INFLOW_NON_NEGATIVITY_METHOD = "truncation"
 
+#: ``modeling.inflow_residual.distribution`` for the source-model track: the
+#: three-parameter lognormal NEWAVE draws its inflow noise from. The DECOMP track
+#: samples no inflow noise, so it leaves novomodelo's ``normal`` default.
+INFLOW_RESIDUAL_DISTRIBUTION = "lognormal_3p"
+
 # inflow_nonnegativity_cost prices the inflow slack at ``water_withdrawal_violation_cost
 # + 1`` (R$/m³/s). The slack *generates* water where every other flow slack only
 # *absorbs* a violation, so pricing it even infinitesimally below withdrawal would

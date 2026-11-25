@@ -25,7 +25,10 @@ from novomodelo_bridge.core.diagnostics import (
     emit,
 )
 from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
-from novomodelo_bridge.core.penalties import INFLOW_NON_NEGATIVITY_METHOD
+from novomodelo_bridge.core.penalties import (
+    INFLOW_NON_NEGATIVITY_METHOD,
+    INFLOW_RESIDUAL_DISTRIBUTION,
+)
 from novomodelo_bridge.core.run_config import SIMULATION_CUT_SET
 from novomodelo_bridge.core.season_calendar import (
     block_names,
@@ -631,6 +634,10 @@ class _RunMode(NamedTuple):
     considera_reamostragem: int
     deterministic: bool
 
+    @property
+    def historical_simulation(self) -> bool:
+        return self.simulation_enabled and self.tipo_simulacao_final == 2
+
 
 def _run_mode(case: NewaveCase, dger: Dger) -> _RunMode:
     """Decode ``tipo_execucao``/``tipo_simulacao_final``/``considera_reamostragem``
@@ -767,7 +774,7 @@ def _simulation_section(case: NewaveCase, dger: Dger, mode: _RunMode) -> dict:
         "cut_set": SIMULATION_CUT_SET,
     }
     if mode.simulation_enabled:
-        if mode.tipo_simulacao_final == 2:
+        if mode.historical_simulation:
             inflow_scheme = "historical"
         elif mode.considera_reamostragem == 1:
             inflow_scheme = "out_of_sample"
@@ -786,6 +793,42 @@ def _simulation_section(case: NewaveCase, dger: Dger, mode: _RunMode) -> dict:
             )
         simulation_section["scenario_source"] = sim_source
     return simulation_section
+
+
+def _inflow_residual(mode: _RunMode) -> dict | None:
+    """Build ``config.json``'s ``modeling.inflow_residual``, or ``None`` to keep
+    novomodelo's normal default.
+
+    A deck that draws no inflow noise keeps the default silently: a
+    deterministic one, or a simulation-only run on the historical series. A
+    training run followed by a final simulation on the historical series keeps
+    it with a warning.
+    """
+    if mode.deterministic:
+        return None
+    # TRACKED NOVOMODELO-GAP (C45): novomodelo refuses lognormal_3p with a
+    # historical simulation inflow scheme.
+    if mode.historical_simulation:
+        if not mode.training_enabled:
+            return None
+        emit(
+            Diagnostic(
+                code="par-residual-lognormal-unavailable",
+                severity=Severity.WARNING,
+                category="Inflow scenarios",
+                title="Normal inflow noise kept: final simulation on the historical series",
+                summary=(
+                    "dger.dat trains the policy and then selects a final "
+                    "simulation on the historical series. Novomodelo does not "
+                    "combine it with the three-parameter lognormal inflow noise "
+                    "NEWAVE draws in training, so config.json keeps the normal "
+                    "noise and the results differ from NEWAVE's."
+                ),
+            ),
+            logger=logger,
+        )
+        return None
+    return {"distribution": INFLOW_RESIDUAL_DISTRIBUTION}
 
 
 def _estimation_section(
@@ -985,6 +1028,7 @@ def convert_config(case: NewaveCase) -> dict:
     training_section = _training_section(case, dger, cut_selection, mode)
     simulation_section = _simulation_section(case, dger, mode)
     estimation = _estimation_section(dger, order_selection, mode.deterministic)
+    inflow_residual = _inflow_residual(mode)
 
     config: dict = {
         "$schema": novomodelo_schemas.schema_url_for("config.json"),
@@ -999,5 +1043,7 @@ def convert_config(case: NewaveCase) -> dict:
         },
         "simulation": simulation_section,
     }
+    if inflow_residual is not None:
+        config["modeling"]["inflow_residual"] = inflow_residual
 
     return config
