@@ -77,8 +77,8 @@ _LOG = logging.getLogger(__name__)
 # "$/mm" but the actual LP column (matrix.rs) reads f_evap_plus/minus as flow
 # rates in m³/s — same unit as withdrawal. The "_m3s" suffix in the simulation output
 # `evaporation_violation_pos_m3s` confirms this. → Conversion: **× ρ_max_acum**
-# (`MAX_PRODTACUM_SIN`) for DESVIO and evaporation (per source-model manual p.87); **×
-# ρ_avg** for the others.
+# (`MAX_PRODTACUM_SIN`) for DESVIO and evaporation (per source-model manual p.87);
+# inflow_nonnegativity_cost is water_withdrawal_violation_cost + 1.
 #
 # Family D — Volume columns (hm³), per stage. Variable carries hm³ once per stage.
 #   Novomodelo: `objective[col] = penalty` (no time multiplier).
@@ -89,12 +89,8 @@ _LOG = logging.getLogger(__name__)
 #   = 277.78 × ρ MWh (purely volumetric — 730h convention cancels). So
 #     novomodelo_coef [R$/hm³] = source_R$/MWh × ρ × HM3_TO_MWH_PER_RHO
 #   with HM3_TO_MWH_PER_RHO = 1e6/3600 ≈ 277.78.
-#   Both slots are derived from the deficit cost via ρ_max_acum:
-#   storage_violation_below_cost = 10 × MAX_CUSTO_DEFICIT × ρ_max_acum
-#   × HM3_TO_MWH_PER_RHO (the evaporation level, i.e. the greatest hydro penalty —
-#   it equals evaporation_cost × HM3_TO_MWH_PER_RHO); filling_target_violation_cost
-#   = 0.9 × MAX_CUSTO_DEFICIT × ρ_max_acum × HM3_TO_MWH_PER_RHO (a little below the
-#   deficit cost).
+#   Both slots are derived from the deficit cost via ρ_max_acum; see
+#   `core.penalties.hydro_penalty_costs`.
 #
 # The source model's 730 h-per-month convention vs novomodelo's actual calendar block_hours
 # (672–744 h) introduces only a ±2% numerical drift in absolute LP cost for the Families
@@ -611,10 +607,8 @@ def convert_penalties(
       model's merit order: exchange < spillage < FPHA < excess. ``pCORTEOL`` is
       zero instead, so curtailment comes first.
     - Evaporation, storage-floor and filling-target slots without a PENALID
-      source are DERIVED from the deficit cost via ``ρ_max_acum``: evaporation and
-      storage at ``10 × MAX_CUSTO_DEFICIT × ρ_max_acum`` (the manual p.87 level;
-      storage additionally ``× HM3_TO_MWH_PER_RHO`` for its R$/hm³ slot) and
-      filling at ``0.9 × MAX_CUSTO_DEFICIT × ρ_max_acum × HM3_TO_MWH_PER_RHO``.
+      source are DERIVED from the deficit cost via ``ρ_max_acum``, by
+      :func:`~novomodelo_bridge.core.penalties.hydro_penalty_costs`.
     - ``hydro.fpha_violation_cost`` has no PENALID source either: the manual p.87
       FPHA folga tier, raised above the deficit plus GHMIN where that is higher.
 
@@ -693,13 +687,10 @@ def convert_hydro_penalty_overrides(
     The source model converts its flow-domain hydro penalties (spillage, turbined,
     diversion, the outflow/turbined/storage/withdrawal/evaporation slacks) using the
     **SIN-aggregate** productivity constants ``PROD_MEDIA_SIN`` and
-    ``MAX_PRODTACUM_SIN``. Those constants are *not* fixed across the horizon:
-    each plant's equivalent productivity tracks its seasonal reference volume
-    (VOLREF_SAZ) and any CFUGA/CMONT tailrace/forebay overrides, so the SIN
-    mean / accumulated-max shift stage to stage. novomodelo-bridge already ships the
-    per-stage per-plant ρ in ``system/hydro_energy_productivity.parquet``; this
-    override makes the **penalty** conversion use the same per-stage ρ, instead
-    of a single static fleet mean — keeping the two coherent.
+    ``MAX_PRODTACUM_SIN``. ``PROD_MEDIA_SIN`` is not fixed across the horizon:
+    the plants carrying CFUGA/CMONT tailrace/forebay overrides move the SIN mean
+    from stage to stage (PRODT ignores VOLREF_SAZ). This override converts the
+    penalties with each stage's own pair instead of one static fleet mean.
 
     The override is SIN-uniform (one value per stage, applied to every hydro, matching
     the source model's use of a single SIN constant) and **sparse**: a row is emitted

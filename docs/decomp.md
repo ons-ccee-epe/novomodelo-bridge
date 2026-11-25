@@ -90,8 +90,9 @@ gauge it is in the first stage. Duplicate `VU` or `VA` pairs are summed, a
 `VU` naming the plant itself is added to the plant's own outflow factor, and a
 `VA` whose gauge is the plant's own stays as a self entry. A duplicate `VL`, an
 unmapped or ambiguous gauge, a plant whose spill does not reach the tailrace
-(`AC VERTJU`) and a plant converted at constant productivity each drop the term
-with a warning. A `VU` whose influencing plant is not in the case is dropped
+(`influencia_vertimento_canal_fuga` 0 in `hidr.dat`; `AC VERTJU` is not read)
+and a plant converted at constant productivity each drop the term with a
+warning. A `VU` whose influencing plant is not in the case is dropped
 without a warning. A `VL` polynomial replaces the constant tailrace only where
 no `polinjus` curve applies. The warnings carry `tailrace-*` codes in the
 `--json` output of `check decomp` and `convert decomp`.
@@ -329,11 +330,20 @@ DECOMP. The import couples them plant by plant, as DECOMP does:
   boundary costs differ by its value; the import warns, naming the plants
   concerned.
 
-Two parts of the coupling cannot be represented yet, and the import warns
-about each. In the last stage, the coupling inflow's difference from the
-operated inflow, and the inflow of cut plants outside the case, vary by
-scenario and are not folded; the warning names the plants and the largest
-gap. A split group has no such difference. Novomodelo also holds one GNL
+In the last stage, the coupling inflow's difference from the operated inflow
+varies by scenario, and so does the inflow of cut plants outside the case.
+The case carries each of these on an auxiliary coupling plant: a hydro with
+no storage, turbining or generation and free spillage, whose last-stage
+inflow is the difference (or the absent plant's coupling inflow) raised by a
+constant that keeps it non-negative, a constant the cuts take back. The
+auxiliary takes its plant's cut row, so the cuts price that inflow as DECOMP
+does. Its id is 1000 plus the plant's deck code and its name is
+`ACOPL-<code> <name>`; a deck with a plant coded 1000 or above that needs one
+is refused, and converts with `--no-fcf`. `compare`, `dashboard` and
+`export dessem` leave the auxiliaries out, and `convert decomp` lists them,
+with each one's largest gap, in the note `boundary-fcf-coupling-auxiliary-plants`.
+
+One part of the coupling cannot be represented yet. Novomodelo holds one GNL
 commitment per delivery window rather than one per patamar, so the boundary
 cost differs from DECOMP's when the commitment would differ by patamar; the
 import warns and reports how far the per-patamar GNL prices spread.

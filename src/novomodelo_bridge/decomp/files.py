@@ -62,6 +62,13 @@ class DecompFiles:
         """The resolved inputs whose reader slices fixed columns."""
         return [path for path in (self.dadger, self.dadgnl) if path is not None]
 
+    def boundary_cut_files(self) -> tuple[Path, Path] | None:
+        """The boundary FCF's ``(cortesh, cortes)`` files, ``None`` unless the
+        deck has both."""
+        if self.cortesh is None or self.cortes is None:
+            return None
+        return self.cortesh, self.cortes
+
 
 #: ``FC`` register ``tipo`` mnemonics (``idecomp.decomp.Dadger.fc()``) naming
 #: the boundary-FCF header and cut-record files respectively.

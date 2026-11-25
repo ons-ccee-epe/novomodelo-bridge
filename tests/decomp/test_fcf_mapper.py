@@ -322,6 +322,40 @@ def test_map_drops_untaken_cut_plant_and_folds_its_inflow() -> None:
     )
 
 
+def test_map_untaken_cut_plant_keeps_its_fold_beside_its_auxiliary() -> None:
+    """The auxiliary takes the row's lag terms on its own state, so the row
+    still counts as untaken and folds its trunk inflow."""
+    id_map = make_id_map((10,))
+    manifest = make_manifest([make_slot(_HYDRO_STORAGE, 0, 0)])
+    cuts = make_boundary_cuts(
+        (10, 901),
+        (
+            make_cut_record(
+                pi_varm=(1.0, 8.0), pi_qafl=(_lags(), _lags(0.5, 0.25)), rhs=3.0
+            ),
+        ),
+    )
+    couplings = (*make_couplings(cuts, id_map), HydroCoupling(1901, 1))
+
+    result = map_boundary_cuts(
+        cuts,
+        manifest,
+        couplings,
+        inflow_lag_depth=2,
+        source_only_inflows={1: _lags(40.0, 20.0)},
+    )
+
+    assert result.dropped == (DroppedTerm(901, 8.0, inflow_folded=True),)
+    mapped = result.cuts[0]
+    assert mapped.intercept == pytest.approx(
+        3.0 * MEAN_MONTH_HOURS + (0.5 * 40.0 + 0.25 * 20.0) * _LAG_FACTOR
+    )
+    assert mapped.inflow_lag_coefficients == {
+        0: (0.0, 0.0),
+        1901: pytest.approx((0.5 * _LAG_FACTOR, 0.25 * _LAG_FACTOR)),
+    }
+
+
 def test_map_untaken_cut_plant_without_inflow_is_not_folded() -> None:
     id_map = make_id_map((10,))
     manifest = make_manifest([make_slot(_HYDRO_STORAGE, 0, 0)])

@@ -140,6 +140,16 @@ the same output.
   start. When a plant leaves either year blank, NEWAVE takes its years from
   `postos.dat`, which the converter does not read: `convert newave` warns and
   the fit uses every year of the history.
+- **Inflow noise.** NEWAVE draws the noise of its synthetic inflow series
+  from a three-parameter lognormal distribution, and the converted
+  `config.json` selects it where Novomodelo's default is the normal
+  distribution. A deck that trains and then simulates the historical series
+  (`tipo_simulacao_final` 2) keeps the normal noise, because Novomodelo
+  refuses the lognormal with a historical simulation: `convert newave` warns
+  that the results differ. A deterministic deck, or a simulation-only run on
+  the historical series, draws no noise and keeps the default without a
+  warning. `novomodelo validate` warns about each plant whose seasonal mean
+  inflow is zero or negative, which falls back to the normal noise.
 - **Incremental inflows.** NEWAVE records natural inflow per gauging station
   (posto); Novomodelo takes each plant's incremental inflow. The converter
   subtracts, for each plant, the natural inflow of the stations of the plants
@@ -149,7 +159,9 @@ the same output.
   zero, and an artificial plant upstream is not subtracted. `convert newave`
   lists these plants, and warns when a gauged plant sits below an artificial
   plant that has gauged plants further upstream, since their inflow may then
-  be counted twice.
+  be counted twice. A negative incremental inflow is lifted to zero at no
+  cost, as NEWAVE does, and the inflow lags of later stages keep the negative
+  value; the [NEWAVE data map](newave-data-map.md) lists the setting.
 - **Production function.** When `dger.dat` selects the hydro production
   function (FPHA), Novomodelo fits each eligible plant's planes itself. The
   converter sets the spillage range of that fit to twice the largest

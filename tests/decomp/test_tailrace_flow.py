@@ -156,7 +156,7 @@ def decomp_mini_resolution(
     return resolve_tailrace_flow(
         decomp_mini_case.dadger,
         decomp_mini_effective,
-        decomp_mini_case.id_map.hydro_codes,
+        decomp_mini_case.id_map.operated_hydro_codes,
         set(),
     )
 
@@ -639,8 +639,13 @@ class TestDiagnosticContract:
         assert len(resolution.diagnostics) == 8
 
 
-def _id_map(*codes: int) -> DecompIdMap:
-    return DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=codes)
+def _id_map(*codes: int, dormant: tuple[int, ...] = ()) -> DecompIdMap:
+    return DecompIdMap(
+        bus_codes=(1,),
+        bus_names=("SE",),
+        hydro_codes=codes,
+        dormant_hydro_codes=dormant,
+    )
 
 
 def _declaration(
@@ -814,9 +819,10 @@ class TestPiecewiseTailraceCodes:
         assert piecewise_tailrace_codes(case, _id_map(1, 2)) == frozenset()
 
     def test_only_operated_plants_with_a_family_count(self) -> None:
-        families = pd.DataFrame({"codigo_usina": [1, 1, 3, 9]})
+        families = pd.DataFrame({"codigo_usina": [1, 1, 3, 4, 9]})
         case = _case_with_polinjus(_StubPolinjus(families))
-        assert piecewise_tailrace_codes(case, _id_map(1, 2, 3)) == {1, 3}
+        id_map = _id_map(1, 2, 3, 4, dormant=(4,))
+        assert piecewise_tailrace_codes(case, id_map) == {1, 3}
 
     def test_decomp_mini_plants_with_declarations_have_a_family(
         self, decomp_mini_case: DecompCase

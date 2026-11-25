@@ -104,6 +104,13 @@ class EffectiveCadastro:
         """Whether *param* for plant *code* carries at least one override."""
         return (code, param) in self.stage_varying
 
+    def plant_names(self) -> dict[int, str]:
+        """Every plant's ``nome_usina`` by plant code, without padding."""
+        return {
+            int(code): str(name).strip()
+            for code, name in self.base["nome_usina"].items()
+        }
+
     def has_diversion(self, code: int) -> bool:
         """Whether plant *code* has a base or ``AC DESVIO`` diversion channel.
 

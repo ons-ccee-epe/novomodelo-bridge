@@ -29,7 +29,6 @@ from idecomp.decomp import Dadgnl, Vazoes
 from inewave.newave import Cortesh
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.policy_dates import hours_between, yyyymmdd_from_date
 from novomodelo_bridge.core.units import MEAN_MONTH_HOURS
 from novomodelo_bridge.decomp.converters.anticipated import (
@@ -39,6 +38,7 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     read_gnl_model,
 )
 from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
+from novomodelo_bridge.decomp.fcf.auxiliary import auxiliary_observation_windows
 from novomodelo_bridge.decomp.fcf.bootstrap import (
     bootstrap_terminal_manifest,
     ensure_writer_binding,
@@ -51,11 +51,12 @@ from novomodelo_bridge.decomp.fcf.cortes import (
     summarize_cut_families,
 )
 from novomodelo_bridge.decomp.fcf.coupling import (
+    coupling_auxiliary_lag_offsets,
     coupling_lag_offsets,
     lag_months,
+    read_complexo_components,
     resolve_couplings,
     source_only_lag_inflows,
-    terminal_shares,
 )
 from novomodelo_bridge.decomp.fcf.mapper import (
     GnlCommandedDelivery,
@@ -77,13 +78,14 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from idecomp.decomp import Dadger
-
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
     from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts
-    from novomodelo_bridge.decomp.fcf.coupling import CouplingResolution, TerminalShare
-    from novomodelo_bridge.decomp.fcf.mapper import MappingResult
+    from novomodelo_bridge.decomp.fcf.coupling import (
+        CouplingAuxiliary,
+        CouplingResolution,
+    )
+    from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling, MappingResult
     from novomodelo_bridge.decomp.temporal import OperativeStage
 
 _LOG = logging.getLogger(__name__)
@@ -234,45 +236,33 @@ def _plan_gnl_ring(
     )
 
 
-def _complexo_map(dadger: Dadger) -> dict[int, list[int]]:
-    """The deck's ``CX`` register as ``{complexo_code: [component_codes]}``.
-
-    ``CX`` couples a complex of the boundary cut (absent from the DECOMP
-    model) to the individual DECOMP plants inside it. Empty when the deck has
-    no ``CX`` line.
-    """
-    complexo_map: dict[int, list[int]] = {}
-    cx = dadger.cx(df=True)
-    if cx.empty:
-        return complexo_map
-    for complexo, component in zip(
-        cx["codigo_newave"], cx["codigo_decomp"], strict=True
-    ):
-        complexo_map.setdefault(as_int(complexo), []).append(as_int(component))
-    return complexo_map
-
-
 @dataclass(frozen=True)
 class _DeckCoupling:
     """What the deck adds to the cut: who takes which row, and the constants.
 
-    ``cut`` is the cut's ``(year, month)``; ``recent_observations`` the
-    ``initial_conditions`` windows read on the coupling postos; ``names`` the
-    ``hidr.dat`` name of every registry plant, converted or not.
+    ``cut`` is the cut's ``(year, month)``; ``couplings`` the converted
+    hydros' and then the auxiliary coupling plants'; ``recent_observations``
+    the ``initial_conditions`` windows read on the coupling postos, the
+    auxiliaries' included; ``names`` the ``hidr.dat`` name of every registry
+    plant, converted or not.
     """
 
     cut: tuple[int, int]
     resolution: CouplingResolution
+    couplings: tuple[HydroCoupling, ...]
     inflow_lag_offsets: Mapping[int, tuple[float, ...]]
     source_only_inflows: Mapping[int, tuple[float, ...]]
-    terminal_shares: tuple[TerminalShare, ...]
     gnl_plan: GnlRingPlan | None
     recent_observations: list[dict]
     names: Mapping[int, str]
 
 
 def _read_deck_coupling(
-    case_dir: Path, case: DecompCase, cortesh: Cortesh, cuts: BoundaryCuts
+    case_dir: Path,
+    case: DecompCase,
+    cortesh: Cortesh,
+    cuts: BoundaryCuts,
+    auxiliaries: Sequence[CouplingAuxiliary],
 ) -> _DeckCoupling:
     cut = cut_month(cortesh, int(cuts.boundary_stage))
     months = lag_months(*cut)
@@ -281,7 +271,7 @@ def _read_deck_coupling(
     vazoes = Vazoes.read(str(case.files.vazoes))
     plant_codes = cuts.header.plant_codes
     resolution = resolve_couplings(
-        plant_codes, case.id_map, effective, _complexo_map(case.dadger)
+        plant_codes, case.id_map, effective, read_complexo_components(case.dadger)
     )
     coupled = {coupling.plant_index for coupling in resolution.couplings}
     source_only = source_only_lag_inflows(
@@ -292,31 +282,31 @@ def _read_deck_coupling(
         calendar,
         months,
     )
+    recent_observations = convert_recent_observation_windows(
+        vazoes, effective, case.id_map, calendar
+    )
     return _DeckCoupling(
         cut=cut,
         resolution=resolution,
-        inflow_lag_offsets=coupling_lag_offsets(
-            vazoes, effective, case.id_map, calendar, months, resolution.couplings
+        couplings=(
+            *resolution.couplings,
+            *(auxiliary.coupling for auxiliary in auxiliaries),
         ),
+        inflow_lag_offsets={
+            **coupling_lag_offsets(
+                vazoes, effective, case.id_map, calendar, months, resolution.couplings
+            ),
+            **coupling_auxiliary_lag_offsets(auxiliaries, calendar, months),
+        },
         source_only_inflows=source_only,
-        terminal_shares=terminal_shares(
-            vazoes,
-            effective,
-            case.id_map,
-            resolution.couplings,
-            (plant_codes[index] for index in source_only),
-            calendar,
-        ),
         gnl_plan=_build_gnl_ring_plan(
             case_dir, case, cortesh, cut, cuts.header.lag_maximo_gnl
         ),
-        recent_observations=convert_recent_observation_windows(
-            vazoes, effective, case.id_map, calendar
-        ),
-        names={
-            int(code): str(name).strip()
-            for code, name in effective.base["nome_usina"].items()
-        },
+        recent_observations=[
+            *recent_observations,
+            *auxiliary_observation_windows(recent_observations, auxiliaries),
+        ],
+        names=effective.plant_names(),
     )
 
 
@@ -444,7 +434,7 @@ def _emit_import_diagnostics(
                     "converted case. Their storage terms are dropped, "
                     "and their inflow terms are folded into each cut's constant "
                     "from the deck's inflow history where the plant has a "
-                    "posto; the last stage's share of that inflow is left out."
+                    "posto, the last stage's share through an auxiliary plant."
                 ),
                 table=dx.DiagnosticTable(
                     columns=["Code", "Name", "β (pi_varm)", "Inflow folded"],
@@ -573,10 +563,7 @@ def _emit_transit_pricing(
 
 
 def _emit_coupling_diagnostics(
-    resolution: CouplingResolution,
-    shares: Sequence[TerminalShare],
-    *,
-    names: Mapping[int, str],
+    resolution: CouplingResolution, *, names: Mapping[int, str]
 ) -> None:
     """Surface how the converted hydros take the cut's plant terms."""
     if resolution.borrowed:
@@ -636,54 +623,6 @@ def _emit_coupling_diagnostics(
             logger=_LOG,
         )
 
-    # TRACKED NOVOMODELO-GAP (C26): novomodelo's lag state follows each hydro's
-    # operation inflow; the terminal stage's coupling-inflow difference and
-    # the source-only plants' terminal inflow cannot be folded.
-    if shares:
-        dx.emit(
-            dx.Diagnostic(
-                code="boundary-fcf-coupling-inflow-unrepresented",
-                severity=dx.Severity.WARNING,
-                category="Boundary FCF",
-                title=(
-                    "Last-stage inflow of the boundary cuts read on the operation "
-                    f"posto ({len(shares)})"
-                ),
-                summary=(
-                    "DECOMP evaluates the boundary cuts' inflow terms of the "
-                    "listed plants on a coupling posto that differs "
-                    "from the inflow the converted case carries. The difference "
-                    "over the earlier stages is folded into the cuts, but in the "
-                    "last stage it varies by scenario and is left out, so the "
-                    "boundary cost differs from DECOMP's; the table gives each "
-                    "plant's largest inflow gap."
-                ),
-                table=dx.DiagnosticTable(
-                    columns=[
-                        "Code",
-                        "Name",
-                        "Coupling posto",
-                        "Operation posto",
-                        "Max gap (m³/s)",
-                    ],
-                    rows=[
-                        [
-                            share.plant_code,
-                            names.get(share.plant_code, ""),
-                            share.coupling_posto,
-                            "-"
-                            if share.operation_posto is None
-                            else share.operation_posto,
-                            round(share.max_gap_m3s, 3),
-                        ]
-                        for share in shares
-                    ],
-                    justify=["right", "left", "right", "right", "right"],
-                ),
-            ),
-            logger=_LOG,
-        )
-
 
 def _patch_policy_boundary(writer: CaseWriter, config: dict) -> None:
     """Set ``["policy"]["boundary"]`` in ``config.json``, preserving the rest.
@@ -731,6 +670,7 @@ def import_boundary_fcf(
     cost_scale_factor: float,
     config: dict | None = None,
     initial_conditions: dict | None = None,
+    coupling_auxiliaries: Sequence[CouplingAuxiliary] = (),
     float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> Path | None:
     """Import the source model's boundary FCF into the converted case at
@@ -746,8 +686,12 @@ def import_boundary_fcf(
     file from an absent dict would silently drop the rest of its content
     rather than mutate it.
 
-    Gated on cut-file presence: if either ``case.files.cortesh`` or
-    ``case.files.cortes`` is ``None``, this is a no-op — no ``boundary/``
+    *coupling_auxiliaries* must be the auxiliary coupling plants the conversion
+    wrote into the case (``FcfInputs.coupling_auxiliaries``); each takes its
+    plant's cut row.
+
+    Gated on cut-file presence: if ``case.files.boundary_cut_files()`` is
+    ``None``, this is a no-op — no ``boundary/``
     directory is written, and ``config.json`` is left untouched. Otherwise:
 
     1. Reads the shared case's ``dadger``/``id_map`` (parsed once by the
@@ -793,7 +737,8 @@ def import_boundary_fcf(
         manifest), or the writer (``fcf/writer.py``, e.g. a mapped
         coefficient vector length mismatch).
     """
-    if case.files.cortesh is None or case.files.cortes is None:
+    cut_files = case.files.boundary_cut_files()
+    if cut_files is None:
         dx.emit(cut_files_absent_diagnostic(), logger=_LOG)
         return None
     if config is None or initial_conditions is None:
@@ -806,8 +751,9 @@ def import_boundary_fcf(
     # never runs under ``--dry-run``.
     writer = CaseWriter(case_dir, float_digits=float_digits)
 
-    cortesh = Cortesh.read(str(case.files.cortesh))
-    cuts = read_cortes(case.files.cortes, cortesh, boundary_stage=None)
+    cortesh_file, cortes_file = cut_files
+    cortesh = Cortesh.read(str(cortesh_file))
+    cuts = read_cortes(cortes_file, cortesh, boundary_stage=None)
     # `BoundaryCuts.boundary_stage` is typed `int`, but a single-stage export's
     # derived value inherits `numpy.int32` from `cortesh.ano_inicio_estudo`'s
     # own numpy dtype (confirmed against this deck) — narrow to a plain `int`
@@ -818,7 +764,7 @@ def import_boundary_fcf(
     ensure_writer_binding()
 
     manifest = bootstrap_terminal_manifest(case_dir, work_dir=work_dir)
-    coupling = _read_deck_coupling(case_dir, case, cortesh, cuts)
+    coupling = _read_deck_coupling(case_dir, case, cortesh, cuts, coupling_auxiliaries)
     # The DECOMP case has no PAR(p) model, so the bootstrap manifest carries no
     # HydroInflowLag slots; the deepest lag the cuts reference is declared to
     # the writer, which reserves the canonical slots.
@@ -826,7 +772,7 @@ def import_boundary_fcf(
     mapping = map_boundary_cuts(
         cuts,
         manifest,
-        coupling.resolution.couplings,
+        coupling.couplings,
         inflow_lag_depth=inflow_lag_depth,
         inflow_lag_offsets=coupling.inflow_lag_offsets,
         source_only_inflows=coupling.source_only_inflows,
@@ -841,11 +787,7 @@ def import_boundary_fcf(
     )
     _emit_import_diagnostics(cuts, mapping, coupling.gnl_plan, names=coupling.names)
     _emit_transit_pricing(mapping, case.id_map.hydro_codes, names=coupling.names)
-    _emit_coupling_diagnostics(
-        coupling.resolution,
-        coupling.terminal_shares,
-        names=coupling.names,
-    )
+    _emit_coupling_diagnostics(coupling.resolution, names=coupling.names)
 
     stage_cuts_payload = build_stage_cuts_payload(
         mapping,

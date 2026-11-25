@@ -48,16 +48,13 @@ from novomodelo_bridge.comparators.operating_points import (
     OperatingPointComparison,
     SourceProductionModel,
     StagePhysics,
-    case_tailrace_flows,
-    evaluate_points,
+    evaluate_both_models,
     flag_ties,
     masked_hydro,
     novomodelo_points,
     productivity_frames,
     tie_share,
     window_gh_max,
-    with_case_lateral,
-    with_envelopes,
 )
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity, emit
 from novomodelo_bridge.core.pandas_utils import (
@@ -415,15 +412,12 @@ def _fpha_frames(
         },
         cota=lambda code, _stage: cota[code],
     )
-    flows = case_tailrace_flows(novomodelo_output_dir)
-    source_eval = with_envelopes(
-        evaluate_points(with_case_lateral(source, flows), model),
-        model,
-        novomodelo_by_key,
+    source_eval, novomodelo_eval = evaluate_both_models(
+        source, novomodelo, model, novomodelo_by_key, novomodelo_output_dir
     )
     split, fit_inputs, slices = productivity_frames(
         source_eval,
-        evaluate_points(with_case_lateral(novomodelo, flows), model),
+        novomodelo_eval,
         model,
         novomodelo_by_key,
         novomodelo_output_dir,

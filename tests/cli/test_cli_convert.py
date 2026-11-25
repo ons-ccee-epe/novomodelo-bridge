@@ -8,7 +8,8 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import MagicMock, patch, sentinel
 
 import pytest
 
@@ -2206,6 +2207,46 @@ class TestCliInProcess:
             "imported": True,
             "path": "boundary",
         }
+
+    def test_convert_decomp_boundary_fcf_import_receives_the_planned_auxiliaries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The auxiliary coupling plants the conversion plans reach the importer
+        that prices them on the cut rows, beside the case's config and
+        initial conditions."""
+        from novomodelo_bridge.core.conversion import ConversionReport
+
+        src = _make_fake_decomp_dir_with_cuts(tmp_path)
+        dst = tmp_path / "dst"
+        fake_report = ConversionReport(
+            hydro_count=1, thermal_count=1, bus_count=1, line_count=0, stage_count=4
+        )
+
+        def convert(*_args: object, fcf_inputs_out: Any, **_kwargs: object) -> object:
+            fcf_inputs_out.config = {"config": True}
+            fcf_inputs_out.initial_conditions = {"initial_conditions": True}
+            fcf_inputs_out.coupling_auxiliaries = (sentinel.auxiliary,)
+            return fake_report
+
+        with (
+            patch("novomodelo_bridge.decomp.pipeline.convert_decomp_case", convert),
+            patch(
+                "novomodelo_bridge.decomp.fcf.capability.ensure_boundary_fcf_capability"
+            ),
+            patch(
+                "novomodelo_bridge.decomp.fcf.importer.import_boundary_fcf",
+                return_value=dst / "boundary",
+            ) as mock_import,
+        ):
+            code, _stdout, _stderr = self._invoke_main(
+                ["convert", "decomp", str(src), str(dst)], monkeypatch
+            )
+
+        assert code == 0
+        kwargs = mock_import.call_args.kwargs
+        assert kwargs["config"] == {"config": True}
+        assert kwargs["initial_conditions"] == {"initial_conditions": True}
+        assert kwargs["coupling_auxiliaries"] == (sentinel.auxiliary,)
 
     def test_convert_decomp_missing_cortes_skips_fcf(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

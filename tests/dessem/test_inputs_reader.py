@@ -66,6 +66,19 @@ class TestReadCaseInputs:
             None,
         ]
 
+    def test_coupling_auxiliary_plants_are_left_out(
+        self, synthetic_case_dir: Path
+    ) -> None:
+        hydros_path = synthetic_case_dir / "system" / "hydros.json"
+        hydros = json.loads(hydros_path.read_text(encoding="utf-8"))
+        real_ids = [hydro["id"] for hydro in hydros["hydros"]]
+        hydros["hydros"].append({**hydros["hydros"][0], "id": 1288, "name": "ACOPL"})
+        hydros_path.write_text(json.dumps(hydros), encoding="utf-8")
+
+        inputs = read_case_inputs(synthetic_case_dir)
+
+        assert [hydro.id for hydro in inputs.hydros] == real_ids
+
     def test_negative_travel_time_raises(self, synthetic_case_dir: Path) -> None:
         hydros_path = synthetic_case_dir / "system" / "hydros.json"
         hydros = json.loads(hydros_path.read_text(encoding="utf-8"))

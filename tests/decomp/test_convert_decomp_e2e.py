@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import json
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -19,18 +23,23 @@ import pytest
 from idecomp.decomp import Dadger, Vazoes
 
 from novomodelo_bridge.core import diagnostics as dx
+from novomodelo_bridge.core.coupling_auxiliary import is_coupling_auxiliary
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
 from novomodelo_bridge.decomp.converters.penalties import FICTITIOUS_EXCHANGE_FACTOR
 from novomodelo_bridge.decomp.fcf.bootstrap import bootstrap_terminal_manifest
-from novomodelo_bridge.decomp.fcf.coupling import resolve_couplings
+from novomodelo_bridge.decomp.fcf.coupling import (
+    CouplingAuxiliary,
+    read_complexo_components,
+    resolve_couplings,
+)
 from novomodelo_bridge.decomp.fcf.importer import (
-    _complexo_map,
     _patch_policy_boundary,
     _seed_recent_observations,
 )
-from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+from novomodelo_bridge.decomp.files import DecompFiles
+from novomodelo_bridge.decomp.pipeline import FcfInputs, convert_decomp_case
 from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 from novomodelo_bridge.novomodelo.readers import read_novomodelo_hydro_block_operation
@@ -43,9 +52,11 @@ from tests.conftest import (
     FloatDigitsKwargs,
     case_json_floats,
     requires_novomodelo_python,
-    requires_tailrace_flow,
     requires_writer_binding,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 #: A ``CI`` import contract 7 in submarket 1, and an ``FE`` line putting it into
 #: ``RE 21`` with coefficient -0.5 (fixed-width columns per the DECOMP manual).
@@ -223,7 +234,6 @@ def test_rhv_volume_tipo_case_validates(decomp_mini_deck: Path, tmp_path: Path) 
 
 
 @requires_novomodelo_python
-@requires_tailrace_flow
 def test_decomp_mini_tailrace_flow_runs_and_reaches_the_tailrace(
     decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
 ) -> None:
@@ -622,7 +632,10 @@ def test_boundary_cuts_bind_the_dormant_nw_plant_and_the_case_runs(
 
     effective, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
     couplings = resolve_couplings(
-        (_ESTRELA, _SALTO), case.id_map, effective, _complexo_map(case.dadger)
+        (_ESTRELA, _SALTO),
+        case.id_map,
+        effective,
+        read_complexo_components(case.dadger),
     ).couplings
     assert [c.plant_index for c in couplings if c.hydro_id == estrela] == [0]
 
@@ -681,3 +694,118 @@ def test_boundary_cuts_bind_the_dormant_nw_plant_and_the_case_runs(
         assert row["generation_mw"] == 0.0
         assert row["storage_initial_hm3"] == pytest.approx(stored[estrela], abs=1e-6)
         assert row["storage_final_hm3"] == pytest.approx(stored[estrela], abs=1e-6)
+
+
+_SALTO_AUXILIARY = CouplingAuxiliary(
+    plant_code=_SALTO,
+    hydro_id=1262,
+    name="ACOPL-262 SALTO",
+    plant_index=0,
+    coupling_posto=262,
+    operation_posto=262,
+    shift_m3s=3.0,
+    terminal_inflows_m3s=(5.0, 3.0),
+    max_gap_m3s=3.0,
+)
+
+#: Every case file whose hydro rows an auxiliary coupling plant joins.
+_AUXILIARY_FILES = (
+    "system/hydros.json",
+    "system/hydro_production_models.json",
+    "system/hydro_energy_productivity.parquet",
+    "initial_conditions.json",
+    "scenarios/inflow_seasonal_stats.parquet",
+    "scenarios/external_inflow_scenarios.parquet",
+)
+
+
+@contextmanager
+def _deck_planning_the_salto_auxiliary() -> Generator[None]:
+    """The deck has cut files, and the planner finds ``_SALTO_AUXILIARY``."""
+    with (
+        patch.object(
+            DecompFiles,
+            "boundary_cut_files",
+            return_value=(Path("cortesh.dat"), Path("cortes.dat")),
+        ),
+        patch(
+            "novomodelo_bridge.decomp.pipeline.read_cortesh",
+            return_value=SimpleNamespace(plant_codes=(_SALTO,)),
+        ),
+        patch(
+            "novomodelo_bridge.decomp.pipeline.plan_coupling_auxiliaries",
+            return_value=(_SALTO_AUXILIARY,),
+        ),
+    ):
+        yield
+
+
+def _auxiliary_ids(case_dir: Path) -> dict[str, set[int]]:
+    def document(name: str, key: str, id_key: str) -> list[int]:
+        doc = json.loads((case_dir / name).read_text(encoding="utf-8"))
+        return [entry[id_key] for entry in doc[key]]
+
+    def column(name: str) -> list[int]:
+        return pq.read_table(case_dir / name).column("hydro_id").to_pylist()
+
+    ids = {
+        "system/hydros.json": document("system/hydros.json", "hydros", "id"),
+        "system/hydro_production_models.json": document(
+            "system/hydro_production_models.json", "production_models", "hydro_id"
+        ),
+        "initial_conditions.json": document(
+            "initial_conditions.json", "storage", "hydro_id"
+        ),
+        **{
+            name: column(name) for name in _AUXILIARY_FILES if name.endswith(".parquet")
+        },
+    }
+    return {
+        name: {hydro_id for hydro_id in found if is_coupling_auxiliary(hydro_id)}
+        for name, found in ids.items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("boundary_fcf", "expected"),
+    [(True, {_SALTO_AUXILIARY.hydro_id}), (False, set())],
+    ids=["with_boundary_fcf", "without_boundary_fcf"],
+)
+def test_convert_decomp_case_writes_the_planned_auxiliary_into_every_case_file(
+    decomp_mini_deck: Path, tmp_path: Path, boundary_fcf: bool, expected: set[int]
+) -> None:
+    dst = tmp_path / "converted"
+    fcf_inputs = FcfInputs()
+
+    with _deck_planning_the_salto_auxiliary():
+        report = convert_decomp_case(
+            decomp_mini_deck,
+            dst,
+            force=True,
+            boundary_fcf=boundary_fcf,
+            fcf_inputs_out=fcf_inputs,
+        )
+
+    assert _auxiliary_ids(dst) == dict.fromkeys(_AUXILIARY_FILES, expected)
+    assert fcf_inputs.coupling_auxiliaries == (
+        (_SALTO_AUXILIARY,) if boundary_fcf else ()
+    )
+    noted = "boundary-fcf-coupling-auxiliary-plants" in {
+        diagnostic.code for diagnostic in report.diagnostics
+    }
+    assert noted is boundary_fcf
+
+
+@requires_novomodelo_python
+def test_a_case_with_a_coupling_auxiliary_validates(
+    decomp_mini_deck: Path, tmp_path: Path
+) -> None:
+    import novomodelo.io  # tier-2: guarded import inside the body, never module scope
+
+    dst = tmp_path / "converted"
+    with _deck_planning_the_salto_auxiliary():
+        convert_decomp_case(decomp_mini_deck, dst, force=True, boundary_fcf=True)
+
+    result = novomodelo.io.validate(str(dst))
+    assert result["valid"] is True
+    assert result["errors"] == []

@@ -126,6 +126,7 @@ def _make_mock_data(
     thermal_meta: dict | None = None,
     non_fictitious_bus_ids: list | None = None,
     line_meta: list | None = None,
+    n_coupling_auxiliaries: int = 0,
 ) -> MagicMock:
     """Build a minimal MagicMock that satisfies the DashboardData interface."""
     data = MagicMock()
@@ -151,6 +152,7 @@ def _make_mock_data(
         non_fictitious_bus_ids if non_fictitious_bus_ids is not None else [0, 1, 2, 3]
     )
     data.line_meta = line_meta if line_meta is not None else [{}, {}]
+    data.n_coupling_auxiliaries = n_coupling_auxiliaries
     return data
 
 
@@ -278,6 +280,15 @@ def test_run_identity_strip_hydros_count() -> None:
     data = _make_mock_data(hydro_meta={0: {}, 1: {}, 2: {}})
     html = _run_identity_strip(data)
     assert "Hydros:</strong> 3" in html
+
+
+def test_run_identity_strip_counts_hidden_coupling_auxiliaries() -> None:
+    html = _run_identity_strip(_make_mock_data(n_coupling_auxiliaries=19))
+    assert "Coupling auxiliaries (not shown):</strong> 19" in html
+
+
+def test_run_identity_strip_omits_coupling_auxiliaries_when_case_has_none() -> None:
+    assert "Coupling auxiliaries" not in _run_identity_strip(_make_mock_data())
 
 
 def test_run_identity_strip_thermals_count() -> None:

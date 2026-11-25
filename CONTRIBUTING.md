@@ -147,7 +147,11 @@ on them, and they are the canonical statements for humans too. In short:
 
 ## Releasing
 
-A bridge release `X.Y.Z` pairs with novomodelo `X.Y.Z`.
+A bridge release pairs with one novomodelo release of the same minor version,
+the one `MIN_NOVOMODELO_VERSION` names. A release that moves the pairing to a
+new novomodelo minor takes that novomodelo version; any other release, a
+bridge-only fix or a pairing with a novomodelo patch, raises the bridge's patch
+number.
 
 1. Bump `version` in `pyproject.toml`. When the novomodelo pairing moves, bump the
    exact `novomodelo-python` pin and `MIN_NOVOMODELO_VERSION`

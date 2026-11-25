@@ -82,7 +82,13 @@ from novomodelo_bridge.decomp.converters.scalar_parameters import (
     build_decomp_scalar_parameters,
     write_scalar_parameters,
 )
-from novomodelo_bridge.decomp.fcf.cortes import read_patamar_fractions
+from novomodelo_bridge.decomp.fcf import auxiliary as auxiliary_conv
+from novomodelo_bridge.decomp.fcf.cortes import read_cortesh, read_patamar_fractions
+from novomodelo_bridge.decomp.fcf.coupling import (
+    CouplingAuxiliary,
+    plan_coupling_auxiliaries,
+    read_complexo_components,
+)
 from novomodelo_bridge.decomp.files import (
     REGISTER_COMMENT_PREFIX,
     unindexed_libs_diagnostic,
@@ -142,6 +148,7 @@ class DecompCaseArtifacts:
     itaipu_operated: bool
     fan_probabilities: list[float]
     tx: float
+    coupling_auxiliaries: tuple[CouplingAuxiliary, ...] = ()
     config: dict | None = None
     stages_dict: dict | None = None
     hydros_dict: dict | None = None
@@ -186,12 +193,13 @@ class FcfInputs:
     unavailable to a caller before ``convert_decomp_case`` runs, so it cannot
     be constructed ahead of the call the way an empty ``FcfInputs()`` can.
     ``convert_decomp_case`` assigns the same dict objects it wrote onto the
-    passed instance, leaving both fields ``None`` when not requested (the
+    passed instance, leaving both dicts ``None`` when not requested (the
     default) or on a failed conversion.
     """
 
     config: dict | None = None
     initial_conditions: dict | None = None
+    coupling_auxiliaries: tuple[CouplingAuxiliary, ...] = ()
 
 
 #: Sentinel for a null ``block_id`` when joining two bound frames in polars:
@@ -931,12 +939,13 @@ def _water_bucket_stages(
     return [{"start_date": horizon_end.isoformat(), "duration_hours": stage_hours}]
 
 
-def _discover(src: Path) -> DecompCaseArtifacts:
+def _discover(src: Path, *, boundary_fcf: bool) -> DecompCaseArtifacts:
     """The ``step("Discovering deck")`` phase: parse *src* via one
     :class:`DecompCase`, resolve the cadastro override view (emitting its
     AC-register diagnostics), and compute the scalars
     every later phase needs -- the Itaipu-operated flag, the terminal fan
-    probabilities, and the annual discount rate.
+    probabilities, the annual discount rate, and, when *boundary_fcf* and the
+    deck has cut files, the auxiliary coupling plants.
     """
     case = DecompCase.from_directory(src)
     tabs = tab_character_diagnostic(
@@ -1003,7 +1012,43 @@ def _discover(src: Path) -> DecompCaseArtifacts:
         itaipu_operated=itaipu_operated,
         fan_probabilities=fan_probabilities,
         tx=tx,
+        coupling_auxiliaries=_plan_coupling_auxiliaries(
+            case, vazoes, effective, boundary_fcf=boundary_fcf
+        ),
     )
+
+
+def _plan_coupling_auxiliaries(
+    case: DecompCase,
+    vazoes: Vazoes,
+    effective: cadastro_conv.EffectiveCadastro,
+    *,
+    boundary_fcf: bool,
+) -> tuple[CouplingAuxiliary, ...]:
+    """The auxiliary coupling plants the boundary cuts need, and their note;
+    none unless *boundary_fcf* and the deck has cut files."""
+    cut_files = case.files.boundary_cut_files()
+    if not boundary_fcf or cut_files is None:
+        return ()
+    # TRACKED NOVOMODELO-GAP (C26): novomodelo's lag state follows each hydro's
+    # own inflow, so a cut row's last-stage coupling inflow that differs from
+    # it rides on an auxiliary plant's inflow.
+    auxiliaries = plan_coupling_auxiliaries(
+        vazoes,
+        effective,
+        case.id_map,
+        case.calendar,
+        read_cortesh(cut_files[0]).plant_codes,
+        read_complexo_components(case.dadger),
+    )
+    if auxiliaries:
+        dx.emit(
+            auxiliary_conv.coupling_auxiliary_diagnostic(
+                auxiliaries, effective.plant_names()
+            ),
+            logger=_LOG,
+        )
+    return auxiliaries
 
 
 #: ``AC`` registers whose override count is per unit set, not per plant.
@@ -1250,12 +1295,15 @@ def _write_hydro_production_files(
     and the geometry and tailrace inputs of the FPHA fit."""
     case = artifacts.case
     id_map = artifacts.id_map
-    writer.write_json(
-        "system/hydro_production_models.json",
-        hydro_conv.convert_production_models(id_map, stage_models),
+    auxiliaries = artifacts.coupling_auxiliaries
+    production_models = hydro_conv.convert_production_models(id_map, stage_models)
+    production_models["production_models"].extend(
+        auxiliary_conv.auxiliary_production_models(auxiliaries)
     )
+    writer.write_json("system/hydro_production_models.json", production_models)
     writer.write_parquet(
-        "system/hydro_energy_productivity.parquet", productivity_parquet
+        "system/hydro_energy_productivity.parquet",
+        auxiliary_conv.with_auxiliary_productivity(productivity_parquet, auxiliaries),
     )
     # FPHA geometry + tailrace inputs novomodelo fits the production function from.
     writer.write_parquet(
@@ -1318,7 +1366,7 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     resolution = tailrace_flow_conv.resolve_tailrace_flow(
         dadger,
         effective,
-        id_map.hydro_codes,
+        id_map.operated_hydro_codes,
         tailrace_flow_conv.piecewise_tailrace_codes(case, id_map),
     )
 
@@ -1349,9 +1397,10 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     # ids assigned when thermals.json is built.
     initial_conditions_doc: dict = {
         "$schema": novomodelo_schemas.schema_url_for("initial_conditions.json"),
-        "storage": hydro_conv.convert_initial_storage(
-            case, id_map, effective=effective
-        ),
+        "storage": [
+            *hydro_conv.convert_initial_storage(case, id_map, effective=effective),
+            *auxiliary_conv.auxiliary_initial_storage(artifacts.coupling_auxiliaries),
+        ],
         "filling_storage": [],
     }
     if past_defluences:
@@ -1422,14 +1471,21 @@ def _convert_scenarios(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> No
     effective = artifacts.effective
     fan_probabilities = artifacts.fan_probabilities
 
+    auxiliaries = artifacts.coupling_auxiliaries
     writer.write_parquet(
         "scenarios/inflow_seasonal_stats.parquet",
-        scenarios_conv.convert_inflow_stats_identity(case, id_map),
+        auxiliary_conv.with_auxiliary_inflow_stats(
+            scenarios_conv.convert_inflow_stats_identity(case, id_map), auxiliaries
+        ),
     )
     writer.write_parquet(
         "scenarios/external_inflow_scenarios.parquet",
-        scenarios_conv.convert_external_inflows(
-            case, id_map, vazoes=vazoes, effective=effective
+        auxiliary_conv.with_auxiliary_external_inflows(
+            scenarios_conv.convert_external_inflows(
+                case, id_map, vazoes=vazoes, effective=effective
+            ),
+            auxiliaries,
+            len(calendar),
         ),
     )
     # Itaipu's carga_ande load nets into its own SE bus (the HVDC Elo
@@ -1528,10 +1584,7 @@ def _read_constraint_census(
         thermal_codes=id_map.thermal_codes,
         pumping_codes=pumping_ids.keys(),
         diversion_codes=effective.diversions.keys(),
-        plant_names={
-            int(code): str(name).strip()
-            for code, name in effective.base["nome_usina"].items()
-        },
+        plant_names=effective.plant_names(),
         dadger_path=dadger_path,
     )
     patamar_values = constraints_conv.re_gnl_patamar_diagnostic(census, gnl_generation)
@@ -2104,7 +2157,21 @@ def _resolve_bounds(artifacts: DecompCaseArtifacts, writer: CaseWriter) -> None:
     hydro_bounds = _couple_diversion_channels(
         hydro_bounds, hydros_dict, base_diversion_channels, id_map, effective
     )
-    writer.write_json("system/hydros.json", hydros_dict)
+    writer.write_json(
+        "system/hydros.json",
+        auxiliary_conv.with_auxiliary_hydros(
+            hydros_dict,
+            artifacts.coupling_auxiliaries,
+            id_map=id_map,
+            submercados={
+                auxiliary.plant_code: as_int(
+                    effective.base.at[auxiliary.plant_code, "submercado"]
+                )
+                for auxiliary in artifacts.coupling_auxiliaries
+            },
+            operational_start_date=case.start_date.isoformat(),
+        ),
+    )
     thermal_bounds_table = _rejoin_thermal_cost(
         bound_tables.thermal, thermal_cost_table
     ).sort_by([("thermal_id", "ascending"), *_BOUND_SORT_KEYS])
@@ -2726,6 +2793,7 @@ def convert_decomp_case(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
+    boundary_fcf: bool = False,
     float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Convert one deck revision into a Novomodelo case directory.
@@ -2747,6 +2815,11 @@ def convert_decomp_case(
         ``initial_conditions.json``, so a caller (the CLI's boundary-FCF
         step) can thread them into ``import_boundary_fcf`` without
         re-reading either file. ``None`` (the default) leaves it unused.
+        Its ``coupling_auxiliaries`` field receives the auxiliary coupling
+        plants the run added.
+    boundary_fcf:
+        When ``True`` and the deck has cut files, add the auxiliary coupling
+        plants the boundary cuts need, for ``import_boundary_fcf`` to price.
     float_digits:
         Significant digits of the floats in the case's JSON files; ``None``
         keeps full precision.
@@ -2775,6 +2848,7 @@ def convert_decomp_case(
             on_phase=on_phase,
             dry_run=dry_run,
             fcf_inputs_out=fcf_inputs_out,
+            boundary_fcf=boundary_fcf,
             float_digits=float_digits,
         ),
         dst,
@@ -2791,6 +2865,7 @@ def _convert_decomp_case_impl(
     on_phase: Callable[[str], None] | None = None,
     dry_run: bool = False,
     fcf_inputs_out: FcfInputs | None = None,
+    boundary_fcf: bool = False,
     float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> ConversionReport:
     """Run the DECOMP conversion pipeline (warning capture handled by the wrapper).
@@ -2808,7 +2883,7 @@ def _convert_decomp_case_impl(
     """
     step = on_phase if on_phase is not None else (lambda _label: None)
     step("Discovering deck")
-    artifacts = _discover(src)
+    artifacts = _discover(src, boundary_fcf=boundary_fcf)
 
     # Every output path is routed through one ``CaseWriter`` so the
     # would-write listing, the byte format, and the dry-run gate live in
@@ -2832,4 +2907,5 @@ def _convert_decomp_case_impl(
     if fcf_inputs_out is not None:
         fcf_inputs_out.config = artifacts.config
         fcf_inputs_out.initial_conditions = artifacts.initial_conditions
+        fcf_inputs_out.coupling_auxiliaries = artifacts.coupling_auxiliaries
     return report

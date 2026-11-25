@@ -41,6 +41,7 @@ from novomodelo_bridge.dashboard.tabs import (
 )
 from novomodelo_bridge.ui.html.document import build_html
 from tests.conftest import hydro_with_group
+from tests.dashboard.conftest import write_hydro_productivity
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -406,9 +407,6 @@ def test_load_ncs_bus_map_missing_file_returns_empty(tmp_path: Path) -> None:
 def test_load_hydro_metadata_extracts_fields(tmp_path: Path) -> None:
     """The plant's bus resolves from ``unit_groups[0].bus_id`` (1) and its
     productivity from ``hydro_energy_productivity.parquet``."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
     hydros_json = {
         "hydros": [
             hydro_with_group(
@@ -422,16 +420,7 @@ def test_load_hydro_metadata_extracts_fields(tmp_path: Path) -> None:
         ]
     }
     _write_json(tmp_path / "system" / "hydros.json", hydros_json)
-    pq.write_table(
-        pa.table(
-            {
-                "hydro_id": pa.array([0], pa.int32()),
-                "stage_id": pa.array([None], pa.int32()),
-                "equivalent_productivity_mw_per_m3s": pa.array([0.08], pa.float64()),
-            }
-        ),
-        tmp_path / "system" / "hydro_energy_productivity.parquet",
-    )
+    write_hydro_productivity(tmp_path, {0: 0.08})
 
     result = load_hydro_metadata(tmp_path)
 
@@ -601,6 +590,16 @@ def test_scan_entity_calls_scan_parquet_with_correct_path(tmp_path: Path) -> Non
 
     mock_scan.assert_called_once_with(expected_path, hive_partitioning=True)
     assert result is mock_lf
+
+
+def test_scan_entity_leaves_out_coupling_auxiliary_rows(tmp_path: Path) -> None:
+    part = tmp_path / "output" / "simulation" / "hydros" / "scenario_id=0000"
+    part.mkdir(parents=True)
+    pl.DataFrame({"stage_id": [0, 0], "hydro_id": [0, 1288]}).write_parquet(
+        part / "data.parquet"
+    )
+
+    assert scan_entity(tmp_path, "hydros").collect()["hydro_id"].to_list() == [0]
 
 
 def test_scan_entity_returns_empty_lazyframe_when_dir_missing(tmp_path: Path) -> None:
@@ -968,18 +967,7 @@ class TestDashboardIntegration:
                 ]
             },
         )
-        pq.write_table(
-            pa.table(
-                {
-                    "hydro_id": pa.array([0], pa.int32()),
-                    "stage_id": pa.array([None], pa.int32()),
-                    "equivalent_productivity_mw_per_m3s": pa.array(
-                        [0.08], pa.float64()
-                    ),
-                }
-            ),
-            case / "system" / "hydro_energy_productivity.parquet",
-        )
+        write_hydro_productivity(case, {0: 0.08})
         _write_json(
             case / "system" / "buses.json",
             {"buses": [{"id": 0, "name": "SE"}]},

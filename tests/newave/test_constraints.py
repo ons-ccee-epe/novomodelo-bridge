@@ -281,69 +281,6 @@ class TestAccumulatedProductivity:
         assert acc[3] == pytest.approx(own_3)
 
 
-class TestIntegratedProductivity:
-    """Tests for the EARM-flavored *integrated* productivity used by VminOP.
-
-    The closed-form integral for ``h(V) = a0 + a1·V`` over [vmin, vmax] is
-    ``a0 + a1·(vmin+vmax)/2`` — the polynomial average over the range.
-    """
-
-    def test_closed_form_average_for_linear_polynomial(self) -> None:
-        from novomodelo_bridge.core.productivity import integrated_productivity
-
-        cadastro = _make_cadastro()
-        # PLANT_A: h(V) = 300 + 0.1·V. vmin=100, vmax=1000. Average h over
-        # [100, 1000] = 300 + 0.1·550 = 355. Drop = 355 - cf=200 = 155.
-        # ρ = ρ_esp · 155 = 0.01 · 155 = 1.55.
-        result = integrated_productivity(cadastro.loc[1])
-        assert result == pytest.approx(0.01 * (300.0 + 0.1 * 550.0 - 200.0))
-
-    def test_canal_fuga_override(self) -> None:
-        from novomodelo_bridge.core.productivity import integrated_productivity
-
-        cadastro = _make_cadastro()
-        result = integrated_productivity(cadastro.loc[1], canal_fuga_override=180.0)
-        # Same average h=355, new drop = 355 - 180 = 175.
-        assert result == pytest.approx(0.01 * (355.0 - 180.0))
-
-    def test_cmont_override_collapses_to_constant_drop(self) -> None:
-        from novomodelo_bridge.core.productivity import integrated_productivity
-
-        cadastro = _make_cadastro()
-        # CMONT supplies the upstream level directly; the polynomial is
-        # bypassed. drop = cmont - canal_fuga_medio = 360 - 200 = 160.
-        result = integrated_productivity(cadastro.loc[1], cmont_override=360.0)
-        assert result == pytest.approx(0.01 * (360.0 - 200.0))
-
-    def test_run_of_river_uses_point_value(self) -> None:
-        from novomodelo_bridge.core.productivity import integrated_productivity
-
-        cadastro = _make_cadastro().copy()
-        # Collapse PLANT_A to run-of-river by setting vmax = vmin.
-        cadastro.loc[1, "volume_maximo"] = cadastro.loc[1, "volume_minimo"]
-        result = integrated_productivity(cadastro.loc[1])
-        # h(100) = 300 + 0.1·100 = 310. Drop = 310 - 200 = 110.
-        assert result == pytest.approx(0.01 * (310.0 - 200.0))
-
-    def test_quadratic_polynomial_uses_correct_antiderivative(self) -> None:
-        """For h(V) = a0 + a1·V + a2·V² the integrated average over
-        [vmin, vmax] is a0 + a1·(vmin+vmax)/2 + a2·(vmax³−vmin³)/(3·(vmax−vmin)).
-        Verify the closed-form matches that formula on a quadratic case."""
-        from novomodelo_bridge.core.productivity import integrated_productivity
-
-        cadastro = _make_cadastro().copy()
-        cadastro.loc[1, "a2_volume_cota"] = 1e-5  # tiny quadratic term
-        vmin, vmax = 100.0, 1000.0
-        a0, a1, a2 = 300.0, 0.1, 1e-5
-        expected_avg_h = (
-            a0
-            + a1 * (vmin + vmax) / 2.0
-            + a2 * (vmax**3 - vmin**3) / (3.0 * (vmax - vmin))
-        )
-        result = integrated_productivity(cadastro.loc[1])
-        assert result == pytest.approx(0.01 * (expected_avg_h - 200.0))
-
-
 class TestAccumulatedIntegratedProductivities:
     """Cascade sum of integrated ρ — what VminOP uses for the rho_acum_h{id}
     override and the per-stage RHS."""

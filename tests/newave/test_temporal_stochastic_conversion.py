@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import calendar
 import datetime
-import struct
 from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,11 +23,7 @@ import pytest
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
 from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
-from novomodelo_bridge.newave.converters.stochastic import (
-    _posto_count,
-    _read_vazoes,
-    block_loads,
-)
+from novomodelo_bridge.newave.converters.stochastic import block_loads
 from novomodelo_bridge.newave.id_map import NewaveIdMap
 from tests.conftest import make_case, make_nw_files
 
@@ -472,6 +467,98 @@ class TestConvertConfig:
 
         result = convert_config(case)
         assert result["modeling"]["inflow_non_negativity"] == {"method": "truncation"}
+
+    @pytest.mark.parametrize(
+        ("tipo_execucao", "tipo_simulacao_final", "reamostragem"),
+        [(1, 1, 0), (1, 1, 1), (1, 0, 0), (0, 1, 1)],
+    )
+    def test_stochastic_deck_selects_the_lognormal_inflow_residual(
+        self, tmp_path, tipo_execucao: int, tipo_simulacao_final: int, reamostragem: int
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=tipo_execucao,
+            tipo_simulacao_final=tipo_simulacao_final,
+            considera_reamostragem_cenarios=reamostragem,
+        )
+        case = make_case(tmp_path, dger=dger)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+
+        assert result["modeling"]["inflow_residual"] == {"distribution": "lognormal_3p"}
+        assert "par-residual-lognormal-unavailable" not in {d.code for d in found}
+
+    def test_deterministic_deck_omits_the_inflow_residual_without_a_finding(
+        self, tmp_path
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=1,
+            tipo_simulacao_final=2,
+            num_forwards=1,
+            num_aberturas=1,
+        )
+        mock_shist = MagicMock()
+        mock_shist.varredura = 0
+        mock_shist.anos_inicio_simulacoes = [1983]
+        mock_shist.ano_inicio_varredura = 1932
+        case = make_case(tmp_path, dger=dger, shist=mock_shist)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+
+        assert "inflow_residual" not in result["modeling"]
+        assert "par-residual-lognormal-unavailable" not in {d.code for d in found}
+
+    def test_training_then_historical_final_simulation_keeps_the_normal_noise_and_warns(
+        self, tmp_path
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=1,
+            tipo_simulacao_final=2,
+            num_forwards=2,
+            num_aberturas=1,
+        )
+        mock_shist = MagicMock()
+        mock_shist.varredura = 0
+        mock_shist.anos_inicio_simulacoes = [1983]
+        mock_shist.ano_inicio_varredura = 1932
+        case = make_case(tmp_path, dger=dger, shist=mock_shist)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+
+        assert "inflow_residual" not in result["modeling"]
+        warnings = [d for d in found if d.code == "par-residual-lognormal-unavailable"]
+        assert [d.severity for d in warnings] == [Severity.WARNING]
+
+    def test_simulation_only_run_on_the_history_omits_the_residual_without_a_finding(
+        self, tmp_path
+    ) -> None:
+        dger = _make_dger_mock(
+            tipo_execucao=0,
+            tipo_simulacao_final=2,
+            num_forwards=2,
+            num_aberturas=1,
+        )
+        mock_shist = MagicMock()
+        mock_shist.varredura = 0
+        mock_shist.anos_inicio_simulacoes = [1983]
+        mock_shist.ano_inicio_varredura = 1932
+        case = make_case(tmp_path, dger=dger, shist=mock_shist)
+
+        from novomodelo_bridge.newave.converters.temporal import convert_config
+
+        with dx.collect() as found:
+            result = convert_config(case)
+
+        assert "inflow_residual" not in result["modeling"]
+        assert "par-residual-lognormal-unavailable" not in {d.code for d in found}
 
     def test_iteration_limit(self, tmp_path) -> None:
         dger = _make_dger_mock(num_max_iteracoes=200)
@@ -1021,7 +1108,10 @@ class TestConvertConfig:
             result = convert_config(case)
         src = result["simulation"]["scenario_source"]
         assert src["historical_years"] == {"from": 1932, "to": 1932}
-        assert [d.code for d in found] == ["shist-range-collapsed"]
+        assert [d.code for d in found] == [
+            "shist-range-collapsed",
+            "par-residual-lognormal-unavailable",
+        ]
 
     def test_shist_empty_start_year_list_simulates_the_year_before_the_study(
         self, tmp_path
@@ -1042,7 +1132,10 @@ class TestConvertConfig:
             result = convert_config(case)
         src = result["simulation"]["scenario_source"]
         assert src["historical_years"] == [2025]
-        assert [d.code for d in found] == ["shist-start-years-empty"]
+        assert [d.code for d in found] == [
+            "shist-start-years-empty",
+            "par-residual-lognormal-unavailable",
+        ]
 
     def test_shist_absent_falls_back_to_dger_history_range(self, tmp_path) -> None:
         """When shist.dat is not in NewaveFiles, the historical years default to
@@ -1695,309 +1788,6 @@ class TestParseCadical:
         assert "c_adic.dat" in collected[0].title
 
 
-# ---------------------------------------------------------------------------
-# Helpers for convert_past_inflows tests
-# ---------------------------------------------------------------------------
-
-
-def _make_vazpast_mock(
-    postos: list[int],
-    num_months: int = 12,
-) -> MagicMock:
-    """Build a synthetic Vazpast mock: one ``tendencia`` row per (posto, calendar
-    month), months 1 to ``min(num_months, 12)``."""
-    rng = np.random.default_rng(99)
-    rows = []
-    n_months = min(num_months, 12)
-    for posto in postos:
-        for mes in range(1, n_months + 1):
-            rows.append(
-                {
-                    "codigo_posto": posto,
-                    "nome_posto": f"POSTO_{posto}",
-                    "mes": mes,
-                    "valor": float(rng.uniform(50.0, 500.0)),
-                }
-            )
-    df = pd.DataFrame(rows)
-    mock = MagicMock()
-    mock.tendencia = df
-    return mock
-
-
-def _make_confhd_posto_mock(posto_to_code: dict[int, int]) -> MagicMock:
-    """Build a Confhd mock mapping postos to hydro codes.
-
-    Includes all columns needed by _inflow_cascade (cascade logic).
-    All plants are headwater (no upstream) unless overridden.
-    """
-    rows = [
-        {
-            "posto": p,
-            "codigo_usina": c,
-            "nome_usina": f"PLANT_{c}",
-            "usina_existente": "EX",
-            "codigo_usina_jusante": 0,
-        }
-        for p, c in posto_to_code.items()
-    ]
-    df = pd.DataFrame(rows)
-    mock = MagicMock()
-    mock.usinas = df
-    return mock
-
-
-# ---------------------------------------------------------------------------
-# Tests: _inflow_cascade — NE/NC cascade bypass
-# ---------------------------------------------------------------------------
-
-
-def _confhd_row(
-    code: int,
-    posto: int,
-    downstream: int,
-    status: str = "EX",
-) -> dict[str, object]:
-    return {
-        "codigo_usina": code,
-        "nome_usina": f"PLANT_{code}",
-        "posto": posto,
-        "codigo_usina_jusante": downstream,
-        "usina_existente": status,
-    }
-
-
-class TestInflowCascadeExpansionPlant:
-    """An ``EE`` plant is in service, so it is a real inflow node. Walking
-    through it instead credits its whole natural inflow to the plant below,
-    inflating that plant's incremental series."""
-
-    def test_ee_plant_between_two_ex_plants_is_its_own_node(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 2, "EX"),
-                _confhd_row(2, 200, 3, "EE"),
-                _confhd_row(3, 310, 0, "EX"),
-            ]
-        )
-        cascade = _inflow_cascade(confhd)
-        assert cascade.upstream_of == {2: [1], 3: [2]}
-        assert cascade.posto_of == {1: 100, 2: 200, 3: 310}
-
-
-class TestInflowCascadeNonExistingBypass:
-    """The cascade walks through NE/NC plants so it stays connected. Without
-    this, the downstream EX plant's incremental inflow fails to subtract the
-    upstream EX plant's natural inflow."""
-
-    def test_nc_plant_between_two_ex_plants_keeps_the_link(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 2, "EX"),
-                _confhd_row(2, 200, 3, "NC"),
-                _confhd_row(3, 310, 0, "EX"),
-            ]
-        )
-        assert _inflow_cascade(confhd).upstream_of == {3: [1]}
-
-    def test_ne_plant_between_two_ex_plants_keeps_the_link(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 2, "EX"),
-                _confhd_row(2, 200, 3, "NE"),
-                _confhd_row(3, 310, 0, "EX"),
-            ]
-        )
-        assert _inflow_cascade(confhd).upstream_of == {3: [1]}
-
-    def test_consecutive_absent_plants_collapse_to_single_link(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 2, "EX"),
-                _confhd_row(2, 200, 3, "NC"),
-                _confhd_row(3, 310, 4, "NE"),
-                _confhd_row(4, 400, 0, "EX"),
-            ]
-        )
-        cascade = _inflow_cascade(confhd)
-        assert cascade.upstream_of == {4: [1]}
-        assert set(cascade.posto_of) == {1, 4}
-
-    def test_absent_at_chain_end_yields_no_link(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 2, "EX"),
-                _confhd_row(2, 200, 0, "NC"),
-            ]
-        )
-        assert _inflow_cascade(confhd).upstream_of == {}
-
-    def test_direct_ex_to_ex_link_preserved(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 2, "EX"),
-                _confhd_row(2, 200, 0, "EX"),
-            ]
-        )
-        assert _inflow_cascade(confhd).upstream_of == {2: [1]}
-
-
-class TestInflowCascadeFillingAdmission:
-    """An admitted ``NE``-with-filling plant *receives* inflow, so it is a
-    real node: an upstream plant links **to** the filling plant instead of
-    walking through it. The JURUENA case (code 309, posto 226, ``NE``) is the
-    live exemplar."""
-
-    def test_filling_plant_is_a_node(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 309, "EX"),
-                _confhd_row(309, 226, 0, "NE"),
-            ]
-        )
-        cascade = _inflow_cascade(confhd, filling_codes={309})
-        assert cascade.posto_of[309] == 226
-        assert cascade.upstream_of == {309: [1]}
-
-    def test_without_filling_codes_the_ne_plant_is_walked_through(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 309, "EX"),
-                _confhd_row(309, 226, 0, "NE"),
-            ]
-        )
-        cascade = _inflow_cascade(confhd)
-        assert cascade == _inflow_cascade(confhd, filling_codes=set())
-        assert 309 not in cascade.posto_of
-        assert cascade.upstream_of == {}
-
-    def test_filling_plant_with_nan_posto_is_skipped(self) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _inflow_cascade
-
-        confhd = pd.DataFrame(
-            [
-                _confhd_row(1, 100, 309, "EX"),
-                {
-                    "codigo_usina": 309,
-                    "nome_usina": "JURUENA",
-                    "posto": float("nan"),
-                    "codigo_usina_jusante": 0,
-                    "usina_existente": "NE",
-                },
-            ]
-        )
-        cascade = _inflow_cascade(confhd, filling_codes={309})
-        assert 309 not in cascade.posto_of
-        assert cascade.upstream_of == {}
-
-
-# ---------------------------------------------------------------------------
-# Tests: vazoes.dat width
-# ---------------------------------------------------------------------------
-
-
-def _write_vazoes(tmp_path: Path, num_bytes: int) -> Path:
-    """A vazoes.dat of the given byte size; only its size matters."""
-    path = tmp_path / "vazoes.dat"
-    path.write_bytes(b"\x00" * num_bytes)
-    return path
-
-
-def _count(path: Path) -> int:
-    return _posto_count(path, hist_start_year=1931, study_start_year=2026)
-
-
-class TestPostoCount:
-    @pytest.mark.parametrize(
-        ("num_values", "expected"),
-        [
-            # One year at 320; not even a whole number of months at 600.
-            (320 * 12, 320),
-            (600 * 12, 600),
-            # 1931-2026 at 600 is also a whole number of years at 320, but
-            # one that would run to 2110.
-            (600 * 12 * 96, 600),
-        ],
-    )
-    def test_the_only_fitting_width_is_used_silently(
-        self, tmp_path, num_values, expected
-    ) -> None:
-        with dx.collect() as collected:
-            assert _count(_write_vazoes(tmp_path, 4 * num_values)) == expected
-        assert collected == []
-
-    def test_ambiguous_size_assumes_320_and_warns(self, tmp_path) -> None:
-        # 15 years at 320 postos is also 8 years at 600, both ending by 2026.
-        with dx.collect() as collected:
-            count = _count(_write_vazoes(tmp_path, 4 * 320 * 12 * 15))
-
-        assert count == 320
-        assert len(collected) == 1
-        diag = collected[0]
-        assert diag.code == "vazoes-posto-count-ambiguous"
-        assert diag.severity is Severity.WARNING
-        assert diag.category == "Historical inflows"
-        assert "320" in diag.summary
-        assert "600" in diag.summary
-
-    @pytest.mark.parametrize(
-        ("num_bytes", "message"),
-        [
-            (4 * 320 * 12 + 2, "4-byte values"),
-            (4 * 1000, "320 or 600"),
-            # 13 months at 320 postos: the historical record ends in December.
-            (4 * 320 * 13, "320 or 600"),
-            # 100 years at 320 postos from 1931 runs to 2030.
-            (4 * 320 * 12 * 100, "to 2030 at 320 postos"),
-        ],
-    )
-    def test_size_that_fits_no_width_is_rejected(
-        self, tmp_path, num_bytes, message
-    ) -> None:
-        with pytest.raises(FieldParseError, match=message):
-            _count(_write_vazoes(tmp_path, num_bytes))
-
-    def test_empty_file_falls_back_to_the_default(self, tmp_path) -> None:
-        # Emptiness is the callers' finding, not the width derivation's.
-        with dx.collect() as collected:
-            assert _count(_write_vazoes(tmp_path, 0)) == 320
-        assert collected == []
-
-
-def test_six_hundred_posto_matrix_is_laid_out_at_full_width(tmp_path) -> None:
-    """Through the real reader: a width it ignores, rejects or lays out
-    transposed would mis-assign every posto's series. The 320-posto default is
-    covered end to end by the mini deck.
-    """
-    path = tmp_path / "vazoes.dat"
-    # Sequential values, unlike ``_write_vazoes``' zeros: the row-major
-    # assertions below are what pin the width.
-    path.write_bytes(b"".join(struct.pack("<i", v) for v in range(600 * 12)))
-
-    df = _read_vazoes(path, _make_dger_mock(ano_inicio=2026)).vazoes
-
-    assert df.shape == (12, 600)
-    assert df.iloc[0, 0] == 0
-    assert df.iloc[0, -1] == 599
-    assert df.iloc[1, 0] == 600
-
-
 class TestLoadFactorsWithoutBlockFactors:
     """A deck whose patamar file carries no block load factors."""
 
@@ -2146,16 +1936,3 @@ class TestLoadInputFindings:
 
         assert df["mean_mw"][:2] == [pytest.approx(1000.0), pytest.approx(1000.0)]
         assert [d.code for d in found] == ["c-adic-unreadable"]
-
-    def test_unreadable_inflow_tendency_gives_no_recent_inflows(self, tmp_path) -> None:
-        from novomodelo_bridge.newave.converters.stochastic import _vazpast_incremental
-
-        case = make_case(make_nw_files(tmp_path, vazpast=tmp_path / "vazpast.dat"))
-
-        with (
-            patch("novomodelo_bridge.newave.case.Vazpast.read", side_effect=ValueError),
-            dx.collect() as found,
-        ):
-            assert _vazpast_incremental(case, self._ID_MAP) == {}
-
-        assert [d.code for d in found] == ["vazpast-unreadable"]

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from novomodelo_bridge.core.coupling_auxiliary import is_coupling_auxiliary
 from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     DiagnosticTable,
@@ -764,7 +765,7 @@ def _assemble_cuts(
     pools: dict,
     trunk_pool_ids: tuple[int, ...],
     plant_ids: tuple[int, ...],
-    dropped: frozenset[int],
+    omitted_storage: frozenset[int],
     frozen_storage_hm3: Mapping[int, float],
     offsets: Any,
     travel_time: tuple[TravelTimePlant, ...],
@@ -796,7 +797,9 @@ def _assemble_cuts(
                 CutInput(
                     intercept=piece.intercept
                     + frozen_storage_offset(piece, pool.slots, frozen_storage_hm3),
-                    pi_varm=storage_coefficients(piece, pool.slots, plant_ids, dropped),
+                    pi_varm=storage_coefficients(
+                        piece, pool.slots, plant_ids, omitted_storage
+                    ),
                     pi_qdefp=release_weights @ piece.coefficients,
                     pi_gnl=pi_gnl,
                 )
@@ -834,7 +837,7 @@ class _ExportPlan:
     pools: dict[int, StageCutPool]
     trunk_pool_ids: tuple[int, ...]
     plant_ids: tuple[int, ...]
-    dropped: frozenset[int]
+    omitted_storage: frozenset[int]
     frozen_storage_hm3: Mapping[int, float]
     travel_time: tuple[TravelTimePlant, ...]
     stages: tuple[StageInfo, ...]
@@ -938,11 +941,13 @@ def _plan_export(
             )
 
     with progress.step("build mapping quantities", 5):
-        plant_ids = tuple(
-            hydro_id
-            for hydro_id in storage_plant_ids(pools[trunk_pool_ids[0]].slots)
-            if hydro_id not in dropped
+        storage_ids = storage_plant_ids(pools[trunk_pool_ids[0]].slots)
+        # A coupling auxiliary plant's storage is held at zero, so leaving its
+        # axis out changes no cut's value.
+        omitted_storage = dropped | frozenset(
+            filter(is_coupling_auxiliary, storage_ids)
         )
+        plant_ids = tuple(h for h in storage_ids if h not in omitted_storage)
         hydro_codes = plant_codes(plant_ids, source.hydros)
 
         # P6: GNL submarket codes
@@ -982,7 +987,7 @@ def _plan_export(
         pools=pools,
         trunk_pool_ids=trunk_pool_ids,
         plant_ids=plant_ids,
-        dropped=dropped,
+        omitted_storage=omitted_storage,
         frozen_storage_hm3=frozen_storage_hm3,
         travel_time=travel_time,
         stages=inputs.stages,
@@ -1008,7 +1013,7 @@ def _write_validated_pair(
             plan.pools,
             plan.trunk_pool_ids,
             plan.plant_ids,
-            plan.dropped,
+            plan.omitted_storage,
             plan.frozen_storage_hm3,
             plan.offsets,
             plan.travel_time,

@@ -300,7 +300,7 @@ requires-dist = [
     { name = "polars", specifier = ">=2.1.0" },
     { name = "pyarrow", specifier = ">=26.0.0" },
     { name = "rich", specifier = ">=15.0.0" },
-    { name = "typer", specifier = ">=0.27.3" },
+    { name = "typer", specifier = ">=0.29.1" },
 ]
 
 [package.metadata.requires-dev]

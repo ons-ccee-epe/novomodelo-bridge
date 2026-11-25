@@ -83,7 +83,7 @@ def _mock_deck_and_cut_seams(
             resolution=CouplingResolution((), (), ()),
             inflow_lag_offsets={},
             source_only_inflows={},
-            terminal_shares=(),
+            couplings=(),
             gnl_plan=None,
             recent_observations=[],
             names={},
