@@ -251,18 +251,23 @@ class TestTreeShapeCheck:
 
 
 _TAILRACE_LABEL = "VL/VU/VA tailrace lateral-flow records"
-_VA_BELO_MONTE = b"VA   288   288             0.07\n"
+_VA_BELO_MONTE = b"VA   288   288             0.07"
 
 
-def _deck_with_dadger_lines(
-    deck: Path, tmp_path: Path, anchor: bytes, *lines: bytes
+def _deck_with_dadger_record(
+    deck: Path, tmp_path: Path, record: bytes, *lines: bytes
 ) -> Path:
+    """A copy of *deck* whose dadger line *record* becomes *lines*, written with
+    the deck's own line ending (CRLF in a Windows checkout)."""
     copy = tmp_path / "deck"
     shutil.copytree(deck, copy)
     dadger = copy / "dadger.rv2"
     text = dadger.read_bytes()
-    assert text.count(anchor) == 1
-    dadger.write_bytes(text.replace(anchor, anchor + b"".join(lines)))
+    eol = b"\r\n" if b"\r\n" in text else b"\n"
+    assert text.count(record + eol) == 1
+    dadger.write_bytes(
+        text.replace(record + eol, b"".join(line + eol for line in lines))
+    )
     return copy
 
 
@@ -284,12 +289,13 @@ class TestTailraceRecords:
     def test_findings_match_what_convert_decomp_reports(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
-        deck = _deck_with_dadger_lines(
+        deck = _deck_with_dadger_record(
             decomp_mini_deck,
             tmp_path,
             _VA_BELO_MONTE,
-            b"VA   288   288             0.10\n",
-            b"VU   288   288             0.50\n",
+            _VA_BELO_MONTE,
+            b"VA   288   288             0.10",
+            b"VU   288   288             0.50",
         )
 
         report = convert_decomp_case(deck, tmp_path / "out")
@@ -308,12 +314,13 @@ class TestTailraceRecords:
     def test_a_dormant_plant_has_no_gauge_and_influences_no_outflow(
         self, decomp_mini_deck: Path, decomp_mini_case: DecompCase, tmp_path: Path
     ) -> None:
-        deck = _deck_with_dadger_lines(
+        deck = _deck_with_dadger_record(
             decomp_mini_deck,
             tmp_path,
             _VA_BELO_MONTE,
-            b"VA   288   260             0.20\n",
-            b"VU   288   260             0.50\n",
+            _VA_BELO_MONTE,
+            b"VA   288   260             0.20",
+            b"VU   288   260             0.50",
         )
 
         report = convert_decomp_case(deck, tmp_path / "out")
@@ -340,13 +347,11 @@ class TestTailraceRecords:
     def test_a_negative_factor_fails_the_check_as_convert_decomp_refuses_it(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
-        deck = tmp_path / "deck"
-        shutil.copytree(decomp_mini_deck, deck)
-        dadger = deck / "dadger.rv2"
-        dadger.write_bytes(
-            dadger.read_bytes().replace(
-                _VA_BELO_MONTE, b"VA   288   288            -0.07\n"
-            )
+        deck = _deck_with_dadger_record(
+            decomp_mini_deck,
+            tmp_path,
+            _VA_BELO_MONTE,
+            b"VA   288   288            -0.07",
         )
 
         with pytest.raises(FieldParseError) as raised:
