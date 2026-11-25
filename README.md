@@ -35,9 +35,11 @@ compare. You need it to solve the converted case between those two steps.
 
 ### Versions
 
-A novomodelo-bridge release `X.Y.Z` targets novomodelo `X.Y.Z`: the converted case
-follows that novomodelo release's input contract, and the bridge depends on
-exactly that `novomodelo-python` release. The pin is exact because novomodelo loads a
+A novomodelo-bridge release targets one novomodelo release of the same minor
+version, which its CHANGELOG section names: the converted case follows that
+novomodelo release's input contract, and the bridge depends on exactly that
+`novomodelo-python` release. A fix to the bridge alone raises only the bridge's
+patch number, so the two patch numbers can differ. The pin is exact because novomodelo loads a
 DECOMP boundary imported by `convert decomp` only in the version of the
 `novomodelo-python` that wrote it (see the
 [DECOMP track page](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/decomp.md#running-a-case-with-an-imported-boundary)).
