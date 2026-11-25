@@ -185,7 +185,7 @@ def with_auxiliary_external_inflows(
 def auxiliary_initial_storage(
     auxiliaries: Sequence[CouplingAuxiliary],
 ) -> list[dict]:
-    """``initial_conditions.json`` storage entries: every auxiliary starts empty."""
+    """Initial storage entries: every auxiliary starts empty."""
     return [
         {"hydro_id": auxiliary.hydro_id, "value_hm3": 0.0} for auxiliary in auxiliaries
     ]
@@ -194,8 +194,8 @@ def auxiliary_initial_storage(
 def auxiliary_observation_windows(
     windows: Sequence[dict], auxiliaries: Sequence[CouplingAuxiliary]
 ) -> list[dict]:
-    """Zero ``recent_observations`` for each auxiliary, on the windows the
-    converted hydros' observations use."""
+    """Zero pre-study inflow windows for each auxiliary, on the windows the
+    converted hydros' windows use."""
     spans = sorted({(window["start_date"], window["end_date"]) for window in windows})
     return [
         {

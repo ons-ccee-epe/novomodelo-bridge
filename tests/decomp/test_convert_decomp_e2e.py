@@ -715,7 +715,7 @@ _AUXILIARY_FILES = (
     "system/hydros.json",
     "system/hydro_production_models.json",
     "system/hydro_energy_productivity.parquet",
-    "initial_conditions.json",
+    "boundary_conditions.json",
     "scenarios/inflow_seasonal_stats.parquet",
     "scenarios/external_inflow_scenarios.parquet",
 )
@@ -755,8 +755,8 @@ def _auxiliary_ids(case_dir: Path) -> dict[str, set[int]]:
         "system/hydro_production_models.json": document(
             "system/hydro_production_models.json", "production_models", "hydro_id"
         ),
-        "initial_conditions.json": document(
-            "initial_conditions.json", "storage", "hydro_id"
+        "boundary_conditions.json": document(
+            "boundary_conditions.json", "hydros", "hydro_id"
         ),
         **{
             name: column(name) for name in _AUXILIARY_FILES if name.endswith(".parquet")

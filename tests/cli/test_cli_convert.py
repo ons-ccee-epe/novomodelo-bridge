@@ -2224,7 +2224,7 @@ class TestCliInProcess:
 
         def convert(*_args: object, fcf_inputs_out: Any, **_kwargs: object) -> object:
             fcf_inputs_out.config = {"config": True}
-            fcf_inputs_out.initial_conditions = {"initial_conditions": True}
+            fcf_inputs_out.boundary_conditions = {"boundary_conditions": True}
             fcf_inputs_out.coupling_auxiliaries = (sentinel.auxiliary,)
             return fake_report
 
@@ -2245,7 +2245,7 @@ class TestCliInProcess:
         assert code == 0
         kwargs = mock_import.call_args.kwargs
         assert kwargs["config"] == {"config": True}
-        assert kwargs["initial_conditions"] == {"initial_conditions": True}
+        assert kwargs["boundary_conditions"] == {"boundary_conditions": True}
         assert kwargs["coupling_auxiliaries"] == (sentinel.auxiliary,)
 
     def test_convert_decomp_missing_cortes_skips_fcf(
