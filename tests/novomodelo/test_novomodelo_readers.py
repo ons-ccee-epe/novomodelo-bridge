@@ -37,6 +37,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_bus_net_import,
     read_novomodelo_bus_percentiles,
     read_novomodelo_buses,
+    read_novomodelo_coupling_auxiliary_count,
     read_novomodelo_default_exchange_cost,
     read_novomodelo_fpha_fit_config,
     read_novomodelo_gnl_delivered_cost,
@@ -65,6 +66,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_thermal_metadata,
     read_novomodelo_thermals,
     read_novomodelo_training_metadata,
+    scan_simulation_entity,
     split_plant_row,
 )
 from tests.conftest import hydro_with_group
@@ -782,7 +784,48 @@ class TestSystemEntityLoaders:
         assert found == []
 
 
+def test_scan_simulation_entity_leaves_out_coupling_auxiliary_rows(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+    _write_sim_entity_partition(
+        output,
+        "hydros",
+        0,
+        [
+            {"stage_id": 0, "hydro_id": 0, "spillage_m3s": 1.0},
+            {"stage_id": 0, "hydro_id": 1288, "spillage_m3s": 9.0},
+        ],
+    )
+    _write_sim_entity_partition(output, "costs", 0, [{"stage_id": 0, "total": 5.0}])
+
+    hydros = scan_simulation_entity(output, "hydros")
+    costs = scan_simulation_entity(output, "costs")
+
+    assert hydros is not None
+    assert costs is not None
+    assert hydros.collect()["hydro_id"].to_list() == [0]
+    assert costs.collect().height == 1
+
+
 class TestReadNovomodeloHydros:
+    def test_coupling_auxiliary_plants_are_left_out(self, tmp_path: Path) -> None:
+        plant = {"id": 0, "name": "A"}
+        auxiliary = {"id": 1288, "name": "ACOPL-288 BELO MONTE"}
+        _write_hydros_text(tmp_path, json.dumps({"hydros": [plant, auxiliary]}))
+
+        assert read_novomodelo_hydros(tmp_path / "output") == [plant]
+
+    def test_coupling_auxiliary_plants_are_counted(self, tmp_path: Path) -> None:
+        hydros = [
+            {"id": 0, "name": "A"},
+            {"id": 1262, "name": "ACOPL-262 SALTO"},
+            {"id": 1288, "name": "ACOPL-288 BELO MONTE"},
+        ]
+        _write_hydros_text(tmp_path, json.dumps({"hydros": hydros}))
+
+        assert read_novomodelo_coupling_auxiliary_count(tmp_path / "output") == 2
+
     def test_file_without_the_plant_list_is_a_case_without_plants(
         self, tmp_path: Path
     ) -> None:

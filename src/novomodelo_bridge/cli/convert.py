@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.core.conversion import ConversionReport
     from novomodelo_bridge.core.diagnostics import Diagnostic
+    from novomodelo_bridge.decomp.fcf.coupling import CouplingAuxiliary
 
 
 def _handle_conversion_pipeline_failure(
@@ -386,6 +387,7 @@ def _import_decomp_boundary_fcf(
     summary: dict[str, object],
     config: dict | None,
     initial_conditions: dict | None,
+    coupling_auxiliaries: Sequence[CouplingAuxiliary],
     err_console: Console,
 ) -> list[Diagnostic]:
     """Import the deck's boundary FCF; return the importer's diagnostics.
@@ -434,6 +436,7 @@ def _import_decomp_boundary_fcf(
                 cost_scale_factor=1.0,
                 config=config,
                 initial_conditions=initial_conditions,
+                coupling_auxiliaries=coupling_auxiliaries,
                 float_digits=args.json_float_digits,
             )
     except Exception as exc:
@@ -549,6 +552,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
                 on_phase=step,
                 dry_run=args.dry_run,
                 fcf_inputs_out=fcf_inputs,
+                boundary_fcf=not args.no_fcf,
                 float_digits=args.json_float_digits,
             )
     except Exception as exc:
@@ -593,6 +597,7 @@ def _run_decomp_conversion(args: ConvertArgs) -> None:
         summary=summary,
         config=fcf_inputs.config,
         initial_conditions=fcf_inputs.initial_conditions,
+        coupling_auxiliaries=fcf_inputs.coupling_auxiliaries,
         err_console=err_console,
     )
     combined_diagnostics = [*report.diagnostics, *boundary_diagnostics]

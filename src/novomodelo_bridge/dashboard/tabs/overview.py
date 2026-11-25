@@ -83,6 +83,13 @@ def _run_identity_strip(data: DashboardData) -> str:
     n_thermals = len(data.thermal_meta)
     n_buses = len(data.non_fictitious_bus_ids)
     n_lines = len(data.line_meta)
+    n_auxiliaries = data.n_coupling_auxiliaries
+    auxiliaries = (
+        "<span><strong>Coupling auxiliaries (not shown):</strong> "
+        f"{n_auxiliaries}</span>"
+        if n_auxiliaries
+        else ""
+    )
 
     return (
         '<div class="run-identity-strip" style="'
@@ -97,7 +104,8 @@ def _run_identity_strip(data: DashboardData) -> str:
         f"<span><strong>Run Date:</strong> {run_date}</span>"
         f"<span><strong>Duration:</strong> {duration_str}</span>"
         f"<span><strong>Hydros:</strong> {n_hydros}</span>"
-        f"<span><strong>Thermals:</strong> {n_thermals}</span>"
+        + auxiliaries
+        + f"<span><strong>Thermals:</strong> {n_thermals}</span>"
         f"<span><strong>Buses:</strong> {n_buses}</span>"
         f"<span><strong>Lines:</strong> {n_lines}</span>"
         "</div>"

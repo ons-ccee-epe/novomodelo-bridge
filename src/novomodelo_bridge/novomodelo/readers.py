@@ -42,6 +42,10 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from novomodelo_bridge.core.coupling_auxiliary import (
+    COUPLING_AUXILIARY_ID_OFFSET,
+    is_coupling_auxiliary,
+)
 from novomodelo_bridge.core.diagnostics import (
     REPORT_FILES_CATEGORY,
     Diagnostic,
@@ -325,6 +329,9 @@ def scan_simulation_entity(
     entity:
         Entity subdirectory name (e.g., ``"hydros"``, ``"thermals"``,
         ``"buses"``).
+
+    Rows of coupling auxiliary plants are left out, by
+    :func:`without_coupling_auxiliaries`.
     """
     sim_dir = novomodelo_output_dir / "simulation" / entity
     if not sim_dir.is_dir():
@@ -339,11 +346,17 @@ def scan_simulation_entity(
         # schema eagerly so a present-but-unreadable parquet raises here —
         # the single choke point every simulation reader shares — instead of
         # leaking a raw polars error past each reader's narrower try/except.
-        lf.collect_schema()
+        schema = lf.collect_schema()
     except Exception as exc:
         raise NovomodeloReadError(f"Failed to scan parquets in {sim_dir}") from exc
 
-    return lf
+    return without_coupling_auxiliaries(lf) if "hydro_id" in schema else lf
+
+
+def without_coupling_auxiliaries(lf: pl.LazyFrame) -> pl.LazyFrame:
+    """*lf*, which has a ``hydro_id`` column, without the rows of the coupling
+    auxiliary plants a converted DECOMP case carries, which no deck holds."""
+    return lf.filter(pl.col("hydro_id") < COUPLING_AUXILIARY_ID_OFFSET)
 
 
 # The seven physical columns novomodelo's writer puts in each
@@ -2333,7 +2346,7 @@ def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dic
     setting it ``None``) makes a caller expecting it fail with ``KeyError``
     instead of silently degrading to an empty bus map.
     """
-    hydros_path, hydros = _read_hydros_json(novomodelo_output_dir)
+    hydros_path, hydros, _ = _read_hydros_json(novomodelo_output_dir)
     if hydros_path is None or not hydros:
         return {}
 
@@ -2637,22 +2650,38 @@ def read_novomodelo_lines(novomodelo_output_dir: Path) -> list[dict]:
     )[1]
 
 
-def _read_hydros_json(novomodelo_output_dir: Path) -> tuple[Path | None, list[dict]]:
-    """``system/hydros.json``'s plants and path, by :func:`_read_system_list`'s
-    contract; the conversion always writes the file, so its absence is noted."""
-    return _read_system_list(
+def _read_hydros_json(
+    novomodelo_output_dir: Path,
+) -> tuple[Path | None, list[dict], int]:
+    """``system/hydros.json``'s path, plants and coupling auxiliary count, by
+    :func:`_read_system_list`'s contract; the conversion always writes the
+    file, so its absence is noted.
+
+    The coupling auxiliary plants (:func:`is_coupling_auxiliary`) are left out
+    of the plants and only counted: no deck holds them and they carry no
+    storage or generation.
+    """
+    path, hydros = _read_system_list(
         novomodelo_output_dir,
         "hydros.json",
         _HYDROS_EFFECT,
         entity=("hydro plant", "hydro plants"),
         absence_is_finding=True,
     )
+    plants = [h for h in hydros if not is_coupling_auxiliary(h["id"])]
+    return path, plants, len(hydros) - len(plants)
 
 
 def read_novomodelo_hydros(novomodelo_output_dir: Path) -> list[dict]:
     """``system/hydros.json``'s hydro plants: the one way any report reads the
     file, so a missing or unreadable file is one finding with one effect."""
     return _read_hydros_json(novomodelo_output_dir)[1]
+
+
+def read_novomodelo_coupling_auxiliary_count(novomodelo_output_dir: Path) -> int:
+    """How many coupling auxiliary plants ``system/hydros.json`` holds beside
+    the plants :func:`read_novomodelo_hydros` returns."""
+    return _read_hydros_json(novomodelo_output_dir)[2]
 
 
 def read_novomodelo_thermals(novomodelo_output_dir: Path) -> list[dict]:

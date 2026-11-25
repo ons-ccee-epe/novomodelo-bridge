@@ -24,9 +24,11 @@ from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
 from novomodelo_bridge.decomp.converters.penalties import FICTITIOUS_EXCHANGE_FACTOR
 from novomodelo_bridge.decomp.fcf.bootstrap import bootstrap_terminal_manifest
-from novomodelo_bridge.decomp.fcf.coupling import resolve_couplings
+from novomodelo_bridge.decomp.fcf.coupling import (
+    complexo_components,
+    resolve_couplings,
+)
 from novomodelo_bridge.decomp.fcf.importer import (
-    _complexo_map,
     _patch_policy_boundary,
     _seed_recent_observations,
 )
@@ -622,7 +624,7 @@ def test_boundary_cuts_bind_the_dormant_nw_plant_and_the_case_runs(
 
     effective, _ = build_effective_cadastro(case.dadger, case.hidr, case.calendar)
     couplings = resolve_couplings(
-        (_ESTRELA, _SALTO), case.id_map, effective, _complexo_map(case.dadger)
+        (_ESTRELA, _SALTO), case.id_map, effective, complexo_components(case.dadger)
     ).couplings
     assert [c.plant_index for c in couplings if c.hydro_id == estrela] == [0]
 

@@ -37,7 +37,8 @@ cut's month) is assumed. The converted boundary therefore departs from the
 source model wherever a hydro has transit slots (:class:`MappingResult.transit`).
 
 A cut plant no converted hydro takes is dropped, never folded into a
-neighbour, and recorded in :class:`MappingResult.dropped`; a GNL term with no
+neighbour, and recorded in :class:`MappingResult.dropped`, even when an
+auxiliary coupling plant takes its last-stage inflow; a GNL term with no
 live ring slot is recorded in :class:`MappingResult.gnl_dropped`.
 """
 
@@ -47,6 +48,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from novomodelo_bridge.core.coupling_auxiliary import is_coupling_auxiliary
 from novomodelo_bridge.core.diagnostics import counted
 from novomodelo_bridge.core.policy_dates import (
     UNDATED,
@@ -545,7 +547,11 @@ def map_boundary_cuts(
         if coupling.hydro_id in transit_positions
     )
 
-    coupled = {coupling.plant_index for coupling in couplings}
+    coupled = {
+        coupling.plant_index
+        for coupling in couplings
+        if not is_coupling_auxiliary(coupling.hydro_id)
+    }
     representative = cuts.records[0].pi_varm if cuts.records else ()
     dropped = tuple(
         DroppedTerm(

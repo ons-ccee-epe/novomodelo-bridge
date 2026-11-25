@@ -718,6 +718,24 @@ def convert_external_inflows(
     )
 
 
+def terminal_case_inflows(
+    vazoes: TreeTables,
+    effective: EffectiveCadastro,
+    id_map: DecompIdMap,
+    calendar: Sequence[OperativeStage],
+) -> list[list[float]]:
+    """The last stage's inflows ``external_inflow_scenarios.parquet`` carries,
+    per scenario in scenario order, each in hydro-id order (m³/s)."""
+    split = split_nw_inflows(vazoes, effective, id_map)
+    values = _tree_values(vazoes, effective, id_map, calendar, split)
+    terminal = len(calendar) - 1
+    return [
+        incrementals
+        for (stage_index, _), incrementals in sorted(values.items())
+        if stage_index == terminal
+    ]
+
+
 def expected_incremental_inflows(
     vazoes: TreeTables,
     effective: EffectiveCadastro,

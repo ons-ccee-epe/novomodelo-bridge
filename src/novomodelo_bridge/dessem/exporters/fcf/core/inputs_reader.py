@@ -21,6 +21,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from novomodelo_bridge.core.coupling_auxiliary import is_coupling_auxiliary
+
 _LOG = logging.getLogger(__name__)
 
 _STAGES_FILE = "stages.json"
@@ -248,11 +250,14 @@ def _read_stages(path: Path) -> tuple[tuple[StageInfo, ...], float]:
 
 
 def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
-    """Read hydros.json."""
+    """Read hydros.json, less the coupling auxiliary plants, which no deck holds."""
     raw = _load_json(path)
     hydros = []
     for pos, entry in enumerate(_require_list(raw, "hydros", "hydros")):
         dotted = f"hydros[{pos}]"
+        hydro_id = _require_int(entry, "id", f"{dotted}.id")
+        if is_coupling_auxiliary(hydro_id):
+            continue
         reservoir = _require(entry, "reservoir", f"{dotted}.reservoir")
         downstream = entry.get("downstream_id")
         if downstream is not None and type(downstream) is not int:
@@ -280,7 +285,7 @@ def _read_hydros(path: Path) -> tuple[HydroInfo, ...]:
             )
         hydros.append(
             HydroInfo(
-                id=_require_int(entry, "id", f"{dotted}.id"),
+                id=hydro_id,
                 name=_require_str(entry, "name", f"{dotted}.name"),
                 downstream_id=downstream,
                 min_storage_hm3=_require_float(

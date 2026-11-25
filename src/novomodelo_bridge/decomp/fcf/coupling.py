@@ -25,7 +25,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from novomodelo_bridge.core.coupling_auxiliary import (
+    coupling_auxiliary_id,
+    coupling_auxiliary_name,
+)
 from novomodelo_bridge.core.inflow_windows import month_window
+from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.decomp.converters.cadastro import is_reservoir
 from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
 from novomodelo_bridge.decomp.scenarios import (
@@ -34,6 +39,7 @@ from novomodelo_bridge.decomp.scenarios import (
     posto_value,
     recent_observation_rows,
     split_nw_inflows,
+    terminal_case_inflows,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +47,7 @@ if TYPE_CHECKING:
     from datetime import date
 
     import pandas as pd
+    from idecomp.decomp import Dadger
 
     from novomodelo_bridge.decomp.converters.cadastro import EffectiveCadastro
     from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -91,17 +98,32 @@ class CouplingResolution:
 
 
 @dataclass(frozen=True)
-class TerminalShare:
-    """A plant whose terminal-stage coupling inflow novomodelo's lag state misses.
+class CouplingAuxiliary:
+    """An auxiliary hydro carrying the last-stage coupling inflow one plant's
+    cut row reads beyond the inflow the case carries for it.
 
-    ``max_gap_m3s`` is the largest difference over the terminal scenarios
-    between the coupling inflow and the inflow novomodelo's state carries.
+    ``terminal_inflows_m3s`` holds, per last-stage scenario, ``y - x + shift_m3s``:
+    ``y`` the coupling inflow and ``x`` the inflow the case carries (0 for a
+    cut plant no converted hydro takes). ``shift_m3s`` is the least constant
+    keeping every value non-negative, and the cut's constant gives it back
+    (:func:`coupling_auxiliary_lag_offsets`). ``operation_posto`` is ``None``
+    for a cut plant not in the case.
     """
 
     plant_code: int
+    hydro_id: int
+    name: str
+    plant_index: int
     coupling_posto: int
     operation_posto: int | None
+    shift_m3s: float
+    terminal_inflows_m3s: tuple[float, ...]
     max_gap_m3s: float
+
+    @property
+    def coupling(self) -> HydroCoupling:
+        """The auxiliary taking its plant's cut row, without a storage term."""
+        return HydroCoupling(hydro_id=self.hydro_id, plant_index=self.plant_index)
 
 
 def lag_months(cut_year: int, cut_month: int) -> tuple[tuple[int, int], ...]:
@@ -370,58 +392,129 @@ def source_only_lag_inflows(
     return inflows
 
 
-def terminal_shares(
+def plan_coupling_auxiliaries(
     vazoes: TreeTables,
     effective: EffectiveCadastro,
     id_map: DecompIdMap,
-    couplings: Iterable[HydroCoupling],
-    source_only_codes: Iterable[int],
     calendar: Sequence[OperativeStage],
-) -> tuple[TerminalShare, ...]:
-    """The plants whose terminal-stage coupling inflow novomodelo's state misses.
+    plant_codes: Sequence[int],
+    complexo_components: Mapping[int, Sequence[int]],
+) -> tuple[CouplingAuxiliary, ...]:
+    """The auxiliary coupling plants the boundary cuts need, in hydro-id order.
 
-    A coupled hydro is listed when its coupling inflow
+    A coupled hydro needs one when its last-stage coupling inflow
     (``cenarios_calculados_com_postos_artificiais`` on the coupling posto)
-    differs from its operation inflow (``cenarios_gerados`` on the operation
-    posto) in some terminal scenario; a source-only plant always is, with its
-    whole coupling inflow as the gap. The plants of an NW group that passes the
-    guard are left out: their gap is within the guard's tolerance, and the
-    inflow the case carries for them is the coupling split.
+    differs in some scenario from the inflow the case carries
+    (:func:`~novomodelo_bridge.decomp.scenarios.terminal_case_inflows`). A
+    cut plant no converted hydro takes needs one when its coupling inflow is
+    nonzero; one absent from ``hidr.dat`` has no posto and is skipped, as in
+    :func:`source_only_lag_inflows`.
+
+    Raises
+    ------
+    UnsupportedSourceError
+        A plant that needs one has a code of 1000 or more
+        (:func:`~novomodelo_bridge.core.coupling_auxiliary.coupling_auxiliary_id`).
     """
-    terminal_estagio = len(calendar)
     coupling_table = vazoes.cenarios_calculados_com_postos_artificiais
-    operation_table = vazoes.cenarios_gerados
-    if coupling_table is None or operation_table is None:
+    if coupling_table is None:
         raise ValueError(
-            "the inflow file has no terminal fan "
-            "(cenarios_calculados_com_postos_artificiais / cenarios_gerados)"
+            "the inflow file has no terminal coupling fan "
+            "(cenarios_calculados_com_postos_artificiais)"
         )
-    coupling_fan = _terminal_fan(coupling_table, terminal_estagio)
-    operation_fan = _terminal_fan(operation_table, terminal_estagio)
-    carried_codes = split_nw_inflows(vazoes, effective, id_map).carried_codes
-    shares: list[TerminalShare] = []
-    for coupling in couplings:
-        code = id_map.hydro_codes[coupling.hydro_id]
-        if code in carried_codes:
-            continue
-        coupling_posto = effective.coupling_gauge(code)
-        operation_posto = effective.inflow_gauge(code, 0)
-        gap = max(
-            (
-                abs(
-                    posto_value(c_row, coupling_posto)
-                    - posto_value(o_row, operation_posto)
-                )
-                for c_row, o_row in zip(coupling_fan, operation_fan, strict=True)
-            ),
-            default=0.0,
+    fan = _terminal_fan(coupling_table, len(calendar))
+    carried = terminal_case_inflows(vazoes, effective, id_map, calendar)
+    if len(fan) != len(carried):
+        raise ValueError(
+            f"{len(fan)} terminal coupling scenarios for {len(carried)} terminal "
+            "inflow scenarios"
         )
-        if gap > _OFFSET_TOLERANCE:
-            shares.append(TerminalShare(code, coupling_posto, operation_posto, gap))
-    for code in source_only_codes:
-        if code not in effective.base.index:
-            continue
+    resolution = resolve_couplings(plant_codes, id_map, effective, complexo_components)
+
+    auxiliaries: list[CouplingAuxiliary] = []
+
+    def add(
+        code: int,
+        plant_index: int,
+        operation_posto: int | None,
+        carried_m3s: Sequence[float],
+    ) -> None:
         posto = effective.coupling_gauge(code)
-        gap = max((abs(posto_value(row, posto)) for row in coupling_fan), default=0.0)
-        shares.append(TerminalShare(code, posto, None, gap))
-    return tuple(shares)
+        gaps = tuple(
+            posto_value(row, posto) - x for row, x in zip(fan, carried_m3s, strict=True)
+        )
+        max_gap = max((abs(gap) for gap in gaps), default=0.0)
+        if max_gap <= _OFFSET_TOLERANCE:
+            return
+        shift = max(0.0, -min(gaps))
+        auxiliaries.append(
+            CouplingAuxiliary(
+                plant_code=code,
+                hydro_id=coupling_auxiliary_id(code),
+                name=coupling_auxiliary_name(
+                    code, str(effective.base.at[code, "nome_usina"])
+                ),
+                plant_index=plant_index,
+                coupling_posto=posto,
+                operation_posto=operation_posto,
+                shift_m3s=shift,
+                terminal_inflows_m3s=tuple(gap + shift for gap in gaps),
+                max_gap_m3s=max_gap,
+            )
+        )
+
+    for coupling in resolution.couplings:
+        code = id_map.hydro_codes[coupling.hydro_id]
+        add(
+            code,
+            coupling.plant_index,
+            effective.inflow_gauge(code, 0),
+            [inflows[coupling.hydro_id] for inflows in carried],
+        )
+    coupled = {coupling.plant_index for coupling in resolution.couplings}
+    for index, code in enumerate(plant_codes):
+        if index not in coupled and code in effective.base.index:
+            add(code, index, None, [0.0] * len(fan))
+    return tuple(sorted(auxiliaries, key=lambda auxiliary: auxiliary.hydro_id))
+
+
+def coupling_auxiliary_lag_offsets(
+    auxiliaries: Iterable[CouplingAuxiliary],
+    calendar: Sequence[OperativeStage],
+    months: Sequence[tuple[int, int]],
+) -> dict[int, tuple[float, ...]]:
+    """Per-depth m³/s the cut's lag value falls short of each auxiliary's state.
+
+    The auxiliary's inflow is 0 before the last stage, so its lag state
+    exceeds the coupling difference only by the shift the last stage carries,
+    over the share of each lag month that stage covers. An auxiliary without a
+    shift is omitted.
+    """
+    terminal = calendar[-1]
+    shares = tuple(
+        _month_share(terminal.start_date, terminal.end_date, year, month)
+        for year, month in months
+    )
+    return {
+        auxiliary.hydro_id: tuple(-auxiliary.shift_m3s * share for share in shares)
+        for auxiliary in auxiliaries
+        if auxiliary.shift_m3s > 0.0
+    }
+
+
+def complexo_components(dadger: Dadger) -> dict[int, list[int]]:
+    """The deck's ``CX`` register as ``{complexo_code: [component_codes]}``.
+
+    ``CX`` couples a complex of the boundary cut (absent from the DECOMP
+    model) to the individual DECOMP plants inside it. Empty when the deck has
+    no ``CX`` line.
+    """
+    components: dict[int, list[int]] = {}
+    cx = dadger.cx(df=True)
+    if cx.empty:
+        return components
+    for complexo, component in zip(
+        cx["codigo_newave"], cx["codigo_decomp"], strict=True
+    ):
+        components.setdefault(as_int(complexo), []).append(as_int(component))
+    return components

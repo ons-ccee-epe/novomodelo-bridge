@@ -14,6 +14,13 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Changed
+
+- **`convert decomp` prices the last-stage coupling inflow of boundary cuts:**
+  auxiliary plants `ACOPL-<code> <name>` carry it, hidden from `compare` and
+  `dashboard`; a coupled plant coded 1000 or above is refused. Results change;
+  reconvert. Warning `boundary-fcf-coupling-inflow-unrepresented` is removed.
+
 ## [0.22.0] - 2026-11-24
 
 Pairs the bridge with the **novomodelo 0.22.0** release and pins

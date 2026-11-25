@@ -35,6 +35,7 @@ from novomodelo_bridge.novomodelo.readers import (
     SPLIT_PLANT_SUMMARY,
     hydro_home_bus,
     read_novomodelo_buses,
+    read_novomodelo_coupling_auxiliary_count,
     read_novomodelo_hydros,
     read_novomodelo_line_bounds,
     read_novomodelo_lines,
@@ -45,6 +46,7 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_thermals,
     read_novomodelo_training_metadata,
     split_plant_row,
+    without_coupling_auxiliaries,
 )
 from novomodelo_bridge.novomodelo.scenario_weights import ScenarioWeights
 
@@ -60,12 +62,14 @@ def scan_entity(case_dir: Path, entity: str) -> pl.LazyFrame:
 
     Returns an empty LazyFrame when the entity directory is missing or
     contains no parquet files, so callers can consume simulation-less cases
-    without triggering polars' "expanded paths were empty" error.
+    without triggering polars' "expanded paths were empty" error. Rows of
+    coupling auxiliary plants are left out, as the compare readers do.
     """
     sim_dir = case_dir / "output" / "simulation" / entity
     if not sim_dir.exists() or not any(sim_dir.rglob("*.parquet")):
         return pl.LazyFrame()
-    return pl.scan_parquet(str(sim_dir / "**" / "*.parquet"), hive_partitioning=True)
+    lf = pl.scan_parquet(str(sim_dir / "**" / "*.parquet"), hive_partitioning=True)
+    return without_coupling_auxiliaries(lf) if "hydro_id" in lf.collect_schema() else lf
 
 
 _ENTITY_READERS: dict[str, Callable[[Path], list[dict]]] = {
@@ -663,6 +667,7 @@ class EntityMetadata:
     hydro_meta: dict[int, dict]
     bus_names: dict[int, str]
     non_fictitious_bus_ids: list[int]
+    n_coupling_auxiliaries: int
 
 
 def load_entity_metadata(case_dir: Path, stages_data: dict) -> EntityMetadata:
@@ -687,6 +692,9 @@ def load_entity_metadata(case_dir: Path, stages_data: dict) -> EntityMetadata:
         hydro_meta=load_hydro_metadata(case_dir, bus_map=hydro_bus_map),
         bus_names=bus_names,
         non_fictitious_bus_ids=sorted(load_bus_ids),
+        n_coupling_auxiliaries=read_novomodelo_coupling_auxiliary_count(
+            case_dir / "output"
+        ),
     )
 
 
@@ -1410,6 +1418,10 @@ class DashboardData:
     @property
     def non_fictitious_bus_ids(self) -> list[int]:
         return self.entities.non_fictitious_bus_ids
+
+    @property
+    def n_coupling_auxiliaries(self) -> int:
+        return self.entities.n_coupling_auxiliaries
 
     @property
     def stage_hours(self) -> dict[int, float]:

@@ -13,7 +13,6 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from idecomp.decomp import Dadger
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.decomp.case import DecompCase
@@ -24,13 +23,8 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     GnlThermal,
 )
 from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts, summarize_cut_families
-from novomodelo_bridge.decomp.fcf.coupling import (
-    BorrowedOwner,
-    CouplingResolution,
-    TerminalShare,
-)
+from novomodelo_bridge.decomp.fcf.coupling import BorrowedOwner, CouplingResolution
 from novomodelo_bridge.decomp.fcf.importer import (
-    _complexo_map,
     _DeckCoupling,
     _emit_coupling_diagnostics,
     _emit_import_diagnostics,
@@ -73,7 +67,7 @@ def _no_coupling() -> _DeckCoupling:
         resolution=CouplingResolution((), (), ()),
         inflow_lag_offsets={},
         source_only_inflows={},
-        terminal_shares=(),
+        couplings=(),
         gnl_plan=None,
         recent_observations=[],
         names={},
@@ -284,32 +278,6 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
     policy = config["policy"]
     assert isinstance(policy, dict)
     assert policy["boundary"] == {"path": "boundary"}
-
-
-# ---------------------------------------------------------------------------
-# The deck's ``CX`` register.
-# ---------------------------------------------------------------------------
-
-
-def test_complexo_map_groups_components_by_complex(tmp_path: Path) -> None:
-    dadger = tmp_path / "dadger.rv2"
-    dadger.write_text(
-        "& CX  complexo componente\n"
-        "CX  132  147\n"
-        "CX  132  146\n"
-        "CX  176  175\n"
-        "UH  147  10\n",
-        encoding="latin-1",
-    )
-
-    assert _complexo_map(Dadger.read(str(dadger))) == {132: [147, 146], 176: [175]}
-
-
-def test_complexo_map_is_empty_without_cx_lines(tmp_path: Path) -> None:
-    dadger = tmp_path / "dadger.rv2"
-    dadger.write_text("UH  147  10\n", encoding="latin-1")
-
-    assert _complexo_map(Dadger.read(str(dadger))) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +617,7 @@ def test_emit_coupling_diagnostics_is_silent_when_every_plant_owns_its_row() -> 
     resolution = CouplingResolution((HydroCoupling(0, 0, 0.0),), (), ())
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), names=_NAMES)
+        _emit_coupling_diagnostics(resolution, names=_NAMES)
 
     assert sink == []
 
@@ -662,7 +630,7 @@ def test_emit_coupling_diagnostics_reports_borrowed_owners() -> None:
     )
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), names=_NAMES)
+        _emit_coupling_diagnostics(resolution, names=_NAMES)
 
     (owners,) = sink
     assert owners.code == "boundary-fcf-coefficient-owners"
@@ -678,29 +646,13 @@ def test_emit_coupling_diagnostics_unowned_plant_is_an_error() -> None:
     resolution = CouplingResolution((), (), (305,))
 
     with dx.collect() as sink:
-        _emit_coupling_diagnostics(resolution, (), names=_NAMES)
+        _emit_coupling_diagnostics(resolution, names=_NAMES)
 
     (unowned,) = sink
     assert unowned.code == "boundary-fcf-unowned-plants"
     assert unowned.severity is dx.Severity.ERROR
     assert unowned.table is not None
     assert unowned.table.rows == [[305, "ITIQUIRA II"]]
-
-
-def test_emit_coupling_diagnostics_lists_unrepresented_coupling_inflows() -> None:
-    shares = (TerminalShare(1, 1, 301, 2.5), TerminalShare(901, 901, None, 40.0))
-
-    with dx.collect() as sink:
-        _emit_coupling_diagnostics(CouplingResolution((), (), ()), shares, names=_NAMES)
-
-    (terminal,) = sink
-    assert terminal.code == "boundary-fcf-coupling-inflow-unrepresented"
-    assert terminal.severity is dx.Severity.WARNING
-    assert terminal.table is not None
-    assert terminal.table.rows == [
-        [1, "", 1, 301, 2.5],
-        [901, "CUT PLANT", 901, "-", 40.0],
-    ]
 
 
 def test_emit_transit_pricing_names_each_plant_and_its_price() -> None:

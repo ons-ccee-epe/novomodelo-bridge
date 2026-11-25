@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from idecomp.decomp import Vazoes
+from idecomp.decomp import Dadger, Vazoes
 
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.cadastro import (
@@ -22,11 +23,14 @@ from novomodelo_bridge.decomp.converters.cadastro import (
 )
 from novomodelo_bridge.decomp.fcf.coupling import (
     BorrowedOwner,
+    CouplingAuxiliary,
+    complexo_components,
+    coupling_auxiliary_lag_offsets,
     coupling_lag_offsets,
     lag_months,
+    plan_coupling_auxiliaries,
     resolve_couplings,
     source_only_lag_inflows,
-    terminal_shares,
 )
 from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
 from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -79,6 +83,7 @@ def _effective(
         orient="index",
         columns=["tipo_regulacao", "posto", "codigo_usina_jusante", "volume_minimo"],
     )
+    base["nome_usina"] = [f"PLANT {code}" for code in base.index]
     base.index.name = "codigo_usina"
     return EffectiveCadastro(
         base=base,
@@ -308,33 +313,99 @@ def test_source_only_lag_inflows_keep_the_observed_month_the_study_starts_in() -
     assert rest == [0.0] * 7
 
 
-def test_terminal_shares_lists_differing_and_source_only_plants() -> None:
-    effective = _effective(coupling_gauges={1: (11, 11, 11, 11)})
-    vazoes = SimpleNamespace(
+def _monthly_gap_vazoes() -> SimpleNamespace:
+    """Plant 1 reads its cut row on posto 11 and plant 2 on its own posto;
+    posto 901 is a cut plant's that the case does not convert."""
+    empty = pd.DataFrame({"estagio": [], "11": [], "1": []})
+    return SimpleNamespace(
+        previsoes_com_postos_artificiais=empty,
+        previsoes=empty,
         cenarios_calculados_com_postos_artificiais=pd.DataFrame(
             {
-                "estagio": [4, 4],
-                "cenario": [2, 1],
-                "11": [60.0, 50.0],
-                "2": [8.0, 7.0],
-                "901": [3.0, -7.0],
+                "estagio": [1, 2, 2],
+                "cenario": [1, 1, 2],
+                "11": [30.0, 65.0, 50.0],
+                "2": [5.0, 8.0, 7.0],
+                "901": [0.0, 3.0, -7.0],
             }
         ),
         cenarios_gerados=pd.DataFrame(
-            {"estagio": [4, 4], "cenario": [1, 2], "1": [45.0, 61.0], "2": [7.0, 8.0]}
+            {
+                "estagio": [1, 2, 2],
+                "cenario": [1, 1, 2],
+                "1": [10.0, 60.0, 70.0],
+                "2": [5.0, 8.0, 7.0],
+            }
         ),
     )
-    couplings = (HydroCoupling(0, 0, 0.0), HydroCoupling(1, 1, None))
 
-    shares = terminal_shares(
-        vazoes, effective, _id_map(1, 2), couplings, (901,), _CALENDAR
+
+def test_plan_coupling_auxiliaries_covers_differing_and_source_only_plants() -> None:
+    """Plant 2's coupling inflow is its own and cut plant 999 is not in
+    ``hidr.dat``, so neither takes an auxiliary."""
+    auxiliaries = plan_coupling_auxiliaries(
+        _monthly_gap_vazoes(),
+        _effective(coupling_gauges={1: (11, 11)}),
+        _id_map(1, 2),
+        _MONTHLY_CALENDAR,
+        (1, 2, 901, 999),
+        {},
     )
 
-    assert [(s.plant_code, s.coupling_posto, s.operation_posto) for s in shares] == [
-        (1, 11, 1),
-        (901, 901, None),
+    assert auxiliaries == (
+        CouplingAuxiliary(
+            plant_code=1,
+            hydro_id=1001,
+            name="ACOPL-1 PLANT 1",
+            plant_index=0,
+            coupling_posto=11,
+            operation_posto=1,
+            shift_m3s=20.0,
+            terminal_inflows_m3s=(25.0, 0.0),
+            max_gap_m3s=20.0,
+        ),
+        CouplingAuxiliary(
+            plant_code=901,
+            hydro_id=1901,
+            name="ACOPL-901 PLANT 901",
+            plant_index=2,
+            coupling_posto=901,
+            operation_posto=None,
+            shift_m3s=7.0,
+            terminal_inflows_m3s=(10.0, 0.0),
+            max_gap_m3s=7.0,
+        ),
+    )
+    assert [auxiliary.coupling for auxiliary in auxiliaries] == [
+        HydroCoupling(1001, 0),
+        HydroCoupling(1901, 2),
     ]
-    assert [s.max_gap_m3s for s in shares] == pytest.approx([5.0, 7.0])
+
+
+def test_plan_coupling_auxiliaries_needs_the_terminal_coupling_fan() -> None:
+    vazoes = _monthly_gap_vazoes()
+    vazoes.cenarios_calculados_com_postos_artificiais = None
+
+    with pytest.raises(ValueError, match="no terminal coupling fan"):
+        plan_coupling_auxiliaries(
+            vazoes, _effective(), _id_map(1), _MONTHLY_CALENDAR, (1,), {}
+        )
+
+
+def test_coupling_auxiliary_lag_offsets_give_the_shift_back_over_the_last_stage() -> (
+    None
+):
+    shifted = CouplingAuxiliary(1, 1001, "ACOPL-1", 0, 11, 1, 20.0, (25.0, 0.0), 20.0)
+    unshifted = CouplingAuxiliary(2, 1002, "ACOPL-2", 1, 2, 2, 0.0, (3.0, 1.0), 3.0)
+
+    offsets = coupling_auxiliary_lag_offsets((shifted, unshifted), _CALENDAR, _MONTHS)
+
+    assert list(offsets) == [1001]
+    april, march, *rest = offsets[1001]
+    # The last stage covers 4-30 April, 27 of its 30 days.
+    assert april == pytest.approx(-20.0 * 27 / 30)
+    assert march == 0.0
+    assert rest == [0.0] * 10
 
 
 def _split_group_vazoes(*, terminal_gaps: tuple[float, float]) -> SimpleNamespace:
@@ -403,39 +474,41 @@ def test_a_fallback_group_keeps_its_lag_offset() -> None:
     assert offsets[0][0] == pytest.approx(3 / 30 * 30.0)
 
 
-def test_a_split_group_is_left_out_of_the_terminal_shares() -> None:
-    """The terminal gap of 1 m³/s is within the guard, but not within the
-    exact-match test the other plants take."""
-    shares = terminal_shares(
+def test_a_split_group_auxiliary_carries_only_the_terminal_gap() -> None:
+    """The case gives 501 its own coupling inflow, so 502's auxiliary carries
+    the 1 m³/s the operation tables add beyond the two coupling inflows."""
+    auxiliaries = plan_coupling_auxiliaries(
         _split_group_vazoes(terminal_gaps=(1.0, 0.0)),
         _effective(),
         _id_map(501, 502, dormant=(501,)),
-        _SPLIT_COUPLINGS,
-        (),
         _CALENDAR,
+        (501, 502),
+        {},
     )
 
-    assert shares == ()
+    assert [
+        (a.plant_code, a.shift_m3s, a.terminal_inflows_m3s) for a in auxiliaries
+    ] == [(502, 1.0, (0.0, 1.0))]
 
 
-def test_a_fallback_group_keeps_its_terminal_share() -> None:
-    shares = terminal_shares(
+def test_a_fallback_group_auxiliaries_carry_both_coupling_inflows() -> None:
+    """The gap breaks the split, so the case carries the whole group on 502
+    and 501's auxiliary takes all of 501's coupling inflow."""
+    auxiliaries = plan_coupling_auxiliaries(
         _split_group_vazoes(terminal_gaps=(0.0, 1.5)),
         _effective(),
         _id_map(501, 502, dormant=(501,)),
-        _SPLIT_COUPLINGS,
-        (),
         _CALENDAR,
+        (501, 502),
+        {},
     )
 
-    assert [(s.plant_code, s.coupling_posto, s.operation_posto) for s in shares] == [
-        (501, 501, 501),
-        (502, 502, 502),
-    ]
-    assert [s.max_gap_m3s for s in shares] == pytest.approx([150.0, 151.5])
+    assert [
+        (a.plant_code, a.shift_m3s, a.terminal_inflows_m3s) for a in auxiliaries
+    ] == [(501, 0.0, (100.0, 150.0)), (502, 151.5, (51.5, 0.0))]
 
 
-def test_decomp_mini_couples_estrela_and_salto_without_offset_or_share(
+def test_decomp_mini_gives_salto_an_auxiliary_for_its_terminal_gap_only(
     decomp_mini_case: DecompCase,
 ) -> None:
     id_map = decomp_mini_case.id_map
@@ -451,13 +524,17 @@ def test_decomp_mini_couples_estrela_and_salto_without_offset_or_share(
     offsets = coupling_lag_offsets(
         vazoes, effective, id_map, calendar, months, resolution.couplings
     )
-    shares = terminal_shares(
-        vazoes, effective, id_map, resolution.couplings, (), calendar
+    auxiliaries = plan_coupling_auxiliaries(
+        vazoes, effective, id_map, calendar, id_map.hydro_codes, {}
     )
 
+    by_code = {auxiliary.plant_code: auxiliary for auxiliary in auxiliaries}
     assert estrela not in offsets
     assert salto not in offsets
-    assert {share.plant_code for share in shares}.isdisjoint({260, 262})
+    assert 260 not in by_code
+    # Salto's coupling and operation fans read one posto and differ by 1 m³/s.
+    assert by_code[262].coupling_posto == by_code[262].operation_posto == 294
+    assert by_code[262].max_gap_m3s == pytest.approx(1.0)
 
 
 #: Monthly stages only: January is the deterministic trunk, February the fan.
@@ -500,16 +577,39 @@ def test_coupling_lag_offsets_read_a_monthly_trunk_stage() -> None:
     assert rest == [0.0] * 10
 
 
-def test_terminal_shares_skip_a_monthly_trunk_stage() -> None:
-    effective = _effective(coupling_gauges={1: (11, 11)})
-
-    shares = terminal_shares(
+def test_plan_coupling_auxiliaries_read_only_the_last_stage() -> None:
+    """January's coupling inflow differs from the case's, February's does not."""
+    auxiliaries = plan_coupling_auxiliaries(
         _monthly_vazoes(),
-        effective,
+        _effective(coupling_gauges={1: (11, 11)}),
         _id_map(1),
-        (HydroCoupling(0, 0, 0.0),),
-        (),
         _MONTHLY_CALENDAR,
+        (1,),
+        {},
     )
 
-    assert shares == ()
+    assert auxiliaries == ()
+
+
+def testcomplexo_components_groups_components_by_complex(tmp_path: Path) -> None:
+    dadger = tmp_path / "dadger.rv2"
+    dadger.write_text(
+        "& CX  complexo componente\n"
+        "CX  132  147\n"
+        "CX  132  146\n"
+        "CX  176  175\n"
+        "UH  147  10\n",
+        encoding="latin-1",
+    )
+
+    assert complexo_components(Dadger.read(str(dadger))) == {
+        132: [147, 146],
+        176: [175],
+    }
+
+
+def testcomplexo_components_is_empty_without_cx_lines(tmp_path: Path) -> None:
+    dadger = tmp_path / "dadger.rv2"
+    dadger.write_text("UH  147  10\n", encoding="latin-1")
+
+    assert complexo_components(Dadger.read(str(dadger))) == {}

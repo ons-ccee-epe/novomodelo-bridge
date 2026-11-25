@@ -329,11 +329,20 @@ DECOMP. The import couples them plant by plant, as DECOMP does:
   boundary costs differ by its value; the import warns, naming the plants
   concerned.
 
-Two parts of the coupling cannot be represented yet, and the import warns
-about each. In the last stage, the coupling inflow's difference from the
-operated inflow, and the inflow of cut plants outside the case, vary by
-scenario and are not folded; the warning names the plants and the largest
-gap. A split group has no such difference. Novomodelo also holds one GNL
+In the last stage, the coupling inflow's difference from the operated inflow
+varies by scenario, and so does the inflow of cut plants outside the case.
+The case carries each of these on an auxiliary coupling plant: a hydro with
+no storage, turbining or generation and free spillage, whose last-stage
+inflow is the difference (or the absent plant's coupling inflow) raised by a
+constant that keeps it non-negative, a constant the cuts take back. The
+auxiliary takes its plant's cut row, so the cuts price that inflow as DECOMP
+does. Its id is 1000 plus the plant's deck code and its name is
+`ACOPL-<code> <name>`; a deck with a plant coded 1000 or above that needs one
+is refused, and converts with `--no-fcf`. `compare`, `dashboard` and
+`export dessem` leave the auxiliaries out, and the import lists them with
+each one's largest gap.
+
+One part of the coupling cannot be represented yet. Novomodelo holds one GNL
 commitment per delivery window rather than one per patamar, so the boundary
 cost differs from DECOMP's when the commitment would differ by patamar; the
 import warns and reports how far the per-patamar GNL prices spread.

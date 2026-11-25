@@ -603,6 +603,16 @@ def test_scan_entity_calls_scan_parquet_with_correct_path(tmp_path: Path) -> Non
     assert result is mock_lf
 
 
+def test_scan_entity_leaves_out_coupling_auxiliary_rows(tmp_path: Path) -> None:
+    part = tmp_path / "output" / "simulation" / "hydros" / "scenario_id=0000"
+    part.mkdir(parents=True)
+    pl.DataFrame({"stage_id": [0, 0], "hydro_id": [0, 1288]}).write_parquet(
+        part / "data.parquet"
+    )
+
+    assert scan_entity(tmp_path, "hydros").collect()["hydro_id"].to_list() == [0]
+
+
 def test_scan_entity_returns_empty_lazyframe_when_dir_missing(tmp_path: Path) -> None:
     """scan_entity must return an empty LazyFrame when the simulation dir is absent."""
     result = scan_entity(tmp_path, "hydros")
