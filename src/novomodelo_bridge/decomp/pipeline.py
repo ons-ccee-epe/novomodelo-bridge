@@ -1452,6 +1452,8 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
                 windows, artifacts.coupling_auxiliaries
             ),
         ]
+    else:
+        dx.emit(scenarios_conv.inflow_history_absent_diagnostic(), logger=_LOG)
     writer.write_json("initial_conditions.json", initial_conditions_doc)
     _write_hydro_production_files(artifacts, writer, stage_models, productivity_parquet)
 

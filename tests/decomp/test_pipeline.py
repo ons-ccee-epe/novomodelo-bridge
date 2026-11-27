@@ -72,6 +72,7 @@ from novomodelo_bridge.decomp.scenarios import (
     convert_inflow_stats_identity,
     convert_scenario_probabilities,
     deterministic_external_scenarios,
+    inflow_history_absent_diagnostic,
     terminal_fan_probabilities,
 )
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
@@ -220,6 +221,32 @@ class TestScenarioEmitters:
         assert not [
             d for d in collected if d.code == "decomp-negative-incremental-inflows"
         ]
+
+    def test_inflow_history_absent_diagnostic_is_an_info_that_says_why(self) -> None:
+        diagnostic = inflow_history_absent_diagnostic()
+
+        assert diagnostic.code == "decomp-inflow-history-absent"
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.category == "Inflow scenarios"
+        assert diagnostic.table is None
+        assert diagnostic.remediation is None
+        assert diagnostic.summary == (
+            "The deck's vazoes.rvN carries no monthly or weekly inflow observed "
+            "before the study, so initial_conditions.json has no past inflows. "
+            "The converted case's inflow model reads no past inflow, so the "
+            "results do not change, and a case chained to a NEWAVE case takes "
+            "that case's past inflows instead. A month before the study that "
+            "imported boundary cuts price is reported separately, as a priced "
+            "inflow lag month with no observed inflow."
+        )
+        for phrase in (
+            "the results do not change",
+            "NEWAVE case",
+            "reported separately",
+        ):
+            assert phrase in diagnostic.summary
+        for leak in ("zero", "recent_observations"):
+            assert leak not in diagnostic.summary
 
     def test_identity_stats(self) -> None:
         stats = convert_inflow_stats_identity(_scenario_case(), _ID_MAP).to_pandas()
@@ -2985,6 +3012,39 @@ class TestMiniDeckRecentObservations:
 
         doc = json.loads((out / "initial_conditions.json").read_text(encoding="utf-8"))
         assert "recent_observations" not in doc
+
+    def test_a_deck_without_observations_reports_it_once(
+        self,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.decomp.scenarios.convert_recent_observation_windows",
+            lambda *_args, **_kwargs: [],
+        )
+        out = tmp_path / "out"
+        report = convert_decomp_case(decomp_mini_deck, out)
+
+        absent = [
+            d for d in report.diagnostics if d.code == "decomp-inflow-history-absent"
+        ]
+        assert len(absent) == 1
+        doc = json.loads((out / "initial_conditions.json").read_text(encoding="utf-8"))
+        assert "recent_observations" not in doc
+
+    def test_a_deck_with_observations_does_not_report_their_absence(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        report = convert_decomp_case(decomp_mini_deck, tmp_path / "out")
+
+        assert not [
+            d for d in report.diagnostics if d.code == "decomp-inflow-history-absent"
+        ]
 
     def test_dry_run_routes_the_seed_through_the_case_writer(
         self,

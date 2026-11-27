@@ -453,6 +453,25 @@ def convert_recent_observation_windows(
     return format_observation_windows(rows)
 
 
+def inflow_history_absent_diagnostic() -> Diagnostic:
+    """INFO for a deck whose vazoes.rvN carries no pre-study observation."""
+    return Diagnostic(
+        code="decomp-inflow-history-absent",
+        severity=Severity.INFO,
+        category="Inflow scenarios",
+        title="No inflow observed before the study in vazoes.rvN",
+        summary=(
+            "The deck's vazoes.rvN carries no monthly or weekly inflow observed "
+            "before the study, so initial_conditions.json has no past inflows. "
+            "The converted case's inflow model reads no past inflow, so the "
+            "results do not change, and a case chained to a NEWAVE case takes "
+            "that case's past inflows instead. A month before the study that "
+            "imported boundary cuts price is reported separately, as a priced "
+            "inflow lag month with no observed inflow."
+        ),
+    )
+
+
 def _tree_values(
     vazoes: TreeTables,
     effective: EffectiveCadastro,
