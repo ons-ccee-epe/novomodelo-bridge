@@ -14,6 +14,19 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert decomp` reports a deck whose `vazoes.rvN` carries no inflow
+  observed before the study**, and notes when the boundary cuts price an
+  inflow month before the study that `vazoes.rvN` does not carry.
+
+### Changed
+
+- **BREAKING: `convert decomp` writes the deck's pre-study inflows to
+  `initial_conditions.json` in every case,** negatives as given, which
+  `novomodelo validate` may warn on. Update any reader that adds its own past
+  inflows to that file, such as hpc-model-utils; reconvert DECOMP cases.
+
 ## [0.22.1] - 2026-11-24
 
 Pairs the bridge with **novomodelo 0.22.0**, as 0.22.0 did; convert NEWAVE and
