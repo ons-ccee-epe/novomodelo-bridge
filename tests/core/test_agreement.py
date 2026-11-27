@@ -5,10 +5,12 @@ from __future__ import annotations
 import pytest
 
 from novomodelo_bridge.core.agreement import (
+    ENTITY_GROUPS,
     FAR_FACTOR,
     SHARED_PLANT_NET_FLOW,
     SHARED_PLANT_NET_IMPORT,
     TIED_NET_FLOW,
+    VARIABLE_LABELS,
     Band,
     band,
     counts_in_headline,
@@ -144,6 +146,36 @@ class TestVariableLabel:
 
     def test_unknown_variable_keeps_its_name(self) -> None:
         assert variable_label("gen_within") == "gen_within"
+
+
+class TestFinalBoundsEntries:
+    def test_the_group_is_the_last_one_the_console_prints(self) -> None:
+        assert list(ENTITY_GROUPS)[-1] == "final_bounds"
+        assert ENTITY_GROUPS["final_bounds"] == "Policy bounds, final iteration"
+
+    def test_the_two_variables_are_the_last_two_in_order(self) -> None:
+        assert list(VARIABLE_LABELS)[-2:] == ["final_lower_bound", "final_bound_ratio"]
+
+    @pytest.mark.parametrize(
+        ("variable", "expected"),
+        [
+            ("final_lower_bound", "Final lower bound (R$)"),
+            ("final_bound_ratio", "Final upper-to-lower bound ratio"),
+        ],
+    )
+    def test_each_variable_has_its_label(self, variable: str, expected: str) -> None:
+        assert variable_label(variable) == expected
+
+    @pytest.mark.parametrize("variable", ["final_lower_bound", "final_bound_ratio"])
+    def test_both_rows_are_judged_and_count_in_the_headline(
+        self, variable: str
+    ) -> None:
+        assert not is_policy_row("final_bounds", variable)
+        assert counts_in_headline("final_bounds", variable)
+
+    def test_the_convergence_rows_stay_policy_rows(self) -> None:
+        assert is_policy_row("convergence", "lower_bound")
+        assert not counts_in_headline("convergence", "lower_bound")
 
 
 class TestSummaryTolerance:

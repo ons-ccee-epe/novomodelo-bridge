@@ -40,13 +40,19 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner, Result
 
+from novomodelo_bridge.comparators import report_builder
 from novomodelo_bridge.comparators.analyze import build_results_dataset
 from novomodelo_bridge.comparators.charts.costs import PairedCost
 from novomodelo_bridge.comparators.dataset import ComparisonDataset
+from novomodelo_bridge.comparators.html_report import (
+    COMPARISON_TABS,
+    build_comparison_html,
+)
 from novomodelo_bridge.comparators.model import PercentileData, ResultComparison
 from novomodelo_bridge.comparators.report_builder import build_comparison_report
 from novomodelo_bridge.comparators.verdict import CompareVerdict, build_compare_verdict
 from novomodelo_bridge.ui.compare_summary import print_results_summary_from_dataset
+from tests import golden_utils
 from tests.comparators.conftest import _extract_tab_content
 from tests.dashboard.test_chart_helpers import (
     _report_fixture_pct,
@@ -145,6 +151,27 @@ def test_build_comparison_report_default_label_report_title() -> None:
     html = build_comparison_report(_build_dataset())
 
     assert "Novomodelo vs NEWAVE Results Comparison" in html
+
+
+def test_build_comparison_tabs_keys_follow_the_tab_order() -> None:
+    tabs = report_builder.build_comparison_tabs(_build_dataset())
+
+    assert list(tabs) == [tab_id for tab_id, _ in COMPARISON_TABS]
+
+
+def test_build_comparison_tabs_content_matches_the_report_tabs() -> None:
+    dataset = _build_dataset()
+    report = build_comparison_report(dataset)
+    assembled = build_comparison_html(
+        title="Novomodelo vs NEWAVE Results Comparison",
+        tab_contents=report_builder.build_comparison_tabs(dataset),
+    )
+
+    for tab_id, _ in COMPARISON_TABS:
+        expected = golden_utils._strip_chart_id(_extract_tab_content(report, tab_id))
+        actual = golden_utils._strip_chart_id(_extract_tab_content(assembled, tab_id))
+        assert expected, tab_id
+        assert actual == expected, tab_id
 
 
 def test_overview_shows_the_bounds_net_of_penalties_after_convergence() -> None:

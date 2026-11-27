@@ -88,6 +88,7 @@ ENTITY_GROUPS: dict[str, str] = {
     "system_spillage": "System spillage",
     "hydro": "Hydro plants",
     "thermal": "Thermal plants",
+    "final_bounds": "Policy bounds, final iteration",
 }
 
 #: Display label, with unit, of each compared variable.
@@ -117,6 +118,9 @@ VARIABLE_LABELS: dict[str, str] = {
     "water_value_per_hm3": "Water value (R$/hm³)",
     "lower_bound": "Lower bound (R$)",
     "upper_bound": "Upper bound, mean (R$)",
+    "final_lower_bound": "Final lower bound (R$)",
+    # Dimensionless; its gap is the difference of the two optimality gaps in fraction of the baseline ratio.
+    "final_bound_ratio": "Final upper-to-lower bound ratio",
 }
 
 

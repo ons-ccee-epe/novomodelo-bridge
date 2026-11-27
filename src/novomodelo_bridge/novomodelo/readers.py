@@ -18,7 +18,12 @@ raise on present-but-corrupt data and differ only in which inputs they
 treat as required — the source model's ``newave_readers`` instead
 degrades every present-but-unparseable input to a typed-empty frame, a
 genuine behaviour difference (see that module's docstring). Every
-partition and system JSON this module reads is an optional input. A
+partition and system JSON this module reads is an optional input to the
+degrading readers; the strict readers
+:func:`read_novomodelo_required_entities` and
+:func:`read_novomodelo_required_generic_constraints` instead raise
+``SourceFileError`` for an absent file and ``FieldParseError`` for a
+malformed one, and emit no diagnostic. A
 present-but-unparseable system JSON that lists entities (lines, hydro
 plants, thermal plants, non-controllable sources, buses), the case's
 ``constraints/generic_constraints.json``, or the run's training
@@ -51,12 +56,15 @@ from novomodelo_bridge.core.diagnostics import (
     Diagnostic,
     Severity,
     emit,
+    exception_reason,
     report_file_missing_diagnostic,
     report_file_unreadable_diagnostic,
 )
 from novomodelo_bridge.core.errors import (
+    FieldParseError,
     NovomodeloOutputError,
     NovomodeloPartitionMissingError,
+    SourceFileError,
 )
 from novomodelo_bridge.core.pandas_utils import as_int
 from novomodelo_bridge.core.tolerances import BIG_M
@@ -235,6 +243,78 @@ def read_novomodelo_block_hours(novomodelo_output_dir: Path) -> pl.DataFrame:
     if block_hours is None:
         return pl.DataFrame(schema=BLOCK_HOURS_SCHEMA)
     return block_hours
+
+
+def read_novomodelo_stage_risk_aversion(
+    novomodelo_output_dir: Path,
+) -> dict[int, float] | None:
+    """``{stage id: weight on the CVaR tail term}`` from ``stages.json``; 0.0 is
+    risk-neutral.
+
+    Reads the first non-empty stage list :func:`_parsed_stages` yields. A stage
+    weighs 0.0 for the string ``expectation`` (ASCII case-insensitive, as the
+    solver reads it) or for no ``risk_measure``, and its ``lambda`` for a CVaR
+    object.
+
+    ``{}`` means no ``stages.json`` was found, taken as risk-neutral. ``None``
+    means the measure is unknown, with a ``report-file-unreadable`` warning: a
+    ``stages.json`` is present but yields no stage list, or a stage has no
+    integer ``id`` or a measure the solver would not read as expectation or CVaR.
+    Test ``is None``, never truthiness.
+    """
+    path = next(
+        (
+            p
+            for p in (
+                case_dir_for(novomodelo_output_dir) / "stages.json",
+                novomodelo_output_dir / "stages.json",
+            )
+            if p.exists()
+        ),
+        None,
+    )
+    if path is None:
+        return {}
+    reason = "no list of stages"
+    for stages in _parsed_stages(novomodelo_output_dir):
+        if isinstance(stages, list) and stages:
+            weighted = [_stage_risk_weight(stage) for stage in stages]
+            known = [pair for pair in weighted if pair is not None]
+            if len(known) == len(weighted):
+                return dict(known)
+            reason = "a stage without a risk measure the report can read"
+            break
+    emit(
+        report_file_unreadable_diagnostic(
+            "stages.json",
+            path,
+            "the report cannot tell whether the run is risk-averse and does not "
+            "judge its upper bound.",
+            reason,
+        ),
+        logger=_LOG,
+    )
+    return None
+
+
+def _stage_risk_weight(stage: object) -> tuple[int, float] | None:
+    """``(id, weight)`` of one ``stages.json`` stage, ``None`` when it has no
+    integer ``id`` or a ``risk_measure`` other than ``expectation`` or a CVaR
+    object with a numeric ``lambda``."""
+    if not isinstance(stage, dict) or type(stage.get("id")) is not int:
+        return None
+    measure = stage.get("risk_measure", "expectation")
+    if isinstance(measure, str):
+        # Mirrors the solver's eq_ignore_ascii_case: strip() would read as
+        # expectation the " expectation" the solver rejects.
+        if measure.isascii() and measure.lower() == "expectation":
+            return stage["id"], 0.0
+        return None
+    cvar = measure.get("cvar") if isinstance(measure, dict) else None
+    weight = cvar.get("lambda") if isinstance(cvar, dict) else None
+    if isinstance(weight, (int, float)) and not isinstance(weight, bool):
+        return stage["id"], float(weight)
+    return None
 
 
 #: novomodelo's resolved generic-constraint echo, relative to the ``output/`` directory.
@@ -1253,6 +1333,9 @@ def read_novomodelo_hydro_withdrawal(novomodelo_output_dir: Path) -> pl.DataFram
         ) from exc
     if "water_withdrawal_m3s" not in df.columns:
         return empty
+    # The target is a stage value; per-block rows carry none.
+    if "block_id" in df.columns:
+        df = df.filter(pl.col("block_id").is_null())
     return df.select(
         pl.col("hydro_id").cast(pl.Int64).alias("entity_id"),
         pl.col("stage_id").cast(pl.Int64),
@@ -1529,7 +1612,9 @@ def read_novomodelo_thermal_means(novomodelo_output_dir: Path) -> pl.DataFrame:
     return result
 
 
-def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_bus_means(
+    novomodelo_output_dir: Path, *, include_net_import: bool = True
+) -> pl.DataFrame:
     """Read Novomodelo bus simulation means per (entity_id, stage_id).
 
     Computes block-hours-weighted scenario means for spot_price and
@@ -1538,6 +1623,9 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
 
     Returns DataFrame with columns: ``entity_id``, ``stage_id``,
     ``spot_price``, ``deficit_mw``, ``net_import_mw``.
+
+    Without *include_net_import* ``system/lines.json`` is not read and
+    ``net_import_mw`` is null on every bus, as for a case without lines.
     """
     empty = pl.DataFrame(
         schema={
@@ -1587,6 +1675,10 @@ def read_novomodelo_bus_means(novomodelo_output_dir: Path) -> pl.DataFrame:
         if col not in result.columns:
             result = result.with_columns(pl.lit(None).cast(pl.Float64).alias(col))
 
+    if not include_net_import:
+        return result.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("net_import_mw")
+        )
     return result.join(
         read_novomodelo_bus_net_import(novomodelo_output_dir),
         on=["entity_id", "stage_id"],
@@ -1737,9 +1829,14 @@ def read_novomodelo_thermal_percentiles(novomodelo_output_dir: Path) -> pl.DataF
         ) from exc
 
 
-def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame:
+def read_novomodelo_bus_percentiles(
+    novomodelo_output_dir: Path, *, include_net_import: bool = True
+) -> pl.DataFrame:
     """Read Novomodelo bus p10/p50/p90 per (entity_id, stage_id), the load
-    buses' net import (:func:`_bus_net_import_per_scenario`) included."""
+    buses' net import (:func:`_bus_net_import_per_scenario`) included.
+
+    Without *include_net_import* ``system/lines.json`` is not read and the net
+    import columns are left out, as for a case without lines."""
     lf = scan_simulation_entity(novomodelo_output_dir, "buses")
     if lf is None:
         return pl.DataFrame()
@@ -1754,6 +1851,8 @@ def read_novomodelo_bus_percentiles(novomodelo_output_dir: Path) -> pl.DataFrame
     try:
         per_sc = _weighted_scenario_values(lf, "bus_id", flow_cols, [], block_hours)
         percentiles = _compute_percentiles(per_sc, flow_cols, weights)
+        if not include_net_import:
+            return percentiles
         net_import = _bus_net_import_per_scenario(novomodelo_output_dir)
         if net_import is None:
             return percentiles
@@ -2330,6 +2429,81 @@ def read_novomodelo_convergence(novomodelo_output_dir: Path) -> pl.DataFrame:
     return df.select([pl.col(c).cast(t) for c, t in _CONVERGENCE_SCHEMA.items()])
 
 
+def read_novomodelo_convergence_bounds(novomodelo_output_dir: Path) -> pl.DataFrame:
+    """Read the training bounds and the upper-bound kind, one row per iteration.
+
+    Columns: ``iteration`` (Int64), ``lower_bound``, ``upper_bound``,
+    ``upper_bound_std`` (Float64) and ``upper_bound_kind`` (Utf8), sorted by
+    ``iteration``. Bounds are in R$; ``upper_bound_std`` is the sample standard
+    deviation of a statistical upper bound and null under an exact one;
+    ``upper_bound_kind`` is constant within one run and null for outputs written
+    before novomodelo 0.14.
+
+    The upper bound is read from ``upper_bound`` or, when that is absent, the legacy
+    ``upper_bound_mean``. Columns are matched by exact name, so a file without them
+    is reported, not guessed at. Empty frame when the file is absent or lacks
+    ``iteration``, ``lower_bound`` or an upper bound.
+    """
+    schema = pl.Schema(
+        {
+            "iteration": pl.Int64,
+            "lower_bound": pl.Float64,
+            "upper_bound": pl.Float64,
+            "upper_bound_std": pl.Float64,
+            "upper_bound_kind": pl.Utf8,
+        }
+    )
+    empty = pl.DataFrame(schema=schema)
+    effect = "the report leaves out the training convergence."
+
+    conv_path = novomodelo_output_dir / "training" / "convergence.parquet"
+    if not conv_path.exists():
+        if conv_path.parent.is_dir():
+            emit(
+                report_file_missing_diagnostic(
+                    "output/training/convergence.parquet", conv_path, effect
+                ),
+                logger=_LOG,
+            )
+        return empty
+
+    try:
+        df = pl.read_parquet(conv_path)
+    except Exception as exc:
+        raise NovomodeloReadError(
+            f"Failed to read convergence.parquet: {conv_path}"
+        ) from exc
+
+    upper = next(
+        (c for c in ("upper_bound", "upper_bound_mean") if c in df.columns),
+        "upper_bound",
+    )
+    required = ("iteration", "lower_bound", upper)
+    if not set(required) <= set(df.columns):
+        emit(
+            report_file_unreadable_diagnostic(
+                "output/training/convergence.parquet",
+                conv_path,
+                effect,
+                _missing_columns(required, df.columns),
+            ),
+            logger=_LOG,
+        )
+        return empty
+
+    optional = [
+        pl.col(c) if c in df.columns else pl.lit(None).alias(c)
+        for c in ("upper_bound_std", "upper_bound_kind")
+    ]
+    return (
+        df.select(
+            "iteration", "lower_bound", pl.col(upper).alias("upper_bound"), *optional
+        )
+        .cast(schema)
+        .sort("iteration")
+    )
+
+
 def read_novomodelo_hydro_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:
     """Read hydro metadata from ``system/hydros.json``.
 
@@ -2766,6 +2940,110 @@ def read_novomodelo_buses(novomodelo_output_dir: Path) -> list[dict]:
         entity=("bus", "buses"),
         absence_is_finding=True,
     )[1]
+
+
+def _strict_entity_list(path: Path, label: str, where: str, key: str) -> list[dict]:
+    """The entries under *key* of the JSON object at *path*, each an object with an
+    integer ``id`` and a non-empty string ``name``, in file order.
+
+    *label* names the file in a parse failure and *where* in the other failures.
+
+    Raises:
+        FieldParseError: the file does not parse, holds no list under *key*, or has
+            an entry without an integer ``id`` or a non-empty ``name``; ``field``
+            is *key*, ``id`` or ``name``.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FieldParseError(
+            f"{label} could not be parsed: {exception_reason(exc)}.",
+            path=str(path),
+            field=key,
+        ) from exc
+    entries = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        raise FieldParseError(
+            f"{where} holds no list of {key}.", path=str(path), field=key
+        )
+    for position, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict) or type(entry.get("id")) is not int:
+            raise FieldParseError(
+                f"Entry {position} of {where} has no integer id.",
+                path=str(path),
+                field="id",
+            )
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise FieldParseError(
+                f"Entry {position} of {where} has no name.",
+                path=str(path),
+                field="name",
+            )
+    return entries
+
+
+def read_novomodelo_required_entities(
+    novomodelo_output_dir: Path, filename: str
+) -> list[dict]:
+    """``system/<filename>``'s entries, each an object with an integer ``id`` and
+    a non-empty string ``name``, in file order.
+
+    Resolved by :func:`_find_system_json` and read under the key named for the
+    file. Unlike the lenient ``read_novomodelo_<file>`` readers it never degrades
+    to ``[]`` and emits no diagnostic; an empty list under the key is ``[]``.
+
+    Raises:
+        SourceFileError: the file is in none of the searched locations.
+        FieldParseError: the file does not parse, holds no list under its key, or
+            has an entry without an integer ``id`` or a non-empty ``name``;
+            ``field`` is the key, ``id`` or ``name``.
+    """
+    path = _find_system_json(novomodelo_output_dir, filename)
+    if path is None:
+        raise SourceFileError(
+            f"system/{filename} was not found for the Novomodelo output "
+            f"{novomodelo_output_dir}.",
+            path=str(case_dir_for(novomodelo_output_dir) / "system" / filename),
+        )
+    return _strict_entity_list(
+        path,
+        f"system/{filename}",
+        f"system/{filename} in the Novomodelo output {novomodelo_output_dir}",
+        path.stem,
+    )
+
+
+def read_novomodelo_required_generic_constraints(
+    novomodelo_case_dir: Path,
+) -> list[dict]:
+    """``constraints/generic_constraints.json``'s constraints, each an object with
+    an integer ``id`` and a non-empty string ``name``, in file order.
+
+    Unlike the lenient :func:`read_novomodelo_generic_constraints` it never
+    degrades to ``[]`` and emits no diagnostic; an empty list under the key is
+    ``[]``.
+
+    Raises:
+        SourceFileError: the file is absent.
+        FieldParseError: the file does not parse, holds no list under
+            ``constraints``, or has an entry without an integer ``id`` or a
+            non-empty ``name``; ``field`` is ``constraints``, ``id`` or ``name``.
+    """
+    path = novomodelo_case_dir / "constraints" / "generic_constraints.json"
+    if not path.exists():
+        raise SourceFileError(
+            "constraints/generic_constraints.json was not found for the "
+            f"Novomodelo case {novomodelo_case_dir}.",
+            path=str(path),
+        )
+    return _strict_entity_list(
+        path,
+        "constraints/generic_constraints.json",
+        "constraints/generic_constraints.json in the Novomodelo case "
+        f"{novomodelo_case_dir}",
+        "constraints",
+    )
 
 
 def read_novomodelo_thermal_metadata(novomodelo_output_dir: Path) -> dict[int, dict]:

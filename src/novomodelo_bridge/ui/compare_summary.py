@@ -105,6 +105,7 @@ def print_results_summary_from_dataset(
     verdict: CompareVerdict,
     training: Sequence[PairedCost] = (),
     reference_label: str = "NEWAVE",
+    candidate_label: str = "Novomodelo",
     console: Console | None = None,
     verbose: bool = False,
 ) -> None:
@@ -135,6 +136,10 @@ def print_results_summary_from_dataset(
         Display name for the reference model in the printed header/labels.
         Defaults to ``"NEWAVE"`` (``compare newave``); ``compare decomp``
         overrides it with ``"DECOMP"``.
+    candidate_label:
+        Display name for the candidate model in the title, the output line,
+        the bounds-table header and the legend. Defaults to ``"Novomodelo"``.
+        Printed verbatim, brackets included.
     console:
         The stdout console to render through. Defaults to :func:`get_console`
         so direct callers (tests) keep working unchanged; the CLI passes its
@@ -148,14 +153,16 @@ def print_results_summary_from_dataset(
 
     target.print()
     target.print(
-        f"Novomodelo vs {reference_label} Results Comparison",
+        f"{candidate_label} vs {reference_label} Results Comparison",
         soft_wrap=True,
         markup=False,
     )
     target.print("=" * 88, soft_wrap=True)
     target.print(f"{reference_label} case:  {newave_dir}", soft_wrap=True, markup=False)
     target.print(
-        f"Novomodelo output: {novomodelo_output_dir}", soft_wrap=True, markup=False
+        f"{candidate_label} output: {novomodelo_output_dir}",
+        soft_wrap=True,
+        markup=False,
     )
 
     excl_ties = dataset.summary["gap_excl_ties"].is_not_null().any()
@@ -175,14 +182,19 @@ def print_results_summary_from_dataset(
         )
         if verbose:
             _print_legend(
-                target, dataset, verdict, reference_label, excl_ties=excl_ties
+                target,
+                dataset,
+                verdict,
+                reference_label,
+                candidate_label,
+                excl_ties=excl_ties,
             )
 
     if training:
         target.print()
         target.print(
             make_table(
-                ["Bounds and cost (10⁹ R$)", reference_label, "Novomodelo", "Δ%"],
+                ["Bounds and cost (10⁹ R$)", reference_label, candidate_label, "Δ%"],
                 [
                     [
                         row.label,
@@ -218,12 +230,13 @@ def _print_legend(
     dataset: ComparisonDataset,
     verdict: CompareVerdict,
     reference_label: str,
+    candidate_label: str,
     *,
     excl_ties: bool,
 ) -> None:
     """Explain the agreement table's gap columns and the rows left out of it."""
     target.print(
-        f"Gap = Σ|Novomodelo − {reference_label}| / Σ|{reference_label}| over "
+        f"Gap = Σ|{candidate_label} − {reference_label}| / Σ|{reference_label}| over "
         f"every stage and entity: close up to {format_gap(verdict.tolerance)}, "
         f"far beyond {format_gap(FAR_FACTOR * verdict.tolerance)}.",
         style="dim",

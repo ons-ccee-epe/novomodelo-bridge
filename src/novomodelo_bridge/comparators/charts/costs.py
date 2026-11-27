@@ -27,9 +27,11 @@ from novomodelo_bridge.ui.html.document import escape_text
 from novomodelo_bridge.ui.html.plotly import plotly_div as _plotly_div
 from novomodelo_bridge.ui.theme import COST_COMPONENT_COLORS
 
-#: The source-model ``parcela`` labels (pmo.dat ``custo_operacao_series_simuladas``
-#: or the DECOMP cost report) each Novomodelo cost component compares with, keyed
-#: by the component names of :data:`COST_CATEGORIES`.
+#: The reference-side labels each Novomodelo cost component compares with, keyed
+#: by the component names of :data:`COST_CATEGORIES`: the source-model ``parcela``
+#: labels (pmo.dat ``custo_operacao_series_simuladas`` or the DECOMP cost report),
+#: or, for a component neither source model reports, the Novomodelo cost column
+#: name a Novomodelo reference carries.
 _SOURCE_PARCELS: dict[str, list[str]] = {
     # The thermal cost as the source model reports it, with any GNL fuel in it.
     # Novomodelo books GNL fuel on its anticipated column when it is committed,
@@ -43,12 +45,16 @@ _SOURCE_PARCELS: dict[str, list[str]] = {
     "Outflow Max": ["VIOL. DEFL. MAXIMA"],
     "Turbining Bounds": ["VIOL. TURB. MINIMO", "VIOL. TURB. MAXIMO"],
     "Generation Bounds": ["VIOLACAO GHMIN", "VIOLACAO GHMINU"],
-    "Storage Bounds": [],
+    # Neither source model reports this component. The label is the Novomodelo
+    # cost column name, for a comparison whose reference is itself a Novomodelo
+    # run.
+    "Storage Bounds": ["storage_violation_cost"],
     "Filling Target": ["VIOLACAO EVMIN"],
     "Evaporation": ["VIOL. EVAP. UHE"],
     "Water Withdrawal": ["VIOLACAO RETIRADA"],
     "FPHA Planes": ["VIOLACAO FPHA"],
-    "Inflow Penalty": [],
+    # Novomodelo-only, as Storage Bounds above.
+    "Inflow Penalty": ["inflow_penalty_cost"],
     # The source model reports the risk-aversion curve and surface (CAR/SAR),
     # electric (RESTELETRICA), interchange-group (INTERC. MIN.), hydraulic
     # (RHQ/RHV) and piecewise-linear (RLPP) restriction violations as separate
@@ -72,7 +78,8 @@ _SOURCE_PARCELS: dict[str, list[str]] = {
     "Turbined Reg.": ["TURBINAMENTO UHE"],
     "NCS Curtailment": ["CORTE GER. EOLICA"],
     "Exchange": ["INTERCAMBIO"],
-    "Pumping": [],
+    # Novomodelo-only, as Storage Bounds above.
+    "Pumping": ["pumping_cost"],
 }
 
 #: Source-model slack parcels with no Novomodelo component: ``(label, parcelas,

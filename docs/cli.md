@@ -133,7 +133,7 @@ $ novomodelo-bridge convert decomp [OPTIONS] {src} {dst}
 
 ## `novomodelo-bridge compare`
 
-Compare source model inputs/results against Novomodelo.
+Compare source model inputs/results against Novomodelo, or two Novomodelo outputs against each other.
 
 **Usage**:
 
@@ -149,6 +149,7 @@ $ novomodelo-bridge compare [OPTIONS] COMMAND [ARGS]...
 
 * `decomp`: Compare a DECOMP run&#x27;s published operation...
 * `newave`: Compare NEWAVE published results against...
+* `novomodelo`: Compare the results of two Novomodelo runs.
 
 ### `novomodelo-bridge compare decomp`
 
@@ -211,6 +212,42 @@ $ novomodelo-bridge compare newave [OPTIONS] {newave_dir} {novomodelo_output_dir
 * `--tolerance <float>`: Largest gap, as a fraction, at which a variable counts as close (default 0.05); beyond four times it a variable is far. Overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml.  [env var: NOVOMODELO_BRIDGE_RESULTS_TOLERANCE]
 * `--format FORMAT`: Output formats: console,html,csv,parquet,json,all. Comma-separated and/or repeatable. Overridable via NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. (default: console,parquet,json)  [env var: NOVOMODELO_BRIDGE_FORMAT]
 * `--out-dir <path>`: Directory for file artifacts. Overridable via NOVOMODELO_BRIDGE_OUT_DIR or novomodelo-bridge.toml. (default: &lt;novomodelo_output_dir&gt;/comparison_artifacts).  [env var: NOVOMODELO_BRIDGE_OUT_DIR]
+* `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
+* `-v, --verbose`: Print warnings and notes in full and raise the console log level (-v INFO, -vv DEBUG).  [default: 0]
+* `--log-file PATH`: Write the full DEBUG log to PATH (the console verbosity is unaffected).
+* `--no-color`: Disable coloured output (also honoured via the NO_COLOR env var).
+* `--quiet`: Suppress the summary and info notes; warnings/errors still show.
+* `--help`: Show this message and exit.
+
+### `novomodelo-bridge compare novomodelo`
+
+Compare the results of two Novomodelo runs.
+
+The first directory is the baseline and the second the candidate; the two
+runs may come from different novomodelo versions or from the same one.
+
+Informational: divergences never change the exit code. Exits 1 if an output
+directory is not found or lacks its hydro or bus list, and 2 if a directory
+is not a Novomodelo output or one of its files cannot be read.
+
+**Usage**:
+
+```console
+$ novomodelo-bridge compare novomodelo [OPTIONS] {baseline_output} {candidate_output}
+```
+
+**Arguments**:
+
+* `baseline_output <path>`: Path to the Novomodelo output directory of the baseline run.  [required]
+* `candidate_output <path>`: Path to the Novomodelo output directory of the candidate run.  [required]
+
+**Options**:
+
+* `--baseline-label <str>`: Name of the baseline run in the report and the terminal (default: Novomodelo &lt;version&gt; when the versions differ, else the case directory name).
+* `--candidate-label <str>`: Name of the candidate run, defaulting as --baseline-label.
+* `--tolerance <float>`: Largest gap, as a fraction, at which a variable counts as close (default 0.05); beyond four times it a variable is far. Overridable via NOVOMODELO_BRIDGE_RESULTS_TOLERANCE or novomodelo-bridge.toml.  [env var: NOVOMODELO_BRIDGE_RESULTS_TOLERANCE]
+* `--format FORMAT`: Output formats: console,html,csv,parquet,json,all. Comma-separated and/or repeatable. Overridable via NOVOMODELO_BRIDGE_FORMAT or novomodelo-bridge.toml. (default: console,parquet,json)  [env var: NOVOMODELO_BRIDGE_FORMAT]
+* `--out-dir <path>`: Directory for file artifacts. Overridable via NOVOMODELO_BRIDGE_OUT_DIR or novomodelo-bridge.toml. (default: &lt;candidate_output&gt;/version_comparison_artifacts).  [env var: NOVOMODELO_BRIDGE_OUT_DIR]
 * `--json`: Emit a single machine-readable JSON verdict to stdout and suppress the human-readable (Rich) output.
 * `-v, --verbose`: Print warnings and notes in full and raise the console log level (-v INFO, -vv DEBUG).  [default: 0]
 * `--log-file PATH`: Write the full DEBUG log to PATH (the console verbosity is unaffected).

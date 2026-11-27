@@ -8,8 +8,18 @@ import re
 import polars as pl
 import pytest
 
+from novomodelo_bridge.comparators.charts import _COST_MAP, _resolve_cost_categories
 from novomodelo_bridge.comparators.charts._shared import _plant_gap_table
-from novomodelo_bridge.comparators.charts.costs import PairedCost, training_costs
+from novomodelo_bridge.comparators.charts.costs import (
+    _DECISION_THERMAL_ROWS,
+    PairedCost,
+    training_costs,
+)
+from novomodelo_bridge.comparators.decomp.results import (
+    _DECISION_THERMAL_LABELS,
+    _DELIVERY_THERMAL_LABELS,
+    _NW_COST_LABELS,
+)
 from novomodelo_bridge.comparators.model import ResultComparison
 from novomodelo_bridge.ui.html.document import folded_table
 
@@ -199,3 +209,65 @@ class TestTrainingCosts:
     def test_paired_cost_percent_undefined_near_a_zero_reference(self) -> None:
         assert PairedCost("x", 0.0, 5.0).pct is None
         assert PairedCost("x", None, 5.0).diff is None
+
+
+_NOVOMODELO_ONLY_LABELS = {
+    "Storage Bounds": "storage_violation_cost",
+    "Inflow Penalty": "inflow_penalty_cost",
+    "Pumping": "pumping_cost",
+}
+
+
+class TestNovomodeloOnlyParcels:
+    def test_labels_are_lower_case_underscored_and_collide_with_no_source_label(
+        self,
+    ) -> None:
+        labels = set(_NOVOMODELO_ONLY_LABELS.values())
+        decomp_labels = {
+            row[0]
+            for row in (
+                *_NW_COST_LABELS,
+                *_DELIVERY_THERMAL_LABELS,
+                *_DECISION_THERMAL_LABELS,
+            )
+        }
+        other_labels = {
+            label
+            for name, source, _, _ in (*_COST_MAP, *_DECISION_THERMAL_ROWS)
+            if name not in _NOVOMODELO_ONLY_LABELS
+            for label in source
+        }
+        rows = {
+            name: (source, columns)
+            for name, source, columns, _ in _COST_MAP
+            if name in _NOVOMODELO_ONLY_LABELS
+        }
+
+        assert all(label == label.lower() and "_" in label for label in labels)
+        assert rows == {
+            name: ([label], [label]) for name, label in _NOVOMODELO_ONLY_LABELS.items()
+        }
+        assert labels.isdisjoint(decomp_labels)
+        assert labels.isdisjoint(other_labels)
+
+    def test_a_novomodelo_reference_pairs_each_component_with_no_unmapped_row(
+        self,
+    ) -> None:
+        source = {
+            "storage_violation_cost": 5.0e6,
+            "inflow_penalty_cost": 4.0e6,
+            "pumping_cost": 3.0e6,
+        }
+        novomodelo = {
+            "storage_violation_cost": 6.0e6,
+            "inflow_penalty_cost": 4.0e6,
+            "pumping_cost": 1.0e6,
+        }
+
+        rows = _resolve_cost_categories(source, novomodelo)
+
+        assert [(label, src, nm) for label, src, nm, _ in rows] == [
+            ("Storage Bounds", 5.0e6, 6.0e6),
+            ("Inflow Penalty", 4.0e6, 4.0e6),
+            ("Pumping", 3.0e6, 1.0e6),
+        ]

@@ -203,6 +203,40 @@ def decomp_dataset_summary(dataset: ComparisonDataset) -> dict[str, object]:
     return summary
 
 
+def version_dataset_summary(dataset: ComparisonDataset) -> dict[str, object]:
+    """The ``compare novomodelo`` command's dataset-sourced ``summary`` block.
+
+    Returns the headline from :func:`compare_summary`, sourced via
+    :func:`~novomodelo_bridge.comparators.verdict.build_compare_verdict`, PLUS
+    eight keys read unchanged from the dataset's facts record
+    (:func:`~novomodelo_bridge.comparators.version.facts.facts_of`), in this fixed
+    order: ``baseline_version``, ``candidate_version``, ``only_in_baseline``,
+    ``only_in_candidate``, ``upper_bound_comparable``, ``baseline_gap_percent``,
+    ``candidate_gap_percent``, ``gap_delta_pp``. A gap is in percent and
+    ``gap_delta_pp`` in percentage points; each is null when undefined.
+
+    The ``final_bounds`` rows count in the headline beside the operation
+    variables, so ``no-comparable-rows`` means neither kind of row was compared.
+
+    Raises:
+        TypeError: *dataset* holds no facts record.
+    """
+    from novomodelo_bridge.comparators.verdict import build_compare_verdict
+    from novomodelo_bridge.comparators.version.facts import facts_of
+
+    summary = compare_summary(build_compare_verdict(dataset))
+    facts = facts_of(dataset)
+    summary["baseline_version"] = facts.baseline_version
+    summary["candidate_version"] = facts.candidate_version
+    summary["only_in_baseline"] = facts.only_in_baseline
+    summary["only_in_candidate"] = facts.only_in_candidate
+    summary["upper_bound_comparable"] = facts.upper_bound_comparable
+    summary["baseline_gap_percent"] = facts.baseline_gap_percent
+    summary["candidate_gap_percent"] = facts.candidate_gap_percent
+    summary["gap_delta_pp"] = facts.gap_delta_pp
+    return summary
+
+
 def dashboard_summary(output: str, size_kb: float) -> dict[str, object]:
     """The ``dashboard`` command's ``summary`` block — the written artifact.
 

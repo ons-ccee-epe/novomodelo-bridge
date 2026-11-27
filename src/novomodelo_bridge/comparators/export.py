@@ -1,12 +1,14 @@
 """Machine-readable artifact export for the ANALYZE layer.
 
 This module wires the canonical :class:`ComparisonDataset` and the
-:class:`ComparisonManifest` into a single export entry point,
+:class:`ComparisonManifest` into an export entry point,
 :func:`write_artifacts`, that emits the artifacts a divergence-investigation
 workflow consumes: the tidy ``comparison.parquet`` frame, the per-variable
 ``summary.parquet`` / ``summary.json`` / ``summary.csv`` projections, the
 ``top_divergences.json`` side-table, the ``comparison.csv`` tidy export, and the
-``comparison.json`` provenance manifest (always written).
+``comparison.json`` provenance manifest (always written). The per-format files
+alone, without a :class:`ComparisonManifest`, are written by
+:func:`write_dataset_files`, which :func:`write_artifacts` calls.
 
 It composes existing primitives only: it never recomputes diffs and adds no
 renderer dependencies (no import of the ``charts`` package / ``report``), so the HTML
@@ -47,25 +49,13 @@ _TIDY_CSV: str = "comparison.csv"
 _SUMMARY_CSV: str = "summary.csv"
 
 
-def write_artifacts(
-    dataset: ComparisonDataset,
-    *,
-    command: str,
-    source_dir: Path,
-    novomodelo_output_dir: Path,
-    tolerance: float,
-    out_dir: Path,
-    formats: Sequence[str],
-    input_files: list[dict[str, object]] | None = None,
-    diagnostics: list[dict[str, object]] | None = None,
-) -> ComparisonManifest:
-    """Emit comparison artifacts for ``dataset`` and return the written manifest.
+def write_dataset_files(
+    dataset: ComparisonDataset, out_dir: Path, formats: Sequence[str]
+) -> list[str]:
+    """Write the per-format artifacts of ``dataset`` and return their basenames.
 
-    Validates ``formats`` against ``{"parquet", "json", "csv"}`` (fail fast),
-    creates ``out_dir``, emits the requested per-format artifacts, and always
-    writes the provenance manifest to ``out_dir / "comparison.json"``.
-
-    Per-format outputs:
+    Validates ``formats`` against ``{"parquet", "json", "csv"}`` (fail fast,
+    before any file is written) and creates ``out_dir``. Outputs per format:
 
     - ``"parquet"`` → ``comparison.parquet`` + ``summary.parquet`` (and, as a
       side effect of :meth:`ComparisonDataset.to_dir`, ``metadata.json`` so the
@@ -74,33 +64,16 @@ def write_artifacts(
       ``top_divergences.json`` (from ``dataset.metadata["top_divergences"]``).
     - ``"csv"`` → ``comparison.csv`` (tidy) + ``summary.csv``.
 
-    The returned manifest's :attr:`~ComparisonManifest.artifacts` is the sorted
-    list of every primary artifact basename, *including* ``comparison.json``
-    itself. ``metadata.json`` is a round-trip side effect of
-    :meth:`ComparisonDataset.to_dir` (needed by ``from_dir``) and is
-    intentionally excluded from the list. The manifest's
-    :attr:`~ComparisonManifest.top_divergences` mirrors the dataset metadata.
-
     Args:
         dataset: The validated canonical dataset to export.
-        command: The originating command label (e.g. ``"compare results"``).
-        source_dir: The source-model case directory (recorded in the manifest).
-        novomodelo_output_dir: The Novomodelo output directory (recorded in the manifest
-            and probed for the Novomodelo version).
-        tolerance: The comparison tolerance (recorded in the manifest).
         out_dir: Destination directory; created with ``parents=True``.
         formats: The artifact formats to emit; each must be in
             ``{"parquet", "json", "csv"}``.
-        input_files: The hashed source-deck input files (mirrors the
-            conversion manifest's ``input_files``); omitted (``None``) records
-            an empty list.
-        diagnostics: The compare run's diagnostics, each as a
-            :meth:`~novomodelo_bridge.core.diagnostics.Diagnostic.to_dict` dict; omitted
-            (``None``) records an empty ``diagnostics`` list and an empty
-            ``diagnostics_summary``.
 
     Returns:
-        The :class:`ComparisonManifest` written to ``out_dir / "comparison.json"``.
+        The written basenames in write order (parquet, json, csv). Neither
+        ``comparison.json`` nor the ``metadata.json`` side effect of
+        :meth:`ComparisonDataset.to_dir` is listed.
 
     Raises:
         ValueError: If ``formats`` contains a value outside the allowed set; the
@@ -146,6 +119,65 @@ def write_artifacts(
         dataset.summary.write_csv(out_dir / _SUMMARY_CSV)
         written.append(_SUMMARY_CSV)
 
+    return written
+
+
+def write_artifacts(
+    dataset: ComparisonDataset,
+    *,
+    command: str,
+    source_dir: Path,
+    novomodelo_output_dir: Path,
+    tolerance: float,
+    out_dir: Path,
+    formats: Sequence[str],
+    input_files: list[dict[str, object]] | None = None,
+    diagnostics: list[dict[str, object]] | None = None,
+) -> ComparisonManifest:
+    """Emit comparison artifacts for ``dataset`` and return the written manifest.
+
+    Validates ``formats`` against ``{"parquet", "json", "csv"}`` (fail fast),
+    creates ``out_dir``, emits the requested per-format artifacts, and always
+    writes the provenance manifest to ``out_dir / "comparison.json"``.
+
+    The per-format outputs are those of :func:`write_dataset_files`.
+
+    The returned manifest's :attr:`~ComparisonManifest.artifacts` is the sorted
+    list of every primary artifact basename, *including* ``comparison.json``
+    itself. ``metadata.json`` is a round-trip side effect of
+    :meth:`ComparisonDataset.to_dir` (needed by ``from_dir``) and is
+    intentionally excluded from the list. The manifest's
+    :attr:`~ComparisonManifest.top_divergences` mirrors the dataset metadata.
+
+    Args:
+        dataset: The validated canonical dataset to export.
+        command: The originating command label (e.g. ``"compare results"``).
+        source_dir: The source-model case directory (recorded in the manifest).
+        novomodelo_output_dir: The Novomodelo output directory (recorded in the manifest
+            and probed for the Novomodelo version).
+        tolerance: The comparison tolerance (recorded in the manifest).
+        out_dir: Destination directory; created with ``parents=True``.
+        formats: The artifact formats to emit; each must be in
+            ``{"parquet", "json", "csv"}``.
+        input_files: The hashed source-deck input files (mirrors the
+            conversion manifest's ``input_files``); omitted (``None``) records
+            an empty list.
+        diagnostics: The compare run's diagnostics, each as a
+            :meth:`~novomodelo_bridge.core.diagnostics.Diagnostic.to_dict` dict; omitted
+            (``None``) records an empty ``diagnostics`` list and an empty
+            ``diagnostics_summary``.
+
+    Returns:
+        The :class:`ComparisonManifest` written to ``out_dir / "comparison.json"``.
+
+    Raises:
+        ValueError: If ``formats`` contains a value outside the allowed set; the
+            message names the offending value(s).
+        SchemaError: Propagated from :meth:`ComparisonDataset.validate` (invoked
+            by :meth:`ComparisonDataset.to_dir`) when the dataset violates its
+            column contract.
+    """
+    written = write_dataset_files(dataset, out_dir, formats)
     # The manifest always lists itself.
     written.append(MANIFEST_FILE)
 

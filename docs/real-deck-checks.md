@@ -242,6 +242,14 @@ Captured with a novomodelo 0.21.0 build that accepts the `spillage` object, in N
 | --- | --- |
 | Inflow statistics against NEWAVE's `parpvaz.dat` | `convert newave` on a January 2026 case, then `novomodelo run` on the converted case with one training iteration and `exports.stochastic` on. For every plant and calendar month, the mean and standard deviation in `output/stochastic/inflow_seasonal_stats.parquet` equal the first `MEDIA AMOSTRAL DAS VAZOES` and `DESVIO PADRAO AMOSTRAL DAS VAZOES` tables of that plant's section of `parpvaz.dat` within 0.005 m³/s, the print resolution: 159 plants, 1908 plant-months. They include the 91 plant-months NEWAVE holds at a constant, with a standard deviation of 0, among them Xingó in every month, Fontes from June to October and Belo Monte in April at 13900 m³/s; NEWAVE's own forward scenarios hold the same values in every stage. Captured with a novomodelo 0.21.0 build in November 2026. |
 
+### Two solved Novomodelo cases of one deck, from two novomodelo releases
+
+No run of this check is recorded yet; the row says what a run verifies.
+
+| Check | Verifies |
+| --- | --- |
+| `compare novomodelo` on two real outputs | One deck is converted with two bridge releases, each into a new directory, and each case is solved by the novomodelo release its bridge pairs with. `novomodelo-bridge compare novomodelo <older case>/output <newer case>/output --format all --out-dir <new directory>` then exits 0. The terminal header and the report title carry each run's version. Plants, buses and lines pair by name, with none reported on one side only. The per-stage bound lines of the plant detail and the line limits of the network tab are drawn from `constraints/hydro_bounds.parquet` and `constraints/line_bounds.parquet`, which only a real case holds. A result the older release did not write is listed under Results unavailable and does not stop the run. The final lower bounds and gaps of the Overview tab equal the last rows of each run's `training/convergence.parquet`. The newer output compared with itself gives the `--json` status `ok` and the `same-output-compared` note. An existing `comparison_artifacts/` in either output is left as it was. |
+
 ## Excerpts still to capture
 
 These would turn the remaining reader checks into ordinary tests. Take the

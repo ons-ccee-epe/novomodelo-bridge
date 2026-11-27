@@ -72,11 +72,12 @@ source = [
     "novomodelo_bridge.comparators.newave.readers",
     "novomodelo_bridge.comparators.newave.alignment",
     "novomodelo_bridge.comparators.newave.constraints",
+    "novomodelo_bridge.comparators.version",
 ]
 
 [tool.coverage.report]
-fail_under = 83
-# Ratchet: raise as coverage improves, never lower to dodge a regression — this is the combined aggregate over the 5 `source` modules above, not a per-module threshold.
+fail_under = 93
+# Ratchet: raise as coverage improves, never lower to dodge a regression — this is the combined aggregate over the `source` entries above, not a per-module threshold.
 
 [tool.pyright]
 # Editor aid only: pyright does not run in CI. The CI lint job gates ruff

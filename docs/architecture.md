@@ -13,9 +13,10 @@ cannot drift far from the tree without a failing build. All paths are under
 
 1. **`cli/`** parses the command line into a frozen args dataclass
    (`cli/args.py`) and calls one handler per command (`cli/convert.py`,
-   `cli/check.py`, `cli/compare.py`, `cli/dashboard.py`). The handler owns
-   what the user sees: exit codes, the `--json` envelope (`cli/verdict.py`),
-   `--validate`, and the provenance manifest (`cli/conversion_manifest.py`).
+   `cli/check.py`, `cli/compare.py`, `cli/compare_version.py`,
+   `cli/dashboard.py`). The handler owns what the user sees: exit codes, the
+   `--json` envelope (`cli/verdict.py`), `--validate`, and the provenance
+   manifest (`cli/conversion_manifest.py`).
 2. **`newave/`** is the track. `files.py` discovers the source files,
    `case.py` parses each one once and caches it, `id_map.py` fixes the
    deterministic 1-based to 0-based id mapping, `preflight.py` implements
@@ -33,8 +34,9 @@ cannot drift far from the tree without a failing build. All paths are under
    self-checks run on output tables before they are written.
 4. **`novomodelo/`** is the Novomodelo side: `CaseWriter`, the single funnel every JSON
    and Parquet file passes through (it owns `--dry-run`); the `$schema` URL
-   registry; the minimum-novomodelo-version policy; and readers for Novomodelo's
-   `output/` tree.
+   registry; the minimum-novomodelo-version policy; readers for Novomodelo's
+   `output/` tree; and a probe of the partitions and columns an output holds
+   (`novomodelo/probe.py`).
 
 Converters are functions from the parsed case to tables and dicts. They do
 not write files, print, or format messages. A degraded input becomes a
@@ -52,16 +54,24 @@ model, exporters, and the HTML report assembled from `comparators/charts/`.
 and renders one module per tab under `dashboard/tabs/`. Both reuse
 `ui/theme.py` and `ui/html/` and neither touches the Rich console.
 
+`compare novomodelo` sets two Novomodelo outputs against each other through
+`comparators/version/`, with no source model. It decides from the probe which
+sections both outputs can supply, reads those sections with the readers of
+`novomodelo/readers.py`, and pairs entities by name, not by id. It then fills
+the same `ComparisonDataset`, with the baseline in the slots the source model
+fills for `compare newave` and `compare decomp`, so the exporters, the verdict
+and the chart code are the shared ones.
+
 ## Package map
 
 | Package       | Role                                                                                                                                                      |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `core`        | Shared foundation for both tracks: diagnostics, errors, units, physics, calendar, generic-constraint format and builder, compare agreement bands. Imports only itself. |
-| `novomodelo`       | Novomodelo-side I/O: the case writer, the schema registry, version compatibility, output readers.                                                              |
+| `novomodelo`       | Novomodelo-side I/O: the case writer, the schema registry, version compatibility, output readers, the output probe.                                            |
 | `newave`      | The NEWAVE track: spine modules plus `converters/`.                                                                                                       |
 | `decomp`      | The DECOMP track: spine modules plus `converters/` and `fcf/` (boundary cost-to-go import).                                                               |
 | `dessem`      | The DESSEM export of a solved DECOMP-track case's cost-to-go function (`export dessem`). Reads the DECOMP deck through `decomp`.                          |
-| `comparators` | Source-vs-Novomodelo comparison, twin-tracked under `comparators/newave/` and `comparators/decomp/`, with shared chart code under `comparators/charts/`.       |
+| `comparators` | Source-vs-Novomodelo comparison, twin-tracked under `comparators/newave/` and `comparators/decomp/`, with shared chart code under `comparators/charts/`; the comparison of two Novomodelo runs under `comparators/version/`. |
 | `ui`          | Rich terminal rendering (`ui/console.py`) and the HTML theme and document helpers (`ui/theme.py`, `ui/html/`). The only package that imports Rich.       |
 | `dashboard`   | The interactive Plotly dashboard: a data layer plus one module per tab.                                                                                  |
 | `cli`         | Typer wiring and the command handlers. Top of the stack; nothing imports it.                                                                             |
@@ -88,9 +98,12 @@ A package may import itself and the packages below it, never sideways or up:
 
 Two refinements: `comparators/newave/` may additionally import `newave`, and
 `comparators/decomp/` may additionally import `decomp`; modules directly under
-`comparators/` import neither track. `ui/theme.py` is a leaf that depends only
-on `core`, so presentation-consuming packages share colours and layout
-without pulling in Rich.
+`comparators/` import neither track. `comparators/version/`, the comparison of
+two Novomodelo runs, belongs to the plain `comparators` package, so it imports
+neither track and neither track comparator, and `test_import_direction`
+enforces it. `ui/theme.py` is a leaf that depends only on `core`, so
+presentation-consuming packages share colours and layout without pulling in
+Rich.
 
 The table is a readability aid. The enforced rule is the `_ALLOWED` map in
 `tests/test_package_boundaries.py`: `test_import_direction` fails on any edge
@@ -131,6 +144,11 @@ tracks need one, it moves to `core/`.
 - **A new CLI flag** is declared in `cli/app.py` on both tracks' commands,
   threaded through `cli/args.py`, and handled in the handler module.
   Regenerate `docs/cli.md` afterwards.
+- **A new section of the version comparison** is declared in
+  `comparators/version/requirements.py` with the partitions and columns it
+  needs, built in `comparators/version/results.py`, and given a tab in
+  `comparators/version/report.py`. Its name is written into `comparison.json`
+  when the section is left out, so it is not renamed once released.
 - **A novomodelo limitation** the bridge has to work around is marked at the site
   with a `TRACKED NOVOMODELO-GAP` comment, surfaced as a log line or diagnostic,
   and recorded with its removal condition in the novomodelo repository. It is never

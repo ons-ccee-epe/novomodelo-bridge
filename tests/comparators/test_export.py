@@ -16,6 +16,7 @@ from novomodelo_bridge.comparators.dataset import (
 from novomodelo_bridge.comparators.export import (
     _read_novomodelo_version,
     write_artifacts,
+    write_dataset_files,
 )
 
 
@@ -236,3 +237,34 @@ def test_write_artifacts_roundtrip_reload(tmp_path: Path) -> None:
 
     assert reloaded.tidy.equals(dataset.tidy)
     assert reloaded.summary.equals(dataset.summary)
+
+
+def test_write_dataset_files_returns_write_order_without_the_manifest(
+    tmp_path: Path,
+) -> None:
+    dataset = _make_dataset()
+    out = tmp_path / "a"
+
+    written = write_dataset_files(dataset, out, ["parquet", "json", "csv"])
+
+    expected = [
+        "comparison.parquet",
+        "summary.parquet",
+        "summary.json",
+        "top_divergences.json",
+        "comparison.csv",
+        "summary.csv",
+    ]
+    assert written == expected
+    assert sorted(p.name for p in out.iterdir()) == sorted([*expected, "metadata.json"])
+
+
+def test_write_dataset_files_unknown_format_raises_before_creating_out_dir(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "a"
+
+    with pytest.raises(ValueError, match="xml"):
+        write_dataset_files(_make_dataset(), out, ["xml"])
+
+    assert not out.exists()

@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+import copy
+import json
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+
 from novomodelo_bridge.cli.verdict import (
     SCHEMA_VERSION,
     _coerce_unmapped_code,
@@ -11,10 +19,19 @@ from novomodelo_bridge.cli.verdict import (
     convert_summary,
     dashboard_summary,
     decomp_dataset_summary,
+    version_dataset_summary,
 )
-from novomodelo_bridge.comparators.verdict import CompareVerdict, FarVariable
+from novomodelo_bridge.comparators.dataset import ComparisonDataset
+from novomodelo_bridge.comparators.verdict import (
+    CompareVerdict,
+    FarVariable,
+    build_compare_verdict,
+)
+from novomodelo_bridge.comparators.version.results import build_version_dataset
+from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Diagnostic, Severity
 from tests.conftest import _empty_fake_dataset, _fake_dataset
+from tests.novomodelo_output_builders import SolvedCaseSpec, build_solved_case
 
 
 def _info_diagnostic() -> Diagnostic:
@@ -262,3 +279,185 @@ class TestDecompDatasetSummary:
         assert summary["stages"] == 0
         assert summary["variables"] == []
         assert summary["unmapped"] == {"hydro": [], "thermal": [], "bus": []}
+
+
+_FACTS: dict[str, Any] = {
+    "baseline_output_dir": "runs/v0.20.0/output",
+    "candidate_output_dir": "runs/v0.21.0/output",
+    "baseline_version": "0.20.0",
+    "candidate_version": "0.21.0",
+    "baseline_label": "v0.20.0 (baseline)",
+    "candidate_label": "v0.21.0 (candidate)",
+    "only_in_baseline": {"hydro": ["TUCURUI"], "thermal": []},
+    "only_in_candidate": {"hydro": [], "thermal": ["ANGRA 3"]},
+    "unavailable": [{"section": "hydro-bounds", "column": None, "side": "both"}],
+    "upper_bound_comparable": True,
+    "upper_bound_comparability": "comparable",
+    "baseline_upper_bound_kind": "inner_approximation",
+    "candidate_upper_bound_kind": "inner_approximation",
+    "baseline_gap_percent": 1.25,
+    "candidate_gap_percent": 0.75,
+    "gap_delta_pp": -0.5,
+}
+
+_VERSION_KEYS = [
+    "baseline_version",
+    "candidate_version",
+    "only_in_baseline",
+    "only_in_candidate",
+    "upper_bound_comparable",
+    "baseline_gap_percent",
+    "candidate_gap_percent",
+    "gap_delta_pp",
+]
+
+
+def _with_facts(dataset: ComparisonDataset, **changes: Any) -> ComparisonDataset:
+    dataset.metadata["version_comparison"] = copy.deepcopy({**_FACTS, **changes})
+    return dataset
+
+
+class TestVersionDatasetSummary:
+    """``version_dataset_summary`` -- the ``compare novomodelo --json`` payload
+    builder: the six headline keys, then eight read from the facts record."""
+
+    def test_keys_are_the_headline_then_the_eight_version_keys_in_order(self) -> None:
+        dataset = _with_facts(_fake_dataset())
+
+        result = version_dataset_summary(dataset)
+
+        assert list(result) == [
+            "tolerance",
+            "total",
+            "close",
+            "moderate",
+            "far",
+            "far_variables",
+            "baseline_version",
+            "candidate_version",
+            "only_in_baseline",
+            "only_in_candidate",
+            "upper_bound_comparable",
+            "baseline_gap_percent",
+            "candidate_gap_percent",
+            "gap_delta_pp",
+        ]
+
+    def test_headline_equals_compare_summary_of_the_dataset_verdict(self) -> None:
+        dataset = _with_facts(_fake_dataset())
+
+        result = version_dataset_summary(dataset)
+
+        headline = compare_summary(build_compare_verdict(dataset))
+        assert {key: result[key] for key in headline} == headline
+        assert result["total"] == 2
+        assert (result["close"], result["moderate"], result["far"]) == (1, 0, 1)
+
+    def test_version_keys_equal_the_facts_values_unchanged(self) -> None:
+        dataset = _with_facts(_fake_dataset())
+
+        result = version_dataset_summary(dataset)
+
+        assert {key: result[key] for key in _VERSION_KEYS} == {
+            key: _FACTS[key] for key in _VERSION_KEYS
+        }
+        assert result["baseline_version"] == "0.20.0"
+        assert result["candidate_version"] == "0.21.0"
+
+    def test_missing_gaps_and_versions_stay_none_and_serialize(self) -> None:
+        dataset = _with_facts(
+            _fake_dataset(),
+            baseline_version=None,
+            only_in_baseline={"hydro": ["TUCURUI"]},
+            upper_bound_comparable=False,
+            baseline_gap_percent=None,
+            candidate_gap_percent=0.5,
+            gap_delta_pp=None,
+        )
+
+        result = version_dataset_summary(dataset)
+
+        assert result["baseline_version"] is None
+        assert result["only_in_baseline"] == {"hydro": ["TUCURUI"]}
+        assert result["upper_bound_comparable"] is False
+        assert result["baseline_gap_percent"] is None
+        assert result["candidate_gap_percent"] == 0.5
+        assert result["gap_delta_pp"] is None
+        json.dumps(result, allow_nan=False)
+
+    def test_gap_values_are_numbers_when_both_sides_have_a_gap(self) -> None:
+        dataset = _with_facts(_fake_dataset())
+
+        result = version_dataset_summary(dataset)
+
+        assert result["baseline_gap_percent"] == 1.25
+        assert result["candidate_gap_percent"] == 0.75
+        assert result["gap_delta_pp"] == -0.5
+        json.dumps(result, allow_nan=False)
+
+    def test_result_shares_no_container_with_the_dataset_metadata(self) -> None:
+        dataset = _with_facts(_fake_dataset(), only_in_baseline={"hydro": ["TUCURUI"]})
+
+        result = version_dataset_summary(dataset)
+        only_in_baseline = result["only_in_baseline"]
+        assert isinstance(only_in_baseline, dict)
+        only_in_baseline["hydro"].append("BELO MONTE")
+        only_in_baseline["thermal"] = ["ANGRA 3"]
+
+        stored = dataset.metadata["version_comparison"]
+        assert isinstance(stored, dict)
+        assert stored["only_in_baseline"] == {"hydro": ["TUCURUI"]}
+
+    @pytest.mark.parametrize(
+        "omitted",
+        [
+            "unavailable",
+            "upper_bound_comparability",
+            "baseline_label",
+            "candidate_label",
+            "baseline_output_dir",
+            "candidate_output_dir",
+            "risk_measures_differ",
+        ],
+    )
+    def test_facts_kept_in_comparison_json_are_not_summary_keys(
+        self, omitted: str
+    ) -> None:
+        dataset = _with_facts(_fake_dataset())
+
+        result = version_dataset_summary(dataset)
+
+        assert omitted not in result
+
+    def test_dataset_without_a_facts_record_raises_type_error(self) -> None:
+        dataset = _fake_dataset()
+
+        with pytest.raises(TypeError, match="version_comparison"):
+            version_dataset_summary(dataset)
+
+    def test_empty_dataset_reports_zero_total_and_keeps_the_version_keys(self) -> None:
+        dataset = _with_facts(_empty_fake_dataset())
+
+        result = version_dataset_summary(dataset)
+
+        assert result["total"] == 0
+        assert result["far_variables"] == []
+        assert [key for key in result if key in _VERSION_KEYS] == _VERSION_KEYS
+
+    def test_two_identical_builds_are_all_close_and_comparable(
+        self, tmp_path: Path
+    ) -> None:
+        spec = SolvedCaseSpec(load_stats=True)
+        baseline = build_solved_case(tmp_path / "baseline", spec)
+        candidate = build_solved_case(
+            tmp_path / "candidate", replace(spec, id_offset=100)
+        )
+        with dx.collect():
+            dataset = build_version_dataset(baseline, candidate, tolerance=0.05)
+
+        result = version_dataset_summary(dataset)
+
+        assert result["total"] == result["close"]
+        assert result["far_variables"] == []
+        assert result["upper_bound_comparable"] is True
+        assert result["gap_delta_pp"] == 0.0

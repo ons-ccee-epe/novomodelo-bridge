@@ -1269,10 +1269,10 @@ def _build_performance_tab(dataset: ComparisonDataset, reference_label: str) -> 
     )
 
 
-def build_comparison_report(
+def build_comparison_tabs(
     dataset: ComparisonDataset, reference_label: str = "NEWAVE"
-) -> str:
-    """Build a complete HTML comparison report.
+) -> dict[str, str]:
+    """Build the HTML content of every comparison tab, keyed by tab id.
 
     Every tab sources its non-tidy inputs from ``dataset.render`` (see
     :class:`~novomodelo_bridge.comparators.dataset.RenderInputs`): each tab reads
@@ -1282,16 +1282,14 @@ def build_comparison_report(
     Parameters
     ----------
     dataset:
-        The canonical comparison dataset. Its ``render`` carries every render
-        input (named per-tab fields plus the ``results`` list).
+        The canonical comparison dataset.
     reference_label:
-        Display name for the reference series (trace names, chart titles,
-        prose). Defaults to ``"NEWAVE"``; ``compare decomp`` passes ``"DECOMP"``.
+        Display name for the reference series (trace names, chart titles, prose).
 
     Returns
     -------
-    str
-        Complete HTML document string.
+    dict[str, str]
+        Tab content in the order of ``html_report.COMPARISON_TABS``.
     """
     results = dataset.render.results
     # Reconstruct the overview summary from the dataset's already-computed
@@ -1301,7 +1299,7 @@ def build_comparison_report(
     summary = _results_summary_from_dataset(dataset)
     tolerance = summary_tolerance(dataset.metadata)
 
-    tab_contents: dict[str, str] = {
+    return {
         "tab-overview": _build_overview_tab(dataset, summary, reference_label),
         "tab-system": _build_system_tab(dataset, reference_label),
         "tab-balance": _build_balance_tab(dataset, reference_label),
@@ -1327,6 +1325,27 @@ def build_comparison_report(
         "tab-performance": _build_performance_tab(dataset, reference_label),
     }
 
+
+def build_comparison_report(
+    dataset: ComparisonDataset, reference_label: str = "NEWAVE"
+) -> str:
+    """Build a complete HTML comparison report.
+
+    Parameters
+    ----------
+    dataset:
+        The canonical comparison dataset. Its ``render`` carries every render
+        input (named per-tab fields plus the ``results`` list).
+    reference_label:
+        Display name for the reference series (trace names, chart titles,
+        prose). Defaults to ``"NEWAVE"``; ``compare decomp`` passes ``"DECOMP"``.
+
+    Returns
+    -------
+    str
+        Complete HTML document string.
+    """
+    tab_contents = build_comparison_tabs(dataset, reference_label)
     return build_comparison_html(
         title=f"Novomodelo vs {reference_label} Results Comparison",
         tab_contents=tab_contents,

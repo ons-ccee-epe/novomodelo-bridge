@@ -11,6 +11,7 @@ CLI maps :class:`NovomodeloReadError` to exit code 2 (distinct from exit 1 =
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,7 +25,12 @@ import typer
 from novomodelo_bridge.cli.args import CompareArgs
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
-from novomodelo_bridge.core.errors import NovomodeloPartitionMissingError
+from novomodelo_bridge.core.errors import (
+    FieldParseError,
+    NovomodeloPartitionMissingError,
+    SourceFileError,
+    diagnostic_from_exception,
+)
 from novomodelo_bridge.core.pandas_utils import as_float, as_int
 from novomodelo_bridge.novomodelo.readers import (
     NovomodeloReadError,
@@ -37,9 +43,12 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_bus_net_import,
     read_novomodelo_bus_percentiles,
     read_novomodelo_buses,
+    read_novomodelo_convergence,
+    read_novomodelo_convergence_bounds,
     read_novomodelo_coupling_auxiliary_count,
     read_novomodelo_default_exchange_cost,
     read_novomodelo_fpha_fit_config,
+    read_novomodelo_generic_constraints,
     read_novomodelo_gnl_delivered_cost,
     read_novomodelo_hydro_block_operation,
     read_novomodelo_hydro_bus_generation,
@@ -59,9 +68,12 @@ from novomodelo_bridge.novomodelo.readers import (
     read_novomodelo_network_lines,
     read_novomodelo_non_controllable_sources,
     read_novomodelo_productivity_detail,
+    read_novomodelo_required_entities,
+    read_novomodelo_required_generic_constraints,
     read_novomodelo_scenario_weights,
     read_novomodelo_spillage_energy,
     read_novomodelo_stage_line_bounds,
+    read_novomodelo_stage_risk_aversion,
     read_novomodelo_thermal_means,
     read_novomodelo_thermal_metadata,
     read_novomodelo_thermals,
@@ -70,134 +82,15 @@ from novomodelo_bridge.novomodelo.readers import (
     split_plant_row,
 )
 from tests.conftest import hydro_with_group
-
-# ---------------------------------------------------------------------------
-# Fixtures: build corrupt vs. valid-but-empty Novomodelo output layouts on disk.
-# ---------------------------------------------------------------------------
-
-_GARBAGE = b"this is definitely not a valid parquet file -- no PAR1 footer"
-
-
-def _write_corrupt_sim_parquet(output_dir: Path, entity: str) -> Path:
-    """Create ``output/simulation/<entity>/scenario_id=0000/data.parquet``
-    containing non-parquet garbage and return its path.
-    """
-    p = output_dir / "simulation" / entity / "scenario_id=0000" / "data.parquet"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(_GARBAGE)
-    return p
-
-
-def _write_hydro_bus_generation_partition(
-    output_dir: Path,
-    scenario_id: int,
-    rows: list[dict[str, object]],
-) -> Path:
-    """Write a synthetic ``hydro_bus_generation`` scenario partition with pyarrow.
-
-    *rows* are dicts with keys ``stage_id``, ``block_id`` (``None`` allowed
-    for a stage-level row), ``hydro_id``, ``bus_id``, ``turbined_m3s``,
-    ``generation_mw``, ``generation_mwh``. Returns the written
-    ``data.parquet`` path.
-    """
-    part_dir = (
-        output_dir
-        / "simulation"
-        / "hydro_bus_generation"
-        / f"scenario_id={scenario_id:04d}"
-    )
-    part_dir.mkdir(parents=True, exist_ok=True)
-    table = pa.table(
-        {
-            "stage_id": pa.array([r["stage_id"] for r in rows], type=pa.int32()),
-            "block_id": pa.array([r["block_id"] for r in rows], type=pa.int32()),
-            "hydro_id": pa.array([r["hydro_id"] for r in rows], type=pa.int32()),
-            "bus_id": pa.array([r["bus_id"] for r in rows], type=pa.int32()),
-            "turbined_m3s": pa.array(
-                [r["turbined_m3s"] for r in rows], type=pa.float64()
-            ),
-            "generation_mw": pa.array(
-                [r["generation_mw"] for r in rows], type=pa.float64()
-            ),
-            "generation_mwh": pa.array(
-                [r["generation_mwh"] for r in rows], type=pa.float64()
-            ),
-        }
-    )
-    path = part_dir / "data.parquet"
-    pq.write_table(table, path)
-    return path
-
-
-def _write_sim_entity_partition(
-    output_dir: Path,
-    entity: str,
-    scenario_id: int,
-    rows: list[dict[str, object]],
-) -> Path:
-    """Write a synthetic hive-partitioned ``simulation/<entity>`` parquet.
-
-    Column dtypes are inferred by pyarrow from the Python values in *rows*
-    (unlike :func:`_write_hydro_bus_generation_partition`, which pins the
-    hydro_bus_generation partition's exact writer dtypes) -- fine here since these
-    fixtures exercise the unchanged thermal/NCS/bus map-and-join branches,
-    not the dtype-sensitive new hydro path.
-    """
-    part_dir = output_dir / "simulation" / entity / f"scenario_id={scenario_id:04d}"
-    part_dir.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pylist(rows)
-    path = part_dir / "data.parquet"
-    pq.write_table(table, path)
-    return path
-
-
-def _write_stages_json(
-    case_dir: Path, stage_blocks: dict[int, list[tuple[int, float]]]
-) -> Path:
-    """Write a minimal ``stages.json`` at the case-dir level.
-
-    *stage_blocks* maps ``stage_id -> [(block_id, hours), ...]``.
-    """
-    data = {
-        "stages": [
-            {
-                "id": stage_id,
-                "blocks": [{"id": bid, "hours": hours} for bid, hours in blocks],
-            }
-            for stage_id, blocks in stage_blocks.items()
-        ]
-    }
-    path = case_dir / "stages.json"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    return path
-
-
-def _write_entity_bus_json(
-    case_dir: Path, entity: str, entries: list[dict[str, int]]
-) -> Path:
-    """Write a minimal ``system/<entity>.json`` with ``id``/``bus_id`` entries."""
-    sysdir = case_dir / "system"
-    sysdir.mkdir(parents=True, exist_ok=True)
-    path = sysdir / f"{entity}.json"
-    path.write_text(json.dumps({entity: entries}), encoding="utf-8")
-    return path
-
-
-def _write_minimal_hydros_json(case_dir: Path, hydros: list[dict[str, object]]) -> Path:
-    """Write a minimal ``system/hydros.json`` (physics fields only, no bus)."""
-    sysdir = case_dir / "system"
-    sysdir.mkdir(parents=True, exist_ok=True)
-    path = sysdir / "hydros.json"
-    path.write_text(json.dumps({"hydros": hydros}), encoding="utf-8")
-    return path
-
-
-def _write_corrupt_parquet(path: Path) -> Path:
-    """Create a corrupt parquet at *path* (parents made) and return it."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_GARBAGE)
-    return path
-
+from tests.novomodelo_output_builders import (
+    write_corrupt_parquet,
+    write_corrupt_sim_parquet,
+    write_entity_bus_json,
+    write_hydro_bus_generation_partition,
+    write_minimal_hydros_json,
+    write_sim_entity_partition,
+    write_stages_json,
+)
 
 # ---------------------------------------------------------------------------
 # Corrupt *existing* file -> NovomodeloReadError.
@@ -207,37 +100,37 @@ def _write_corrupt_parquet(path: Path) -> Path:
 class TestCorruptExistingRaises:
     def test_hydro_means_corrupt_parquet_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_corrupt_sim_parquet(out, "hydros")
+        write_corrupt_sim_parquet(out, "hydros")
         with pytest.raises(NovomodeloReadError, match="scan parquets"):
             read_novomodelo_hydro_means(out)
 
     def test_thermal_means_corrupt_parquet_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_corrupt_sim_parquet(out, "thermals")
+        write_corrupt_sim_parquet(out, "thermals")
         with pytest.raises(NovomodeloReadError):
             read_novomodelo_thermal_means(out)
 
     def test_bus_means_corrupt_parquet_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_corrupt_sim_parquet(out, "buses")
+        write_corrupt_sim_parquet(out, "buses")
         with pytest.raises(NovomodeloReadError):
             read_novomodelo_bus_means(out)
 
     def test_line_means_corrupt_parquet_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_corrupt_sim_parquet(out, "exchanges")
+        write_corrupt_sim_parquet(out, "exchanges")
         with pytest.raises(NovomodeloReadError):
             read_novomodelo_line_means(out)
 
     def test_lp_max_generation_corrupt_bounds_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_corrupt_parquet(out / "training" / "dictionaries" / "bounds.parquet")
+        write_corrupt_parquet(out / "training" / "dictionaries" / "bounds.parquet")
         with pytest.raises(NovomodeloReadError, match="bounds.parquet"):
             read_novomodelo_lp_max_generation(out)
 
     def test_hydro_withdrawal_corrupt_constraints_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_corrupt_parquet(tmp_path / "constraints" / "hydro_bounds.parquet")
+        write_corrupt_parquet(tmp_path / "constraints" / "hydro_bounds.parquet")
         with pytest.raises(NovomodeloReadError, match="hydro_bounds.parquet"):
             read_novomodelo_hydro_withdrawal(out)
 
@@ -245,7 +138,7 @@ class TestCorruptExistingRaises:
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "output"
-        _write_corrupt_parquet(tmp_path / "constraints" / "hydro_bounds.parquet")
+        write_corrupt_parquet(tmp_path / "constraints" / "hydro_bounds.parquet")
         with pytest.raises(NovomodeloReadError, match="hydro_bounds.parquet"):
             read_novomodelo_hydro_per_stage_bounds(out)
 
@@ -432,6 +325,25 @@ class TestMissingColumnsWarn:
         assert result.is_empty()
         assert found == []
 
+    def test_withdrawal_reads_the_stage_rows_of_a_case_with_block_rows(
+        self, tmp_path: Path
+    ) -> None:
+        bounds = tmp_path / "constraints" / "hydro_bounds.parquet"
+        bounds.parent.mkdir(parents=True)
+        pl.DataFrame(
+            {
+                "hydro_id": [1, 1, 1, 1],
+                "stage_id": [0, 0, 0, 1],
+                "block_id": [None, 0, 1, None],
+                "water_withdrawal_m3s": [0.5, None, None, 0.7],
+            },
+            schema_overrides={"block_id": pl.Int32},
+        ).write_parquet(bounds)
+
+        result = read_novomodelo_hydro_withdrawal(tmp_path / "output")
+
+        assert result.rows() == [(1, 0, 0.5), (1, 1, 0.7)]
+
 
 class TestCorruptDrivesRealReaderPath:
     def test_real_reader_raises_on_corrupt_then_empty_on_absent(
@@ -441,7 +353,7 @@ class TestCorruptDrivesRealReaderPath:
         bounds = out / "training" / "dictionaries" / "bounds.parquet"
 
         # Corrupt-but-existing -> raises.
-        _write_corrupt_parquet(bounds)
+        write_corrupt_parquet(bounds)
         with pytest.raises(NovomodeloReadError):
             read_novomodelo_lp_max_generation(out)
 
@@ -471,7 +383,7 @@ _HYDRO_BUS_GENERATION_COLUMNS = {
 class TestHydroBusGenerationValidPartition:
     def test_returns_seven_columns_plus_scenario_id(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_hydro_bus_generation_partition(
+        write_hydro_bus_generation_partition(
             out,
             scenario_id=1,
             rows=[
@@ -505,7 +417,7 @@ class TestHydroBusGenerationValidPartition:
 
     def test_dtypes_match_writer_contract(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_hydro_bus_generation_partition(
+        write_hydro_bus_generation_partition(
             out,
             scenario_id=1,
             rows=[
@@ -616,7 +528,7 @@ class TestHydroBusGenerationNullableBlockId:
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "output"
-        _write_hydro_bus_generation_partition(
+        write_hydro_bus_generation_partition(
             out,
             scenario_id=1,
             rows=[
@@ -668,7 +580,7 @@ class TestHydroBusGenerationCorruptRaisesNovomodeloReadError:
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "output"
-        _write_corrupt_sim_parquet(out, "hydro_bus_generation")
+        write_corrupt_sim_parquet(out, "hydro_bus_generation")
 
         # Present-but-corrupt is a different failure than absence: the
         # existing NovomodeloReadError contract applies, not the new named
@@ -687,7 +599,7 @@ class TestHydroMetadataHasNoBusId:
     def test_bus_id_key_is_absent(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
         out.mkdir(parents=True)
-        _write_minimal_hydros_json(tmp_path, [hydro_with_group(0, 100, name="H0")])
+        write_minimal_hydros_json(tmp_path, [hydro_with_group(0, 100, name="H0")])
 
         result = read_novomodelo_hydro_metadata(out)
 
@@ -788,7 +700,7 @@ def test_scan_simulation_entity_leaves_out_coupling_auxiliary_rows(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "output"
-    _write_sim_entity_partition(
+    write_sim_entity_partition(
         output,
         "hydros",
         0,
@@ -797,7 +709,7 @@ def test_scan_simulation_entity_leaves_out_coupling_auxiliary_rows(
             {"stage_id": 0, "hydro_id": 1288, "spillage_m3s": 9.0},
         ],
     )
-    _write_sim_entity_partition(output, "costs", 0, [{"stage_id": 0, "total": 5.0}])
+    write_sim_entity_partition(output, "costs", 0, [{"stage_id": 0, "total": 5.0}])
 
     hydros = scan_simulation_entity(output, "hydros")
     costs = scan_simulation_entity(output, "costs")
@@ -866,7 +778,7 @@ class TestReadNovomodeloHydros:
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "output"
-        _write_sim_entity_partition(
+        write_sim_entity_partition(
             out,
             "hydros",
             0,
@@ -897,7 +809,7 @@ class TestReadNovomodeloHydros:
     def test_total_inflow_adds_the_upstream_plants_outflow(
         self, tmp_path: Path
     ) -> None:
-        _write_minimal_hydros_json(
+        write_minimal_hydros_json(
             tmp_path, [{"id": 0, "downstream_id": 1}, {"id": 1, "downstream_id": None}]
         )
 
@@ -919,7 +831,7 @@ class TestHydroBusLabels:
         self, tmp_path: Path
     ) -> None:
         out = tmp_path / "output"
-        _write_hydro_bus_generation_partition(
+        write_hydro_bus_generation_partition(
             out,
             scenario_id=0,
             rows=[
@@ -957,7 +869,7 @@ class TestHydroBusLabels:
         down to a single one here.
         """
         out = tmp_path / "output"
-        _write_hydro_bus_generation_partition(
+        write_hydro_bus_generation_partition(
             out,
             scenario_id=0,
             rows=[
@@ -1119,11 +1031,11 @@ def _build_full_bus_aggregates_case(tmp_path: Path) -> Path:
     """
     out = tmp_path / "output"
     out.mkdir(parents=True)
-    _write_stages_json(tmp_path, _STAGE_BLOCKS)
+    write_stages_json(tmp_path, _STAGE_BLOCKS)
 
     # Hydro: one plant on bus 5. generation_mwh is block_mw * block_hours,
     # exactly as novomodelo's writer produces it.
-    _write_hydro_bus_generation_partition(
+    write_hydro_bus_generation_partition(
         out,
         scenario_id=0,
         rows=[
@@ -1147,7 +1059,7 @@ def _build_full_bus_aggregates_case(tmp_path: Path) -> Path:
             },
         ],
     )
-    _write_hydro_bus_generation_partition(
+    write_hydro_bus_generation_partition(
         out,
         scenario_id=1,
         rows=[
@@ -1173,8 +1085,8 @@ def _build_full_bus_aggregates_case(tmp_path: Path) -> Path:
     )
 
     # Thermal: one plant on bus 5, mapped via system/thermals.json.
-    _write_entity_bus_json(tmp_path, "thermals", [{"id": 1, "bus_id": 5}])
-    _write_sim_entity_partition(
+    write_entity_bus_json(tmp_path, "thermals", [{"id": 1, "bus_id": 5}])
+    write_sim_entity_partition(
         out,
         "thermals",
         scenario_id=0,
@@ -1195,7 +1107,7 @@ def _build_full_bus_aggregates_case(tmp_path: Path) -> Path:
             },
         ],
     )
-    _write_sim_entity_partition(
+    write_sim_entity_partition(
         out,
         "thermals",
         scenario_id=1,
@@ -1218,10 +1130,10 @@ def _build_full_bus_aggregates_case(tmp_path: Path) -> Path:
     )
 
     # NCS: one source on bus 5, mapped via system/non_controllable_sources.json.
-    _write_entity_bus_json(
+    write_entity_bus_json(
         tmp_path, "non_controllable_sources", [{"id": 1, "bus_id": 5}]
     )
-    _write_sim_entity_partition(
+    write_sim_entity_partition(
         out,
         "non_controllables",
         scenario_id=0,
@@ -1242,7 +1154,7 @@ def _build_full_bus_aggregates_case(tmp_path: Path) -> Path:
             },
         ],
     )
-    _write_sim_entity_partition(
+    write_sim_entity_partition(
         out,
         "non_controllables",
         scenario_id=1,
@@ -1352,12 +1264,12 @@ class TestBusAggregatesMissingHydroPartitionRaisesNamed:
     ) -> None:
         out = tmp_path / "output"
         out.mkdir(parents=True)
-        _write_stages_json(tmp_path, _STAGE_BLOCKS)
+        write_stages_json(tmp_path, _STAGE_BLOCKS)
 
         # Thermal data present and valid -- proves the hydro absence isn't
         # incidentally masked by every other branch also being empty.
-        _write_entity_bus_json(tmp_path, "thermals", [{"id": 1, "bus_id": 5}])
-        _write_sim_entity_partition(
+        write_entity_bus_json(tmp_path, "thermals", [{"id": 1, "bus_id": 5}])
+        write_sim_entity_partition(
             out,
             "thermals",
             scenario_id=0,
@@ -1388,14 +1300,14 @@ class TestBusAggregatesEnergyNotReweighted:
     ) -> None:
         out = tmp_path / "output"
         out.mkdir(parents=True)
-        _write_stages_json(tmp_path, _STAGE_BLOCKS)
+        write_stages_json(tmp_path, _STAGE_BLOCKS)
 
         # Two hydro plants on the same bus, one scenario. A null-block_id
         # stage-level row is included to prove it is summed in
         # without corrupting the result -- its
         # generation_mwh is 0.0, a real value novomodelo could legitimately
         # write for a slack/violation-only stage-level row.
-        _write_hydro_bus_generation_partition(
+        write_hydro_bus_generation_partition(
             out,
             scenario_id=0,
             rows=[
@@ -1489,7 +1401,7 @@ class TestBusAggregatesHydroFallsBackToBlockZeroMwWithoutStagesJson:
         # assertion below fails loudly if either leaks into the sum instead
         # of being excluded, exactly like the sibling aggregators' block_id
         # == 0 fallback excludes every non-representative block.
-        _write_hydro_bus_generation_partition(
+        write_hydro_bus_generation_partition(
             out,
             scenario_id=0,
             rows=[
@@ -1573,7 +1485,7 @@ class TestLoadEntityBusMapNoBareExcept:
         # The old code silently dropped an entry lacking "bus_id" via
         # ``if "bus_id" in e``. That filter is gone: a thermal/NCS entry
         # missing its bus_id is a real problem now, not a skippable row.
-        _write_entity_bus_json(tmp_path, "thermals", [{"id": 1}])
+        write_entity_bus_json(tmp_path, "thermals", [{"id": 1}])
 
         with pytest.raises(NovomodeloReadError):
             _load_entity_bus_map(tmp_path / "output", "thermals")
@@ -1584,7 +1496,7 @@ class TestLoadEntityBusMapNoBareExcept:
         assert result == {}
 
     def test_valid_json_still_returns_map(self, tmp_path: Path) -> None:
-        _write_entity_bus_json(
+        write_entity_bus_json(
             tmp_path, "thermals", [{"id": 1, "bus_id": 5}, {"id": 2, "bus_id": 6}]
         )
 
@@ -1624,7 +1536,7 @@ class TestEnergyNotReweightedHandComputedProof:
         out = tmp_path / "output"
         out.mkdir(parents=True)
         stage_blocks = {0: [(0, 100.0), (1, 200.0)]}
-        _write_stages_json(tmp_path, stage_blocks)
+        write_stages_json(tmp_path, stage_blocks)
 
         # One plant, one bus, one scenario: generation_mwh is exactly
         # generation_mw * block_hours, as novomodelo's writer produces it.
@@ -1648,7 +1560,7 @@ class TestEnergyNotReweightedHandComputedProof:
                 "generation_mwh": 20.0 * 200.0,  # 4000.0
             },
         ]
-        _write_hydro_bus_generation_partition(out, scenario_id=0, rows=rows)
+        write_hydro_bus_generation_partition(out, scenario_id=0, rows=rows)
 
         result = read_novomodelo_bus_aggregates(out)
         row = result.filter((pl.col("bus_id") == 5) & (pl.col("stage_id") == 0))
@@ -1702,11 +1614,11 @@ class TestBusSumMatchesPlantTotalCrossCheck:
     def _build_case(self, tmp_path: Path) -> Path:
         out = tmp_path / "output"
         out.mkdir(parents=True)
-        _write_stages_json(tmp_path, self._STAGE_BLOCKS)
+        write_stages_json(tmp_path, self._STAGE_BLOCKS)
 
         # Bus-keyed source (new): hydro_bus_generation partition. Plants 1
         # and 2 share bus 5; plant 3 is alone on bus 6.
-        _write_hydro_bus_generation_partition(
+        write_hydro_bus_generation_partition(
             out,
             scenario_id=0,
             rows=[
@@ -1770,7 +1682,7 @@ class TestBusSumMatchesPlantTotalCrossCheck:
         # Plant-keyed source (unchanged): simulation/hydros/, carrying the
         # same raw per-block MW values as the partition above, so both
         # sources describe the same underlying generation.
-        _write_sim_entity_partition(
+        write_sim_entity_partition(
             out,
             "hydros",
             scenario_id=0,
@@ -1823,8 +1735,8 @@ class TestBusSumMatchesPlantTotalCrossCheck:
         # A third bus (7) with a thermal plant and NO hydro plant at all --
         # the negative-space check: this bus must not surface a nonzero (or
         # any other bus's) hydro figure.
-        _write_entity_bus_json(tmp_path, "thermals", [{"id": 1, "bus_id": 7}])
-        _write_sim_entity_partition(
+        write_entity_bus_json(tmp_path, "thermals", [{"id": 1, "bus_id": 7}])
+        write_sim_entity_partition(
             out,
             "thermals",
             scenario_id=0,
@@ -1938,7 +1850,7 @@ class TestReadNovomodeloLines:
 
 class TestReadNovomodeloFphaFitConfig:
     def test_reads_each_fit_range_per_stage(self, tmp_path: Path) -> None:
-        _write_stages_json(tmp_path, {0: [(0, 1.0)], 1: [(0, 1.0)]})
+        write_stages_json(tmp_path, {0: [(0, 1.0)], 1: [(0, 1.0)]})
         system_dir = tmp_path / "system"
         system_dir.mkdir()
         config = {
@@ -2007,8 +1919,8 @@ class TestReadNovomodeloFphaFitConfig:
 class TestReadNovomodeloHydroBlockOperation:
     def test_carries_the_inflow_non_negativity_slack(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_stages_json(tmp_path, {0: [(0, 2.0)]})
-        _write_sim_entity_partition(
+        write_stages_json(tmp_path, {0: [(0, 2.0)]})
+        write_sim_entity_partition(
             out,
             "hydros",
             0,
@@ -2142,7 +2054,7 @@ class TestReadNovomodeloLineBounds:
 
     def test_corrupt_parquet_raises_novomodeloreaderror(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_corrupt_parquet(tmp_path / "constraints" / "line_bounds.parquet")
+        write_corrupt_parquet(tmp_path / "constraints" / "line_bounds.parquet")
 
         with pytest.raises(NovomodeloReadError, match="line_bounds.parquet"):
             read_novomodelo_line_bounds(out)
@@ -2180,7 +2092,7 @@ class TestReadNovomodeloStageLineBounds:
     def test_weights_block_overrides_by_hours_not_the_base_row(
         self, tmp_path: Path
     ) -> None:
-        _write_stages_json(tmp_path, {0: [(0, 30.0), (1, 69.0), (2, 69.0)]})
+        write_stages_json(tmp_path, {0: [(0, 30.0), (1, 69.0), (2, 69.0)]})
         lines = _write_line_case(
             tmp_path,
             [
@@ -2200,7 +2112,7 @@ class TestReadNovomodeloStageLineBounds:
         assert row["reverse_mw"] == pytest.approx((30 * 4200 + 138 * 1000) / 168)
 
     def test_block_without_override_takes_the_base_row(self, tmp_path: Path) -> None:
-        _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 3.0)]})
+        write_stages_json(tmp_path, {0: [(0, 1.0), (1, 3.0)]})
         lines = _write_line_case(
             tmp_path,
             [(0, 0, None, 800.0, 600.0), (0, 0, 1, 400.0, 200.0)],
@@ -2217,7 +2129,7 @@ class TestReadNovomodeloStageLineBounds:
     def test_block_without_any_row_takes_the_line_capacity(
         self, tmp_path: Path
     ) -> None:
-        _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 1.0)]})
+        write_stages_json(tmp_path, {0: [(0, 1.0), (1, 1.0)]})
         lines = _write_line_case(
             tmp_path, [(0, 0, 0, 400.0, 200.0)], {0: (1000.0, 800.0)}
         )
@@ -2232,7 +2144,7 @@ class TestReadNovomodeloStageLineBounds:
     def test_direction_unbounded_in_one_block_stays_unbounded(
         self, tmp_path: Path
     ) -> None:
-        _write_stages_json(tmp_path, {0: [(0, 1.0), (1, 1.0)]})
+        write_stages_json(tmp_path, {0: [(0, 1.0), (1, 1.0)]})
         lines = _write_line_case(
             tmp_path,
             [(0, 0, 0, 99999.0, 300.0), (0, 0, 1, 500.0, 300.0)],
@@ -2460,7 +2372,7 @@ class TestReadNovomodeloScenarioWeights:
 
     def test_corrupt_summary_raises(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_corrupt_parquet(out / "simulation" / "scenario_summary.parquet")
+        write_corrupt_parquet(out / "simulation" / "scenario_summary.parquet")
 
         with pytest.raises(NovomodeloReadError):
             read_novomodelo_scenario_weights(out)
@@ -2472,7 +2384,7 @@ class TestMeansReadersUseTheScenarioProbabilities:
     @staticmethod
     def _two_scenario_thermals(output_dir: Path) -> None:
         for scenario_id, generation in ((0, 100.0), (1, 200.0)):
-            _write_sim_entity_partition(
+            write_sim_entity_partition(
                 output_dir,
                 "thermals",
                 scenario_id,
@@ -2516,7 +2428,7 @@ def _write_exchange_case(
     """SE (bus 0) -> NE (bus 1) on line 0 and NE -> FC (bus 2) on line 1, FC
     without load; *flows* maps a scenario to its ``(line, block, MW)`` rows at
     stage 0, whose blocks last 10 h and 30 h."""
-    _write_stages_json(case_dir, {0: [(0, 10.0), (1, 30.0)]})
+    write_stages_json(case_dir, {0: [(0, 10.0), (1, 30.0)]})
     _write_load_stats(
         case_dir,
         {"bus_id": [0, 1, 2], "stage_id": [0, 0, 0], "mean_mw": [9.0, 9.0, 0.0]},
@@ -2536,7 +2448,7 @@ def _write_exchange_case(
     )
     out = case_dir / "output"
     for scenario_id, rows in flows.items():
-        _write_sim_entity_partition(
+        write_sim_entity_partition(
             out,
             "exchanges",
             scenario_id,
@@ -2581,7 +2493,7 @@ class TestReadNovomodeloBusNetImport:
 
     def test_a_case_without_lines_has_no_net_import(self, tmp_path: Path) -> None:
         out = tmp_path / "output"
-        _write_sim_entity_partition(
+        write_sim_entity_partition(
             out,
             "exchanges",
             0,
@@ -2595,7 +2507,7 @@ class TestReadNovomodeloBusNetImport:
 
     def _with_bus_prices(self, out: Path) -> None:
         for scenario_id in (0, 1):
-            _write_sim_entity_partition(
+            write_sim_entity_partition(
                 out,
                 "buses",
                 scenario_id,
@@ -2641,6 +2553,83 @@ class TestReadNovomodeloBusNetImport:
             (120.0, 200.0, 280.0),
             (None, None, None),
         ]
+
+    def _priced_case(self, tmp_path: Path) -> Path:
+        out = _write_exchange_case(
+            tmp_path, {s: [(0, b, 100.0) for b in (0, 1)] for s in (0, 1)}
+        )
+        self._with_bus_prices(out)
+        _write_scenario_summary(out, [0.5, 0.5])
+        return out
+
+    def test_asking_for_the_net_import_is_the_default(self, tmp_path: Path) -> None:
+        out = self._priced_case(tmp_path)
+
+        means = read_novomodelo_bus_means(out)
+        bands = read_novomodelo_bus_percentiles(out)
+
+        assert means.equals(read_novomodelo_bus_means(out, include_net_import=True))
+        assert bands.equals(
+            read_novomodelo_bus_percentiles(out, include_net_import=True)
+        )
+        assert means.sort("entity_id")["net_import_mw"].to_list() == [
+            pytest.approx(-100.0),
+            pytest.approx(100.0),
+            None,
+        ]
+        assert "net_import_mw_p50" in bands.columns
+
+    def test_by_default_a_malformed_line_list_is_reported_by_each_reader(
+        self, tmp_path: Path
+    ) -> None:
+        out = self._priced_case(tmp_path)
+        (out.parent / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+
+        with dx.collect() as found:
+            means = read_novomodelo_bus_means(out)
+            bands = read_novomodelo_bus_percentiles(out)
+
+        assert [d.code for d in found] == ["report-file-unreadable"] * 2
+        assert means["net_import_mw"].null_count() == means.height
+        assert "net_import_mw_p50" not in bands.columns
+
+    def test_without_the_net_import_a_malformed_line_list_is_not_read(
+        self, tmp_path: Path
+    ) -> None:
+        out = self._priced_case(tmp_path)
+        with_net_import = read_novomodelo_bus_means(out)
+        bands_with_net_import = read_novomodelo_bus_percentiles(out)
+        (out.parent / "system" / "lines.json").write_text("{not json", encoding="utf-8")
+
+        with dx.collect() as found:
+            means = read_novomodelo_bus_means(out, include_net_import=False)
+            bands = read_novomodelo_bus_percentiles(out, include_net_import=False)
+
+        assert found == []
+        assert means.schema == with_net_import.schema
+        assert means["net_import_mw"].null_count() == means.height
+        assert means.drop("net_import_mw").equals(with_net_import.drop("net_import_mw"))
+        assert bands.equals(
+            bands_with_net_import.drop(
+                [c for c in bands_with_net_import.columns if "net_import" in c]
+            )
+        )
+
+    def test_without_the_net_import_a_case_reads_as_one_without_lines(
+        self, tmp_path: Path
+    ) -> None:
+        out = self._priced_case(tmp_path)
+        (out.parent / "system" / "lines.json").unlink()
+
+        means = read_novomodelo_bus_means(out)
+        bands = read_novomodelo_bus_percentiles(out)
+
+        assert means.equals(read_novomodelo_bus_means(out, include_net_import=False))
+        assert bands.equals(
+            read_novomodelo_bus_percentiles(out, include_net_import=False)
+        )
+        assert means.schema["net_import_mw"] == pl.Float64
+        assert not any("net_import" in column for column in bands.columns)
 
 
 class TestReadNovomodeloDefaultExchangeCost:
@@ -2720,8 +2709,8 @@ class TestReadNovomodeloGnlDeliveredCost:
                 for block in (0, 1)
                 for thermal in (7, 8)
             ]
-            _write_sim_entity_partition(output_dir, "thermals", scenario, rows)
-            _write_sim_entity_partition(
+            write_sim_entity_partition(output_dir, "thermals", scenario, rows)
+            write_sim_entity_partition(
                 output_dir,
                 "costs",
                 scenario,
@@ -2753,3 +2742,891 @@ class TestReadNovomodeloGnlDeliveredCost:
 
     def test_none_without_thermal_output(self, tmp_path: Path) -> None:
         assert read_novomodelo_gnl_delivered_cost(tmp_path / "output") is None
+
+
+class TestReadNovomodeloConvergenceBounds:
+    COLUMNS = [
+        "iteration",
+        "lower_bound",
+        "upper_bound",
+        "upper_bound_std",
+        "upper_bound_kind",
+    ]
+
+    @staticmethod
+    def _write(tmp_path: Path, frame: pl.DataFrame) -> Path:
+        output_dir = tmp_path / "output"
+        (output_dir / "training").mkdir(parents=True)
+        frame.write_parquet(output_dir / "training" / "convergence.parquet")
+        return output_dir
+
+    @staticmethod
+    def _current(**overrides: pl.Series) -> pl.DataFrame:
+        columns = {
+            "iteration": pl.Series("iteration", [2, 1], dtype=pl.Int32),
+            "lower_bound": pl.Series("lower_bound", [200.0, 100.0]),
+            "upper_bound": pl.Series("upper_bound", [260.0, 150.0]),
+            "upper_bound_std": pl.Series("upper_bound_std", [None, None], pl.Float64),
+            "upper_bound_kind": pl.Series("upper_bound_kind", ["exact", "exact"]),
+            "forward_passes": pl.Series("forward_passes", [5, 5]),
+        }
+        return pl.DataFrame(list({**columns, **overrides}.values()))
+
+    def test_returns_the_five_columns_sorted_by_iteration(self, tmp_path: Path) -> None:
+        result = read_novomodelo_convergence_bounds(
+            self._write(tmp_path, self._current())
+        )
+
+        assert result.columns == self.COLUMNS
+        assert dict(result.schema) == {
+            "iteration": pl.Int64,
+            "lower_bound": pl.Float64,
+            "upper_bound": pl.Float64,
+            "upper_bound_std": pl.Float64,
+            "upper_bound_kind": pl.Utf8,
+        }
+        assert result["iteration"].to_list() == [1, 2]
+        assert result["lower_bound"].to_list() == [100.0, 200.0]
+        assert result["upper_bound"].to_list() == [150.0, 260.0]
+        assert result["upper_bound_std"].to_list() == [None, None]
+        assert result["upper_bound_kind"].to_list() == ["exact", "exact"]
+
+    def test_a_statistical_bound_keeps_its_std_and_kind(self, tmp_path: Path) -> None:
+        frame = self._current(
+            upper_bound_std=pl.Series("upper_bound_std", [7.0, 9.0]),
+            upper_bound_kind=pl.Series(
+                "upper_bound_kind", ["statistical", "statistical"]
+            ),
+        )
+
+        result = read_novomodelo_convergence_bounds(self._write(tmp_path, frame))
+
+        assert result["upper_bound_std"].to_list() == [9.0, 7.0]
+        assert result["upper_bound_kind"].to_list() == ["statistical", "statistical"]
+
+    def test_the_schema_before_0_14_reads_the_legacy_upper_bound(
+        self, tmp_path: Path
+    ) -> None:
+        frame = pl.DataFrame(
+            {
+                "iteration": [1, 2],
+                "lower_bound": [100.0, 200.0],
+                "upper_bound_mean": [150.0, 260.0],
+            }
+        )
+
+        result = read_novomodelo_convergence_bounds(self._write(tmp_path, frame))
+
+        assert result.columns == self.COLUMNS
+        assert result["upper_bound"].to_list() == [150.0, 260.0]
+        assert result["upper_bound_kind"].to_list() == [None, None]
+        assert result.schema["upper_bound_kind"] == pl.Utf8
+        assert result["upper_bound_std"].to_list() == [None, None]
+        assert result.schema["upper_bound_std"] == pl.Float64
+
+    def test_upper_bound_wins_over_the_legacy_column(self, tmp_path: Path) -> None:
+        frame = self._current().with_columns(upper_bound_mean=pl.Series([999.0, 999.0]))
+
+        result = read_novomodelo_convergence_bounds(self._write(tmp_path, frame))
+
+        assert result["upper_bound"].to_list() == [150.0, 260.0]
+
+    def test_without_a_training_directory_the_empty_frame_is_silent(
+        self, tmp_path: Path
+    ) -> None:
+        with dx.collect() as found:
+            result = read_novomodelo_convergence_bounds(tmp_path / "output")
+
+        assert result.is_empty()
+        assert result.columns == self.COLUMNS
+        assert found == []
+
+    def test_an_absent_file_in_the_training_directory_is_noted(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "output" / "training").mkdir(parents=True)
+
+        with dx.collect() as found:
+            result = read_novomodelo_convergence_bounds(tmp_path / "output")
+
+        assert result.is_empty()
+        assert result.columns == self.COLUMNS
+        assert result.schema["upper_bound_kind"] == pl.Utf8
+        assert [d.code for d in found] == ["report-file-missing"]
+
+    def test_a_file_of_garbage_bytes_raises(self, tmp_path: Path) -> None:
+        output_dir = tmp_path / "output"
+        write_corrupt_parquet(output_dir / "training" / "convergence.parquet")
+
+        with pytest.raises(NovomodeloReadError, match="convergence.parquet"):
+            read_novomodelo_convergence_bounds(output_dir)
+
+    @pytest.mark.parametrize(
+        ("drop", "rename", "reason"),
+        [
+            ("lower_bound", None, "no lower_bound column"),
+            ("iteration", None, "no iteration column"),
+            ("upper_bound", None, "no upper_bound column"),
+            ("upper_bound", "zsup", "no upper_bound column"),
+        ],
+    )
+    def test_a_file_lacking_a_required_column_is_reported(
+        self, tmp_path: Path, drop: str, rename: str | None, reason: str
+    ) -> None:
+        frame = self._current().drop(drop)
+        if rename:
+            frame = frame.with_columns(**{rename: pl.Series([1.0, 2.0])})
+
+        with dx.collect() as found:
+            result = read_novomodelo_convergence_bounds(self._write(tmp_path, frame))
+
+        assert result.is_empty()
+        assert result.columns == self.COLUMNS
+        assert [(d.code, d.severity) for d in found] == [
+            ("report-file-unreadable", Severity.WARNING)
+        ]
+        assert f"Reason: {reason}" in found[0].notes
+
+    @pytest.mark.parametrize("lacking", [None, "lower_bound"])
+    def test_its_findings_collapse_with_those_of_the_convergence_reader(
+        self, tmp_path: Path, lacking: str | None
+    ) -> None:
+        if lacking:
+            output_dir = self._write(tmp_path, self._current().drop(lacking))
+        else:
+            output_dir = tmp_path / "output"
+            (output_dir / "training").mkdir(parents=True)
+
+        with dx.collect() as found:
+            read_novomodelo_convergence(output_dir)
+            read_novomodelo_convergence_bounds(output_dir)
+
+        assert len(found) == 2
+        assert len(dx.finalize_diagnostics(found)) == 1
+
+
+class TestReadNovomodeloRequiredEntities:
+    ENTRIES = [{"id": 1, "name": "SUL", "bus_id": 0}, {"id": 0, "name": "SUDESTE"}]
+
+    @staticmethod
+    def _write(tmp_path: Path, filename: str, content: str | bytes) -> Path:
+        path = tmp_path / "system" / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content.encode() if isinstance(content, str) else content)
+        return path
+
+    @staticmethod
+    def _fails[E: Exception](output_dir: Path, filename: str, error: type[E]) -> E:
+        with dx.collect() as found, pytest.raises(error) as raised:
+            read_novomodelo_required_entities(output_dir, filename)
+        assert found == []
+        return raised.value
+
+    @pytest.mark.parametrize("entity", ["hydros", "buses", "thermals", "lines"])
+    def test_a_readable_file_is_returned_in_file_order_and_silent(
+        self, tmp_path: Path, entity: str
+    ) -> None:
+        self._write(tmp_path, f"{entity}.json", json.dumps({entity: self.ENTRIES}))
+
+        with dx.collect() as found:
+            result = read_novomodelo_required_entities(
+                tmp_path / "output", f"{entity}.json"
+            )
+
+        assert result == self.ENTRIES
+        assert found == []
+
+    def test_an_empty_list_is_returned_as_empty(self, tmp_path: Path) -> None:
+        self._write(tmp_path, "lines.json", json.dumps({"lines": []}))
+
+        with dx.collect() as found:
+            result = read_novomodelo_required_entities(
+                tmp_path / "output", "lines.json"
+            )
+
+        assert result == []
+        assert found == []
+
+    def test_a_file_in_the_output_directory_is_found_and_named_in_the_error(
+        self, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        self._write(output_dir, "buses.json", json.dumps({"buses": []}))
+        assert read_novomodelo_required_entities(output_dir, "buses.json") == []
+
+        bad = self._write(output_dir, "hydros.json", "not json")
+        exc = self._fails(output_dir, "hydros.json", FieldParseError)
+
+        assert exc.path == str(bad)
+
+    def test_an_absent_file_raises_source_file_error(self, tmp_path: Path) -> None:
+        output_dir = tmp_path / "output"
+
+        exc = self._fails(output_dir, "hydros.json", SourceFileError)
+
+        assert exc.path == str(tmp_path / "system" / "hydros.json")
+        assert exc.path.endswith("system/hydros.json")
+        assert exc.field is None
+        assert str(exc) == (
+            f"system/hydros.json was not found for the Novomodelo output {output_dir}."
+        )
+        assert diagnostic_from_exception(exc, context="Comparison").code == (
+            "source-file-missing"
+        )
+
+    def test_text_that_is_not_json_raises_field_parse_error(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write(tmp_path, "hydros.json", "not json")
+
+        exc = self._fails(tmp_path / "output", "hydros.json", FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == "hydros"
+        assert str(exc).startswith(
+            "system/hydros.json could not be parsed: JSONDecodeError: "
+        )
+        assert str(exc).endswith(".")
+        assert isinstance(exc.__cause__, ValueError)
+        assert diagnostic_from_exception(exc, context="Comparison").code == (
+            "source-field-parse"
+        )
+
+    def test_a_file_that_cannot_be_decoded_raises_field_parse_error(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write(tmp_path, "lines.json", b"\xff\xfe{")
+
+        exc = self._fails(tmp_path / "output", "lines.json", FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == "lines"
+        assert "UnicodeDecodeError" in str(exc)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '{"hydros": {"id": 0, "name": "FURNAS"}}',
+            '{"hydros": null}',
+            '{"buses": [{"id": 0, "name": "SUDESTE"}]}',
+            "{}",
+            "[]",
+            '"hydros"',
+        ],
+    )
+    def test_no_list_under_the_key_raises_field_parse_error(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        path = self._write(tmp_path, "hydros.json", text)
+
+        exc = self._fails(tmp_path / "output", "hydros.json", FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == "hydros"
+        assert "holds no list of hydros" in str(exc)
+        assert diagnostic_from_exception(exc, context="Comparison").code == (
+            "source-field-parse"
+        )
+
+    @pytest.mark.parametrize(
+        ("filename", "payload", "field", "position"),
+        [
+            ("hydros.json", [{"id": 0}], "name", 1),
+            ("hydros.json", [{"name": "FURNAS"}], "id", 1),
+            ("hydros.json", [{"id": True, "name": "FURNAS"}], "id", 1),
+            ("hydros.json", [{"id": "0", "name": "FURNAS"}], "id", 1),
+            ("hydros.json", [{"id": 0.0, "name": "FURNAS"}], "id", 1),
+            ("hydros.json", ["FURNAS"], "id", 1),
+            ("hydros.json", [{"id": 0, "name": ""}], "name", 1),
+            ("hydros.json", [{"id": 0, "name": 7}], "name", 1),
+            (
+                "buses.json",
+                [{"id": 0, "name": "SE"}, {"id": 1, "name": None}],
+                "name",
+                2,
+            ),
+            (
+                "thermals.json",
+                [{"id": 4, "name": "ANGRA 1"}, {"id": 5, "name": " "}],
+                "name",
+                2,
+            ),
+            (
+                "lines.json",
+                [{"id": 0, "source_bus_id": 0, "target_bus_id": 1}],
+                "name",
+                1,
+            ),
+            ("lines.json", [{"id": 0, "name": "SE-S"}, {"name": "S-NE"}], "id", 2),
+        ],
+    )
+    def test_a_bad_entry_raises_field_parse_error_at_its_position(
+        self,
+        tmp_path: Path,
+        filename: str,
+        payload: list[object],
+        field: str,
+        position: int,
+    ) -> None:
+        key = filename.removesuffix(".json")
+        path = self._write(tmp_path, filename, json.dumps({key: payload}))
+
+        exc = self._fails(tmp_path / "output", filename, FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == field
+        assert str(exc).startswith(f"Entry {position} of system/{filename} ")
+        assert diagnostic_from_exception(exc, context="Comparison").code == (
+            "source-field-parse"
+        )
+
+    def test_the_first_bad_entry_decides_the_field(self, tmp_path: Path) -> None:
+        payload = {"hydros": [{"id": 0, "name": "A"}, {"id": 1}, {"name": "C"}]}
+        self._write(tmp_path, "hydros.json", json.dumps(payload))
+
+        exc = self._fails(tmp_path / "output", "hydros.json", FieldParseError)
+
+        assert exc.field == "name"
+        assert str(exc).startswith("Entry 2 ")
+
+    def test_nothing_above_debug_is_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        output_dir = tmp_path / "output"
+        self._write(tmp_path, "buses.json", json.dumps({"buses": self.ENTRIES}))
+        self._write(tmp_path, "hydros.json", "not json")
+
+        read_novomodelo_required_entities(output_dir, "buses.json")
+        self._fails(output_dir, "hydros.json", FieldParseError)
+        self._fails(output_dir, "thermals.json", SourceFileError)
+
+        assert [r for r in caplog.records if r.levelno > logging.DEBUG] == []
+
+    def test_messages_name_no_repository_internals(self, tmp_path: Path) -> None:
+        output_dir = tmp_path / "output"
+        self._write(tmp_path, "hydros.json", "not json")
+        self._write(tmp_path, "buses.json", json.dumps({"buses": [{"id": 0}]}))
+        self._write(tmp_path, "lines.json", "{}")
+        messages = [
+            str(self._fails(output_dir, name, error))
+            for name, error in (
+                ("hydros.json", FieldParseError),
+                ("buses.json", FieldParseError),
+                ("lines.json", FieldParseError),
+                ("thermals.json", SourceFileError),
+            )
+        ]
+
+        for leak in (
+            "read_novomodelo",
+            "find_system_json",
+            "docs/",
+            "plans/",
+            "ticket-",
+        ):
+            assert not [m for m in messages if leak in m]
+
+
+class TestReadNovomodeloRequiredGenericConstraints:
+    ENTRIES = [
+        {"id": 1, "name": "VMINOP_1", "slack": True},
+        {"id": 0, "name": "RE_1", "expression": "hydro_generation(id=0)"},
+    ]
+
+    @staticmethod
+    def _write(case_dir: Path, content: str | bytes) -> Path:
+        path = case_dir / "constraints" / "generic_constraints.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content.encode() if isinstance(content, str) else content)
+        return path
+
+    @staticmethod
+    def _fails[E: Exception](case_dir: Path, error: type[E]) -> E:
+        with dx.collect() as found, pytest.raises(error) as raised:
+            read_novomodelo_required_generic_constraints(case_dir)
+        assert found == []
+        return raised.value
+
+    def test_a_readable_file_is_returned_in_file_order_and_silent(
+        self, tmp_path: Path
+    ) -> None:
+        self._write(tmp_path, json.dumps({"constraints": self.ENTRIES}))
+
+        with dx.collect() as found:
+            result = read_novomodelo_required_generic_constraints(tmp_path)
+
+        assert result == self.ENTRIES
+        assert found == []
+
+    def test_an_empty_list_is_returned_as_empty(self, tmp_path: Path) -> None:
+        self._write(tmp_path, json.dumps({"constraints": []}))
+
+        with dx.collect() as found:
+            result = read_novomodelo_required_generic_constraints(tmp_path)
+
+        assert result == []
+        assert found == []
+
+    def test_an_absent_file_raises_source_file_error_naming_the_expected_path(
+        self, tmp_path: Path
+    ) -> None:
+        exc = self._fails(tmp_path, SourceFileError)
+
+        assert exc.path == str(tmp_path / "constraints" / "generic_constraints.json")
+        assert exc.field is None
+        assert str(exc) == (
+            "constraints/generic_constraints.json was not found for the "
+            f"Novomodelo case {tmp_path}."
+        )
+        assert diagnostic_from_exception(exc, context="Comparison").code == (
+            "source-file-missing"
+        )
+
+    def test_a_case_without_the_constraints_directory_is_an_absent_file(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "system").mkdir()
+
+        self._fails(tmp_path, SourceFileError)
+
+    def test_text_that_is_not_json_raises_field_parse_error(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write(tmp_path, "not json")
+
+        exc = self._fails(tmp_path, FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == "constraints"
+        assert str(exc).startswith(
+            "constraints/generic_constraints.json could not be parsed: "
+            "JSONDecodeError: "
+        )
+        assert str(exc).endswith(".")
+        assert isinstance(exc.__cause__, ValueError)
+        assert diagnostic_from_exception(exc, context="Comparison").code == (
+            "source-field-parse"
+        )
+
+    def test_a_file_that_cannot_be_decoded_raises_field_parse_error(
+        self, tmp_path: Path
+    ) -> None:
+        path = self._write(tmp_path, b"\xff\xfe{")
+
+        exc = self._fails(tmp_path, FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == "constraints"
+        assert "UnicodeDecodeError" in str(exc)
+
+    def test_a_path_that_is_a_directory_raises_field_parse_error(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "constraints" / "generic_constraints.json"
+        path.mkdir(parents=True)
+
+        exc = self._fails(tmp_path, FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == "constraints"
+        assert isinstance(exc.__cause__, OSError)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '{"constraints": {}}',
+            '{"constraints": {"id": 0, "name": "RE_1"}}',
+            '{"constraints": null}',
+            '{"hydros": [{"id": 0, "name": "RE_1"}]}',
+            "{}",
+            "[]",
+            '[{"id": 0, "name": "RE_1"}]',
+            '"constraints"',
+        ],
+    )
+    def test_no_list_under_the_key_raises_field_parse_error(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        path = self._write(tmp_path, text)
+
+        exc = self._fails(tmp_path, FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == "constraints"
+        assert "holds no list of constraints" in str(exc)
+        assert diagnostic_from_exception(exc, context="Comparison").code == (
+            "source-field-parse"
+        )
+
+    @pytest.mark.parametrize(
+        ("payload", "field", "position"),
+        [
+            ([{"id": 0}], "name", 1),
+            ([{"name": "RE_1"}], "id", 1),
+            ([{"id": True, "name": "A"}], "id", 1),
+            ([{"id": False, "name": "A"}], "id", 1),
+            ([{"id": "0", "name": "RE_1"}], "id", 1),
+            ([{"id": 0.0, "name": "RE_1"}], "id", 1),
+            ([{"id": None, "name": "RE_1"}], "id", 1),
+            (["RE_1"], "id", 1),
+            ([[0, "RE_1"]], "id", 1),
+            ([None], "id", 1),
+            ([{"id": 0, "name": ""}], "name", 1),
+            ([{"id": 0, "name": " "}], "name", 1),
+            ([{"id": 0, "name": "\t\n"}], "name", 1),
+            ([{"id": 0, "name": 7}], "name", 1),
+            ([{"id": 0, "name": None}], "name", 1),
+            ([{"id": 0, "name": ["RE_1"]}], "name", 1),
+            ([{"id": 0, "name": "RE_1"}, {"id": 1, "name": " "}], "name", 2),
+            ([{"id": 0, "name": "RE_1"}, {"name": "VMINOP_1"}], "id", 2),
+        ],
+    )
+    def test_a_bad_entry_raises_field_parse_error_at_its_position(
+        self, tmp_path: Path, payload: list[object], field: str, position: int
+    ) -> None:
+        path = self._write(tmp_path, json.dumps({"constraints": payload}))
+
+        exc = self._fails(tmp_path, FieldParseError)
+
+        assert exc.path == str(path)
+        assert exc.field == field
+        assert str(exc).startswith(
+            f"Entry {position} of constraints/generic_constraints.json "
+        )
+        assert str(exc).endswith(
+            "has no integer id." if field == "id" else "has no name."
+        )
+        assert diagnostic_from_exception(exc, context="Comparison").code == (
+            "source-field-parse"
+        )
+
+    def test_the_first_bad_entry_decides_the_field(self, tmp_path: Path) -> None:
+        payload = [{"id": 0, "name": "A"}, {"id": 1}, {"name": "C"}]
+        self._write(tmp_path, json.dumps({"constraints": payload}))
+
+        exc = self._fails(tmp_path, FieldParseError)
+
+        assert exc.field == "name"
+        assert str(exc).startswith("Entry 2 ")
+
+    def test_other_keys_of_an_entry_and_a_padded_name_are_not_checked(
+        self, tmp_path: Path
+    ) -> None:
+        entries = [{"id": 3, "name": " re_1 ", "description": 5, "slack": "yes"}]
+        self._write(tmp_path, json.dumps({"constraints": entries}))
+
+        assert read_novomodelo_required_generic_constraints(tmp_path) == entries
+
+    def test_the_lenient_reader_stays_lenient_on_the_same_file(
+        self, tmp_path: Path
+    ) -> None:
+        self._write(tmp_path, json.dumps({"constraints": [{"id": 0, "name": " "}]}))
+
+        with dx.collect() as found:
+            assert read_novomodelo_generic_constraints(tmp_path) == [
+                {"id": 0, "name": " "}
+            ]
+        assert found == []
+
+        self._write(tmp_path, "not json")
+
+        with dx.collect() as found:
+            assert read_novomodelo_generic_constraints(tmp_path) == []
+        assert [d.code for d in found] == ["report-file-unreadable"]
+
+    def test_nothing_above_debug_is_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        good, bad, absent = tmp_path / "good", tmp_path / "bad", tmp_path / "absent"
+        self._write(good, json.dumps({"constraints": self.ENTRIES}))
+        self._write(bad, "not json")
+
+        read_novomodelo_required_generic_constraints(good)
+        self._fails(bad, FieldParseError)
+        self._fails(absent, SourceFileError)
+
+        assert [r for r in caplog.records if r.levelno > logging.DEBUG] == []
+
+    def test_messages_name_no_repository_internals(self, tmp_path: Path) -> None:
+        cases = {
+            "not_json": ("not json", FieldParseError),
+            "no_id": (json.dumps({"constraints": [{"name": "A"}]}), FieldParseError),
+            "no_list": ("{}", FieldParseError),
+        }
+        messages = []
+        for name, (text, error) in cases.items():
+            self._write(tmp_path / name, text)
+            messages.append(str(self._fails(tmp_path / name, error)))
+        messages.append(str(self._fails(tmp_path / "absent", SourceFileError)))
+
+        for leak in (
+            "read_novomodelo",
+            "find_system_json",
+            "docs/",
+            "plans/",
+            "ticket-",
+        ):
+            assert not [m for m in messages if leak in m]
+
+
+class TestReadNovomodeloStageRiskAversion:
+    """``None`` is an unknown measure, ``{}`` no ``stages.json``: never truthiness."""
+
+    CVAR = {"cvar": {"alpha": 0.25, "lambda": 0.35}}
+    EFFECT = (
+        "the report cannot tell whether the run is risk-averse and does not "
+        "judge its upper bound."
+    )
+
+    @staticmethod
+    def _write(directory: Path, stages: object) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "stages.json"
+        path.write_text(json.dumps({"stages": stages}), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _read(
+        output_dir: Path,
+    ) -> tuple[dict[int, float] | None, list[dx.Diagnostic]]:
+        with dx.collect() as found:
+            result = read_novomodelo_stage_risk_aversion(output_dir)
+        return result, found
+
+    def _assert_unknown(self, output_dir: Path) -> dx.Diagnostic:
+        result, found = self._read(output_dir)
+        assert result is None
+        assert [(d.code, d.severity) for d in found] == [
+            ("report-file-unreadable", Severity.WARNING)
+        ]
+        return found[0]
+
+    def test_expectation_and_cvar_stages_map_to_their_weights(
+        self, tmp_path: Path
+    ) -> None:
+        self._write(
+            tmp_path,
+            [
+                {"id": 0, "risk_measure": "expectation"},
+                {"id": 1, "risk_measure": self.CVAR},
+            ],
+        )
+
+        result, found = self._read(tmp_path / "output")
+
+        assert result == {0: 0.0, 1: 0.35}
+        assert found == []
+
+    def test_stages_without_a_risk_measure_weigh_zero(self, tmp_path: Path) -> None:
+        self._write(tmp_path, [{"id": 0}, {"id": 1}, {"id": 5, "blocks": []}])
+
+        result, found = self._read(tmp_path / "output")
+
+        assert result == {0: 0.0, 1: 0.0, 5: 0.0}
+        assert found == []
+
+    @pytest.mark.parametrize(("lam", "weight"), [(0, 0.0), (0.0, 0.0), (1, 1.0)])
+    def test_a_cvar_lambda_is_the_weight_as_a_float(
+        self, tmp_path: Path, lam: float, weight: float
+    ) -> None:
+        measure = {"cvar": {"alpha": 0.5, "lambda": lam}}
+        self._write(tmp_path, [{"id": 3, "risk_measure": measure}])
+
+        result, found = self._read(tmp_path / "output")
+
+        assert result == {3: weight}
+        assert result is not None
+        assert isinstance(result[3], float)
+        assert found == []
+
+    @pytest.mark.parametrize("spelling", ["expectation", "Expectation", "EXPECTATION"])
+    def test_expectation_is_read_without_regard_to_ascii_case(
+        self, tmp_path: Path, spelling: str
+    ) -> None:
+        self._write(tmp_path, [{"id": 0, "risk_measure": spelling}])
+
+        result, found = self._read(tmp_path / "output")
+
+        assert result == {0: 0.0}
+        assert found == []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "cvar",
+            "CVaR",
+            "",
+            " expectation",
+            "expectation ",
+            "expectation\n",
+            "risk-neutral",
+            "EXPECTATİON",
+        ],
+    )
+    def test_any_other_string_is_unknown(self, tmp_path: Path, text: str) -> None:
+        self._write(tmp_path, [{"id": 0, "risk_measure": text}])
+
+        diagnostic = self._assert_unknown(tmp_path / "output")
+
+        assert "a stage without a risk measure the report can read" in str(
+            diagnostic.notes
+        )
+
+    @pytest.mark.parametrize(
+        "measure",
+        [
+            {"cvar": {"alpha": 0.25}},
+            {"cvar": {"alpha": 0.25, "lambda": "0.35"}},
+            {"cvar": {"alpha": 0.25, "lambda": True}},
+            {"cvar": {"alpha": 0.25, "lambda": None}},
+            {"cvar": 0.35},
+            {"cvar": None},
+            {"cvar": []},
+            {"lambda": 0.35},
+            {},
+            None,
+            [],
+            7,
+            True,
+        ],
+    )
+    def test_a_malformed_measure_is_unknown(
+        self, tmp_path: Path, measure: object
+    ) -> None:
+        self._write(tmp_path, [{"id": 0, "risk_measure": measure}])
+
+        self._assert_unknown(tmp_path / "output")
+
+    @pytest.mark.parametrize(
+        "stage",
+        [
+            {"risk_measure": "expectation"},
+            {"id": "0", "risk_measure": "expectation"},
+            {"id": 0.0, "risk_measure": "expectation"},
+            {"id": True, "risk_measure": "expectation"},
+            {"id": None},
+            "stage",
+            7,
+            None,
+        ],
+    )
+    def test_a_stage_without_an_integer_id_is_unknown(
+        self, tmp_path: Path, stage: object
+    ) -> None:
+        self._write(tmp_path, [stage])
+
+        self._assert_unknown(tmp_path / "output")
+
+    @pytest.mark.parametrize("bad_position", [0, 1, 2])
+    def test_one_unusable_stage_makes_the_whole_case_unknown(
+        self, tmp_path: Path, bad_position: int
+    ) -> None:
+        stages: list[dict] = [{"id": i, "risk_measure": self.CVAR} for i in range(3)]
+        stages[bad_position]["risk_measure"] = "cvar"
+        self._write(tmp_path, stages)
+
+        diagnostic = self._assert_unknown(tmp_path / "output")
+
+        assert diagnostic.notes[-1].endswith(
+            "a stage without a risk measure the report can read"
+        )
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            b"not json",
+            b"",
+            b"\xff\xfe{",
+            b"[1]",
+            b'"stages"',
+            b"{}",
+            b'{"stages": []}',
+            b'{"stages": null}',
+            b'{"stages": "0"}',
+            b'{"stages": {"id": 0}}',
+        ],
+    )
+    def test_a_file_without_a_stage_list_is_unknown(
+        self, tmp_path: Path, content: bytes
+    ) -> None:
+        (tmp_path / "stages.json").write_bytes(content)
+
+        diagnostic = self._assert_unknown(tmp_path / "output")
+
+        assert diagnostic.notes[-1] == "Reason: no list of stages"
+
+    def test_no_file_is_empty_and_silent(self, tmp_path: Path) -> None:
+        (tmp_path / "output").mkdir()
+
+        result, found = self._read(tmp_path / "output")
+
+        assert result == {}
+        assert result is not None
+        assert found == []
+
+    def test_the_diagnostic_names_the_file_and_its_effect(self, tmp_path: Path) -> None:
+        path = tmp_path / "stages.json"
+        path.write_text("not json", encoding="utf-8")
+
+        diagnostic = self._assert_unknown(tmp_path / "output")
+
+        assert diagnostic.title == "stages.json could not be read"
+        assert diagnostic.summary == f"stages.json could not be read, so {self.EFFECT}"
+        assert diagnostic.notes == [f"Path: {path}", "Reason: no list of stages"]
+
+    def test_the_diagnostic_path_is_the_first_searched_file_that_exists(
+        self, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "stages.json").write_text("not json", encoding="utf-8")
+        assert f"Path: {output_dir / 'stages.json'}" in (
+            self._assert_unknown(output_dir).notes
+        )
+
+        (tmp_path / "stages.json").write_text("not json", encoding="utf-8")
+        assert f"Path: {tmp_path / 'stages.json'}" in (
+            self._assert_unknown(output_dir).notes
+        )
+
+    def test_the_output_directory_is_read_when_the_case_directory_has_none(
+        self, tmp_path: Path
+    ) -> None:
+        self._write(tmp_path / "output", [{"id": 0, "risk_measure": self.CVAR}])
+
+        result, found = self._read(tmp_path / "output")
+
+        assert result == {0: 0.35}
+        assert found == []
+
+    def test_the_case_directory_is_read_before_the_output_directory(
+        self, tmp_path: Path
+    ) -> None:
+        self._write(tmp_path, [{"id": 0, "risk_measure": self.CVAR}])
+        self._write(tmp_path / "output", [{"id": 0, "risk_measure": "expectation"}])
+
+        result, _ = self._read(tmp_path / "output")
+
+        assert result == {0: 0.35}
+
+    @pytest.mark.parametrize("case_dir_file", ["not json", '{"stages": []}'])
+    def test_a_file_without_stages_falls_through_to_the_next_location(
+        self, tmp_path: Path, case_dir_file: str
+    ) -> None:
+        (tmp_path / "stages.json").write_text(case_dir_file, encoding="utf-8")
+        self._write(tmp_path / "output", [{"id": 0, "risk_measure": self.CVAR}])
+
+        result, found = self._read(tmp_path / "output")
+
+        assert result == {0: 0.35}
+        assert found == []
+
+    def test_the_first_non_empty_list_decides_even_when_unusable(
+        self, tmp_path: Path
+    ) -> None:
+        self._write(tmp_path, [{"id": 0, "risk_measure": "cvar"}])
+        self._write(tmp_path / "output", [{"id": 0, "risk_measure": "expectation"}])
+
+        self._assert_unknown(tmp_path / "output")

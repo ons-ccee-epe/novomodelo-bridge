@@ -14,6 +14,15 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`compare novomodelo BASELINE_OUTPUT CANDIDATE_OUTPUT` compares two solved
+  Novomodelo runs**, of different novomodelo versions or the same one, pairing
+  plants, buses and lines by name. It names each run by its version, its case
+  directory or `--baseline-label` and `--candidate-label`, warns about what
+  only one output holds and writes to
+  `CANDIDATE_OUTPUT/version_comparison_artifacts/`.
+
 ## [0.22.1] - 2026-11-24
 
 Pairs the bridge with **novomodelo 0.22.0**, as 0.22.0 did; convert NEWAVE and

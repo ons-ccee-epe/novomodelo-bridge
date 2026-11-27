@@ -20,6 +20,7 @@ from novomodelo_bridge.cli.args import (
 )
 from novomodelo_bridge.cli.check import _run_check, _run_decomp_check
 from novomodelo_bridge.cli.compare import _run_decomp_comparison, _run_newave_comparison
+from novomodelo_bridge.cli.compare_version import _run_novomodelo_comparison
 from novomodelo_bridge.cli.convert import _run_decomp_conversion, _run_newave_conversion
 from novomodelo_bridge.cli.dashboard import _run_dashboard
 from novomodelo_bridge.cli.export import export_app
@@ -120,6 +121,18 @@ _OutDirOpt = Annotated[
         ),
     ),
 ]
+_VersionOutDirOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--out-dir",
+        envvar="NOVOMODELO_BRIDGE_OUT_DIR",
+        help=(
+            "Directory for file artifacts. Overridable via NOVOMODELO_BRIDGE_OUT_DIR "
+            "or novomodelo-bridge.toml. "
+            "(default: <candidate_output>/version_comparison_artifacts)."
+        ),
+    ),
+]
 _JsonOpt = Annotated[
     bool,
     typer.Option(
@@ -152,7 +165,8 @@ app = typer.Typer(
 )
 convert_app = typer.Typer(help="Convert data from a source format to Novomodelo JSON.")
 compare_app = typer.Typer(
-    help="Compare source model inputs/results against Novomodelo."
+    help="Compare source model inputs/results against Novomodelo, "
+    "or two Novomodelo outputs against each other."
 )
 check_app = typer.Typer(help="Validate source-model inputs without converting.")
 app.add_typer(convert_app, name="convert")
@@ -430,6 +444,74 @@ def _compare_newave(
             no_color=no_color,
             quiet=quiet,
         )
+    )
+
+
+@compare_app.command("novomodelo")
+def _compare_novomodelo(
+    baseline_output: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the Novomodelo output directory of the baseline run."
+        ),
+    ],
+    candidate_output: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to the Novomodelo output directory of the candidate run."
+        ),
+    ],
+    baseline_label: Annotated[
+        str | None,
+        typer.Option(
+            "--baseline-label",
+            help=(
+                "Name of the baseline run in the report and the terminal "
+                "(default: Novomodelo <version> when the versions differ, else "
+                "the case directory name)."
+            ),
+        ),
+    ] = None,
+    candidate_label: Annotated[
+        str | None,
+        typer.Option(
+            "--candidate-label",
+            help="Name of the candidate run, defaulting as --baseline-label.",
+        ),
+    ] = None,
+    tolerance: _ToleranceOpt = None,
+    fmt: _FormatOpt = None,
+    out_dir: _VersionOutDirOpt = None,
+    json_output: _JsonOpt = False,
+    verbose: _VerboseOpt = 0,
+    log_file: _LogFileOpt = None,
+    no_color: _NoColorOpt = False,
+    quiet: _QuietOpt = False,
+) -> None:
+    """Compare the results of two Novomodelo runs.
+
+    The first directory is the baseline and the second the candidate; the two
+    runs may come from different novomodelo versions or from the same one.
+
+    Informational: divergences never change the exit code. Exits 1 if an output
+    directory is not found or lacks its hydro or bus list, and 2 if a directory
+    is not a Novomodelo output or one of its files cannot be read.
+    """
+    _configure_logging(verbose, log_file)
+    _run_novomodelo_comparison(
+        CompareArgs(
+            source_dir=baseline_output,
+            novomodelo_output_dir=candidate_output,
+            tolerance=tolerance,
+            format=fmt,
+            out_dir=out_dir,
+            json_output=json_output,
+            verbose=verbose,
+            log_file=log_file,
+            no_color=no_color,
+            quiet=quiet,
+        ),
+        labels=(baseline_label, candidate_label),
     )
 
 

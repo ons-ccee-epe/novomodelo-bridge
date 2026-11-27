@@ -272,6 +272,8 @@ _TYPE_CHECKING_EDGES: frozenset[tuple[str, str]] = frozenset(
         ("cli.compare", "comparators.newave.alignment"),
         ("cli.compare", "newave.case"),
         ("cli.compare", "newave.id_map"),
+        ("cli.compare_version", "comparators.dataset"),
+        ("cli.compare_version", "core.diagnostics"),
         ("cli.conversion_manifest", "core.conversion"),
         ("cli.conversion_manifest", "core.diagnostics"),
         ("cli.conversion_manifest", "decomp.files"),

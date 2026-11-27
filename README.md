@@ -4,6 +4,8 @@
 planning models **NEWAVE** (long term) and **DECOMP** (short term) into the
 input format of [Novomodelo](https://github.com/ons-ccee-epe/novomodelo), an open-source
 SDDP solver, and compares the two models' results once both have been run.
+It also compares two Novomodelo runs with each other, such as one case solved
+by two novomodelo releases.
 
 It is a command-line tool. A session typically goes:
 
@@ -79,6 +81,7 @@ adds one rule for running the case; see the
 | `check newave SRC` / `check decomp SRC`        | Validate the source inputs without writing anything; report missing inputs and what the conversion would leave out. |
 | `compare newave NEWAVE_DIR NOVOMODELO_OUTPUT_DIR`   | Compare NEWAVE's published results (`MEDIAS-*.CSV`, `pmo.dat`) against a Novomodelo simulation output directory.         |
 | `compare decomp DECOMP_DIR NOVOMODELO_OUTPUT_DIR`   | Compare a DECOMP run's operation tables (`dec_oper_*.csv`) against a Novomodelo simulation output directory.             |
+| `compare novomodelo BASELINE_OUTPUT CANDIDATE_OUTPUT` | Compare two Novomodelo simulation output directories with each other: two novomodelo versions, or two runs of one. |
 | `export dessem DECOMP_DIR CASE_DIR`            | Export a Novomodelo case's FCF to DESSEM-compatible `mapcut`/`cortdeco` format.                                          |
 | `dashboard CASE_DIR`                           | Build an interactive HTML dashboard from a solved Novomodelo case (reads `CASE_DIR/output/`).                            |
 
@@ -133,6 +136,14 @@ keeps every note.
 `compare` is informational: differences between the two models never change the
 exit code, and the report is where you judge them.
 
+`compare novomodelo` prints the same summary for the candidate against the
+baseline and writes to `CANDIDATE_OUTPUT/version_comparison_artifacts/` (or
+`--out-dir`). That default directory is not `comparison_artifacts/`, so a
+`compare newave` or `compare decomp` run on the same output keeps its files
+untouched. Its `comparison.json` also records what only one of the two outputs
+holds. See
+[Comparing two Novomodelo runs](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/compare-novomodelo.md).
+
 ### Machine-readable output
 
 With `--json`, a command prints exactly one JSON document to stdout,
@@ -143,7 +154,8 @@ stdout, including when it fails. Human-readable rendering is suppressed.
 | ----------- | -------------------------------------------------------------------------------------------------------- |
 | `check`     | 0 ready, 1 ready with warnings, 2 will not convert                                                       |
 | `convert`   | 0 converted, 1 conversion error, 2 `--validate` reported a load failure                                  |
-| `compare`   | 0 compared, 1 source case not found or refused, 2 case from another deck or Novomodelo output unreadable |
+| `compare newave`, `compare decomp` | 0 compared, 1 source case not found or refused, 2 case from another deck or Novomodelo output unreadable |
+| `compare novomodelo` | 0 compared, 1 an output directory not found, or its hydro or bus list missing or malformed, 2 a directory that is not a Novomodelo output, or a file that cannot be read |
 | `dashboard` | 0 written, 1 error                                                                                       |
 | `export`    | 0 exported, 1 export failed, including a case from another deck                                          |
 
@@ -178,6 +190,7 @@ environment > file > built-in default.
 - [NEWAVE track](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/newave.md): inputs, what the converter changes, comparing results.
 - [DECOMP track](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/decomp.md): inputs, deferred features, the boundary cost-to-go import, running the case.
 - [DESSEM export](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/dessem.md): exporting Novomodelo FCF to DESSEM-compatible format.
+- [Comparing two Novomodelo runs](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/compare-novomodelo.md): inputs, how the two runs are aligned, the convergence verdict, exit codes.
 - [Mapa de dados NEWAVE](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/newave-data-map.md) and [Mapa de dados DECOMP](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/decomp-data-map.md), in Portuguese: which deck file, record, and column feeds each Novomodelo file and field, and what is not converted yet.
 - [Architecture](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/docs/architecture.md): how the code is organised, for contributors.
 - [Contributing](https://github.com/ons-ccee-epe/novomodelo-bridge/blob/main/CONTRIBUTING.md): development setup, tests, quality gates, releasing.

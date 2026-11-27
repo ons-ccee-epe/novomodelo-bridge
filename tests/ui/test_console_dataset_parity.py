@@ -30,8 +30,10 @@ import contextlib
 import io
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import polars as pl
+from rich.console import Console
 
 from novomodelo_bridge.comparators.analyze import build_results_dataset
 from novomodelo_bridge.comparators.model import (
@@ -335,3 +337,38 @@ def test_results_correlation_none_renders_dash_from_dataset() -> None:
     expected_cells = _expected_results_cells(row)
     assert expected_cells[2] == "—"
     assert parsed[_expected_key(row)] == expected_cells
+
+
+# ---------------------------------------------------------------------------
+# Group 2: header labels
+# ---------------------------------------------------------------------------
+
+
+def _summary_text(**labels: Any) -> str:
+    dataset = build_results_dataset(_make_results(), _one_hydro_pct(), _RESULTS_TOL)
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=120, color_system=None, force_terminal=False)
+    print_results_summary_from_dataset(
+        dataset,
+        _NW,
+        _NOVOMODELO,
+        verdict=build_compare_verdict(dataset),
+        console=console,
+        **labels,
+    )
+    return buffer.getvalue()
+
+
+def test_summary_header_names_reference_and_candidate_labels() -> None:
+    lines = _summary_text(
+        reference_label="v0.20.0 (baseline)", candidate_label="v0.21.0 (candidate)"
+    ).splitlines()
+
+    title = lines.index("v0.21.0 (candidate) vs v0.20.0 (baseline) Results Comparison")
+    assert lines[title + 1] == "=" * 88
+    assert lines[title + 2] == f"v0.20.0 (baseline) case:  {_NW}"
+    assert lines[title + 3] == f"v0.21.0 (candidate) output: {_NOVOMODELO}"
+
+
+def test_summary_explicit_novomodelo_candidate_label_matches_default() -> None:
+    assert _summary_text(candidate_label="Novomodelo") == _summary_text()
