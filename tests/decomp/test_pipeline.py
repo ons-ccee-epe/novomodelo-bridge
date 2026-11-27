@@ -499,7 +499,7 @@ class TestDecompCaseArtifacts:
     ``_convert_scenarios`` thread across the discovery/entity/scenario phases,
     and the still-inline bounds/constraints/write phases read back off — must
     carry every field those five functions (plus the FCF importer,
-    which reads ``config``/``initial_conditions``) depend on."""
+    which reads ``config``) depend on."""
 
     def test_field_contract(self) -> None:
         field_names = {f.name for f in dataclasses.fields(DecompCaseArtifacts)}
@@ -520,7 +520,6 @@ class TestDecompCaseArtifacts:
             "buses_doc",
             "lines_doc",
             "line_bounds",
-            "initial_conditions",
             "deficit_cost",
             "fpha_codes",
         } <= field_names
@@ -540,7 +539,6 @@ class TestDecompCaseArtifacts:
             tx=0.1,
         )
         assert artifacts.config is None
-        assert artifacts.initial_conditions is None
         assert artifacts.stages_dict is None
         assert artifacts.hydros_dict is None
         assert artifacts.thermals_dict is None
@@ -548,14 +546,12 @@ class TestDecompCaseArtifacts:
         assert artifacts.line_bounds is None
 
         artifacts.config = {"a": 1}
-        artifacts.initial_conditions = {"storage": []}
         artifacts.stages_dict = {"stages": []}
         artifacts.hydros_dict = {"hydros": []}
         artifacts.thermals_dict = {"thermals": []}
         artifacts.lines_doc = {"lines": []}
         artifacts.line_bounds = pa.table({"line_id": pa.array([], type=pa.int32())})
         assert isinstance(artifacts.config, dict)
-        assert isinstance(artifacts.initial_conditions, dict)
         assert isinstance(artifacts.stages_dict, dict)
         assert isinstance(artifacts.hydros_dict, dict)
         assert isinstance(artifacts.thermals_dict, dict)

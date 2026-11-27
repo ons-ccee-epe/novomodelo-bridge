@@ -157,7 +157,6 @@ class DecompCaseArtifacts:
     buses_doc: dict | None = None
     lines_doc: dict | None = None
     line_bounds: pa.Table | None = None
-    initial_conditions: dict | None = None
     deficit_cost: float | None = None
     fpha_codes: set[int] | None = None
     turbine_limits: hydro_conv.TurbineLimits | None = None
@@ -183,22 +182,20 @@ class DecompCaseArtifacts:
 
 @dataclass
 class FcfInputs:
-    """Optional out-parameter carrying the pipeline's in-memory ``config``/
-    ``initial_conditions`` dicts back to a caller that needs them post-return
-    (the boundary-FCF importer's ``config``/``initial_conditions`` params —
-    see ``fcf/importer.py::import_boundary_fcf``).
+    """Optional out-parameter carrying the pipeline's in-memory ``config`` dict
+    and its auxiliary coupling plants back to the boundary-FCF importer
+    (``fcf/importer.py::import_boundary_fcf``).
 
     Deliberately not :class:`DecompCaseArtifacts`: that bundle carries several
     mandatory fields (the parsed case, id map, calendar, and more) that are
     unavailable to a caller before ``convert_decomp_case`` runs, so it cannot
     be constructed ahead of the call the way an empty ``FcfInputs()`` can.
-    ``convert_decomp_case`` assigns the same dict objects it wrote onto the
-    passed instance, leaving both dicts ``None`` when not requested (the
+    ``convert_decomp_case`` assigns the same ``config`` dict object it wrote
+    onto the passed instance, leaving it ``None`` when not requested (the
     default) or on a failed conversion.
     """
 
     config: dict | None = None
-    initial_conditions: dict | None = None
     coupling_auxiliaries: tuple[CouplingAuxiliary, ...] = ()
 
 
@@ -1405,7 +1402,6 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     }
     if past_defluences:
         initial_conditions_doc["past_defluences"] = past_defluences
-    artifacts.initial_conditions = initial_conditions_doc
 
     buses_doc = network_conv.convert_buses(case, id_map)
     artifacts.buses_doc = buses_doc
@@ -2815,12 +2811,11 @@ def convert_decomp_case(
         :attr:`~novomodelo_bridge.core.conversion.ConversionReport.would_write_paths`.
     fcf_inputs_out:
         Optional :class:`FcfInputs` out-parameter. When given, its
-        ``config``/``initial_conditions`` fields are assigned the same
-        in-memory dict objects this run wrote to ``config.json``/
-        ``initial_conditions.json``, so a caller (the CLI's boundary-FCF
-        step) can thread them into ``import_boundary_fcf`` without
-        re-reading either file. ``None`` (the default) leaves it unused.
-        Its ``coupling_auxiliaries`` field receives the auxiliary coupling
+        ``config`` field is assigned the same in-memory dict object this run
+        wrote to ``config.json``, so a caller (the CLI's boundary-FCF step)
+        can thread it into ``import_boundary_fcf`` without re-reading the
+        file. ``None`` (the default) leaves it unused. Its
+        ``coupling_auxiliaries`` field receives the auxiliary coupling
         plants the run added.
     boundary_fcf:
         When ``True`` and the deck has cut files, add the auxiliary coupling
@@ -2883,8 +2878,8 @@ def _convert_decomp_case_impl(
     but the write phase creates no directories and writes no files; the paths that
     would have been written are still accumulated and recorded on the report.
 
-    ``fcf_inputs_out`` (when given) receives the run's in-memory ``config``/
-    ``initial_conditions`` dicts — see :func:`convert_decomp_case`.
+    ``fcf_inputs_out`` (when given) receives the run's in-memory ``config``
+    dict and ``coupling_auxiliaries`` — see :func:`convert_decomp_case`.
     """
     step = on_phase if on_phase is not None else (lambda _label: None)
     step("Discovering deck")
@@ -2911,6 +2906,5 @@ def _convert_decomp_case_impl(
     report = _emit_and_write(artifacts, writer)
     if fcf_inputs_out is not None:
         fcf_inputs_out.config = artifacts.config
-        fcf_inputs_out.initial_conditions = artifacts.initial_conditions
         fcf_inputs_out.coupling_auxiliaries = artifacts.coupling_auxiliaries
     return report

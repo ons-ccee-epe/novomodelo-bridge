@@ -2223,7 +2223,6 @@ class TestCliInProcess:
 
         def convert(*_args: object, fcf_inputs_out: Any, **_kwargs: object) -> object:
             fcf_inputs_out.config = {"config": True}
-            fcf_inputs_out.initial_conditions = {"initial_conditions": True}
             fcf_inputs_out.coupling_auxiliaries = (sentinel.auxiliary,)
             return fake_report
 
