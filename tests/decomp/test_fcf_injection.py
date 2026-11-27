@@ -85,6 +85,7 @@ def _mock_deck_and_cut_seams(
             couplings=(),
             gnl_plan=None,
             names={},
+            unseeded_lag_months=(),
         ),
     )
     monkeypatch.setattr(

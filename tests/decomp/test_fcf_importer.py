@@ -6,6 +6,7 @@ Synthetic fixtures only: no deck, no novomodelo binary.
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -23,7 +24,11 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     GnlThermal,
 )
 from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts, summarize_cut_families
-from novomodelo_bridge.decomp.fcf.coupling import BorrowedOwner, CouplingResolution
+from novomodelo_bridge.decomp.fcf.coupling import (
+    BorrowedOwner,
+    CouplingResolution,
+    lag_months,
+)
 from novomodelo_bridge.decomp.fcf.importer import (
     _DeckCoupling,
     _emit_coupling_diagnostics,
@@ -31,6 +36,7 @@ from novomodelo_bridge.decomp.fcf.importer import (
     _emit_transit_pricing,
     _gnl_targets_from,
     _plan_gnl_ring,
+    _priced_lag_months,
     import_boundary_fcf,
 )
 from novomodelo_bridge.decomp.fcf.mapper import (
@@ -70,6 +76,7 @@ def _no_coupling() -> _DeckCoupling:
         couplings=(),
         gnl_plan=None,
         names={},
+        unseeded_lag_months=(),
     )
 
 
@@ -677,3 +684,92 @@ def test_emit_transit_pricing_is_silent_without_transit_slots() -> None:
         _emit_transit_pricing(MappingResult(cuts=(), dropped=()), (156,), names={})
 
     assert sink == []
+
+
+def test_priced_lag_months_keeps_only_depths_with_a_nonzero_coefficient() -> None:
+    priced = _priced_lag_months(
+        lag_months(2026, 4), (3, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+    )
+
+    assert priced == ((2026, 4), (2026, 2), (2025, 5))
+
+
+def _import_with_unseeded_lag_months(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    months: tuple[tuple[int, int], ...],
+) -> list[dx.Diagnostic]:
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    case, _ = _stub_import_seams(
+        monkeypatch, tmp_path, _boundary_stage_4_cuts(), graph_stage_id=4
+    )
+    monkeypatch.setattr(
+        "novomodelo_bridge.decomp.fcf.importer._read_deck_coupling",
+        lambda *_args: dataclasses.replace(_no_coupling(), unseeded_lag_months=months),
+    )
+
+    with dx.collect() as sink:
+        import_boundary_fcf(
+            case_dir,
+            case,
+            work_dir=tmp_path / "work",
+            cost_scale_factor=1.0,
+            config={},
+        )
+
+    return [
+        diagnostic
+        for diagnostic in sink
+        if diagnostic.code == "boundary-fcf-inflow-lag-unseeded"
+    ]
+
+
+def test_import_boundary_fcf_reports_priced_lag_months_vazoes_does_not_carry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The observation tables of ``vazoes.rvN`` belong to the whole deck: a month
+    is covered for every plant or for none, so the finding is per month and has
+    no per-plant table."""
+    (unseeded,) = _import_with_unseeded_lag_months(
+        tmp_path, monkeypatch, ((2025, 6), (2025, 5))
+    )
+
+    assert unseeded.severity is dx.Severity.INFO
+    assert unseeded.category == "Boundary FCF"
+    assert unseeded.table is None
+    assert unseeded.remediation is None
+    assert "2 months" in unseeded.summary
+    assert "2025-06, 2025-05" in unseeded.summary
+    assert "reads them as zero" in unseeded.summary
+    assert "does not make the results differ from DECOMP's" in unseeded.summary
+
+
+def test_import_boundary_fcf_unseeded_lag_summary_agrees_with_one_month(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (unseeded,) = _import_with_unseeded_lag_months(tmp_path, monkeypatch, ((2025, 6),))
+
+    assert "1 month" in unseeded.summary
+    assert "reads it as zero" in unseeded.summary
+
+
+def test_import_boundary_fcf_is_silent_when_vazoes_covers_every_priced_lag_month(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_dir = tmp_path / "case"
+    case_dir.mkdir()
+    case, _ = _stub_import_seams(
+        monkeypatch, tmp_path, _boundary_stage_4_cuts(), graph_stage_id=4
+    )
+
+    with dx.collect() as sink:
+        import_boundary_fcf(
+            case_dir,
+            case,
+            work_dir=tmp_path / "work",
+            cost_scale_factor=1.0,
+            config={},
+        )
+
+    assert "boundary-fcf-inflow-lag-unseeded" not in {d.code for d in sink}

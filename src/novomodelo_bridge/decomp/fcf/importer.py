@@ -56,6 +56,7 @@ from novomodelo_bridge.decomp.fcf.coupling import (
     read_complexo_components,
     resolve_couplings,
     source_only_lag_inflows,
+    unseeded_lag_months,
 )
 from novomodelo_bridge.decomp.fcf.mapper import (
     GnlCommandedDelivery,
@@ -78,7 +79,7 @@ if TYPE_CHECKING:
 
     from novomodelo_bridge.decomp.case import DecompCase
     from novomodelo_bridge.decomp.converters.anticipated import GnlCommitmentModel
-    from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts
+    from novomodelo_bridge.decomp.fcf.cortes import BoundaryCuts, CutFamilySummary
     from novomodelo_bridge.decomp.fcf.coupling import (
         CouplingAuxiliary,
         CouplingResolution,
@@ -240,7 +241,9 @@ class _DeckCoupling:
 
     ``cut`` is the cut's ``(year, month)``; ``couplings`` the converted
     hydros' and then the auxiliary coupling plants'; ``names`` the
-    ``hidr.dat`` name of every registry plant, converted or not.
+    ``hidr.dat`` name of every registry plant, converted or not;
+    ``unseeded_lag_months`` the priced lag months before the study that no
+    ``vazoes.rvN`` observation covers, in depth order.
     """
 
     cut: tuple[int, int]
@@ -250,6 +253,17 @@ class _DeckCoupling:
     source_only_inflows: Mapping[int, tuple[float, ...]]
     gnl_plan: GnlRingPlan | None
     names: Mapping[int, str]
+    unseeded_lag_months: tuple[tuple[int, int], ...]
+
+
+def _priced_lag_months(
+    months: Sequence[tuple[int, int]], lag_nonzero_by_depth: Sequence[int]
+) -> tuple[tuple[int, int], ...]:
+    return tuple(
+        month
+        for month, count in zip(months, lag_nonzero_by_depth, strict=True)
+        if count > 0
+    )
 
 
 def _read_deck_coupling(
@@ -258,6 +272,7 @@ def _read_deck_coupling(
     cortesh: Cortesh,
     cuts: BoundaryCuts,
     auxiliaries: Sequence[CouplingAuxiliary],
+    summary: CutFamilySummary,
 ) -> _DeckCoupling:
     cut = cut_month(cortesh, int(cuts.boundary_stage))
     months = lag_months(*cut)
@@ -295,6 +310,11 @@ def _read_deck_coupling(
             case_dir, case, cortesh, cut, cuts.header.lag_maximo_gnl
         ),
         names=effective.plant_names(),
+        unseeded_lag_months=unseeded_lag_months(
+            vazoes,
+            calendar,
+            _priced_lag_months(months, summary.lag_nonzero_by_depth),
+        ),
     )
 
 
@@ -599,6 +619,30 @@ def _emit_coupling_diagnostics(
         )
 
 
+def _emit_unseeded_lag_diagnostic(months: Sequence[tuple[int, int]]) -> None:
+    """Report the priced lag months the conversion reads as zero."""
+    if not months:
+        return
+    n = len(months)
+    listed = ", ".join(f"{year:04d}-{month:02d}" for year, month in months)
+    dx.emit(
+        dx.Diagnostic(
+            code="boundary-fcf-inflow-lag-unseeded",
+            severity=dx.Severity.INFO,
+            category="Boundary FCF",
+            title="Priced inflow lag months with no observed inflow",
+            summary=(
+                f"The boundary cuts price the inflow of {dx.counted(n, 'month')} "
+                f"before the study that vazoes.rvN does not carry ({listed}), so "
+                f"the conversion reads {'it' if n == 1 else 'them'} as zero. "
+                "DECOMP reads past inflows from the same vazoes.rvN, so this "
+                "does not make the results differ from DECOMP's."
+            ),
+        ),
+        logger=_LOG,
+    )
+
+
 def _patch_policy_boundary(writer: CaseWriter, config: dict) -> None:
     """Set ``["policy"]["boundary"]`` in ``config.json``, preserving the rest.
 
@@ -735,11 +779,14 @@ def import_boundary_fcf(
     ensure_writer_binding()
 
     manifest = bootstrap_terminal_manifest(case_dir, work_dir=work_dir)
-    coupling = _read_deck_coupling(case_dir, case, cortesh, cuts, coupling_auxiliaries)
+    summary = summarize_cut_families(cuts)
+    coupling = _read_deck_coupling(
+        case_dir, case, cortesh, cuts, coupling_auxiliaries, summary
+    )
     # The DECOMP case has no PAR(p) model, so the bootstrap manifest carries no
     # HydroInflowLag slots; the deepest lag the cuts reference is declared to
     # the writer, which reserves the canonical slots.
-    inflow_lag_depth = required_inflow_lag_depth(summarize_cut_families(cuts))
+    inflow_lag_depth = required_inflow_lag_depth(summary)
     mapping = map_boundary_cuts(
         cuts,
         manifest,
@@ -759,6 +806,7 @@ def import_boundary_fcf(
     _emit_import_diagnostics(cuts, mapping, coupling.gnl_plan, names=coupling.names)
     _emit_transit_pricing(mapping, case.id_map.hydro_codes, names=coupling.names)
     _emit_coupling_diagnostics(coupling.resolution, names=coupling.names)
+    _emit_unseeded_lag_diagnostic(coupling.unseeded_lag_months)
 
     stage_cuts_payload = build_stage_cuts_payload(
         mapping,
