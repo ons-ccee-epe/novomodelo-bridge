@@ -124,3 +124,23 @@ def build_scalar_parameters(
         ),
         "scalar_parameters": entries,
     }
+
+
+def append_scalar_parameters(doc: Mapping, entries: Sequence[Mapping]) -> dict:
+    """Return a copy of the ``generic_parameters.json`` dict *doc* with
+    *entries* appended to its ``scalar_parameters``.
+
+    Each appended entry gets ``"id"``, its position in the final list, as its
+    first key; the parameters already in *doc* keep their ids.
+    """
+    existing = doc["scalar_parameters"]
+    return {
+        **doc,
+        "scalar_parameters": [
+            *existing,
+            *(
+                {"id": position, **entry}
+                for position, entry in enumerate(entries, start=len(existing))
+            ),
+        ],
+    }

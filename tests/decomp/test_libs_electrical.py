@@ -6,240 +6,56 @@ like idecomp's ``df=True`` accessors, so these run in CI with no real deck.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+import re
 from datetime import date
-from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.electrical_expression import (
-    GNL_TOKEN,
-    AssembledBound,
-    Bucket,
-    DataContext,
-    MalformedElectricalExpression,
-    ParsedTerm,
-    UnrecognizedElectricalToken,
-    UnsupportedElectricalExpression,
-    classify_term,
-    classify_terms,
-    parse_linear_expression,
-)
-from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
-from novomodelo_bridge.core.generic_constraint_builder import is_bounded
-from novomodelo_bridge.decomp.case import DecompCase
-from novomodelo_bridge.decomp.converters.anticipated import (
-    GnlCommitment,
-    GnlCommitmentModel,
-    GnlStageCommitment,
-    GnlThermal,
-)
 from novomodelo_bridge.decomp.converters.libs_electrical import (
-    ActivationRule,
-    AvailablePower,
-    Comparison,
-    ElectricalAlias,
-    ElectricalExpression,
-    ElectricalRestriction,
-    LibsElectricalModel,
+    FormulaOverride,
     PeriodPatamarOverride,
-    ViolationTreatment,
-    _effective_inequacao_sides,
-    _fold_formula_bound,
-    _fold_inequacao_bound,
-    _fold_reserve_disp_usih,
-    _UnresolvableBucketBTerm,
-    _UnresolvableDispUsih,
-    active_cells,
-    assemble_bound,
-    build_available_power,
-    build_data_context,
-    evaluate_rule,
-    evaluate_se,
-    is_always_active,
-    parse_activation_rule,
+    ViolationRow,
+    _stage_of_date,
+    _stage_range_from_dates,
     read_carga_ande,
     read_libs_electrical,
-    resolve_disp_usih,
 )
-from novomodelo_bridge.decomp.group_bounds import GroupBoundEntry
-from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
-from tests.conftest import make_decomp_case
-
-_LIBS = Path("deck/lib_restricao-eletrica-especial.csv")
-
-
-class _StubRestricoes:
-    """Return a preset DataFrame (or ``None``) for each ``Restricoes`` accessor,
-    with no line kept as plain text."""
-
-    data: tuple[object, ...] = ()
-
-    def __init__(self, **frames: pd.DataFrame) -> None:
-        self._frames = frames
-
-    def expressao_eletrica(self, df: bool = True) -> pd.DataFrame | None:
-        return self._frames.get("expressao_eletrica")
-
-    def alias_eletrico_valor_periodo_patamar(
-        self, df: bool = True
-    ) -> pd.DataFrame | None:
-        return self._frames.get("alias_eletrico_valor_periodo_patamar")
-
-    def alias_eletrico(self, df: bool = True) -> pd.DataFrame | None:
-        return self._frames.get("alias_eletrico")
-
-    def restricao_eletrica_horizonte_periodo(
-        self, df: bool = True
-    ) -> pd.DataFrame | None:
-        return self._frames.get("restricao_eletrica_horizonte_periodo")
-
-    def restricao_eletrica_limite_formula_periodo_patamar(
-        self, df: bool = True
-    ) -> pd.DataFrame | None:
-        return self._frames.get("restricao_eletrica_limite_formula_periodo_patamar")
-
-    def restricao_eletrica_inequacao_periodo_patamar(
-        self, df: bool = True
-    ) -> pd.DataFrame | None:
-        return self._frames.get("restricao_eletrica_inequacao_periodo_patamar")
-
-    def restricao_eletrica_habilita(self, df: bool = True) -> pd.DataFrame | None:
-        return self._frames.get("restricao_eletrica_habilita")
-
-    def restricao_eletrica_regra_ativacao(self, df: bool = True) -> pd.DataFrame | None:
-        return self._frames.get("restricao_eletrica_regra_ativacao")
-
-    def restricao_eletrica_tratamento_violacao(
-        self, df: bool = True
-    ) -> pd.DataFrame | None:
-        return self._frames.get("restricao_eletrica_tratamento_violacao")
-
-    def restricao_eletrica_formula(self, df: bool = True) -> pd.DataFrame | None:
-        return self._frames.get("restricao_eletrica_formula")
-
-    def restricao_eletrica_inequacao(self, df: bool = True) -> pd.DataFrame | None:
-        return self._frames.get("restricao_eletrica_inequacao")
-
-
-def _stage(index: int) -> OperativeStage:
-    return OperativeStage(
-        index=index,
-        start_date=date(2026, 7, 4),
-        end_date=date(2026, 7, 11),
-        season_id=6,
-        block_hours=(168.0,),
-    )
-
-
-def _calendar(n_stages: int) -> list[OperativeStage]:
-    return [_stage(i) for i in range(n_stages)]
-
-
-def _expressao(*rows: tuple) -> pd.DataFrame:
-    """EXPRESSAO-ELETRICA rows: (codigo_expressao, identificador_expressao, formula)."""
-    return pd.DataFrame(
-        rows, columns=["codigo_expressao", "identificador_expressao", "formula"]
-    )
-
-
-def _alias(*rows: tuple) -> pd.DataFrame:
-    """ALIAS-ELETRICO rows: (codigo_alias, identificador_alias)."""
-    return pd.DataFrame(rows, columns=["codigo_alias", "identificador_alias"])
-
-
-def _alias_valor(*rows: tuple) -> pd.DataFrame:
-    """ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR rows: (codigo_alias, estagio_inicio,
-    estagio_fim, patamar, valor)."""
-    return pd.DataFrame(
-        rows,
-        columns=["codigo_alias", "estagio_inicio", "estagio_fim", "patamar", "valor"],
-    )
-
-
-def _re_formula(*rows: tuple) -> pd.DataFrame:
-    """RESTRICAO-ELETRICA-FORMULA rows: (codigo_restricao, formula)."""
-    return pd.DataFrame(rows, columns=["codigo_restricao", "formula"])
-
-
-def _re_lim_formula(*rows: tuple) -> pd.DataFrame:
-    """RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR rows: (codigo_restricao,
-    estagio_inicio, estagio_fim, patamar, limite_inferior, limite_superior)."""
-    return pd.DataFrame(
-        rows,
-        columns=[
-            "codigo_restricao",
-            "estagio_inicio",
-            "estagio_fim",
-            "patamar",
-            "limite_inferior",
-            "limite_superior",
-        ],
-    )
-
-
-def _re_inequacao(*rows: tuple) -> pd.DataFrame:
-    """RESTRICAO-ELETRICA-INEQUACAO rows: (codigo_restricao, formula, operador,
-    formula_limite)."""
-    return pd.DataFrame(
-        rows, columns=["codigo_restricao", "formula", "operador", "formula_limite"]
-    )
-
-
-def _re_inequacao_per_pat(*rows: tuple) -> pd.DataFrame:
-    """RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR rows: (codigo_restricao,
-    estagio_inicio, estagio_fim, patamar, formula, operador, formula_limite)."""
-    return pd.DataFrame(
-        rows,
-        columns=[
-            "codigo_restricao",
-            "estagio_inicio",
-            "estagio_fim",
-            "patamar",
-            "formula",
-            "operador",
-            "formula_limite",
-        ],
-    )
-
-
-def _horizonte(*rows: tuple) -> pd.DataFrame:
-    """RESTRICAO-ELETRICA-HORIZONTE-PERIODO rows: (codigo_restricao,
-    estagio_inicio, estagio_fim)."""
-    return pd.DataFrame(
-        rows, columns=["codigo_restricao", "estagio_inicio", "estagio_fim"]
-    )
-
-
-def _habilita(*rows: tuple) -> pd.DataFrame:
-    """RESTRICAO-ELETRICA-HABILITA rows: (codigo_restricao, codigo_regra_ativacao)."""
-    return pd.DataFrame(rows, columns=["codigo_restricao", "codigo_regra_ativacao"])
-
-
-def _regra(*rows: tuple) -> pd.DataFrame:
-    """RESTRICAO-ELETRICA-REGRA-ATIVACAO rows: (codigo_regra_ativacao,
-    regra_ativacao)."""
-    return pd.DataFrame(rows, columns=["codigo_regra_ativacao", "regra_ativacao"])
-
-
-def _tratamento_violacao(*rows: tuple) -> pd.DataFrame:
-    """RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO rows: (codigo_restricao,
-    custo_violacao)."""
-    return pd.DataFrame(rows, columns=["codigo_restricao", "custo_violacao"])
+from tests.decomp.conftest import (
+    SHORT_FORM_ACCESSORS,
+    StubRestricoes,
+    alias,
+    alias_valor,
+    calendar,
+    expressao,
+    habilita,
+    horizonte,
+    horizonte_data,
+    re_formula,
+    re_formula_data_pat,
+    re_formula_per_pat,
+    re_inequacao,
+    re_inequacao_per_pat,
+    re_lim_formula,
+    re_lim_formula_data,
+    regra,
+    spelled,
+    tratamento_violacao,
+    tratamento_violacao_periodo,
+    weekly_calendar,
+)
 
 
 def test_expressions_indexed_by_name() -> None:
-    stub = _StubRestricoes(
-        expressao_eletrica=_expressao(
+    stub = StubRestricoes(
+        expressao_eletrica=expressao(
             (1, "FNESE", "ener_interc(3,1) - ener_interc(1,3)"),
             (2, "RNE", "ger_usih(10)"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
+    model = read_libs_electrical(stub, calendar(6))
     assert model is not None
     assert model.expressions["FNESE"].code == 1
     assert model.expressions["FNESE"].formula == "ener_interc(3,1) - ener_interc(1,3)"
@@ -248,35 +64,35 @@ def test_expressions_indexed_by_name() -> None:
 
 
 def test_aliases_with_period_patamar_values_including_na_patamar() -> None:
-    stub = _StubRestricoes(
-        alias_eletrico=_alias((1, "MMGDSIN")),
-        alias_eletrico_valor_periodo_patamar=_alias_valor(
+    stub = StubRestricoes(
+        alias_eletrico=alias((1, "MMGDSIN")),
+        alias_eletrico_valor_periodo_patamar=alias_valor(
             (1, 1, 2, 1.0, 100.0),
             (1, 3, 3, float("nan"), 250.0),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
+    model = read_libs_electrical(stub, calendar(6))
     assert model is not None
-    alias = model.aliases["MMGDSIN"]
-    assert alias.code == 1
+    mmgdsin = model.aliases["MMGDSIN"]
+    assert mmgdsin.code == 1
     # a two-stage range (estagio 1..2) expands to both 0-based stage indices
-    assert alias.values[(0, 1)] == 100.0
-    assert alias.values[(1, 1)] == 100.0
+    assert mmgdsin.values[(0, 1)] == 100.0
+    assert mmgdsin.values[(1, 1)] == 100.0
     # NA patamar -> None ("all blocks")
-    assert alias.values[(2, None)] == 250.0
+    assert mmgdsin.values[(2, None)] == 250.0
 
 
 def test_formula_restriction_two_sided_limits_with_sentinel() -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_formula=_re_formula(
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula(
             (401, "ger_usih(285)+ger_usih(287)"),
         ),
-        restricao_eletrica_horizonte_periodo=_horizonte((401, 1, 6)),
-        restricao_eletrica_limite_formula_periodo_patamar=_re_lim_formula(
+        restricao_eletrica_horizonte_periodo=horizonte((401, 1, 6)),
+        restricao_eletrica_limite_formula_periodo_patamar=re_lim_formula(
             (401, 1, 6, float("nan"), -1e31, 6300.0),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
+    model = read_libs_electrical(stub, calendar(6))
     assert model is not None
     restriction = model.restrictions[401]
     assert restriction.is_formula is True
@@ -291,12 +107,12 @@ def test_formula_restriction_two_sided_limits_with_sentinel() -> None:
 
 
 def test_inequacao_restriction_verbatim_lhs_operator_rhs() -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_inequacao=_re_inequacao(
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao(
             (402, "disp_usih(261) - ger_usih(261)", ">=", "0.05*(val_demanda(1))"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
+    model = read_libs_electrical(stub, calendar(6))
     assert model is not None
     restriction = model.restrictions[402]
     assert restriction.is_formula is False
@@ -306,15 +122,15 @@ def test_inequacao_restriction_verbatim_lhs_operator_rhs() -> None:
 
 
 def test_inequacao_period_patamar_overrides_read_verbatim() -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_inequacao=_re_inequacao(
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao(
             (406, "EXPNE", "<=", "14700"),
         ),
-        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+        restricao_eletrica_inequacao_periodo_patamar=re_inequacao_per_pat(
             (406, 1, 6, 1, "EXPNE", "<=", "14700"),
         ),
     )
-    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
+    model = read_libs_electrical(stub, calendar(6))
     assert model is not None
     restriction = model.restrictions[406]
     assert len(restriction.overrides) == 1
@@ -328,620 +144,267 @@ def test_inequacao_period_patamar_overrides_read_verbatim() -> None:
 
 
 def test_restriction_habilita_rule_and_violation_joined() -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_inequacao=_re_inequacao(
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao(
             (501, "demanda(1)", ">=", "1000"),
         ),
-        restricao_eletrica_habilita=_habilita((501, 10)),
-        restricao_eletrica_regra_ativacao=_regra((10, "demanda(1) > 5000")),
-        restricao_eletrica_tratamento_violacao=_tratamento_violacao((501, 1234.5)),
+        restricao_eletrica_habilita=habilita((501, 10)),
+        restricao_eletrica_regra_ativacao=regra((10, "demanda(1) > 5000")),
+        restricao_eletrica_tratamento_violacao=tratamento_violacao(
+            (501, "hard", 1234.5)
+        ),
     )
-    model = read_libs_electrical(stub, _calendar(6), source=_LIBS)
+    model = read_libs_electrical(stub, calendar(6))
     assert model is not None
     restriction = model.restrictions[501]
     assert restriction.habilita == 10
     assert model.rules[10] == "demanda(1) > 5000"
-    assert restriction.violation == ViolationTreatment(enabled=True, penalty=1234.5)
+    assert restriction.violations == (ViolationRow(None, None, "hard", 1234.5),)
+
+
+def test_violation_period_row_maps_stages_kind_and_blank_cost() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao((501, "demanda(1)", ">=", "1000")),
+        restricao_eletrica_tratamento_violacao_periodo=tratamento_violacao_periodo(
+            (501, 2, 4, "Soft", float("nan")),
+        ),
+    )
+    model = read_libs_electrical(stub, calendar(6))
+    assert model is not None
+    assert model.restrictions[501].violations == (ViolationRow(1, 3, "soft", None),)
+
+
+def test_violation_rows_whole_horizon_first_then_period_in_file_order() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        restricao_eletrica_inequacao=re_inequacao((501, "demanda(1)", ">=", "1000")),
+        restricao_eletrica_tratamento_violacao_periodo=tratamento_violacao_periodo(
+            (501, 3, 3, "hard", 10.0),
+            (401, 1, 6, "soft", 5.0),
+            (501, 1, 2, "soft", float("nan")),
+        ),
+        restricao_eletrica_tratamento_violacao=tratamento_violacao(
+            (501, "hard", 1234.5),
+            (401, "soft", float("nan")),
+            (501, "soft", 99.0),
+        ),
+    )
+    model = read_libs_electrical(stub, calendar(6))
+    assert model is not None
+    assert model.restrictions[501].violations == (
+        ViolationRow(None, None, "hard", 1234.5),
+        ViolationRow(None, None, "soft", 99.0),
+        ViolationRow(2, 2, "hard", 10.0),
+        ViolationRow(0, 1, "soft", None),
+    )
+    assert model.restrictions[401].violations == (
+        ViolationRow(None, None, "soft", None),
+        ViolationRow(0, 5, "soft", 5.0),
+    )
+
+
+def test_violation_rows_of_unknown_restriction_are_not_attached() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao((501, "demanda(1)", ">=", "1000")),
+        restricao_eletrica_tratamento_violacao=tratamento_violacao((777, "hard", 1.0)),
+    )
+    model = read_libs_electrical(stub, calendar(6))
+    assert model is not None
+    assert 777 not in model.restrictions
+    assert model.restrictions[501].violations == ()
+
+
+def test_restriction_without_violation_rows_has_empty_violations() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao((501, "demanda(1)", ">=", "1000")),
+    )
+    model = read_libs_electrical(stub, calendar(6))
+    assert model is not None
+    restriction = model.restrictions[501]
+    assert restriction.violations == ()
+
+
+def test_violation_rows_attach_to_period_only_inequacao_restriction() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao_periodo_patamar=re_inequacao_per_pat(
+            (406, 1, 6, 1, "EXPNE", "<=", "14700"),
+        ),
+        restricao_eletrica_tratamento_violacao=tratamento_violacao((406, "hard", 7.0)),
+    )
+    model = read_libs_electrical(stub, calendar(6))
+    assert model is not None
+    assert model.restrictions[406].violations == (
+        ViolationRow(None, None, "hard", 7.0),
+    )
+
+
+@pytest.mark.parametrize("tipo", ["teste", float("nan")])
+def test_violation_unknown_tipo_violacao_raises(tipo: object) -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao((501, "demanda(1)", ">=", "1000")),
+        restricao_eletrica_tratamento_violacao=tratamento_violacao((501, tipo, 1.0)),
+    )
+    with pytest.raises(ValueError, match="unknown tipo_violacao") as exc_info:
+        read_libs_electrical(stub, calendar(6))
+    assert "501" in str(exc_info.value)
+
+
+def test_violation_period_unknown_tipo_violacao_raises() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao((501, "demanda(1)", ">=", "1000")),
+        restricao_eletrica_tratamento_violacao_periodo=tratamento_violacao_periodo(
+            (501, 1, 2, "teste", 1.0),
+        ),
+    )
+    with pytest.raises(ValueError, match="unknown tipo_violacao") as exc_info:
+        read_libs_electrical(stub, calendar(6))
+    assert "501" in str(exc_info.value)
+
+
+def test_violation_period_outside_calendar_raises() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao((501, "demanda(1)", ">=", "1000")),
+        restricao_eletrica_tratamento_violacao_periodo=tratamento_violacao_periodo(
+            (501, 4, 9, "hard", 1.0),
+        ),
+    )
+    with pytest.raises(ValueError, match="outside the calendar") as exc_info:
+        read_libs_electrical(stub, calendar(6))
+    assert "501" in str(exc_info.value)
 
 
 def test_horizonte_period_out_of_range_raises_value_error() -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_inequacao=_re_inequacao(
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao(
             (99, "ger_usih(1)", ">=", "0"),
         ),
-        restricao_eletrica_horizonte_periodo=_horizonte((99, 1, 7)),
+        restricao_eletrica_horizonte_periodo=horizonte((99, 1, 7)),
     )
     with pytest.raises(ValueError) as exc_info:
-        read_libs_electrical(stub, _calendar(6), source=_LIBS)
+        read_libs_electrical(stub, calendar(6))
     message = str(exc_info.value)
     assert "7" in message
     assert "6" in message
 
 
-@pytest.mark.parametrize(
-    ("operador", "operator"), [(">=", ">="), ("<=", "<="), (" >= ", ">=")]
-)
-def test_an_inequality_reads_the_operators_the_source_model_defines(
-    operador: str, operator: str
-) -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_inequacao=_re_inequacao((98, "ger_usih(1)", operador, "0")),
-        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
-            (98, 1, 1, None, "ger_usih(1)", operador, "5"),
-        ),
-    )
-    model = read_libs_electrical(stub, _calendar(1), source=_LIBS)
-    assert model is not None
-    restriction = model.restrictions[98]
-    assert restriction.operator == operator
-    assert [row.operator for row in restriction.overrides] == [operator]
-
-
-_INEQUACAO_ROW_LOCATIONS = {
-    "constant row": (
-        lambda op: {
-            "restricao_eletrica_inequacao": _re_inequacao((97, "ger_usih(1)", op, "0"))
-        },
-        "RESTRICAO-ELETRICA-INEQUACAO",
-    ),
-    "period row": (
-        lambda op: {
-            "restricao_eletrica_inequacao": _re_inequacao(
-                (97, "ger_usih(1)", "<=", "0")
-            ),
-            "restricao_eletrica_inequacao_periodo_patamar": _re_inequacao_per_pat(
-                (97, 1, 1, None, "ger_usih(1)", op, "5")
-            ),
-        },
-        "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
-    ),
-    "period row alone, outside the horizon": (
-        lambda op: {
-            "restricao_eletrica_inequacao_periodo_patamar": _re_inequacao_per_pat(
-                (97, 1, 1, None, "ger_usih(1)", "<=", "5"),
-                (97, 2, 2, None, "ger_usih(1)", op, "5"),
-            ),
-            "restricao_eletrica_horizonte_periodo": _horizonte((97, 1, 1)),
-        },
-        "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR",
-    ),
-}
-
-
-@pytest.mark.parametrize("location", list(_INEQUACAO_ROW_LOCATIONS))
-@pytest.mark.parametrize(
-    ("operador", "problem"),
-    [
-        ("==", "the operador '=='"),
-        ("<>", "the operador '<>'"),
-        ("=", "the operador '='"),
-        (None, "no operador"),
-        ("  ", "no operador"),
-    ],
-)
-def test_an_inequality_with_an_operator_the_source_model_does_not_define_is_refused(
-    location: str, operador: str | None, problem: str
-) -> None:
-    frames, card = _INEQUACAO_ROW_LOCATIONS[location]
-    stub = _StubRestricoes(**frames(operador))
-    with pytest.raises(FieldParseError) as exc_info:
-        read_libs_electrical(stub, _calendar(2), source=_LIBS)
-    assert str(exc_info.value) == (
-        f"lib_restricao-eletrica-especial.csv: restriction 97 has {problem} in "
-        f"its {card} row; an inequality compares with >= or <="
-    )
-    assert exc_info.value.path == str(_LIBS)
-    assert exc_info.value.field == "operador"
-
-
 def test_no_electrical_cards_returns_none() -> None:
-    stub = _StubRestricoes()
-    assert read_libs_electrical(stub, _calendar(6), source=_LIBS) is None
+    stub = StubRestricoes()
+    assert read_libs_electrical(stub, calendar(6)) is None
 
 
-# ---------------------------------------------------------------------------
-# parse_linear_expression
-# ---------------------------------------------------------------------------
-
-
-def _model(
-    expressions: dict[str, str] | None = None,
-    aliases: tuple[str, ...] = (),
-    restrictions: dict[int, str] | None = None,
-    alias_values: dict[str, dict[tuple[int, int | None], float]] | None = None,
-) -> LibsElectricalModel:
-    """A minimal hand-built model for parser tests: named expressions keyed by
-    ``{name: formula}``, bare alias names (their per-(stage,patamar) values are
-    irrelevant to the parser, which never resolves them, but relevant to
-    ``build_data_context`` -- supply them via *alias_values*,
-    keyed by alias name), and restrictions keyed by ``{code: lhs}`` (used only
-    to exercise ``re(R)`` expansion)."""
-    return LibsElectricalModel(
-        expressions={
-            name: ElectricalExpression(code=i, name=name, formula=formula)
-            for i, (name, formula) in enumerate((expressions or {}).items())
-        },
-        aliases={
-            name: ElectricalAlias(
-                code=i, name=name, values=(alias_values or {}).get(name, {})
-            )
-            for i, name in enumerate(aliases)
-        },
-        restrictions={
-            code: ElectricalRestriction(
-                code=code,
-                lhs=lhs,
-                operator=None,
-                rhs=None,
-                is_formula=True,
-                limits={},
-                overrides=(),
-            )
-            for code, lhs in (restrictions or {}).items()
-        },
-        rules={},
-    )
-
-
-def test_sign_distribution_binary_minus() -> None:
-    model = _model()
-    terms = parse_linear_expression("disp_usih(261) - ger_usih(261)", model)
-    assert terms == [
-        ParsedTerm(coefficient=1.0, token="disp_usih", args=(261,)),
-        ParsedTerm(coefficient=-1.0, token="ger_usih", args=(261,)),
-    ]
-
-
-def test_sign_distribution_leading_unary_minus() -> None:
-    model = _model()
-    terms = parse_linear_expression("-ger_usih(5) + ger_usih(6)", model)
-    assert terms == [
-        ParsedTerm(coefficient=-1.0, token="ger_usih", args=(5,)),
-        ParsedTerm(coefficient=1.0, token="ger_usih", args=(6,)),
-    ]
-
-
-def test_scalar_distributed_over_parenthesized_sum() -> None:
-    model = _model()
-    terms = parse_linear_expression("0.05*(val_demanda(1) + val_demanda(2))", model)
-    assert terms == [
-        ParsedTerm(coefficient=0.05, token="val_demanda", args=(1,)),
-        ParsedTerm(coefficient=0.05, token="val_demanda", args=(2,)),
-    ]
-
-
-def test_standalone_constant_and_explicit_coefficient_terms() -> None:
-    model = _model()
-    terms = parse_linear_expression(
-        "11000 - 0.04*val_demanda(3) + 0.06*ger_pee(11)", model
-    )
-    assert terms == [
-        ParsedTerm(coefficient=11000.0, token="__const__"),
-        ParsedTerm(coefficient=-0.04, token="val_demanda", args=(3,)),
-        ParsedTerm(coefficient=0.06, token="ger_pee", args=(11,)),
-    ]
-
-
-@pytest.mark.parametrize(
-    ("text", "value"),
-    [
-        ("1E2", 100.0),
-        ("1e2", 100.0),
-        ("1E+2", 100.0),
-        ("1.5E3", 1500.0),
-        ("2.5e-3", 0.0025),
-        ("1E+31", 1e31),
-    ],
-)
-def test_constant_with_exponent(text: str, value: float) -> None:
-    assert parse_linear_expression(text, _model()) == [
-        ParsedTerm(coefficient=value, token="__const__")
-    ]
-
-
-def test_exponent_constant_beside_names_starting_with_e() -> None:
-    model = _model(expressions={"EXPNE": "ger_usih(1)"}, aliases=("E1",))
-    assert parse_linear_expression("1E2 + EXPNE - 2*E1", model) == [
-        ParsedTerm(coefficient=100.0, token="__const__"),
-        ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),
-        ParsedTerm(coefficient=-2.0, token="alias", alias_name="E1"),
-    ]
-
-
-def test_named_expression_inlined_no_reference_token_remains() -> None:
-    model = _model(expressions={"RNE": "ener_interc(3,1) - ener_interc(1,3)"})
-    terms = parse_linear_expression("RNE", model)
-    assert terms == [
-        ParsedTerm(coefficient=1.0, token="ener_interc", args=(3, 1)),
-        ParsedTerm(coefficient=-1.0, token="ener_interc", args=(1, 3)),
-    ]
-    assert all(term.token != "RNE" for term in terms)
-
-
-def test_named_expression_inlining_multiplies_through_enclosing_coefficient() -> None:
-    model = _model(expressions={"RNE": "ener_interc(3,1) - ener_interc(1,3)"})
-    terms = parse_linear_expression("0.5*RNE", model)
-    assert terms == [
-        ParsedTerm(coefficient=0.5, token="ener_interc", args=(3, 1)),
-        ParsedTerm(coefficient=-0.5, token="ener_interc", args=(1, 3)),
-    ]
-
-
-def test_nested_named_expression_inlining() -> None:
-    model = _model(
-        expressions={
-            "OUTER": "2*INNER - ger_usih(1)",
-            "INNER": "ger_usih(2) + ger_usih(3)",
-        }
-    )
-    terms = parse_linear_expression("OUTER", model)
-    assert terms == [
-        ParsedTerm(coefficient=2.0, token="ger_usih", args=(2,)),
-        ParsedTerm(coefficient=2.0, token="ger_usih", args=(3,)),
-        ParsedTerm(coefficient=-1.0, token="ger_usih", args=(1,)),
-    ]
-
-
-def test_re_reference_inlines_restriction_formula() -> None:
-    model = _model(restrictions={401: "ger_usih(285) + ger_usih(287)"})
-    terms = parse_linear_expression("re(401)", model)
-    assert terms == [
-        ParsedTerm(coefficient=1.0, token="ger_usih", args=(285,)),
-        ParsedTerm(coefficient=1.0, token="ger_usih", args=(287,)),
-    ]
-
-
-def test_alias_reference_kept_as_single_unexpanded_token() -> None:
-    model = _model(aliases=("MMGDSECO",))
-    terms = parse_linear_expression("MMGDSECO", model)
-    assert terms == [
-        ParsedTerm(coefficient=1.0, token="alias", alias_name="MMGDSECO"),
-    ]
-
-
-def test_alias_reference_not_a_numeric_value() -> None:
-    model = _model(aliases=("MMGDSECO",))
-    terms = parse_linear_expression("MMGDSECO", model)
-    assert len(terms) == 1
-    assert terms[0].token != "__const__"
-    assert terms[0].alias_name == "MMGDSECO"
-
-
-def test_builtin_bare_tokens_kept_unexpanded() -> None:
-    model = _model()
-    for name in ("demanda_sin", "val_demanda_sin", "carga_ande"):
-        terms = parse_linear_expression(name, model)
-        assert terms == [ParsedTerm(coefficient=1.0, token=name)]
-
-
-def test_cyclic_named_expression_reference_is_malformed() -> None:
-    model = _model(expressions={"A": "B", "B": "A"})
-    with pytest.raises(MalformedElectricalExpression) as exc_info:
-        parse_linear_expression("A", model)
-    message = str(exc_info.value)
-    assert "A" in message
-    assert "B" in message
-
-
-def test_unbalanced_parentheses_is_malformed() -> None:
-    model = _model()
-    with pytest.raises(MalformedElectricalExpression, match="ger_usih"):
-        parse_linear_expression("ger_usih(261", model)
-
-
-def test_non_numeric_function_argument_is_malformed() -> None:
-    model = _model()
-    with pytest.raises(MalformedElectricalExpression, match="abc"):
-        parse_linear_expression("ger_usih(abc)", model)
-
-
-def test_trailing_operator_with_no_operand_is_malformed() -> None:
-    model = _model()
-    with pytest.raises(MalformedElectricalExpression):
-        parse_linear_expression("ger_usih(1) +", model)
-
-
-def test_unrecognized_bare_identifier_raises_unrecognized_electrical_token() -> None:
-    # a well-formed but undeclared identifier raises the
-    # dedicated subclass -- still an instance of ValueError, so any existing
-    # pytest.raises(ValueError) contract keeps passing.
-    model = _model()
-    with pytest.raises(UnrecognizedElectricalToken, match="ZZTOP") as exc_info:
-        parse_linear_expression("ZZTOP", model)
-    assert isinstance(exc_info.value, ValueError)
-
-
-def test_unrecognized_token_message_names_identifier_and_expression() -> None:
-    # an undeclared identifier alongside a resolvable ger_usih(...) term.
-    # The message must name both the offending identifier and the enclosing
-    # expression, so a diagnostic built from it is actionable.
-    model = _model()
-    text = "mmgd_N_PCHgd + ger_usih(1)"
-    with pytest.raises(UnrecognizedElectricalToken) as exc_info:
-        parse_linear_expression(text, model)
-    assert isinstance(exc_info.value, ValueError)
-    message = str(exc_info.value)
-    assert "mmgd_N_PCHgd" in message
-    assert text in message
-
-
-def test_se_preserved_as_one_structural_term() -> None:
-    model = _model()
-    terms = parse_linear_expression("se(demanda_sin > 50000, ger_usih(1), 0)", model)
-    assert len(terms) == 1
-    term = terms[0]
-    assert term.token == "se"
-    assert term.coefficient == 1.0
-    assert term.args == ()
-    assert term.condition == "demanda_sin > 50000"
-    assert term.branch_true == "ger_usih(1)"
-    assert term.branch_false == "0"
-
-
-def test_se_condition_is_never_evaluated() -> None:
-    # A condition referencing an undeclared identifier would raise if the
-    # parser tried to evaluate/parse it as its own linear expression; it must
-    # not, since se(...)'s cond is opaque, unparsed text.
-    model = _model()
-    terms = parse_linear_expression(
-        "se(totally_unparseable !! syntax, ger_usih(1), ger_usih(2))", model
-    )
-    assert terms[0].condition == "totally_unparseable !! syntax"
-
-
-def test_se_with_nested_parens_and_commas_in_branches() -> None:
-    model = _model()
-    terms = parse_linear_expression(
-        "se(demanda(1) > 100, ger_usih(1) + ger_usih(2), ger_usih(3))", model
-    )
-    term = terms[0]
-    assert term.condition == "demanda(1) > 100"
-    assert term.branch_true == "ger_usih(1) + ger_usih(2)"
-    assert term.branch_false == "ger_usih(3)"
-
-
-# ---------------------------------------------------------------------------
-# classify_term / classify_terms
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "token",
-    ["ger_usih", "ger_usit", "ger_pee", "ger_conjh", "ener_interc", "ener_comerc"],
-)
-def test_classify_term_bucket_a_decision_tokens(token: str) -> None:
-    term = ParsedTerm(coefficient=1.0, token=token, args=(1,))
-    assert classify_term(term) == Bucket.A
-
-
-@pytest.mark.parametrize(
-    "term",
-    [
-        ParsedTerm(coefficient=1.0, token="demanda", args=(1,)),
-        ParsedTerm(coefficient=1.0, token="val_demanda", args=(1,)),
-        ParsedTerm(coefficient=1.0, token="demanda_sin"),
-        ParsedTerm(coefficient=1.0, token="val_demanda_sin"),
-        ParsedTerm(coefficient=1.0, token="carga_ande"),
-        ParsedTerm(coefficient=1.0, token="alias", alias_name="MMGDSECO"),
-        ParsedTerm(coefficient=100.0, token="__const__"),
-        ParsedTerm(
-            coefficient=1.0,
-            token="se",
-            condition="demanda_sin > 50000",
-            branch_true="ger_usih(1)",
-            branch_false="0",
+def _every_card_with_a_short_form() -> dict[str, pd.DataFrame]:
+    return {
+        "expressao_eletrica": expressao((1, "FNESE", "ener_interc(3,1)")),
+        "alias_eletrico": alias((1, "MMGDSIN")),
+        "alias_eletrico_valor_periodo_patamar": alias_valor((1, 1, 2, 1.0, 100.0)),
+        "restricao_eletrica_formula": re_formula(
+            (401, "ger_usih(285)"), (403, "ger_usih(287)")
         ),
-    ],
-)
-def test_classify_term_bucket_b_input_data_tokens(term: ParsedTerm) -> None:
-    assert classify_term(term) == Bucket.B
+        "restricao_eletrica_horizonte_periodo": horizonte((401, 1, 6)),
+        "restricao_eletrica_horizonte_data": horizonte_data(
+            (403, "2026-07-11", "2026-07-24")
+        ),
+        "restricao_eletrica_limite_formula_periodo_patamar": re_lim_formula(
+            (401, 1, 6, float("nan"), -1e31, 6300.0)
+        ),
+        "restricao_eletrica_limites_formula_data_patamar": re_lim_formula_data(
+            (403, "2026-07-04", "2026-07-11", 2, 10.0, 1e31)
+        ),
+        "restricao_eletrica_formula_periodo_patamar": re_formula_per_pat(
+            (401, 1, 6, None, "2*ger_usih(285)")
+        ),
+        "restricao_eletrica_formula_data_patamar": re_formula_data_pat(
+            (403, "2026-07-11", "2026-07-24", 2, "ger_usih(287)")
+        ),
+        "restricao_eletrica_inequacao": re_inequacao(
+            (402, "disp_usih(261)", ">=", "0.05*(val_demanda(1))")
+        ),
+        "restricao_eletrica_habilita": habilita((402, 10)),
+        "restricao_eletrica_regra_ativacao": regra((10, "demanda(1) > 5000")),
+        "restricao_eletrica_tratamento_violacao": tratamento_violacao(
+            (402, "hard", 1234.5)
+        ),
+        "restricao_eletrica_tratamento_violacao_periodo": tratamento_violacao_periodo(
+            (401, 2, 4, "soft", float("nan"))
+        ),
+    }
 
 
-def test_classify_term_bucket_c_disp_usih() -> None:
-    term = ParsedTerm(coefficient=1.0, token="disp_usih", args=(261,))
-    assert classify_term(term) == Bucket.C
-
-
-def test_classify_term_unrecognized_token_raises_value_error() -> None:
-    term = ParsedTerm(coefficient=1.0, token="ger_bogus", args=(1,))
-    with pytest.raises(ValueError, match="ger_bogus"):
-        classify_term(term)
-
-
-def test_classify_terms_partitions_mixed_expression_into_a_b_c() -> None:
-    model = _model()
-    terms = parse_linear_expression(
-        "disp_usih(261) - ger_usih(261) + 0.05*carga_ande", model
+def test_short_form_cards_read_as_their_long_form_equivalents() -> None:
+    frames = _every_card_with_a_short_form()
+    assert set(SHORT_FORM_ACCESSORS) <= set(frames)
+    long_model = read_libs_electrical(spelled(frames, short=False), weekly_calendar(6))
+    short_model = read_libs_electrical(spelled(frames, short=True), weekly_calendar(6))
+    assert short_model is not None
+    assert short_model == long_model
+    assert short_model.aliases["MMGDSIN"].values == {(0, 1): 100.0, (1, 1): 100.0}
+    assert short_model.rules == {10: "demanda(1) > 5000"}
+    assert short_model.restrictions[401].stage_end == 5
+    assert short_model.restrictions[401].limits[(0, None)] == (None, 6300.0)
+    assert short_model.restrictions[403].stage_start == 1
+    assert short_model.restrictions[403].limits == {
+        (0, 2): (10.0, None),
+        (1, 2): (10.0, None),
+    }
+    assert short_model.restrictions[401].violations == (
+        ViolationRow(1, 3, "soft", None),
     )
-    partition = classify_terms(terms)
-    assert len(partition[Bucket.A]) == 1
-    assert len(partition[Bucket.B]) == 1
-    assert len(partition[Bucket.C]) == 1
-    assert partition[Bucket.A][0].token == "ger_usih"
-    assert partition[Bucket.B][0].token == "carga_ande"
-    assert partition[Bucket.C][0].token == "disp_usih"
-
-
-def test_classify_terms_present_empty_lists_for_absent_buckets() -> None:
-    partition = classify_terms(
-        [ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,))]
+    assert short_model.restrictions[401].formula_overrides == (
+        FormulaOverride(0, 5, None, "2*ger_usih(285)"),
     )
-    assert partition[Bucket.A] == [
-        ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,))
-    ]
-    assert partition[Bucket.B] == []
-    assert partition[Bucket.C] == []
-
-
-def test_classify_terms_order_preserving_within_bucket() -> None:
-    terms = [
-        ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),
-        ParsedTerm(coefficient=1.0, token="ger_usit", args=(2,)),
-        ParsedTerm(coefficient=1.0, token="ger_pee", args=(3,)),
-    ]
-    partition = classify_terms(terms)
-    assert [term.args for term in partition[Bucket.A]] == [(1,), (2,), (3,)]
-
-
-# ---------------------------------------------------------------------------
-# parse_activation_rule / evaluate_rule / is_always_active
-# ---------------------------------------------------------------------------
-
-
-def _dict_context(values: Mapping[str, float]) -> DataContext:
-    """A trivial dict-backed :data:`DataContext` test double.
-
-    Keys are a bare token's own name (``"demanda_sin"``), or
-    ``"token(args)"`` for a parameterized token (``"demanda(1)"``), or the
-    alias's own name for an unresolved ``ALIAS-ELETRICO`` reference. A bare
-    numeric constant always resolves to ``1.0`` (its value already lives in
-    the term's own ``coefficient`` — see :data:`DataContext`), so it is never
-    looked up in *values*.
-    """
-
-    def resolve(term: ParsedTerm) -> float:
-        if term.token == "__const__":
-            return 1.0
-        if term.token == "alias":
-            assert term.alias_name is not None
-            return values[term.alias_name]
-        key = (
-            f"{term.token}({','.join(str(arg) for arg in term.args)})"
-            if term.args
-            else term.token
-        )
-        return values[key]
-
-    return resolve
-
-
-@pytest.mark.parametrize("op", ["<", "<=", ">", ">=", "==", "!="])
-def test_parse_activation_rule_recognizes_each_operator_longest_match(
-    op: str,
-) -> None:
-    model = _model()
-    rule = parse_activation_rule(f"demanda_sin {op} 50000", model)
-    assert len(rule.comparisons) == 1
-    assert rule.comparisons[0].op == op
-
-
-def test_parse_activation_rule_single_comparison() -> None:
-    model = _model()
-    rule = parse_activation_rule("demanda_sin >= 50000", model)
-    assert rule == ActivationRule(
-        comparisons=(
-            Comparison(
-                left=[ParsedTerm(coefficient=1.0, token="demanda_sin")],
-                op=">=",
-                right=[ParsedTerm(coefficient=50000.0, token="__const__")],
-            ),
-        )
+    assert short_model.restrictions[403].formula_overrides == (
+        FormulaOverride(1, 2, 2, "ger_usih(287)"),
+    )
+    assert short_model.restrictions[402].habilita == 10
+    assert short_model.restrictions[402].violations == (
+        ViolationRow(None, None, "hard", 1234.5),
     )
 
 
-def test_parse_activation_rule_alias_and_sum_operands() -> None:
-    model = _model(aliases=("MMGDSECO",))
-    rule = parse_activation_rule("demanda(3)+demanda(4) < MMGDSECO", model)
-    assert len(rule.comparisons) == 1
-    comparison = rule.comparisons[0]
-    assert comparison.op == "<"
-    assert comparison.left == [
-        ParsedTerm(coefficient=1.0, token="demanda", args=(3,)),
-        ParsedTerm(coefficient=1.0, token="demanda", args=(4,)),
-    ]
-    assert comparison.right == [
-        ParsedTerm(coefficient=1.0, token="alias", alias_name="MMGDSECO"),
-    ]
-
-
-def test_parse_activation_rule_multi_conjunct_splits_on_top_level_ampersand() -> None:
-    model = _model()
-    rule = parse_activation_rule("demanda_sin >= 50000 & demanda(1) < 1000", model)
-    assert len(rule.comparisons) == 2
-    first, second = rule.comparisons
-    assert first == Comparison(
-        left=[ParsedTerm(coefficient=1.0, token="demanda_sin")],
-        op=">=",
-        right=[ParsedTerm(coefficient=50000.0, token="__const__")],
+@pytest.mark.filterwarnings("error")
+def test_long_and_short_form_restrictions_are_read_together() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        re=re_formula((402, "ger_usih(287)")),
+        restricao_eletrica_limite_formula_periodo_patamar=re_lim_formula(
+            (401, 1, 6, float("nan"), -1e31, 6300.0)
+        ),
+        re_lim_form_per_pat=re_lim_formula((402, 1, 6, 1, 0.0, 100.0)),
     )
-    assert second == Comparison(
-        left=[ParsedTerm(coefficient=1.0, token="demanda", args=(1,))],
-        op="<",
-        right=[ParsedTerm(coefficient=1000.0, token="__const__")],
+    model = read_libs_electrical(stub, calendar(6))
+    assert model is not None
+    assert sorted(model.restrictions) == [401, 402]
+    assert model.restrictions[401].limits[(0, None)] == (None, 6300.0)
+    assert model.restrictions[402].limits[(0, 1)] == (0.0, 100.0)
+
+
+def test_short_form_only_deck_is_not_empty() -> None:
+    stub = StubRestricoes(re=re_formula((401, "ger_usih(285)")))
+    model = read_libs_electrical(stub, calendar(6))
+    assert model is not None
+    assert model.restrictions[401].lhs == "ger_usih(285)"
+
+
+@pytest.mark.filterwarnings("error")
+def test_empty_short_form_frame_is_ignored() -> None:
+    long_only = StubRestricoes(restricao_eletrica_formula=re_formula((401, "A")))
+    with_empty_alias = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "A")),
+        re=re_formula(),
     )
-
-
-def test_parse_activation_rule_decision_operand_is_malformed() -> None:
-    model = _model()
-    with pytest.raises(
-        MalformedElectricalExpression, match="ger_usih\\(5\\) .* is not input data"
-    ):
-        parse_activation_rule("ger_usih(5) >= 100", model)
-
-
-def test_parse_activation_rule_conjunct_without_operator_is_malformed() -> None:
-    model = _model()
-    with pytest.raises(MalformedElectricalExpression, match="no comparison operator"):
-        parse_activation_rule("demanda_sin 50000", model)
-
-
-def test_parse_activation_rule_unrecognized_operator_is_malformed() -> None:
-    model = _model()
-    with pytest.raises(
-        MalformedElectricalExpression, match="unrecognized comparison operator"
-    ):
-        parse_activation_rule("demanda_sin <> 50000", model)
-
-
-def test_parse_activation_rule_unbalanced_parens_is_malformed() -> None:
-    model = _model()
-    with pytest.raises(MalformedElectricalExpression, match="unbalanced parentheses"):
-        parse_activation_rule("demanda(3 >= 5", model)
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "demanda_sin < 0 | demanda_sin > 10",
-        "demanda(1) > 0 & demanda_sin<0|demanda_sin>9",
-    ],
-)
-def test_parse_activation_rule_with_an_or_is_not_converted_yet(text: str) -> None:
-    # The source model joins comparisons with | (OR) as well as & (AND).
-    with pytest.raises(UnsupportedSourceError) as exc_info:
-        parse_activation_rule(text, _model())
-    assert str(exc_info.value) == (
-        f"the condition {text!r} joins comparisons with | (OR)"
+    assert read_libs_electrical(with_empty_alias, calendar(6)) == read_libs_electrical(
+        long_only, calendar(6)
     )
 
 
-def test_evaluate_rule_and_of_comparisons_true() -> None:
-    model = _model()
-    rule = parse_activation_rule("demanda_sin >= 50000 & demanda(1) < 1000", model)
-    context = _dict_context({"demanda_sin": 60000.0, "demanda(1)": 900.0})
-    assert evaluate_rule(rule, context) is True
-
-
-def test_evaluate_rule_and_of_comparisons_false_when_one_fails() -> None:
-    model = _model()
-    rule = parse_activation_rule("demanda_sin >= 50000 & demanda(1) < 1000", model)
-    context = _dict_context({"demanda_sin": 60000.0, "demanda(1)": 1500.0})
-    assert evaluate_rule(rule, context) is False
-
-
-def test_evaluate_rule_empty_conjunction_is_always_true() -> None:
-    rule = ActivationRule(comparisons=())
-    assert evaluate_rule(rule, _dict_context({})) is True
-
-
-def test_is_always_active_true_for_no_habilita_restriction() -> None:
-    assert is_always_active(ActivationRule(comparisons=())) is True
-
-
-def test_is_always_active_false_for_a_parsed_rule() -> None:
-    model = _model()
-    rule = parse_activation_rule("demanda_sin >= 50000", model)
-    assert is_always_active(rule) is False
+def test_code_in_both_spellings_takes_the_short_form_row() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "A")),
+        re=re_formula((401, "B")),
+    )
+    model = read_libs_electrical(stub, calendar(6))
+    assert model is not None
+    assert model.restrictions[401].lhs == "B"
 
 
 # ---------------------------------------------------------------------------
@@ -986,8 +449,8 @@ def _ri_calendar(n_stages: int, *, n_blocks: int) -> list[OperativeStage]:
 
 def test_carga_ande_single_stage_inherited_forward_across_calendar() -> None:
     stub = _StubDadger(_ri((66, 1, 1, 3505.0, 3332.0, 2817.5), n_patamares=3))
-    calendar = _ri_calendar(6, n_blocks=3)
-    result = read_carga_ande(stub, calendar)
+    stages = _ri_calendar(6, n_blocks=3)
+    result = read_carga_ande(stub, stages)
     assert set(result) == {0, 1, 2, 3, 4, 5}
     for values in result.values():
         assert values == [3505.0, 3332.0, 2817.5]
@@ -997,8 +460,8 @@ def test_carga_ande_multi_stage_sparse_inheritance() -> None:
     stub = _StubDadger(
         _ri((66, 1, 1, 100.0, 100.0), (66, 3, 1, 200.0, 200.0), n_patamares=2)
     )
-    calendar = _ri_calendar(4, n_blocks=2)
-    result = read_carga_ande(stub, calendar)
+    stages = _ri_calendar(4, n_blocks=2)
+    result = read_carga_ande(stub, stages)
     assert result[0] == [100.0, 100.0]
     assert result[1] == [100.0, 100.0]
     assert result[2] == [200.0, 200.0]
@@ -1012,9 +475,9 @@ def test_carga_ande_no_ri_register_returns_empty_dict() -> None:
 
 def test_carga_ande_block_count_mismatch_raises_value_error() -> None:
     stub = _StubDadger(_ri((66, 2, 1, 111.0, 222.0), n_patamares=2))
-    calendar = _ri_calendar(4, n_blocks=3)
+    stages = _ri_calendar(4, n_blocks=3)
     with pytest.raises(ValueError) as exc_info:
-        read_carga_ande(stub, calendar)
+        read_carga_ande(stub, stages)
     message = str(exc_info.value)
     # estagio 2 -> 0-based stage index 1
     assert "1" in message
@@ -1024,1006 +487,9 @@ def test_carga_ande_block_count_mismatch_raises_value_error() -> None:
 
 def test_carga_ande_missing_estagio_1_raises_value_error() -> None:
     stub = _StubDadger(_ri((66, 3, 1, 200.0, 200.0), n_patamares=2))
-    calendar = _ri_calendar(4, n_blocks=2)
+    stages = _ri_calendar(4, n_blocks=2)
     with pytest.raises(ValueError, match="estágio 1"):
-        read_carga_ande(stub, calendar)
-
-
-# ---------------------------------------------------------------------------
-# build_data_context / assemble_bound / evaluate_se
-# ---------------------------------------------------------------------------
-
-
-class _StubElectricalDadger:
-    """Return a preset ``dp``/``ri`` DataFrame (or ``None``) for each
-    ``Dadger`` accessor ``build_data_context`` reads -- mirrors
-    ``_StubRestricoes``'s generic-accessor shape."""
-
-    def __init__(self, **frames: pd.DataFrame) -> None:
-        self._frames = frames
-
-    def __getattr__(self, name: str):
-        if name.startswith("_"):
-            raise AttributeError(name)
-
-        def accessor(df: bool = True) -> pd.DataFrame | None:
-            return self._frames.get(name)
-
-        return accessor
-
-
-def _case(
-    dadger: _StubElectricalDadger, calendar: Sequence[OperativeStage]
-) -> DecompCase:
-    return make_decomp_case(Path("unused"), dadger=dadger, calendar=calendar)
-
-
-def _dp(*rows: tuple, n_patamares: int) -> pd.DataFrame:
-    """``DP`` rows shaped as idecomp's ``df=True`` accessor: (codigo_submercado,
-    estagio, numero_patamares, carga_1, ..., carga_n)."""
-    columns = ["codigo_submercado", "estagio", "numero_patamares"] + [
-        f"carga_{k}" for k in range(1, n_patamares + 1)
-    ]
-    return pd.DataFrame(rows, columns=columns)
-
-
-def test_build_data_context_demanda_sin_and_demanda_submarket() -> None:
-    id_map = DecompIdMap(bus_codes=(1, 2), bus_names=("SE", "S"))
-    calendar = _ri_calendar(1, n_blocks=2)
-    dadger = _StubElectricalDadger(
-        dp=_dp(
-            (1, 1, 2, 1000.0, 900.0),
-            (2, 1, 2, 500.0, 400.0),
-            n_patamares=2,
-        )
-    )
-    ctx = build_data_context(_case(dadger, calendar), id_map, model=_model())(0, 0)
-    assert ctx(ParsedTerm(coefficient=1.0, token="demanda_sin")) == 1500.0
-    assert ctx(ParsedTerm(coefficient=1.0, token="demanda", args=(1,))) == 1000.0
-
-
-def test_build_data_context_carga_ande_resolves_the_series() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    calendar = _ri_calendar(1, n_blocks=2)
-    dadger = _StubElectricalDadger(
-        dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2),
-        ri=_ri((66, 1, 1, 50.0, 60.0), n_patamares=2),
-    )
-    ctx0 = build_data_context(_case(dadger, calendar), id_map, model=_model())(0, 0)
-    ctx1 = build_data_context(_case(dadger, calendar), id_map, model=_model())(0, 1)
-    term = ParsedTerm(coefficient=1.0, token="carga_ande")
-    assert ctx0(term) == 50.0
-    assert ctx1(term) == 60.0
-
-
-def test_build_data_context_alias_stage_inherited_with_na_patamar_fallback() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    calendar = _ri_calendar(3, n_blocks=2)
-    dadger = _StubElectricalDadger(dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2))
-    model = _model(
-        aliases=("MMGDSIN",),
-        alias_values={"MMGDSIN": {(0, None): 100.0, (2, 1): 500.0}},
-    )
-    factory = build_data_context(_case(dadger, calendar), id_map, model=model)
-    term = ParsedTerm(coefficient=1.0, token="alias", alias_name="MMGDSIN")
-    # stage 0: no exact patamar entry, NA (all-blocks) covers both blocks.
-    assert factory(0, 0)(term) == 100.0
-    assert factory(0, 1)(term) == 100.0
-    # stage 1: nothing declared -- inherits stage 0's NA entry.
-    assert factory(1, 0)(term) == 100.0
-    # stage 2: an exact patamar-1 entry overrides the inherited NA default.
-    assert factory(2, 0)(term) == 500.0
-
-
-def test_build_data_context_constant_resolves_to_one_not_its_value() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    calendar = _ri_calendar(1, n_blocks=1)
-    dadger = _StubElectricalDadger(dp=_dp((1, 1, 1, 0.0), n_patamares=1))
-    ctx = build_data_context(_case(dadger, calendar), id_map, model=_model())(0, 0)
-    # the constant's own value lives in
-    # the term's coefficient; ctx must return 1.0, never the value itself.
-    assert ctx(ParsedTerm(coefficient=42.0, token="__const__")) == 1.0
-
-
-def test_build_data_context_unknown_submarket_raises_unresolvable() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    calendar = _ri_calendar(1, n_blocks=1)
-    dadger = _StubElectricalDadger(dp=_dp((1, 1, 1, 0.0), n_patamares=1))
-    ctx = build_data_context(_case(dadger, calendar), id_map, model=_model())(0, 0)
-    with pytest.raises(_UnresolvableBucketBTerm, match="99"):
-        ctx(ParsedTerm(coefficient=1.0, token="demanda", args=(99,)))
-
-
-def test_build_data_context_alias_with_no_value_raises_unresolvable() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    calendar = _ri_calendar(1, n_blocks=1)
-    dadger = _StubElectricalDadger(dp=_dp((1, 1, 1, 0.0), n_patamares=1))
-    model = _model(aliases=("MMGDSIN",))  # no values declared at all
-    ctx = build_data_context(_case(dadger, calendar), id_map, model=model)(0, 0)
-    with pytest.raises(_UnresolvableBucketBTerm, match="MMGDSIN"):
-        ctx(ParsedTerm(coefficient=1.0, token="alias", alias_name="MMGDSIN"))
-
-
-def _pq(*rows: tuple, n_patamares: int) -> pd.DataFrame:
-    """``PQ`` rows shaped as idecomp's ``df=True`` accessor: (nome,
-    codigo_submercado, estagio, geracao_1, ..., geracao_n)."""
-    columns = ["nome", "codigo_submercado", "estagio"] + [
-        f"geracao_{k}" for k in range(1, n_patamares + 1)
-    ]
-    return pd.DataFrame(rows, columns=columns)
-
-
-_PEQ_ID_MAP = DecompIdMap(bus_codes=(1, 2, 3, 4), bus_names=("SE", "S", "NE", "N"))
-
-
-def _peq_factory(n_stages: int = 2):
-    calendar = _ri_calendar(n_stages, n_blocks=2)
-    dadger = _StubElectricalDadger(
-        dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2),
-        pq=_pq(
-            ("N_PCHgd", 4, 1, 10.0, 20.0),
-            ("N_PCHgd", 4, 2, 11.0, 21.0),
-            ("SECO_PCHgd", 1, 1, 30.0, 40.0),
-            ("SUL_EOLgd", 2, 1, 50.0, 60.0),
-            n_patamares=2,
-        ),
-    )
-    return build_data_context(_case(dadger, calendar), _PEQ_ID_MAP, model=_model())
-
-
-def _peq_term(text: str) -> ParsedTerm:
-    (term,) = parse_linear_expression(text, _model())
-    return term
-
-
-def test_parse_peq_splits_series_name_at_last_underscore() -> None:
-    assert _peq_term("peq_N_PCHgd_N") == ParsedTerm(
-        coefficient=1.0, token="peq", pq_name="N_PCHgd", pq_submarket="N"
-    )
-    assert classify_term(_peq_term("peq_N_PCHgd_N")) is Bucket.B
-
-
-def test_parse_peq_survives_named_expression_expansion() -> None:
-    model = _model(expressions={"MMGD_NRed": "peq_N_PCHgd_N - MMGD_AMexp"})
-    model = replace(model, aliases=_model(aliases=("MMGD_AMexp",)).aliases)
-    terms = parse_linear_expression("2*MMGD_NRed", model)
-    assert terms == [
-        ParsedTerm(coefficient=2.0, token="peq", pq_name="N_PCHgd", pq_submarket="N"),
-        ParsedTerm(coefficient=-2.0, token="alias", alias_name="MMGD_AMexp"),
-    ]
-
-
-def test_build_data_context_peq_reads_pq_generation_per_stage_and_block() -> None:
-    factory = _peq_factory(n_stages=3)
-    term = _peq_term("peq_N_PCHgd_N")
-    assert factory(0, 0)(term) == 10.0
-    assert factory(0, 1)(term) == 20.0
-    assert factory(1, 1)(term) == 21.0
-    # stage 3 has no PQ row and inherits stage 2
-    assert factory(2, 0)(term) == 11.0
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("peq_SECO_PCHgd_SE", 30.0),
-        ("peq_SECO_PCHgd_SECO", 30.0),
-        ("peq_SUL_EOLgd_S", 50.0),
-        ("peq_SUL_EOLgd_SUL", 50.0),
-        ("peq_SUL_EOLgd_sul", 50.0),
-    ],
-)
-def test_build_data_context_peq_accepts_sb_mnemonic_or_region_name(
-    text: str, expected: float
-) -> None:
-    assert _peq_factory()(0, 0)(_peq_term(text)) == expected
-
-
-@pytest.mark.parametrize(
-    ("text", "match"),
-    [
-        ("peq_SECO_PCHgd_SUDESTE", "undeclared subsystem SUDESTE$"),
-        ("peq_N_BIOgd_N", "no PQ series N_BIOgd of subsystem 4$"),
-        ("peq_SECO_PCHgd_N", "no PQ series SECO_PCHgd of subsystem 4$"),
-    ],
-)
-def test_build_data_context_peq_unresolvable_raises(text: str, match: str) -> None:
-    with pytest.raises(_UnresolvableBucketBTerm, match=match):
-        _peq_factory()(0, 0)(_peq_term(text))
-
-
-def _gnl_model() -> GnlCommitmentModel:
-    """SANTA CRUZ (86) commanded only in the first of two weekly stages."""
-    return GnlCommitmentModel(
-        thermals=(GnlThermal(86, "SANTA CRUZ", 1),),
-        commitments={
-            86: GnlCommitment(
-                86,
-                (
-                    GnlStageCommitment(
-                        1,
-                        date(2026, 7, 4),
-                        450.0,
-                        168.0,
-                        block_mw=(500.0, 400.0),
-                        block_hours=(84.0, 84.0),
-                    ),
-                ),
-            )
-        },
-        weeks_per_month={},
-        nl_lag_months={},
-        tg=pd.DataFrame(
-            [
-                {
-                    "codigo_submercado": 1,
-                    "codigo_usina": 86,
-                    "estagio": 1,
-                    "nome": "SANTA CRUZ",
-                    **{f"cvu_{k}": 199.0 for k in (1, 2, 3)},
-                    **{f"disponibilidade_{k}": 600.0 for k in (1, 2, 3)},
-                    **{f"inflexibilidade_{k}": 0.0 for k in (1, 2, 3)},
-                }
-            ]
-        ),
-    )
-
-
-def _gnl_factory():
-    calendar = [
-        OperativeStage(
-            index=i,
-            start_date=date(2026, 7, 4 + 7 * i),
-            end_date=date(2026, 7, 11 + 7 * i),
-            season_id=6,
-            block_hours=(84.0, 84.0),
-        )
-        for i in range(2)
-    ]
-    dadger = _StubElectricalDadger(dp=_dp((1, 1, 2, 0.0, 0.0), n_patamares=2))
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    return build_data_context(
-        _case(dadger, calendar), id_map, model=_model(), gnl_model=_gnl_model()
-    )
-
-
-def test_parse_ger_usit_of_gnl_plant_is_input_data() -> None:
-    model = replace(_model(), gnl_thermal_codes=frozenset({86}))
-    gnl, ct = parse_linear_expression("0.5*ger_usit(86) + ger_usit(1)", model)
-    assert gnl == ParsedTerm(coefficient=0.5, token=GNL_TOKEN, args=(86,))
-    assert classify_term(gnl) is Bucket.B
-    assert ct == ParsedTerm(coefficient=1.0, token="ger_usit", args=(1,))
-    assert classify_term(ct) is Bucket.A
-
-
-def test_build_data_context_gnl_reads_commanded_generation_per_block() -> None:
-    term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
-    factory = _gnl_factory()
-    assert factory(0, 0)(term) == 500.0
-    assert factory(0, 1)(term) == 400.0
-
-
-def test_build_data_context_gnl_uncommanded_stage_is_a_gl_field_error() -> None:
-    term = ParsedTerm(coefficient=1.0, token=GNL_TOKEN, args=(86,))
-    with pytest.raises(
-        FieldParseError,
-        match=r"^ger_usit\(86\) is on GNL thermal 86, but no dadgnl GL week starts "
-        "in stage 2, so the thermal has no commanded generation there to move "
-        "into the limits; DECOMP stops on such a term too$",
-    ) as raised:
-        _gnl_factory()(1, 0)(term)
-
-    assert raised.value.field == "GL"
-
-
-def test_assemble_bound_abates_gnl_commanded_generation() -> None:
-    model = replace(_model(), gnl_thermal_codes=frozenset({86}))
-    restriction = _inequacao(434, "ger_usih(1)", "<=", "0.5*ger_usit(86) + 11180")
-    assembled = assemble_bound(restriction, model, 0, 0, _gnl_factory()(0, 0))
-    assert assembled == AssembledBound(
-        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
-        lower=None,
-        upper=11430.0,
-    )
-
-
-def _inequacao(
-    code: int,
-    lhs: str,
-    operator: str,
-    rhs: str,
-    overrides: tuple[PeriodPatamarOverride, ...] = (),
-) -> ElectricalRestriction:
-    return ElectricalRestriction(
-        code=code,
-        lhs=lhs,
-        operator=operator,
-        rhs=rhs,
-        is_formula=False,
-        limits={},
-        overrides=overrides,
-    )
-
-
-def _formula(
-    code: int, lhs: str, limits: dict[tuple[int, int | None], tuple]
-) -> ElectricalRestriction:
-    return ElectricalRestriction(
-        code=code,
-        lhs=lhs,
-        operator=None,
-        rhs=None,
-        is_formula=True,
-        limits=limits,
-        overrides=(),
-    )
-
-
-def test_assemble_bound_inequacao_upper_only_from_rhs_bucket_b() -> None:
-    restriction = _inequacao(285, "ger_usih(285)", "<=", "11000 - 0.04*val_demanda(3)")
-    ctx = _dict_context({"val_demanda(3)": 5000.0})
-    assert assemble_bound(restriction, _model(), 0, 0, ctx) == AssembledBound(
-        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(285,)),),
-        lower=None,
-        upper=10800.0,
-    )
-
-
-def test_assemble_bound_formula_two_sided_sentinel_maps_to_none() -> None:
-    restriction = _formula(
-        401, "ger_usih(285)+ger_usih(287)", {(0, None): (None, 6300.0)}
-    )
-    assert assemble_bound(
-        restriction, _model(), 0, 0, _dict_context({})
-    ) == AssembledBound(
-        terms=(
-            ParsedTerm(coefficient=1.0, token="ger_usih", args=(285,)),
-            ParsedTerm(coefficient=1.0, token="ger_usih", args=(287,)),
-        ),
-        lower=None,
-        upper=6300.0,
-    )
-
-
-def test_assemble_bound_negates_a_lhs_bucket_b_term_sign_discipline() -> None:
-    # a bucket-B term on the LHS must be
-    # negated when it moves to the bound side, not just summed in verbatim.
-    # ger_usih(5) + val_demanda(1) >= 0, val_demanda(1) = 300 <=>
-    # ger_usih(5) >= -300.
-    restriction = _inequacao(42, "ger_usih(5) + val_demanda(1)", ">=", "0")
-    ctx = _dict_context({"val_demanda(1)": 300.0})
-    assert assemble_bound(restriction, _model(), 0, 0, ctx) == AssembledBound(
-        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(5,)),),
-        lower=-300.0,
-        upper=None,
-    )
-
-
-def test_assemble_bound_moves_rhs_bucket_a_term_to_lhs_negated() -> None:
-    # a plain INEQUACAO carrying a bucket-A term on the RHS (here
-    # +0.06*ger_pee(11)) must surface it on AssembledBound.terms with its
-    # sign flipped -- reading restriction.rhs verbatim would reproduce the
-    # sign hazard for this shape too.
-    restriction = _inequacao(403, "ger_usih(1)", "<=", "1000 + 0.06*ger_pee(11)")
-    result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
-    assert result == AssembledBound(
-        terms=(
-            ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),
-            ParsedTerm(coefficient=-0.06, token="ger_pee", args=(11,)),
-        ),
-        lower=None,
-        upper=1000.0,
-    )
-
-
-def test_assemble_bound_reserve_single_plant_sign_proof() -> None:
-    # The sign fix: disp_usih(1) - ger_usih(1) >= R, A_h(1) = 1000,
-    # R = 300 -> ger_usih(1) <= 700, with a POSITIVE surviving coefficient --
-    # a generation cap, never an inverted lower bound.
-    restriction = _inequacao(407, "disp_usih(1) - ger_usih(1)", ">=", "300")
-    a_h = AvailablePower(overlay={(1, 0): 1000.0})
-    result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-    assert result == AssembledBound(
-        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
-        lower=None,
-        upper=700.0,
-    )
-
-
-def test_assemble_bound_drops_and_warns_on_unresolvable_carga_ande() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    calendar = _ri_calendar(1, n_blocks=1)
-    dadger = _StubElectricalDadger(dp=_dp((1, 1, 1, 1000.0), n_patamares=1))
-    model = _model()
-    cell_ctx = build_data_context(_case(dadger, calendar), id_map, model=model)(0, 0)
-    restriction = _inequacao(999, "carga_ande", ">=", "100")
-
-    with dx.collect() as sink:
-        result = assemble_bound(restriction, model, 0, 0, cell_ctx)
-
-    assert result is None
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.WARNING
-    assert sink[0].table is not None
-    [[code, stage, block, reason]] = sink[0].table.rows
-    assert (code, stage, block) == (999, 0, 0)
-    assert "carga_ande" in str(reason)
-
-
-# ---------------------------------------------------------------------------
-# INEQUACAO-PERIODO-PATAMAR override precedence
-# ---------------------------------------------------------------------------
-
-
-def test_effective_inequacao_sides_no_matching_override_returns_base() -> None:
-    restriction = _inequacao(500, "ger_usih(1)", "<=", "5000")
-    assert _effective_inequacao_sides(restriction, 0, 1) == (
-        "ger_usih(1)",
-        "<=",
-        "5000",
-    )
-
-
-def test_effective_inequacao_sides_later_declared_override_wins_tie() -> None:
-    # Requirement 3: two rows tie on specificity (both exact-patamar 1) for
-    # the same cell -- the later-declared one wins.
-    first = PeriodPatamarOverride(0, 3, 1, "ger_usih(1)", "<=", "6000")
-    second = PeriodPatamarOverride(0, 3, 1, "ger_usih(1)", "<=", "7000")
-    restriction = _inequacao(
-        501, "ger_usih(1)", "<=", "5000", overrides=(first, second)
-    )
-    assert _effective_inequacao_sides(restriction, 1, 1) == (
-        "ger_usih(1)",
-        "<=",
-        "7000",
-    )
-
-
-def test_assemble_bound_period_patamar_override_applies_only_to_matching_cell() -> None:
-    # base X<=5000, override for stages 1-2 patamar 1 (X<=6000). At
-    # (stage 1, block 0 = patamar 1) the override matches; at (stage 1,
-    # block 1 = patamar 2) no override matches this patamar, so the base
-    # constant applies.
-    override = PeriodPatamarOverride(1, 2, 1, "ger_usih(9)", "<=", "6000")
-    restriction = _inequacao(502, "ger_usih(9)", "<=", "5000", overrides=(override,))
-    model = _model()
-    ctx = _dict_context({})
-
-    overridden = assemble_bound(restriction, model, 1, 0, ctx)
-    base_applies = assemble_bound(restriction, model, 1, 1, ctx)
-
-    assert overridden is not None
-    assert overridden.upper == 6000.0
-    assert base_applies is not None
-    assert base_applies.upper == 5000.0
-
-
-def test_assemble_bound_exact_patamar_override_beats_na_patamar_override() -> None:
-    # an exact-patamar override (patamar=1, X<=6000) and an NA-patamar
-    # override (patamar=None, X<=5500) both cover the same stage -- the
-    # exact-patamar one wins at patamar 1.
-    exact = PeriodPatamarOverride(0, 5, 1, "ger_usih(9)", "<=", "6000")
-    na = PeriodPatamarOverride(0, 5, None, "ger_usih(9)", "<=", "5500")
-    restriction = _inequacao(503, "ger_usih(9)", "<=", "5000", overrides=(na, exact))
-    model = _model()
-    ctx = _dict_context({})
-
-    result = assemble_bound(restriction, model, 2, 0, ctx)
-
-    assert result is not None
-    assert result.upper == 6000.0
-
-
-def test_assemble_bound_period_patamar_override_flips_operator() -> None:
-    # base X>=100, override X<=900 -- the returned interval must
-    # reflect the override's operator (upper=900, lower=None), not the
-    # base's ">=" (which would have set lower=100, upper=None).
-    override = PeriodPatamarOverride(0, 1, None, "ger_usih(9)", "<=", "900")
-    restriction = _inequacao(504, "ger_usih(9)", ">=", "100", overrides=(override,))
-    model = _model()
-    ctx = _dict_context({})
-
-    result = assemble_bound(restriction, model, 0, 0, ctx)
-
-    assert result is not None
-    assert result.upper == 900.0
-    assert result.lower is None
-
-
-def test_assemble_bound_empty_overrides_matches_the_base_fold() -> None:
-    # an empty overrides tuple must be byte-identical to folding
-    # restriction.lhs/.operator/.rhs verbatim, for a cell nowhere near any
-    # override range.
-    restriction = _inequacao(505, "ger_usih(9)", "<=", "1000 - 0.02*val_demanda(1)")
-    ctx = _dict_context({"val_demanda(1)": 400.0})
-    model = _model()
-    assert restriction.lhs is not None
-    lhs_partition = classify_terms(parse_linear_expression(restriction.lhs, model))
-    assert restriction.rhs is not None
-    rhs_partition = classify_terms(parse_linear_expression(restriction.rhs, model))
-    expected = _fold_inequacao_bound(restriction, ctx, lhs_partition, rhs_partition)
-
-    assert assemble_bound(restriction, model, 3, 2, ctx) == expected
-
-
-def test_evaluate_se_folds_a_pure_bucket_b_selected_branch() -> None:
-    model = _model()
-    term = parse_linear_expression("se(demanda_sin > 1000, val_demanda(1), 0)", model)[
-        0
-    ]
-    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
-    assert evaluate_se(term, model, ctx) == 300.0
-
-
-@pytest.mark.parametrize(
-    ("text", "branch", "term"),
-    [
-        ("se(demanda_sin > 1000, ger_usih(1), 0)", "ger_usih(1)", "ger_usih(1)"),
-        ("se(demanda_sin > 1000, 0, 2*ger_usit(3))", "2*ger_usit(3)", "ger_usit(3)"),
-        ("se(demanda_sin > 1000, disp_usih(1), 0)", "disp_usih(1)", "disp_usih(1)"),
-    ],
-)
-def test_evaluate_se_refuses_a_branch_that_is_not_input_data(
-    text: str, branch: str, term: str
-) -> None:
-    # The source model defines a se(...) branch as a number; folding a
-    # decision term in either branch would drop it from the LP.
-    model = _model()
-    (se_term,) = parse_linear_expression(text, model)
-    ctx = _dict_context({"demanda_sin": 1500.0})
-    with pytest.raises(MalformedElectricalExpression) as exc_info:
-        evaluate_se(se_term, model, ctx)
-    assert str(exc_info.value) == (
-        f"se(...) branch {branch!r} carries {term}, which is not input data; "
-        "a se(...) branch reads only input data, never a decision"
-    )
-
-
-#: A se(...) branch the conversion cannot read: an undeclared name, and a
-#: constant factor written after its term.
-_UNREAD_BRANCHES = ["undeclared_alias", "val_demanda(1) / 2"]
-
-
-@pytest.mark.parametrize("unread", _UNREAD_BRANCHES)
-def test_evaluate_se_ignores_a_branch_it_does_not_select_and_cannot_read(
-    unread: str,
-) -> None:
-    model = _model()
-    (term,) = parse_linear_expression(
-        f"se(demanda_sin > 1000, val_demanda(1), {unread})", model
-    )
-    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
-    assert evaluate_se(term, model, ctx) == 300.0
-
-
-@pytest.mark.parametrize("unread", _UNREAD_BRANCHES)
-def test_a_restriction_whose_unselected_se_branch_cannot_be_read_converts(
-    unread: str,
-) -> None:
-    calendar = _ri_calendar(1, n_blocks=1)
-    dadger = _StubElectricalDadger(dp=_dp((1, 1, 1, 1500.0), n_patamares=1))
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
-    model = _model()
-    restriction = _formula(
-        470,
-        f"ger_usih(1) + se(demanda_sin > 1000, 100, {unread})",
-        {(0, None): (None, 500.0)},
-    )
-    ctx = build_data_context(_case(dadger, calendar), id_map, model=model)(0, 0)
-    assert assemble_bound(restriction, model, 0, 0, ctx) == AssembledBound(
-        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
-        lower=None,
-        upper=400.0,
-    )
-
-
-@pytest.mark.parametrize(
-    ("unread", "error", "match"),
-    [
-        ("undeclared_alias", UnrecognizedElectricalToken, "'undeclared_alias'"),
-        (
-            "val_demanda(1) / 2",
-            UnsupportedElectricalExpression,
-            "divides a term by the constant 2",
-        ),
-    ],
-)
-def test_evaluate_se_raises_on_a_branch_it_selects_and_cannot_read(
-    unread: str,
-    error: type[UnrecognizedElectricalToken | UnsupportedElectricalExpression],
-    match: str,
-) -> None:
-    model = _model()
-    (term,) = parse_linear_expression(
-        f"se(demanda_sin > 1000, {unread}, val_demanda(1))", model
-    )
-    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
-    with pytest.raises(error, match=match):
-        evaluate_se(term, model, ctx)
-
-
-def test_evaluate_se_refuses_a_malformed_branch_it_does_not_select() -> None:
-    model = _model()
-    (term,) = parse_linear_expression(
-        "se(demanda_sin > 1000, val_demanda(1), 2 +)", model
-    )
-    ctx = _dict_context({"demanda_sin": 1500.0, "val_demanda(1)": 300.0})
-    with pytest.raises(MalformedElectricalExpression, match="'2 \\+'"):
-        evaluate_se(term, model, ctx)
-
-
-# ---------------------------------------------------------------------------
-# active_cells
-# ---------------------------------------------------------------------------
-
-
-def _restriction_with_horizon(
-    code: int,
-    *,
-    stage_start: int | None,
-    stage_end: int | None,
-    habilita: int | None,
-) -> ElectricalRestriction:
-    """A minimal INEQUACAO restriction carrying only the fields
-    ``active_cells`` reads: ``habilita``/horizonte. ``lhs``/``operator``/
-    ``rhs`` are irrelevant placeholders -- ``active_cells`` never parses
-    them, only the activation rule text."""
-    return ElectricalRestriction(
-        code=code,
-        lhs="ger_usih(1)",
-        operator=">=",
-        rhs="0",
-        is_formula=False,
-        limits={},
-        overrides=(),
-        stage_start=stage_start,
-        stage_end=stage_end,
-        habilita=habilita,
-    )
-
-
-def _demanda_sin_context_factory(
-    values: Mapping[tuple[int, int], float],
-) -> Callable[[int, int], DataContext]:
-    """A per-cell :data:`DataContext` factory over a
-    dict of ``demanda_sin`` values keyed by ``(stage_index, block_index)``;
-    a cell absent from *values* defaults to ``0.0``."""
-
-    def factory(stage_index: int, block_index: int) -> DataContext:
-        return _dict_context(
-            {"demanda_sin": values.get((stage_index, block_index), 0.0)}
-        )
-
-    return factory
-
-
-def test_active_cells_band_gated_returns_single_cell() -> None:
-    model = LibsElectricalModel(
-        expressions={},
-        aliases={},
-        restrictions={},
-        rules={10: "demanda_sin >= 50000"},
-    )
-    restriction = _restriction_with_horizon(
-        701, stage_start=0, stage_end=1, habilita=10
-    )
-    calendar = _ri_calendar(2, n_blocks=2)
-    factory = _demanda_sin_context_factory(
-        {
-            (0, 0): 60000.0,
-            (0, 1): 40000.0,
-            (1, 0): 40000.0,
-            (1, 1): 40000.0,
-        }
-    )
-    assert active_cells(restriction, model, factory, calendar) == {(0, 0)}
-
-
-def test_active_cells_no_habilita_active_in_every_horizon_cell() -> None:
-    model = LibsElectricalModel(expressions={}, aliases={}, restrictions={}, rules={})
-    restriction = _restriction_with_horizon(
-        702, stage_start=0, stage_end=1, habilita=None
-    )
-    calendar = _ri_calendar(2, n_blocks=2)
-    # No cell data at all -- an always-active rule must never even consult
-    # the context factory.
-    factory = _demanda_sin_context_factory({})
-    assert active_cells(restriction, model, factory, calendar) == {
-        (0, 0),
-        (0, 1),
-        (1, 0),
-        (1, 1),
-    }
-
-
-def test_active_cells_no_horizon_declared_defaults_to_full_calendar() -> None:
-    model = LibsElectricalModel(expressions={}, aliases={}, restrictions={}, rules={})
-    restriction = _restriction_with_horizon(
-        705, stage_start=None, stage_end=None, habilita=None
-    )
-    calendar = _ri_calendar(2, n_blocks=2)
-    factory = _demanda_sin_context_factory({})
-    assert active_cells(restriction, model, factory, calendar) == {
-        (0, 0),
-        (0, 1),
-        (1, 0),
-        (1, 1),
-    }
-
-
-def test_active_cells_inactive_everywhere_returns_empty_and_emits_info() -> None:
-    model = LibsElectricalModel(
-        expressions={},
-        aliases={},
-        restrictions={},
-        rules={10: "demanda_sin >= 50000"},
-    )
-    restriction = _restriction_with_horizon(
-        703, stage_start=0, stage_end=1, habilita=10
-    )
-    calendar = _ri_calendar(2, n_blocks=2)
-    # Every cell defaults to 0.0 -- the rule is false everywhere in-horizon.
-    factory = _demanda_sin_context_factory({})
-
-    with dx.collect() as sink:
-        result = active_cells(restriction, model, factory, calendar)
-
-    assert result == set()
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.INFO
-    assert sink[0].table is not None
-    assert sink[0].table.rows == [[703, 0, 1]]
-
-
-def test_active_cells_dangling_habilita_is_malformed_naming_the_rule() -> None:
-    model = LibsElectricalModel(expressions={}, aliases={}, restrictions={}, rules={})
-    restriction = _restriction_with_horizon(
-        704, stage_start=0, stage_end=1, habilita=999
-    )
-    calendar = _ri_calendar(2, n_blocks=2)
-    factory = _demanda_sin_context_factory({})
-
-    with pytest.raises(
-        MalformedElectricalExpression,
-        match="HABILITA names activation rule 999, which no "
-        "RESTRICAO-ELETRICA-REGRA-ATIVACAO record declares",
-    ):
-        active_cells(restriction, model, factory, calendar)
-
-
-# ---------------------------------------------------------------------------
-# AvailablePower / resolve_disp_usih / build_available_power
-# ---------------------------------------------------------------------------
-
-
-def test_resolve_disp_usih_returns_the_plants_available_power() -> None:
-    a_h = AvailablePower(overlay={(261, 0): 1000.0})
-    term = ParsedTerm(coefficient=1.0, token="disp_usih", args=(261,))
-    assert resolve_disp_usih(term, 0, a_h) == 1000.0
-
-
-def test_available_power_resolve_raises_disp_usih_unresolvable_for_absent_plant() -> (
-    None
-):
-    a_h = AvailablePower(overlay={(261, 0): 1000.0})
-    with pytest.raises(_UnresolvableDispUsih, match="999"):
-        a_h.resolve(999, 0)
-
-
-def test_build_available_power_sums_each_plants_groups_per_stage_by_deck_code() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(261, 262))
-    overlay = {
-        (0, 0, 0): GroupBoundEntry(max_generation_mw=900.0, max_turbined_m3s=10.0),
-        (0, 1, 0): GroupBoundEntry(max_generation_mw=100.0, max_turbined_m3s=10.0),
-        (0, 0, 1): GroupBoundEntry(max_generation_mw=800.0, max_turbined_m3s=10.0),
-        (0, 1, 1): GroupBoundEntry(max_generation_mw=50.0, max_turbined_m3s=10.0),
-        (1, 0, 0): GroupBoundEntry(max_generation_mw=300.0, max_turbined_m3s=5.0),
-        (1, 0, 1): GroupBoundEntry(max_generation_mw=300.0, max_turbined_m3s=5.0),
-    }
-
-    a_h = build_available_power(id_map, overlay=overlay)
-
-    assert a_h.overlay == {
-        (261, 0): 1000.0,
-        (261, 1): 850.0,
-        (262, 0): 300.0,
-        (262, 1): 300.0,
-    }
-
-
-# ---------------------------------------------------------------------------
-# assemble_bound bucket-C disp_usih reserve -> gen-cap fold
-# ---------------------------------------------------------------------------
-
-_RESERVE_LHS = "disp_usih(261) + disp_usih(262) - ger_usih(261) - ger_usih(262)"
-
-
-def test_assemble_bound_disp_usih_reserve_rewrites_to_gen_cap() -> None:
-    # disp_usih(261)+disp_usih(262)-ger_usih(261)-ger_usih(262) >= 500,
-    # A_h = {261: 1000, 262: 800} -> ger_usih(261)+ger_usih(262) <= 1300, with
-    # both surviving ger_usih terms carrying a POSITIVE coefficient (the sign
-    # fix: restriction.lhs itself carries them negative).
-    restriction = _inequacao(402, _RESERVE_LHS, ">=", "500")
-    a_h = AvailablePower(overlay={(261, 0): 1000.0, (262, 0): 800.0})
-    result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-    assert result == AssembledBound(
-        terms=(
-            ParsedTerm(coefficient=1.0, token="ger_usih", args=(261,)),
-            ParsedTerm(coefficient=1.0, token="ger_usih", args=(262,)),
-        ),
-        lower=None,
-        upper=1300.0,
-    )
-
-
-def test_assemble_bound_disp_usih_emits_one_fidelity_diagnostic_per_substitution() -> (
-    None
-):
-    restriction = _inequacao(402, _RESERVE_LHS, ">=", "500")
-    a_h = AvailablePower(overlay={(261, 0): 1000.0, (262, 0): 800.0})
-
-    with dx.collect() as sink:
-        result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-    assert result is not None
-    assert result.lower is None
-    assert result.upper == 1300.0
-    assert len(sink) == 2
-    for diagnostic in sink:
-        assert diagnostic.severity is dx.Severity.INFO
-
-    assert [d.table.rows for d in sink if d.table is not None] == [
-        [[402, 261, 0, 1000.0]],
-        [[402, 262, 0, 800.0]],
-    ]
-
-
-def test_assemble_bound_disp_usih_unresolvable_plant_drops_and_warns() -> None:
-    restriction = _inequacao(403, "disp_usih(999) - ger_usih(999)", ">=", "100")
-    a_h = AvailablePower(overlay={})
-
-    with dx.collect() as sink:
-        result = assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-
-    assert result is None
-    assert len(sink) == 1
-    assert sink[0].severity is dx.Severity.WARNING
-    assert sink[0].table is not None
-    [[code, stage, block, reason]] = sink[0].table.rows
-    assert (code, stage, block) == (403, 0, 0)
-    assert "999" in str(reason)
-
-
-def test_assemble_bound_disp_usih_without_available_power_raises_value_error() -> None:
-    restriction = _inequacao(404, "disp_usih(1) - ger_usih(1)", ">=", "0")
-    with pytest.raises(ValueError, match="no available power was supplied"):
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
-
-
-@pytest.mark.parametrize(
-    ("lhs", "rhs", "expected"),
-    [
-        (
-            "ger_usih(1)",
-            "disp_usih(1)",
-            "^the right-hand side carries a decision or disp_usih term",
-        ),
-        (
-            "disp_usih(1) - ger_usih(1) + ger_usih(2)",
-            "0",
-            "^ger_usih\\(2\\) has no disp_usih\\(2\\) beside it",
-        ),
-        (
-            "disp_usih(1) - 2*ger_usih(1)",
-            "0",
-            "^disp_usih\\(1\\) has no ger_usih\\(1\\) of the opposite coefficient",
-        ),
-        (
-            "disp_usih(1) - ger_usit(5)",
-            "0",
-            "^the decision term ger_usit\\(5\\) sits beside disp_usih",
-        ),
-        (
-            "disp_usih(1) - ger_usih(1) - ger_usih(1)",
-            "0",
-            "^two ger_usih terms beside disp_usih name the same plant",
-        ),
-    ],
-)
-def test_assemble_bound_disp_usih_outside_the_reserve_pattern_is_unsupported(
-    lhs: str, rhs: str, expected: str
-) -> None:
-    # CRITICAL pitfall guard: a shape outside the documented reserve pattern
-    # is refused, never silently mis-rewritten.
-    restriction = _inequacao(405, lhs, ">=", rhs)
-    a_h = AvailablePower(overlay={(1, 0): 100.0})
-    with pytest.raises(UnsupportedSourceError, match=expected) as exc_info:
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}), a_h)
-    assert str(exc_info.value).endswith(
-        "the conversion rewrites disp_usih only in the reserve pattern "
-        "disp_usih(h) - ger_usih(h) >= R"
-    )
-    assert exc_info.value.field is None
-
-
-def test_assemble_bound_formula_with_disp_usih_is_unsupported() -> None:
-    # The documented reserve->gen-cap rewrite only covers the INEQUACAO
-    # shape; a FORMULA restriction carrying disp_usih is out of pattern.
-    restriction = _formula(420, "disp_usih(1)", {(0, None): (None, 100.0)})
-    with pytest.raises(UnsupportedSourceError, match="RESTRICAO-ELETRICA-FORMULA"):
-        assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
-
-
-def test_assemble_bound_formula_without_a_limit_on_an_active_cell_is_malformed() -> (
-    None
-):
-    # The source model needs a limit on every período and patamar of the
-    # horizon, so a missing one is a hole in the deck, not an unbounded side.
-    restriction = _formula(422, "ger_usih(1)", {(0, None): (None, 100.0)})
-    with pytest.raises(
-        FieldParseError,
-        match="^no RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR row covers "
-        "período 2, patamar 1 of its horizon",
-    ) as exc_info:
-        assemble_bound(restriction, _model(), 1, 0, _dict_context({}))
-    assert exc_info.value.field == "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR"
-
-
-# ---------------------------------------------------------------------------
-# the three folds share the harmonized pre-computed-partitions
-# signature -- none re-parses restriction.lhs/.rhs a second time
-# ---------------------------------------------------------------------------
-
-
-def test_fold_formula_bound_never_reparses_lhs() -> None:
-    # A malformed lhs would raise if _fold_formula_bound parsed it itself;
-    # it must instead use only the pre-computed lhs_partition, exactly as
-    # assemble_bound's own parse of "ger_usih(285)" would have classified it.
-    restriction = _formula(
-        421, "not a valid !! expression", {(0, None): (None, 6300.0)}
-    )
-    lhs_partition = classify_terms(parse_linear_expression("ger_usih(285)", _model()))
-    result = _fold_formula_bound(restriction, 0, 1, _dict_context({}), lhs_partition)
-    assert result == AssembledBound(
-        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(285,)),),
-        lower=None,
-        upper=6300.0,
-    )
-
-
-def test_fold_inequacao_bound_never_reparses_lhs_or_rhs() -> None:
-    restriction = _inequacao(
-        422, "not a valid !! expression", "<=", "also not valid !!"
-    )
-    lhs_partition = classify_terms(parse_linear_expression("ger_usih(1)", _model()))
-    rhs_partition = classify_terms(parse_linear_expression("500", _model()))
-    result = _fold_inequacao_bound(
-        restriction, _dict_context({}), lhs_partition, rhs_partition
-    )
-    assert result == AssembledBound(
-        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
-        lower=None,
-        upper=500.0,
-    )
-
-
-def test_fold_reserve_disp_usih_takes_precomputed_partitions() -> None:
-    # Pins the shared signature shape against the other two folds, now
-    # that all three match.
-    restriction = _inequacao(423, "disp_usih(1) - ger_usih(1)", ">=", "300")
-    lhs_partition = classify_terms(
-        parse_linear_expression("disp_usih(1) - ger_usih(1)", _model())
-    )
-    rhs_partition = classify_terms(parse_linear_expression("300", _model()))
-    a_h = AvailablePower(overlay={(1, 0): 1000.0})
-    result = _fold_reserve_disp_usih(
-        restriction, 0, a_h, _dict_context({}), lhs_partition, rhs_partition
-    )
-    assert result == AssembledBound(
-        terms=(ParsedTerm(coefficient=1.0, token="ger_usih", args=(1,)),),
-        lower=None,
-        upper=700.0,
-    )
+        read_carga_ande(stub, stages)
 
 
 # ---------------------------------------------------------------------------
@@ -2032,14 +498,14 @@ def test_fold_reserve_disp_usih_takes_precomputed_partitions() -> None:
 
 
 def test_read_inequacao_declared_only_by_period_rows() -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao_periodo_patamar=re_inequacao_per_pat(
             (449, 1, 7, None, "FSILE", "<=", "0.45*(C_AM_cMMGD - MMGD_AMexp)"),
         ),
-        restricao_eletrica_horizonte_periodo=_horizonte((449, 1, 7)),
-        restricao_eletrica_habilita=_habilita((449, 524)),
+        restricao_eletrica_horizonte_periodo=horizonte((449, 1, 7)),
+        restricao_eletrica_habilita=habilita((449, 524)),
     )
-    model = read_libs_electrical(stub, _calendar(7), source=_LIBS)
+    model = read_libs_electrical(stub, calendar(7))
     assert model is not None
     restriction = model.restrictions[449]
     assert restriction.is_formula is False
@@ -2057,109 +523,441 @@ def test_read_inequacao_declared_only_by_period_rows() -> None:
     assert restriction.habilita == 524
 
 
+def _unused_period_rows(sink: list[dx.Diagnostic]) -> list[list[object]]:
+    """The rows of the one period-rows-unused diagnostic in *sink*."""
+    [unused] = [d for d in sink if d.code == "decomp-electrical-period-rows-unused"]
+    assert unused.severity is dx.Severity.WARNING
+    assert unused.table is not None
+    assert unused.table.columns == ["Card", "Restriction"]
+    return [list(row) for row in unused.table.rows]
+
+
 def test_read_period_rows_not_matching_the_card_shape_are_reported() -> None:
-    stub = _StubRestricoes(
-        restricao_eletrica_formula=_re_formula((401, "ger_usih(285)")),
-        restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        restricao_eletrica_inequacao_periodo_patamar=re_inequacao_per_pat(
             (401, 1, 1, None, "ger_usih(285)", "<=", "10"),
             (449, 1, 1, None, "ger_usih(1)", "<=", "10"),
         ),
-        restricao_eletrica_limite_formula_periodo_patamar=_re_lim_formula(
+        restricao_eletrica_limite_formula_periodo_patamar=re_lim_formula(
             (449, 1, 1, None, -1e31, 5.0),
         ),
     )
     with dx.collect() as sink:
-        model = read_libs_electrical(stub, _calendar(1), source=_LIBS)
+        model = read_libs_electrical(stub, calendar(1))
     assert model is not None
     assert model.restrictions[401].overrides == ()
-    [unused] = [d for d in sink if d.code == "decomp-electrical-period-rows-unused"]
-    assert unused.table is not None
-    assert unused.table.rows == [
+    assert _unused_period_rows(sink) == [
         ["RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", 401],
-        ["RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR", 449],
+        ["RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR/-DATA-PATAMAR", 449],
     ]
 
 
-def _period_only_inequacao(
-    *overrides: PeriodPatamarOverride,
-) -> ElectricalRestriction:
-    return ElectricalRestriction(
-        code=460,
-        lhs=None,
-        operator=None,
-        rhs=None,
-        is_formula=False,
-        limits={},
-        overrides=overrides,
-    )
+# ---------------------------------------------------------------------------
+# date-indexed horizonte and limit cards
+# ---------------------------------------------------------------------------
 
 
-_PERIOD_ONLY = _period_only_inequacao(
-    PeriodPatamarOverride(0, 0, 1, "ger_usih(9)", "<=", "100"),
-    PeriodPatamarOverride(1, 1, None, "ger_usih(9)", "<=", "200"),
+#: Stages starting 2026-07-04, 2026-07-11 and 2026-07-18; the last ends 2026-07-25
+#: (exclusive).
+_THREE_WEEKS = weekly_calendar(3)
+
+
+def _stage_range(start: object, end: object) -> tuple[int, int]:
+    return _stage_range_from_dates(start, end, _THREE_WEEKS, "ctx", card="CARD")
+
+
+def test_date_range_end_is_inclusive() -> None:
+    assert _stage_range("2026-07-06", "2026-07-11") == (0, 1)
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected"),
+    [
+        ("2026-07-11 00:00", "2026-07-24", (1, 2)),
+        ("2026-07-04", "2026-07-04", (0, 0)),
+        ("2026-07-04", "2026-07-24 23:59", (0, 2)),
+        ("2026-07-10 23:59", "2026-07-11 08:30", (0, 1)),
+    ],
+    ids=["start-on-first-day", "single-day", "whole-horizon", "time-of-day-ignored"],
 )
+def test_date_range_runs_from_the_stage_of_its_start_to_the_stage_of_its_end(
+    start: str, end: str, expected: tuple[int, int]
+) -> None:
+    assert _stage_range(start, end) == expected
 
 
-def test_effective_inequacao_sides_period_only_uncovered_cell_returns_none() -> None:
-    assert _effective_inequacao_sides(_PERIOD_ONLY, 0, 2) is None
-    assert _effective_inequacao_sides(_PERIOD_ONLY, 1, 2) == (
-        "ger_usih(9)",
-        "<=",
-        "200",
+@pytest.mark.parametrize("day", ["2026-07-03", "2026-07-25"])
+def test_date_outside_the_calendar_raises_with_the_calendar_span(day: str) -> None:
+    message = rf"ctx: data {day} outside the calendar \(2026-07-04\.\.2026-07-25\)"
+    with pytest.raises(ValueError, match=message):
+        _stage_of_date(day, _THREE_WEEKS, "ctx")
+
+
+def test_date_range_inverted_inside_one_stage_raises() -> None:
+    with pytest.raises(ValueError, match="after data_fim") as exc_info:
+        _stage_range("2026-07-06", "2026-07-05")
+    assert "CARD" in str(exc_info.value)
+
+
+def test_blank_date_raises_naming_the_restriction() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        restricao_eletrica_horizonte_data=horizonte_data((401, None, "2026-07-24")),
+    )
+    with pytest.raises(ValueError, match="restriction 401 horizonte: date is blank"):
+        read_libs_electrical(stub, _THREE_WEEKS)
+
+
+def test_horizonte_date_past_the_calendar_raises_naming_the_restriction() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        restricao_eletrica_horizonte_data=horizonte_data(
+            (401, "2026-07-11", "2026-07-25")
+        ),
+    )
+    with pytest.raises(
+        ValueError,
+        match="restriction 401 horizonte: data 2026-07-25 outside the calendar",
+    ):
+        read_libs_electrical(stub, _THREE_WEEKS)
+
+
+def _date_deck(*, short: bool) -> StubRestricoes:
+    horizonte_accessor, limits_accessor = (
+        ("re_horiz_data", "re_lim_form_data_pat")
+        if short
+        else (
+            "restricao_eletrica_horizonte_data",
+            "restricao_eletrica_limites_formula_data_patamar",
+        )
+    )
+    return StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        **{
+            horizonte_accessor: horizonte_data((401, "2026-07-11", "2026-07-24")),
+            limits_accessor: re_lim_formula_data(
+                (401, "2026-07-04", "2026-07-11", 2, 10.0, 1e31)
+            ),
+        },
     )
 
 
-def test_active_cells_period_only_inequacao_limited_to_covered_cells() -> None:
-    model = LibsElectricalModel(expressions={}, aliases={}, restrictions={}, rules={})
-    calendar = _ri_calendar(2, n_blocks=2)
-    factory = _demanda_sin_context_factory({})
-    assert active_cells(_PERIOD_ONLY, model, factory, calendar) == {
-        (0, 0),
-        (1, 0),
-        (1, 1),
+def test_date_cards_read_as_the_period_cards_of_the_same_deck() -> None:
+    period_deck = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        restricao_eletrica_horizonte_periodo=horizonte((401, 2, 3)),
+        restricao_eletrica_limite_formula_periodo_patamar=re_lim_formula(
+            (401, 1, 2, 2, 10.0, 1e31)
+        ),
+    )
+    model = read_libs_electrical(_date_deck(short=False), _THREE_WEEKS)
+    assert model is not None
+    restriction = model.restrictions[401]
+    assert (restriction.stage_start, restriction.stage_end) == (1, 2)
+    assert restriction.limits == {(0, 2): (10.0, None), (1, 2): (10.0, None)}
+    assert model == read_libs_electrical(period_deck, _THREE_WEEKS)
+
+
+def test_short_form_date_cards_read_as_their_long_form_equivalents() -> None:
+    long_model = read_libs_electrical(_date_deck(short=False), _THREE_WEEKS)
+    short_model = read_libs_electrical(_date_deck(short=True), _THREE_WEEKS)
+    assert short_model is not None
+    assert short_model == long_model
+    assert short_model.restrictions[401].stage_start == 1
+
+
+def test_date_horizonte_row_follows_the_period_row_of_the_same_restriction() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        restricao_eletrica_horizonte_periodo=horizonte((401, 1, 3)),
+        restricao_eletrica_horizonte_data=horizonte_data(
+            (401, "2026-07-11", "2026-07-24")
+        ),
+    )
+    model = read_libs_electrical(stub, _THREE_WEEKS)
+    assert model is not None
+    restriction = model.restrictions[401]
+    assert (restriction.stage_start, restriction.stage_end) == (1, 2)
+
+
+def test_date_limit_row_follows_the_period_row_of_the_same_cell() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(285)")),
+        restricao_eletrica_limite_formula_periodo_patamar=re_lim_formula(
+            (401, 1, 3, 1, 1.0, 2.0)
+        ),
+        restricao_eletrica_limites_formula_data_patamar=re_lim_formula_data(
+            (401, "2026-07-11", "2026-07-11", 1, 5.0, 6.0)
+        ),
+    )
+    model = read_libs_electrical(stub, _THREE_WEEKS)
+    assert model is not None
+    assert model.restrictions[401].limits == {
+        (0, 1): (1.0, 2.0),
+        (1, 1): (5.0, 6.0),
+        (2, 1): (1.0, 2.0),
     }
 
 
-def test_assemble_bound_period_only_inequacao_uses_the_covering_row() -> None:
-    model = _model()
-    ctx = _dict_context({})
-    first = assemble_bound(_PERIOD_ONLY, model, 0, 0, ctx)
-    second = assemble_bound(_PERIOD_ONLY, model, 1, 1, ctx)
-    assert first is not None
-    assert first.upper == 100.0
-    assert second is not None
-    assert second.upper == 200.0
-    assert first.terms == second.terms
+def test_limit_rows_by_date_on_a_non_formula_restriction_are_reported() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao((402, "A", "<=", "0")),
+        restricao_eletrica_limites_formula_data_patamar=re_lim_formula_data(
+            (402, "2026-07-04", "2026-07-11", None, -1e31, 5.0)
+        ),
+    )
+    with dx.collect() as sink:
+        model = read_libs_electrical(stub, _THREE_WEEKS)
+    assert model is not None
+    assert _unused_period_rows(sink) == [
+        ["RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR/-DATA-PATAMAR", 402]
+    ]
 
 
-def test_assemble_bound_period_only_inequacao_uncovered_cell_raises() -> None:
-    with pytest.raises(ValueError, match="no inequality in effect"):
-        assemble_bound(_PERIOD_ONLY, _model(), 0, 1, _dict_context({}))
+# ---------------------------------------------------------------------------
+# formula cards by período and by date
+# ---------------------------------------------------------------------------
 
 
-def test_re_reference_to_period_only_inequacao_is_malformed() -> None:
-    # The source model's re(X) references restriction X's formula, and an
-    # inequality declares none.
-    model = replace(_model(), restrictions={460: _PERIOD_ONLY})
-    with pytest.raises(MalformedElectricalExpression) as exc_info:
-        parse_linear_expression("re(460)", model)
-    assert str(exc_info.value) == (
-        "re(460) references restriction 460, which is declared only by "
-        "inequality period rows and so has no formula in electrical expression "
-        "'re(460)'"
+def test_formula_overrides_read_period_rows_then_date_rows_verbatim() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "ger_usih(261)")),
+        restricao_eletrica_formula_periodo_patamar=re_formula_per_pat(
+            (401, 1, 2, None, "2*ger_usih(261)  + 1")
+        ),
+        restricao_eletrica_formula_data_patamar=re_formula_data_pat(
+            (401, "2026-07-11", "2026-07-18", 2, "ger_usih(261)")
+        ),
+    )
+    model = read_libs_electrical(stub, _THREE_WEEKS)
+    assert model is not None
+    restriction = model.restrictions[401]
+    assert restriction.formula_overrides == (
+        FormulaOverride(0, 1, None, "2*ger_usih(261)  + 1"),
+        FormulaOverride(1, 2, 2, "ger_usih(261)"),
+    )
+    assert restriction.overrides == ()
+    assert restriction.lhs == "ger_usih(261)"
+
+
+def test_formula_override_rows_keep_file_order_within_a_card() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "A")),
+        restricao_eletrica_formula_periodo_patamar=re_formula_per_pat(
+            (401, 3, 3, 1, "C"),
+            (401, 1, 1, 1, "B"),
+        ),
+    )
+    model = read_libs_electrical(stub, _THREE_WEEKS)
+    assert model is not None
+    assert [o.formula for o in model.restrictions[401].formula_overrides] == ["C", "B"]
+
+
+def test_formula_overrides_alone_declare_a_formula_restriction() -> None:
+    stub = StubRestricoes(
+        re_per_pat=re_formula_per_pat((402, 1, 1, 1, "ger_usih(261)")),
+        restricao_eletrica_limite_formula_periodo_patamar=re_lim_formula(
+            (402, 1, 1, 1, 0.0, 100.0)
+        ),
+    )
+    with dx.collect() as sink:
+        model = read_libs_electrical(stub, calendar(1))
+    assert model is not None
+    restriction = model.restrictions[402]
+    assert restriction.is_formula is True
+    assert restriction.lhs is None
+    assert restriction.limits == {(0, 1): (0.0, 100.0)}
+    assert restriction.formula_overrides == (FormulaOverride(0, 0, 1, "ger_usih(261)"),)
+    assert not [d for d in sink if d.code == "decomp-electrical-period-rows-unused"]
+
+
+def test_formula_override_rows_alone_make_a_non_empty_model() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula_data_patamar=re_formula_data_pat(
+            (402, "2026-07-04", "2026-07-04", None, "A")
+        )
+    )
+    model = read_libs_electrical(stub, _THREE_WEEKS)
+    assert model is not None
+    assert model.restrictions[402].formula_overrides == (
+        FormulaOverride(0, 0, None, "A"),
     )
 
 
-def test_re_reference_to_an_undeclared_restriction_is_malformed() -> None:
-    with pytest.raises(MalformedElectricalExpression, match="unknown restriction 461"):
-        parse_linear_expression("re(461)", _model())
-
-
-def test_assemble_bound_period_only_inequacao_no_limit_sentinel_is_unbounded() -> None:
-    restriction = _period_only_inequacao(
-        PeriodPatamarOverride(0, 0, None, "ger_usih(9)", "<=", "1E+31"),
+def test_formula_override_rows_on_an_inequacao_restriction_are_reported() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_inequacao=re_inequacao((403, "A", "<=", "0")),
+        restricao_eletrica_formula_periodo_patamar=re_formula_per_pat(
+            (403, 1, 1, None, "B")
+        ),
     )
-    assembled = assemble_bound(restriction, _model(), 0, 0, _dict_context({}))
-    assert assembled is not None
-    assert assembled.upper == 1e31
-    assert not is_bounded(assembled.upper)
+    with dx.collect() as sink:
+        model = read_libs_electrical(stub, calendar(1))
+    assert model is not None
+    assert model.restrictions[403].formula_overrides == ()
+    assert _unused_period_rows(sink) == [
+        ["RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR/-DATA-PATAMAR", 403]
+    ]
+
+
+def test_inequality_rows_beside_formula_override_rows_are_reported() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula_periodo_patamar=re_formula_per_pat(
+            (404, 1, 1, None, "B")
+        ),
+        restricao_eletrica_inequacao_periodo_patamar=re_inequacao_per_pat(
+            (404, 1, 1, None, "A", "<=", "0")
+        ),
+    )
+    with dx.collect() as sink:
+        model = read_libs_electrical(stub, calendar(1))
+    assert model is not None
+    restriction = model.restrictions[404]
+    assert restriction.is_formula is True
+    assert restriction.overrides == ()
+    assert _unused_period_rows(sink) == [
+        ["RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", 404]
+    ]
+
+
+def test_formula_override_period_past_the_calendar_names_the_restriction() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "A")),
+        restricao_eletrica_formula_periodo_patamar=re_formula_per_pat(
+            (401, 2, 4, 1, "B")
+        ),
+    )
+    with pytest.raises(
+        ValueError,
+        match="restriction 401 formula override: período 4 outside the calendar",
+    ):
+        read_libs_electrical(stub, _THREE_WEEKS)
+
+
+def test_formula_override_date_past_the_calendar_names_the_restriction() -> None:
+    stub = StubRestricoes(
+        restricao_eletrica_formula=re_formula((401, "A")),
+        restricao_eletrica_formula_data_patamar=re_formula_data_pat(
+            (401, "2026-07-18", "2026-07-25", 1, "B")
+        ),
+    )
+    with pytest.raises(
+        ValueError,
+        match="restriction 401 formula override: data 2026-07-25 outside the calendar",
+    ):
+        read_libs_electrical(stub, _THREE_WEEKS)
+
+
+# ---------------------------------------------------------------------------
+# a stage or date range that ends before it starts
+# ---------------------------------------------------------------------------
+
+_INVERTED_RANGES = {
+    "alias value": (
+        {
+            "alias_eletrico": alias((7, "MMGDSIN")),
+            "alias_eletrico_valor_periodo_patamar": alias_valor((7, 3, 1, 1, 1.0)),
+        },
+        "alias 7 value (ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR): "
+        "estagio_inicio 3 after estagio_fim 1",
+    ),
+    "horizonte by period": (
+        {
+            "restricao_eletrica_formula": re_formula((401, "A")),
+            "restricao_eletrica_horizonte_periodo": horizonte((401, 3, 1)),
+        },
+        "restriction 401 horizonte (RESTRICAO-ELETRICA-HORIZONTE-PERIODO): "
+        "estagio_inicio 3 after estagio_fim 1",
+    ),
+    "horizonte by date": (
+        {
+            "restricao_eletrica_formula": re_formula((401, "A")),
+            "restricao_eletrica_horizonte_data": horizonte_data(
+                (401, "2026-07-18", "2026-07-04")
+            ),
+        },
+        "restriction 401 horizonte (RESTRICAO-ELETRICA-HORIZONTE-DATA): "
+        "data_inicio 2026-07-18 after data_fim 2026-07-04",
+    ),
+    "limits by period": (
+        {
+            "restricao_eletrica_formula": re_formula((401, "A")),
+            "restricao_eletrica_limite_formula_periodo_patamar": re_lim_formula(
+                (401, 3, 1, 1, 0.0, 1.0)
+            ),
+        },
+        "restriction 401 limits (RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR): "
+        "estagio_inicio 3 after estagio_fim 1",
+    ),
+    "limits by date": (
+        {
+            "restricao_eletrica_formula": re_formula((401, "A")),
+            "restricao_eletrica_limites_formula_data_patamar": re_lim_formula_data(
+                (401, "2026-07-18", "2026-07-04", 1, 0.0, 1.0)
+            ),
+        },
+        "restriction 401 limits (RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR): "
+        "data_inicio 2026-07-18 after data_fim 2026-07-04",
+    ),
+    "override with patamar": (
+        {
+            "restricao_eletrica_inequacao_periodo_patamar": re_inequacao_per_pat(
+                (406, 3, 1, 1, "A", "<=", "0")
+            ),
+        },
+        "restriction 406 inequacao override "
+        "(RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR): "
+        "estagio_inicio 3 after estagio_fim 1",
+    ),
+    "override without patamar": (
+        {
+            "restricao_eletrica_inequacao_periodo_patamar": re_inequacao_per_pat(
+                (406, 3, 1, None, "A", "<=", "0")
+            ),
+        },
+        "restriction 406 inequacao override "
+        "(RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR): "
+        "estagio_inicio 3 after estagio_fim 1",
+    ),
+    "formula override by period": (
+        {
+            "restricao_eletrica_formula": re_formula((401, "A")),
+            "restricao_eletrica_formula_periodo_patamar": re_formula_per_pat(
+                (401, 3, 1, 1, "B")
+            ),
+        },
+        "restriction 401 formula override "
+        "(RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR): "
+        "estagio_inicio 3 after estagio_fim 1",
+    ),
+    "formula override by date": (
+        {
+            "restricao_eletrica_formula": re_formula((401, "A")),
+            "restricao_eletrica_formula_data_patamar": re_formula_data_pat(
+                (401, "2026-07-18", "2026-07-04", None, "B")
+            ),
+        },
+        "restriction 401 formula override "
+        "(RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR): "
+        "data_inicio 2026-07-18 after data_fim 2026-07-04",
+    ),
+    "violation period": (
+        {
+            "restricao_eletrica_inequacao": re_inequacao((501, "A", ">=", "0")),
+            "restricao_eletrica_tratamento_violacao_periodo": (
+                tratamento_violacao_periodo((501, 3, 1, "hard", 1.0))
+            ),
+        },
+        "restriction 501 violation period "
+        "(RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO): "
+        "estagio_inicio 3 after estagio_fim 1",
+    ),
+}
+
+
+@pytest.mark.parametrize("card", _INVERTED_RANGES)
+def test_inverted_range_raises_naming_the_card_and_the_code(card: str) -> None:
+    frames, message = _INVERTED_RANGES[card]
+    with pytest.raises(ValueError, match=re.escape(message)):
+        read_libs_electrical(StubRestricoes(**frames), _THREE_WEEKS)

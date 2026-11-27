@@ -1,7 +1,7 @@
-"""The LIBs-era electrical-constraint emitter spliced into
-``convert_decomp_case`` -- the narrowed ``detect_libs_electrical`` warn and the
-census INFO diagnostic. Discovering the file is covered with the rest of file
-discovery, in ``tests/decomp/test_files.py``.
+"""The LIBs-era electrical-constraint cards in ``convert_decomp_case`` -- the
+generic-constraint files they are translated into and their census.
+Discovering the file is covered with the rest of file discovery, in
+``tests/decomp/test_files.py``.
 
 Synthetic stub decks only, mirroring the ``test_pipeline`` module's own
 ``_run_cadastro_pipeline`` convention -- no ``import novomodelo`` at module scope.
@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pyarrow as pa
@@ -23,7 +23,8 @@ import pyarrow.parquet as pq
 import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
-from novomodelo_bridge.core.errors import FieldParseError, diagnostic_from_exception
+from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
+from novomodelo_bridge.core.generic_constraint_builder import GENERIC_BOUNDS_SCHEMA
 from novomodelo_bridge.core.libs_index import UNREAD_LINES_CODE
 from novomodelo_bridge.decomp.bounds_accumulator import BoundContribution
 from novomodelo_bridge.decomp.constraint_registers import (
@@ -32,23 +33,31 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintTerm,
     StageBounds,
 )
-from novomodelo_bridge.decomp.converters.anticipated import (
-    GnlCommitmentModel,
-    GnlThermal,
+from novomodelo_bridge.decomp.converters.electrical_constraints import (
+    GenericOutputs,
 )
 from novomodelo_bridge.decomp.converters.libs_electrical import (
+    ElectricalAlias,
     ElectricalRestriction,
     LibsElectricalModel,
+    ViolationRow,
 )
 from novomodelo_bridge.decomp.converters.network import _LINE_BOUNDS_SCHEMA
+from novomodelo_bridge.decomp.converters.scalar_parameters import (
+    build_decomp_scalar_parameters,
+)
 from novomodelo_bridge.decomp.converters.thermal import (
     _THERMAL_COST_SCHEMA,
     ThermalBounds,
 )
 from novomodelo_bridge.decomp.files import DecompFiles
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.pipeline import ConversionReport, _gnl_thermal_codes
+from novomodelo_bridge.decomp.pipeline import (
+    ConversionReport,
+    _electrical_census_diagnostic,
+)
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.novomodelo.schemas import SCHEMA_URLS
 from tests.conftest import make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
 
@@ -95,40 +104,61 @@ def _plant_row(
     }
 
 
-def _hidr_frame() -> pd.DataFrame:
-    """Two plants, codes 1 and 2, both on bus (submercado) 1, no cascade."""
+_SPLIT_PLANT_CODE = 66
+_ITAIPU_CODE = _SPLIT_PLANT_CODE
+
+
+def _hidr_frame(second_plant_code: int = 2) -> pd.DataFrame:
+    """Two plants, codes 1 and *second_plant_code*, both on bus (submercado) 1,
+    no cascade; the split plant (code 66) has two machine sets."""
+    second = _plant_row("PLANT_TWO", 1, 0, 10.0, 50.0, posto=12)
+    if second_plant_code == _SPLIT_PLANT_CODE:
+        second |= {
+            "numero_conjuntos_maquinas": 2,
+            "maquinas_conjunto_2": 2,
+            "vazao_nominal_conjunto_2": 100.0,
+            "potencia_nominal_conjunto_2": 50.0,
+        }
     df = pd.DataFrame(
         {
             1: _plant_row("PLANT_ONE", 1, 0, 20.0, 100.0, posto=11),
-            2: _plant_row("PLANT_TWO", 1, 0, 10.0, 50.0, posto=12),
+            second_plant_code: second,
         }
     ).T
     df.index.name = "codigo_usina"
     return df
 
 
-def _uh_frame() -> pd.DataFrame:
+def _uh_frame(second_plant_code: int = 2) -> pd.DataFrame:
     return pd.DataFrame(
         [
             {
-                "codigo_usina": 1,
+                "codigo_usina": code,
                 "volume_inicial": 50.0,
                 "vazao_defluente_minima": None,
                 "volume_morto_inicial": None,
                 "codigo_ree": 1,
-            },
-            {
-                "codigo_usina": 2,
-                "volume_inicial": 50.0,
-                "vazao_defluente_minima": None,
-                "volume_morto_inicial": None,
-                "codigo_ree": 1,
-            },
+            }
+            for code in (1, second_plant_code)
         ]
     )
 
 
-_ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, 2))
+def _id_map(second_plant_code: int = 2) -> DecompIdMap:
+    return DecompIdMap(
+        bus_codes=(1,), bus_names=("SE",), hydro_codes=(1, second_plant_code)
+    )
+
+
+def _split_plant_frequencies() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"codigo_usina": _SPLIT_PLANT_CODE, "frequencia": frequency}
+            for frequency in (50.0, 60.0)
+        ]
+    )
+
+
 _N_BLOCKS = 3
 
 
@@ -137,32 +167,9 @@ def _calendar():
     return build_operative_calendar(date(2026, 7, 18), hours)
 
 
-def _dp_frame() -> pd.DataFrame:
-    """One ``DP`` row per calendar stage, all zero load -- ``build_data_context``
-    (Requirement 2) eagerly reads ``DP`` via ``_per_stage_block_loads``
-    regardless of whether a restriction's bucket-B side ever references
-    ``demanda``/``demanda_sin``, so a valid (if trivial) frame is required
-    even for the pure bucket-A restrictions this module's fixtures use."""
-    return pd.DataFrame(
-        [
-            {
-                "estagio": stage,
-                "codigo_submercado": 1,
-                "numero_patamares": _N_BLOCKS,
-                "carga_1": 0.0,
-                "carga_2": 0.0,
-                "carga_3": 0.0,
-            }
-            for stage in range(1, 4)
-        ]
-    )
-
-
 class _MockDadger:
     """Covers only what the real (unmocked) consumers this fixture exercises
-    need: ``.tx.taxa``, ``.uh(df=True)``, ``.vi``, ``.vl``/``.vu``/``.va``, ``.ac(...)``, ``.dp(...)``,
-    ``.ri(...)``, ``.pq(...)`` -- mirrors the ``test_pipeline`` module's own
-    ``_CadastroDadger``, extended for ``build_data_context``'s own reads."""
+    need -- mirrors the ``test_pipeline`` module's own ``_CadastroDadger``."""
 
     class _Tx:
         taxa = 12.0
@@ -172,14 +179,33 @@ class _MockDadger:
         def of_type(_register: type) -> list:
             return []
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        second_plant_code: int = 2,
+        *,
+        pq: pd.DataFrame | None = None,
+        ri: pd.DataFrame | None = None,
+    ) -> None:
         self.tx = self._Tx()
-        self._uh = _uh_frame()
-        self._dp = _dp_frame()
+        self._uh = _uh_frame(second_plant_code)
+        self._pq = pq
+        self._ri = ri
         self.data = self._Data()
 
     def uh(self, df: bool = False) -> pd.DataFrame:
         return self._uh
+
+    def mp(self, df: bool = False) -> pd.DataFrame:
+        return _split_plant_frequencies()
+
+    def fd(self, df: bool = False) -> pd.DataFrame:
+        return _split_plant_frequencies()
+
+    def pq(self, df: bool = False) -> pd.DataFrame | None:
+        return self._pq
+
+    def ri(self, df: bool = False) -> pd.DataFrame | None:
+        return self._ri
 
     def vi(self, df: bool = False) -> pd.DataFrame | None:
         return None
@@ -199,19 +225,10 @@ class _MockDadger:
     def ti(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
-    def dp(self, df: bool = False) -> pd.DataFrame:
-        return self._dp
-
-    def ri(self, df: bool = False) -> pd.DataFrame | None:
-        return None
-
     def ez(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
     def fp(self, df: bool = False) -> pd.DataFrame | None:
-        return None
-
-    def pq(self, df: bool = False) -> pd.DataFrame | None:
         return None
 
     def ac(
@@ -223,14 +240,13 @@ class _MockDadger:
         return None
 
 
+#: A soft violation treatment with its own cost, so a restriction does not take
+#: the default penalty the harness's deck (no deficit cost) cannot derive.
+_SOFT_TREATMENT = (ViolationRow(None, None, "soft", 1000.0),)
+
+
 def _cap_restriction(code: int, plant_code: int, cap: float) -> ElectricalRestriction:
-    """A pure bucket-A/constant INEQUACAO restriction (``ger_usih(plant_code)
-    <= cap``), active across the whole calendar (no ``habilita``, no
-    horizon) -- needs neither ``a_h``/``disp_usih`` resolution nor any
-    per-(stage,block) data-context lookup, so it isolates the pipeline's own
-    wiring (threading ``id_map``/``context_factory``/``big_m``/
-    ``next_generic_id`` correctly) from the emitter's own correctness
-    (covered by the ``test_libs_electrical_emit`` module)."""
+    """A constant INEQUACAO restriction (``ger_usih(plant_code) <= cap``)."""
     return ElectricalRestriction(
         code=code,
         lhs=f"ger_usih({plant_code})",
@@ -239,33 +255,23 @@ def _cap_restriction(code: int, plant_code: int, cap: float) -> ElectricalRestri
         is_formula=False,
         limits={},
         overrides=(),
+        violations=_SOFT_TREATMENT,
     )
 
 
-def _libs_model() -> LibsElectricalModel:
-    return LibsElectricalModel(
-        expressions={},
-        aliases={},
-        restrictions={
-            601: _cap_restriction(601, plant_code=1, cap=500.0),
-            602: _cap_restriction(602, plant_code=2, cap=300.0),
-        },
-        rules={},
-    )
-
-
-def _re_record() -> ConstraintRecord:
-    """A multi-term RE record (never lowers to a bound) so
-    ``emit_re_generics`` emits exactly one id ahead of the LIBs-electrical
-    ones -- proves the shared allocator, not just the LIBs link in
-    isolation."""
+def _re_record(schedule: tuple[tuple[int, float], ...] = ()) -> ConstraintRecord:
+    """A multi-term RE record: it never lowers to a bound, so it is emitted as
+    a generic constraint. *schedule* (first coefficient 1.0) is the first
+    term's, which a varying schedule makes a per-stage ``@`` parameter."""
     return ConstraintRecord(
         family="RE",
         constraint_id=901,
         stage_start=0,
         stage_end=2,
         terms=(
-            ConstraintTerm(code=1, coefficient=1.0, variable="generation"),
+            ConstraintTerm(
+                code=1, coefficient=1.0, variable="generation", schedule=schedule
+            ),
             ConstraintTerm(code=2, coefficient=1.0, variable="generation"),
         ),
         bounds={
@@ -282,10 +288,14 @@ def _run_libs_pipeline(
     libs_restricao_eletrica: Path | None = None,
     libs_restricoes: object | None = None,
     libs_electrical_model: object | None = None,
-    detect_libs_electrical_return: dx.Diagnostic | None = None,
     to_generic: tuple[ConstraintRecord, ...] = (),
+    second_plant_code: int = 2,
+    pq_frame: pd.DataFrame | None = None,
+    ri_frame: pd.DataFrame | None = None,
     diagnostics_out: list[dx.Diagnostic] | None = None,
     report_out: list[ConversionReport] | None = None,
+    mocks_out: dict[str, MagicMock] | None = None,
+    dry_run: bool = False,
 ) -> Path:
     """Run ``convert_decomp_case`` against a fully synthetic mock deck,
     patching every converter not under test to a canned return
@@ -297,10 +307,11 @@ def _run_libs_pipeline(
     *libs_restricao_eletrica*/*libs_electrical_model* control
     ``files.libs_restricao_eletrica`` and the (patched)
     ``read_libs_electrical`` return value; *libs_restricoes* is the parsed
-    file, a reader with no lines by default; *detect_libs_electrical_return*
-    controls the (patched) flat presence-detection diagnostic, independent
-    of whether the model itself converted -- so a test can prove the
-    pipeline suppresses it even when it WOULD have fired.
+    file, a reader with no lines by default; *second_plant_code* is the code of
+    the deck's second plant (66 makes it the two-group split plant, and Itaipu,
+    so an *ri_frame* is read); *pq_frame*/*ri_frame* are the ``PQ``/``RI``
+    registers of the mock dadger; *mocks_out* receives each patched target's
+    mock; *dry_run* is forwarded to ``convert_decomp_case``.
     """
     from novomodelo_bridge.decomp import pipeline as decomp_pipeline
 
@@ -314,14 +325,15 @@ def _run_libs_pipeline(
         polinjus=None,
         libs_restricao_eletrica=libs_restricao_eletrica,
     )
-    dadger = _MockDadger()
-    hidr = _hidr_frame()
+    id_map = _id_map(second_plant_code)
+    dadger = _MockDadger(second_plant_code, pq=pq_frame, ri=ri_frame)
+    hidr = _hidr_frame(second_plant_code)
     calendar = _calendar()
     case = make_decomp_case(
         files,
         dadger=dadger,
         hidr=hidr,
-        id_map=_ID_MAP,
+        id_map=id_map,
         calendar=calendar,
         renovaveis=None,
         dadgnl=None,
@@ -394,6 +406,7 @@ def _run_libs_pipeline(
         "novomodelo_bridge.decomp.pipeline.thermal_conv.convert_thermals": {
             "thermals": []
         },
+        "novomodelo_bridge.decomp.pipeline.thermal_conv.ct_submarkets": {},
         "novomodelo_bridge.decomp.pipeline.ncs_conv.convert_non_controllable_sources": {
             "non_controllable_sources": []
         },
@@ -415,28 +428,32 @@ def _run_libs_pipeline(
         "novomodelo_bridge.decomp.pipeline.hydro_conv.tailrace_families": {},
         "novomodelo_bridge.decomp.pipeline.hydro_conv.stage_availability_factors": {},
         "novomodelo_bridge.decomp.pipeline.hydro_conv.compute_turbine_limits": (
-            flat_turbine_limits(_ID_MAP, len(case.calendar))
+            flat_turbine_limits(
+                id_map,
+                len(case.calendar),
+                group_counts={_SPLIT_PLANT_CODE: 2},
+            )
         ),
         "novomodelo_bridge.decomp.pipeline.contracts_conv.read_contracts": [],
         "novomodelo_bridge.decomp.pipeline.constraint_registers.read_constraints": (
             ConstraintCensus(by_family={}, to_bounds=(), to_generic=to_generic)
         ),
         "novomodelo_bridge.decomp.pipeline.network_conv.pumping_station_id_map": {},
-        "novomodelo_bridge.decomp.pipeline.thermal_conv.ct_submarkets": {},
         "novomodelo_bridge.decomp.pipeline"
         ".constraint_registers.detect_unconverted_rha": None,
-        "novomodelo_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
-            detect_libs_electrical_return
-        ),
         "novomodelo_bridge.decomp.pipeline.libs_electrical_conv.read_libs_electrical": (
             libs_electrical_model
         ),
     }
     with ExitStack() as stack:
         for target, value in patches.items():
-            stack.enter_context(patch(target, return_value=value))
+            mock = stack.enter_context(patch(target, return_value=value))
+            if mocks_out is not None:
+                mocks_out[target] = mock
         dst = tmp_path / "case"
-        report = decomp_pipeline.convert_decomp_case(Path("unused-src"), dst)
+        report = decomp_pipeline.convert_decomp_case(
+            Path("unused-src"), dst, dry_run=dry_run
+        )
     if diagnostics_out is not None:
         diagnostics_out.extend(report.diagnostics)
     if report_out is not None:
@@ -444,45 +461,22 @@ def _run_libs_pipeline(
     return dst
 
 
+_GENERIC_CONSTRAINTS_PATH = "constraints/generic_constraints.json"
+_GENERIC_BOUNDS_PATH = "constraints/generic_constraint_bounds.parquet"
+#: The files the conversion no longer writes: the cards go to the generic ones.
+_ELECTRICAL_PATHS = (
+    "constraints/electrical_constraints.json",
+    "constraints/electrical_constraint_bounds.parquet",
+)
+_LIBS_CSV = Path("unused/lib_restricao-eletrica-especial.csv")
+
+
+def _electrical_codes(diagnostics: list[dx.Diagnostic]) -> set[str]:
+    return {d.code for d in diagnostics if d.code.startswith("decomp-libs-electrical")}
+
+
 class TestLibsElectricalPipelineWiring:
-    def test_converted_restrictions_follow_the_links_with_dense_ids(
-        self, tmp_path: Path
-    ) -> None:
-        """A stub deck whose ``read_libs_electrical`` yields a model
-        with convertible restrictions gets ``LIBS_ELEC_<code>`` constraints
-        appended AFTER the (empty here) RHQ/RHV/RHE links, sharing the
-        allocator with a synthetic RE record so the id space never
-        collides."""
-        dst = _run_libs_pipeline(
-            tmp_path,
-            libs_restricao_eletrica=Path("unused/lib_restricao-eletrica-especial.csv"),
-            libs_electrical_model=_libs_model(),
-            to_generic=(_re_record(),),
-        )
-
-        doc = json.loads(
-            (dst / "constraints" / "generic_constraints.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        names = [c["name"] for c in doc["constraints"]]
-        assert names == ["RE_901", "LIBS_ELEC_601", "LIBS_ELEC_602"]
-        ids = [c["id"] for c in doc["constraints"]]
-        assert sorted(ids) == list(range(3))
-        assert len(set(ids)) == 3
-
-        bounds_table = pq.read_table(
-            dst / "constraints" / "generic_constraint_bounds.parquet"
-        )
-        libs_ids = {ids[1], ids[2]}
-        libs_rows = [
-            row for row in bounds_table.to_pylist() if row["constraint_id"] in libs_ids
-        ]
-        assert libs_rows
-
-    def test_no_entry_emits_no_constraint_and_no_diagnostic(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_entry_is_a_no_op(self, tmp_path: Path) -> None:
         """No ``RESTRICAO-ELETRICA-ESPECIAL`` entry -- no electrical
         constraint emitted and no libs diagnostic produced."""
         diagnostics_out: list[dx.Diagnostic] = []
@@ -490,104 +484,29 @@ class TestLibsElectricalPipelineWiring:
             tmp_path,
             libs_restricao_eletrica=None,
             libs_electrical_model=None,
-            detect_libs_electrical_return=None,
             diagnostics_out=diagnostics_out,
         )
 
-        assert not (dst / "constraints" / "generic_constraints.json").exists()
-        assert not (dst / "constraints" / "generic_constraint_bounds.parquet").exists()
-        codes = {d.code for d in diagnostics_out}
-        assert "decomp-libs-electrical-present" not in codes
-        assert "decomp-libs-electrical-converted" not in codes
+        assert not (dst / _GENERIC_CONSTRAINTS_PATH).exists()
+        assert not (dst / _GENERIC_BOUNDS_PATH).exists()
+        assert _electrical_codes(diagnostics_out) == set()
 
-    def test_short_form_only_entry_still_warns(self, tmp_path: Path) -> None:
-        """The entry is present but ``read_libs_electrical`` returns
-        ``None`` (short-form-only) -- the warning is still emitted."""
-        canned_warning = dx.Diagnostic(
-            code="decomp-libs-electrical-present",
-            severity=dx.Severity.WARNING,
-            category="Special constraints",
-            title="LIBs electrical constraints present",
-            summary="synthetic short-form-only finding",
-        )
+    def test_file_the_reader_finds_no_card_in_emits_no_electrical_diagnostic(
+        self, tmp_path: Path
+    ) -> None:
+        """The entry is declared but ``read_libs_electrical`` returns ``None``:
+        the lines the reader keeps as text are already reported by the
+        unread-lines diagnostic, so nothing electrical is added."""
         diagnostics_out: list[dx.Diagnostic] = []
-        _run_libs_pipeline(
+        dst = _run_libs_pipeline(
             tmp_path,
-            libs_restricao_eletrica=Path("unused/lib_restricao-eletrica-especial.csv"),
+            libs_restricao_eletrica=_LIBS_CSV,
             libs_electrical_model=None,
-            detect_libs_electrical_return=canned_warning,
             diagnostics_out=diagnostics_out,
         )
 
-        codes = {d.code for d in diagnostics_out}
-        assert "decomp-libs-electrical-present" in codes
-        assert "decomp-libs-electrical-converted" not in codes
-
-    def test_census_info_replaces_the_warning_for_the_converted_subset(
-        self, tmp_path: Path
-    ) -> None:
-        """Exactly one INFO census diagnostic reporting the converted
-        count and per-reason deferred counts, and NO
-        ``decomp-libs-electrical-present`` WARNING for the converted subset
-        -- even though ``detect_libs_electrical`` is stubbed to return one,
-        proving the pipeline itself suppresses it rather than it merely
-        being absent by coincidence."""
-        would_have_warned = dx.Diagnostic(
-            code="decomp-libs-electrical-present",
-            severity=dx.Severity.WARNING,
-            category="Special constraints",
-            title="LIBs electrical constraints present",
-            summary="would fire if not suppressed",
-        )
-        diagnostics_out: list[dx.Diagnostic] = []
-        _run_libs_pipeline(
-            tmp_path,
-            libs_restricao_eletrica=Path("unused/lib_restricao-eletrica-especial.csv"),
-            libs_electrical_model=_libs_model(),
-            detect_libs_electrical_return=would_have_warned,
-            diagnostics_out=diagnostics_out,
-        )
-
-        census = [
-            d for d in diagnostics_out if d.code == "decomp-libs-electrical-converted"
-        ]
-        assert len(census) == 1
-        [diagnostic] = census
-        assert diagnostic.severity is dx.Severity.INFO
-        assert diagnostic.table is not None
-        counts = {str(label): count for label, count in diagnostic.table.rows}
-        assert counts["Converted"] == 2
-        assert counts["Left out: never active"] == 0
-        assert counts["Left out: no case variable for a term"] == 0
-        assert counts["Left out: data term not evaluated"] == 0
-        assert counts["Left out: undeclared name"] == 0
-
-        assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics_out}
-
-    def test_a_malformed_formula_is_a_field_parse_error_on_the_libs_file(
-        self, tmp_path: Path
-    ) -> None:
-        libs_file = Path("unused/lib_restricao-eletrica-especial.csv")
-        restriction = replace(_cap_restriction(603, plant_code=1, cap=500.0), lhs="(")
-        model = replace(_libs_model(), restrictions={603: restriction})
-
-        with pytest.raises(
-            FieldParseError, match="restriction 603 is malformed"
-        ) as err:
-            _run_libs_pipeline(
-                tmp_path,
-                libs_restricao_eletrica=libs_file,
-                libs_electrical_model=model,
-            )
-
-        assert err.value.path == str(libs_file)
-        assert err.value.field == "RESTRICAO-ELETRICA-INEQUACAO"
-        diagnostic = diagnostic_from_exception(err.value, context="convert")
-        assert diagnostic.code == "source-field-parse"
-
-    # ---------------------------------------------------------------------------
-    # _gnl_thermal_codes -- which LIBs ger_usit codes are commanded GNL data
-    # ---------------------------------------------------------------------------
+        assert _electrical_codes(diagnostics_out) == set()
+        assert not (dst / _GENERIC_CONSTRAINTS_PATH).exists()
 
     def test_lines_the_reader_keeps_as_text_are_warned(self, tmp_path: Path) -> None:
         from idecomp.libs.restricoes import Restricoes
@@ -611,23 +530,422 @@ class TestLibsElectricalPipelineWiring:
         assert unread.table.rows == [["restricao-eletrica-formula; 1; ger_usih(1)"]]
 
 
-def _gnl_registry(*codes: int) -> GnlCommitmentModel:
-    return GnlCommitmentModel(
-        thermals=tuple(GnlThermal(code, f"GNL {code}", 1) for code in codes),
-        commitments={},
-        weeks_per_month={},
-        nl_lag_months={},
-        tg=pd.DataFrame(),
+_GENERIC_PARAMETERS_PATH = "constraints/generic_parameters.json"
+_CENSUS_CODE = "decomp-libs-electrical-translated"
+_CAP_MW = 500.0
+_ANDE_MW = (3505.0, 3332.0, 2817.5)
+_PQ_MW = (10.0, 20.0, 30.0)
+
+
+def _model(
+    formula: str = "ger_usih(1) - carga_ande",
+    *,
+    violations: tuple[ViolationRow, ...] = _SOFT_TREATMENT,
+) -> LibsElectricalModel:
+    """One FORMULA restriction, 601: *formula* at most :data:`_CAP_MW` in
+    every stage, for all blocks, under *violations*."""
+    return LibsElectricalModel(
+        expressions={},
+        aliases={},
+        restrictions={
+            601: ElectricalRestriction(
+                code=601,
+                lhs=formula,
+                operator=None,
+                rhs=None,
+                is_formula=True,
+                limits={(stage, None): (None, _CAP_MW) for stage in range(3)},
+                overrides=(),
+                violations=violations,
+            )
+        },
+        rules={},
     )
 
 
-def test_gnl_thermal_codes_are_the_tg_registry_codes() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), thermal_codes=(1, 13))
-    assert _gnl_thermal_codes(_gnl_registry(86, 224), id_map) == {86, 224}
-    assert _gnl_thermal_codes(None, id_map) == frozenset()
+def _alias_model(name: str = "MM") -> LibsElectricalModel:
+    """:func:`_model` of ``ger_usih(1) - <name>``, the alias *name* declared
+    1.0 in every stage."""
+    return replace(
+        _model(f"ger_usih(1) - {name}"),
+        aliases={
+            name: ElectricalAlias(
+                code=1, name=name, values={(stage, None): 1.0 for stage in range(3)}
+            )
+        },
+    )
 
 
-def test_gnl_thermal_codes_shared_with_ct_raises() -> None:
-    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), thermal_codes=(1, 86))
-    with pytest.raises(ValueError, match=r"\[86\] are declared both"):
-        _gnl_thermal_codes(_gnl_registry(86, 224), id_map)
+def _ri_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [(66, 1, 1, *_ANDE_MW)],
+        columns=[
+            "codigo_usina",
+            "estagio",
+            "codigo_submercado",
+            *(f"carga_ande_{k}" for k in range(1, _N_BLOCKS + 1)),
+        ],
+    )
+
+
+def _pq_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "codigo_submercado": 1,
+                "estagio": 1,
+                "nome": "SECO_PCHgd",
+                **{f"geracao_{k}": mw for k, mw in enumerate(_PQ_MW, start=1)},
+            }
+        ]
+    )
+
+
+def _run_translated(
+    tmp_path: Path,
+    model: LibsElectricalModel | None = None,
+    *,
+    diagnostics_out: list[dx.Diagnostic] | None = None,
+    report_out: list[ConversionReport] | None = None,
+    dry_run: bool = False,
+) -> Path:
+    """:func:`_run_libs_pipeline` over *model* (:func:`_model` by default) on
+    a deck that operates Itaipu (plant 66, hydro id 1) and declares the ANDE
+    load."""
+    return _run_libs_pipeline(
+        tmp_path,
+        libs_restricao_eletrica=_LIBS_CSV,
+        libs_electrical_model=_model() if model is None else model,
+        second_plant_code=_ITAIPU_CODE,
+        ri_frame=_ri_frame(),
+        diagnostics_out=diagnostics_out,
+        report_out=report_out,
+        dry_run=dry_run,
+    )
+
+
+def _read_json(path: Path) -> dict:
+    return json.loads(path.read_text("utf-8"))
+
+
+def _constraint(dst: Path, constraint_id: int) -> dict:
+    """The record of *constraint_id* in the case's generic constraints."""
+    doc = _read_json(dst / _GENERIC_CONSTRAINTS_PATH)
+    [record] = [c for c in doc["constraints"] if c["id"] == constraint_id]
+    return record
+
+
+def _bound_rows(dst: Path, constraint_id: int) -> list[dict]:
+    """The rows of *constraint_id* in the case's generic constraint bounds."""
+    bounds = pq.read_table(dst / _GENERIC_BOUNDS_PATH)
+    return [row for row in bounds.to_pylist() if row["constraint_id"] == constraint_id]
+
+
+def _block_values(mw: tuple[float, ...]) -> list[list[float]]:
+    return [
+        [stage, block, value] for stage in range(3) for block, value in enumerate(mw)
+    ]
+
+
+#: The ``generic_parameters.json`` entries of the deck's two hydros (ids 0 and 1).
+_HYDRO_PARAMETERS = build_decomp_scalar_parameters([0, 1])["scalar_parameters"]
+
+
+class TestElectricalConstraintsInGenericFiles:
+    def test_cards_are_translated_into_the_generic_files(self, tmp_path: Path) -> None:
+        dst = _run_translated(tmp_path)
+
+        doc = _read_json(dst / _GENERIC_CONSTRAINTS_PATH)
+        assert doc["$schema"] == SCHEMA_URLS[_GENERIC_CONSTRAINTS_PATH]
+        assert _constraint(dst, 601) == {
+            "id": 601,
+            "name": "constraint_601",
+            "expression": "hydro_generation(0) - @carga_ande",
+            "slack": {"enabled": True, "penalty": 1000.0, "penalty_basis": "per_hour"},
+        }
+        assert pq.read_schema(dst / _GENERIC_BOUNDS_PATH).equals(GENERIC_BOUNDS_SCHEMA)
+        assert _bound_rows(dst, 601) == [
+            {
+                "constraint_id": 601,
+                "stage_id": stage,
+                "block_id": None,
+                "bound_lower": None,
+                "bound_upper": _CAP_MW,
+            }
+            for stage in range(3)
+        ]
+        assert not any((dst / path).exists() for path in _ELECTRICAL_PATHS)
+        parameters = _read_json(dst / _GENERIC_PARAMETERS_PATH)["scalar_parameters"]
+        assert parameters == [
+            *_HYDRO_PARAMETERS,
+            {
+                "id": len(_HYDRO_PARAMETERS),
+                "name": "carga_ande",
+                "kind": "per_stage_block",
+                "block_values": _block_values(_ANDE_MW),
+            },
+        ]
+
+    def test_electrical_parameters_follow_the_generic_constraint_parameters(
+        self, tmp_path: Path
+    ) -> None:
+        dst = _run_libs_pipeline(
+            tmp_path,
+            libs_restricao_eletrica=_LIBS_CSV,
+            libs_electrical_model=_alias_model(),
+            to_generic=(_re_record(((0, 1.0), (1, 2.0))),),
+        )
+
+        parameters = _read_json(dst / _GENERIC_PARAMETERS_PATH)["scalar_parameters"]
+        generic = build_decomp_scalar_parameters(
+            [0, 1], per_stage={"coef_re901_t0": [1.0, 2.0, 2.0]}
+        )["scalar_parameters"]
+        assert parameters[:-1] == generic
+        assert parameters[-1]["id"] == len(generic)
+        assert parameters[-1]["name"] == "MM"
+
+    def test_a_deck_name_a_generic_parameter_takes_is_renamed(
+        self, tmp_path: Path
+    ) -> None:
+        dst = _run_libs_pipeline(
+            tmp_path,
+            libs_restricao_eletrica=_LIBS_CSV,
+            libs_electrical_model=_alias_model("rho_eq_h0"),
+        )
+
+        assert _constraint(dst, 601)["expression"] == (
+            "hydro_generation(0) - @rho_eq_h0_2"
+        )
+        parameters = _read_json(dst / _GENERIC_PARAMETERS_PATH)["scalar_parameters"]
+        assert parameters[:-1] == _HYDRO_PARAMETERS
+        assert parameters[-1]["name"] == "rho_eq_h0_2"
+
+    def test_machine_sets_are_the_unit_groups_of_the_written_hydros(
+        self, tmp_path: Path
+    ) -> None:
+        dst = _run_translated(tmp_path, _model("ger_conjh(66, 2)"))
+
+        hydros = _read_json(dst / "system" / "hydros.json")["hydros"]
+        [itaipu] = [hydro for hydro in hydros if hydro["id"] == 1]
+        assert sorted(group["id"] for group in itaipu["unit_groups"]) == [0, 1]
+        assert _constraint(dst, 601)["expression"] == (
+            "hydro_generation(1, unit_group=1)"
+        )
+
+    def test_dry_run_reports_the_generic_files_without_writing_them(
+        self, tmp_path: Path
+    ) -> None:
+        report_out: list[ConversionReport] = []
+        diagnostics_out: list[dx.Diagnostic] = []
+        dst = _run_translated(
+            tmp_path,
+            report_out=report_out,
+            diagnostics_out=diagnostics_out,
+            dry_run=True,
+        )
+
+        [report] = report_out
+        would_write = {
+            Path(written).relative_to(dst).as_posix()
+            for written in report.would_write_paths
+        }
+        generic = {
+            _GENERIC_CONSTRAINTS_PATH,
+            _GENERIC_BOUNDS_PATH,
+            _GENERIC_PARAMETERS_PATH,
+        }
+        assert generic <= would_write
+        assert would_write.isdisjoint(_ELECTRICAL_PATHS)
+        assert not any((dst / path).exists() for path in generic)
+        assert _electrical_codes(diagnostics_out) == {_CENSUS_CODE}
+
+    def test_no_electrical_cards_writes_no_file(self, tmp_path: Path) -> None:
+        dst = _run_libs_pipeline(tmp_path)
+
+        assert not any(
+            (dst / path).exists()
+            for path in (_GENERIC_CONSTRAINTS_PATH, _GENERIC_BOUNDS_PATH)
+        )
+        assert not any((dst / path).exists() for path in _ELECTRICAL_PATHS)
+
+    def test_an_inequality_without_parameters_writes_activating_rows_only(
+        self, tmp_path: Path
+    ) -> None:
+        model = LibsElectricalModel(
+            expressions={},
+            aliases={},
+            restrictions={601: _cap_restriction(601, plant_code=1, cap=_CAP_MW)},
+            rules={},
+        )
+        dst = _run_libs_pipeline(
+            tmp_path, libs_restricao_eletrica=_LIBS_CSV, libs_electrical_model=model
+        )
+
+        assert _constraint(dst, 601)["expression"] == "hydro_generation(0) <= 500.0"
+        assert _bound_rows(dst, 601) == [
+            {
+                "constraint_id": 601,
+                "stage_id": stage,
+                "block_id": None,
+                "bound_lower": None,
+                "bound_upper": None,
+            }
+            for stage in range(3)
+        ]
+        assert not (dst / _GENERIC_PARAMETERS_PATH).exists()
+
+    def test_deck_constraints_follow_the_special_register_records(
+        self, tmp_path: Path
+    ) -> None:
+        dst = _run_libs_pipeline(
+            tmp_path,
+            libs_restricao_eletrica=_LIBS_CSV,
+            libs_electrical_model=_model("ger_usih(1)"),
+            to_generic=(_re_record(),),
+        )
+
+        doc = _read_json(dst / _GENERIC_CONSTRAINTS_PATH)
+        assert [c["name"] for c in doc["constraints"]] == ["RE_901", "constraint_601"]
+        assert "expressions" not in doc
+        bounds = pq.read_table(dst / _GENERIC_BOUNDS_PATH)
+        [re_901] = [c["id"] for c in doc["constraints"] if c["name"] == "RE_901"]
+        assert set(bounds.column("constraint_id").to_pylist()) == {re_901, 601}
+
+    def test_the_census_counts_the_translated_records(self, tmp_path: Path) -> None:
+        diagnostics_out: list[dx.Diagnostic] = []
+        _run_translated(tmp_path, diagnostics_out=diagnostics_out)
+
+        [census] = [d for d in diagnostics_out if d.code == _CENSUS_CODE]
+        assert census.severity is dx.Severity.INFO
+        assert census.category == "Special constraints"
+        assert census.title == "LIBS electrical constraints translated (1)"
+        assert census.table is not None
+        assert census.table.columns == ["Record", "Count"]
+        assert census.table.rows == [
+            ["Constraints", 1],
+            ["Expressions", 0],
+            ["Parameters", 1],
+            ["Bounds rows", 3],
+            ["Constraints with a condition", 0],
+        ]
+        assert _electrical_codes(diagnostics_out) == {_CENSUS_CODE}
+
+    def test_a_translation_error_stops_the_conversion(self, tmp_path: Path) -> None:
+        with pytest.raises(
+            UnsupportedSourceError,
+            match=r"^lib_restricao-eletrica-especial\.csv: restriction 601: "
+            ".*hydro code 99 is not in the converted case$",
+        ):
+            _run_translated(tmp_path, _model("ger_usih(99)"))
+
+    def test_a_restriction_without_a_cost_needs_a_deficit_cost(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(
+            FieldParseError,
+            match=r"^lib_restricao-eletrica-especial\.csv: restriction 601: "
+            "no violation cost",
+        ):
+            _run_translated(tmp_path, _model(violations=()))
+
+
+_LOAD_STATS_TARGET = "novomodelo_bridge.decomp.pipeline.load_conv.convert_load_stats"
+
+
+class TestDataTerms:
+    def test_ande_and_pq_values_are_parameters_and_the_ande_stays_on_the_itaipu_bus(
+        self, tmp_path: Path
+    ) -> None:
+        mocks: dict[str, MagicMock] = {}
+        dst = _run_libs_pipeline(
+            tmp_path,
+            libs_restricao_eletrica=_LIBS_CSV,
+            libs_electrical_model=_model(
+                "ger_usih(1) - carga_ande - peq_SECO_PCHgd_SE"
+            ),
+            second_plant_code=_ITAIPU_CODE,
+            pq_frame=_pq_frame(),
+            ri_frame=_ri_frame(),
+            mocks_out=mocks,
+        )
+
+        parameters = _read_json(dst / _GENERIC_PARAMETERS_PATH)["scalar_parameters"]
+        assert [
+            (p["name"], p["block_values"]) for p in parameters[len(_HYDRO_PARAMETERS) :]
+        ] == [
+            ("carga_ande", _block_values(_ANDE_MW)),
+            ("peq_SECO_PCHgd_SE", _block_values(_PQ_MW)),
+        ]
+        extra_bus_loads = mocks[_LOAD_STATS_TARGET].call_args.kwargs["extra_bus_loads"]
+        assert extra_bus_loads == {(0, stage): list(_ANDE_MW) for stage in range(3)}
+
+    def test_a_deck_without_ri_and_pq_writes_only_the_declared_alias(
+        self, tmp_path: Path
+    ) -> None:
+        mocks: dict[str, MagicMock] = {}
+        dst = _run_libs_pipeline(
+            tmp_path,
+            libs_restricao_eletrica=_LIBS_CSV,
+            libs_electrical_model=_alias_model(),
+            second_plant_code=_ITAIPU_CODE,
+            mocks_out=mocks,
+        )
+
+        parameters = _read_json(dst / _GENERIC_PARAMETERS_PATH)["scalar_parameters"]
+        assert [p["name"] for p in parameters[len(_HYDRO_PARAMETERS) :]] == ["MM"]
+        assert mocks[_LOAD_STATS_TARGET].call_args.kwargs["extra_bus_loads"] is None
+
+
+class TestElectricalCensusDiagnostic:
+    def test_counts_only_the_top_level_records_of_each_list(self) -> None:
+        outputs = GenericOutputs(
+            constraints=[
+                {"id": 1, "active_when": "a", "slack": {"enabled": False}},
+                {"id": 2, "slack": {"enabled": False}},
+                {"id": 3, "active_when": "b", "slack": {"enabled": False}},
+            ],
+            expressions=[{"name": "A"}, {"name": "B"}],
+            bounds=pa.Table.from_pylist(
+                [
+                    {"constraint_id": 1, "stage_id": stage, "block_id": None}
+                    for stage in range(5)
+                ],
+                schema=GENERIC_BOUNDS_SCHEMA,
+            ),
+            parameters=[{"name": "C"}, {"name": "D"}, {"name": "E"}, {"name": "F"}],
+        )
+
+        diagnostic = _electrical_census_diagnostic(outputs)
+
+        assert diagnostic.table is not None
+        assert diagnostic.table.rows == [
+            ["Constraints", 3],
+            ["Expressions", 2],
+            ["Parameters", 4],
+            ["Bounds rows", 5],
+            ["Constraints with a condition", 2],
+        ]
+        assert diagnostic.title.endswith("(3)")
+
+    def test_summary_says_the_cards_were_translated_into_the_generic_files(
+        self,
+    ) -> None:
+        diagnostic = _electrical_census_diagnostic(
+            GenericOutputs(
+                constraints=[],
+                expressions=[],
+                bounds=GENERIC_BOUNDS_SCHEMA.empty_table(),
+                parameters=[],
+            )
+        )
+
+        assert (
+            "translated the LIBS electrical file to novomodelo's vocabulary and ids"
+            in diagnostic.summary
+        )
+        for path in (
+            _GENERIC_CONSTRAINTS_PATH,
+            _GENERIC_BOUNDS_PATH,
+            _GENERIC_PARAMETERS_PATH,
+        ):
+            assert path in diagnostic.summary

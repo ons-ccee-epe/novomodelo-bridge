@@ -14,6 +14,79 @@ links are cobre-bridge's.
 
 ## [Unreleased]
 
+### Added
+
+- **`convert decomp` reads the short-form names of the electrical-constraint
+  records** (`RE`, `RE-HORIZ-PER`, `RE-LIM-FORM-PER-PAT`, `RE-HORIZ-DATA`,
+  `RE-LIM-FORM-DATA-PAT`, `ALIAS-ELET`, `ALIAS-ELET-VAL-PER-PAT`,
+  `RE-REGRA-ATIVA`, `RE-HABILITA`, `RE-TRAT-VIOL`, `RE-TRAT-VIOL-PER`) as their
+  long forms, the per-period violation treatment
+  (`RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO`), the horizon and limit
+  cards given by date (`RESTRICAO-ELETRICA-HORIZONTE-DATA`,
+  `RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR`), and the formula cards by
+  period and by date (`RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR`,
+  `RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR`, and their short forms `RE-PER-PAT`
+  and `RE-DATA-PAT`).
+- **`convert decomp` reports how it translates the electrical constraints**:
+  `decomp-libs-electrical-translated` counts what was converted,
+  `decomp-electrical-restrictions-split` lists the restrictions written as
+  several constraints or under another id, with the cells of each, and those
+  left out for having no limit at any cell,
+  `decomp-electrical-hard-treatment-cost-ignored` lists the `hard` violation
+  treatments that give a cost, which is not used,
+  `decomp-electrical-name-sanitized` lists the deck names changed to fit
+  novomodelo, `decomp-electrical-alias-shadowed` and
+  `decomp-electrical-data-alias-shadowed` list the aliases and the `RI` or `PQ`
+  data hidden by a declaration of the same name,
+  `decomp-electrical-unread-cells-filled` lists the alias and data cells
+  without a value that no constraint reads, written as 0.0,
+  `decomp-electrical-unread-omitted` lists the aliases, expressions and
+  activation rules no constraint reaches, which are left out, and
+  `decomp-libs-electrical-contract-code-ambiguous` notes a contract number
+  that two contracts share.
+
+### Changed
+
+- **BREAKING: `convert decomp` writes each LIBS electrical restriction as the
+  constraint `constraint_<code>`, with its code as id, where it wrote
+  `LIBS_ELEC_*` constraints.** Reconvert the deck and run a novomodelo that
+  reads these constraints; the results change. The terms are translated to
+  novomodelo's vocabulary and entity ids in
+  `constraints/generic_constraints.json`, the limits are written to
+  `constraints/generic_constraint_bounds.parquet`, and the aliases, `RI` and
+  `PQ` data and data-only expressions they read are parameters in
+  `constraints/generic_parameters.json`. A restriction whose relation or
+  violation treatment changes over the study is split into
+  `constraint_<code>_<k>` constraints, under new ids above every id of the
+  case. A `hard` restriction now allows no violation, and a `soft` one without
+  a cost is charged 10 times the largest `CD` deficit cost per hour. A term,
+  code or name the translation cannot resolve, an alias or data value missing
+  where a constraint reads it, overrides or violation treatments in conflict,
+  a `soft` cost not above 0 and an undeclared activation rule stop the
+  conversion with an error that names where it is written; correct the deck.
+- **BREAKING:** `convert decomp` stops with an error that names the card and
+  the restriction or alias code when an electrical-constraint card gives a range
+  of stages or dates that ends before it starts, where it used to drop the rows
+  without a warning or write the range as given; correct the range in the deck.
+- **BREAKING: `convert decomp` stops when an electrical constraint reads
+  `demanda` or `demanda_sin` outside an activation rule or a `se` condition**;
+  write `val_demanda` or `val_demanda_sin` instead. In a condition both read the
+  load value, and `val_demanda_sin` is written as the sum of every bus's load.
+
+### Removed
+
+- **`convert decomp` no longer emits** `decomp-electrical-bucket-a-unresolved`,
+  `decomp-electrical-bucket-b-unresolved`,
+  `decomp-electrical-disp-usih-substituted`,
+  `decomp-electrical-disp-usih-unresolved`,
+  `decomp-electrical-ener-comerc-deferred`,
+  `decomp-electrical-restriction-inactive`,
+  `decomp-electrical-unrecognized-token`,
+  `decomp-electrical-demand-in-cmo`, `decomp-electrical-gnl-patamar-values`,
+  `decomp-electrical-term-coupling-only-plant`,
+  `decomp-electrical-term-interchange-no-line`,
+  `decomp-libs-electrical-converted` and `decomp-libs-electrical-present`.
+
 ## [0.22.1] - 2026-11-24
 
 Pairs the bridge with **novomodelo 0.22.0**, as 0.22.0 did; convert NEWAVE and

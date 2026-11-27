@@ -48,6 +48,241 @@ The register-by-register map from the deck to the converted case, including
 what the converter does not convert yet, is the
 [DECOMP data map](decomp-data-map.md) (in Portuguese).
 
+### Electrical constraints
+
+The electrical-constraint file is translated into novomodelo's vocabulary and
+entity ids and written as generic constraints. When the file declares any
+expression, alias, restriction or activation rule, `convert decomp` writes:
+
+- in `constraints/generic_constraints.json`, after the constraints of the `RE`,
+  `HQ`, `HV`, `HE` and `RI` registers, the constraints of the restrictions, by
+  id, and, among its expressions, those the constraints read that are more than
+  arithmetic over data, followed by the formulas `re(R)` reads;
+- in `constraints/generic_constraint_bounds.parquet`, after the rows of the
+  other constraints, the rows that say where each of these constraints holds
+  and its limits there;
+- entries of `constraints/generic_parameters.json`, after the parameters the
+  other conversions declare, when the constraints read an alias, a data term
+  or an expression of arithmetic over data.
+
+The short-form record names (`RE`, `RE-*`, `ALIAS-ELET*`) are read as the
+long-form cards they stand for. The cards that give a horizon or limits by date
+(`RESTRICAO-ELETRICA-HORIZONTE-DATA`,
+`RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR`, and their short forms
+`RE-HORIZ-DATA` and `RE-LIM-FORM-DATA-PAT`) are read as well: a date becomes the
+stage that contains it, and a range runs from the stage that contains its start
+date to the stage that contains its end date, the end date included. A date
+outside the case's stages makes the deck fail to convert, with an error that
+names the restriction or alias code and the date. A range of stages or dates
+that ends before it starts also fails, with an error that names the card and
+the restriction or alias code. The formula cards by period and by date
+(`RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR`,
+`RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR`, and their short forms `RE-PER-PAT`
+and `RE-DATA-PAT`) are read as formula overrides: each row gives a formula that
+replaces the restriction's formula over the stages and the load block of the
+row, with the same date mapping and the same errors. A restriction declared
+only by those rows is a formula restriction. Rows that do not fit the
+restriction's card shape, such as formula or limit rows on an inequality
+restriction, are not applied, and the `decomp-electrical-period-rows-unused`
+warning reports them.
+
+Each text of the file (a formula, an inequality side, an override, an
+expression, an activation-rule condition) is parsed and written again with
+every term replaced as the table shows, one space around each binary operator,
+and each `+` or `-` sign written against its operand. Nothing is inlined,
+folded or evaluated: the author's parentheses, signs and number spellings stay,
+and novomodelo evaluates the conditionals and the activation-rule conditions.
+Only entity codes are translated; a block argument `k` is copied as written.
+
+| Deck term | Converted term | Codes translated through |
+| --- | --- | --- |
+| `ger_usih(c[, k])` | `hydro_generation(id[, k])` | hydro plants |
+| `ger_usit(c[, k])` | `thermal_generation(id[, k])` | thermal plants |
+| `ger_pee(c[, k])` | `non_controllable_generation(id[, k])` | renewable parks |
+| `disp_usih(c[, k])` | `hydro_availability(id[, k])` | hydro plants |
+| `val_demanda(s[, k])` | `bus_load_value(id[, k])` | submarkets |
+| `val_demanda_sin([k])`, with or without parentheses | the sum of `bus_load_value(id[, k])` over every bus of the submarket table, in parentheses, in ascending id order | none |
+| `demanda(s[, k])`, inside a condition | `bus_load_value(id[, k])` | submarkets |
+| `demanda_sin([k])`, with or without parentheses, inside a condition | the same sum as `val_demanda_sin([k])` | none |
+| `ener_comerc(c[, k])` | `contract_import(id[, k])` or `contract_export(id[, k])`, by the contract's declared kind | contracts |
+| `ener_interc(x, y)` | `line_flow(source_bus=id(x), target_bus=id(y))` | submarkets |
+| `ger_conjh(c, n[, k])` | `hydro_generation(id(c)[, k], unit_group=g)` | hydro plants, then the plant's machine sets |
+| `se(c, a, b)` | `if(c, a, b)`, the condition and both branches translated | none |
+| `re(R)` | `@restriction_<R>_formula` | none |
+| an expression name | `@<name>` | none |
+| an alias name | `@<name>` | none |
+| `carga_ande` or `carga_ande()` | `@carga_ande` | none |
+| `peq_<series>_<submarket>`, with or without `()` | `@peq_<series>_<submarket>` | none |
+
+novomodelo reads the load only as data, `bus_load_value`, and has no term for
+the system load: the conversion writes it in place as the sum of one
+`bus_load_value` call per bus of the submarket table, each bus once, with the
+block argument copied into every call. With one bus the sum is that call alone,
+without parentheses. In DECOMP, `demanda` and `demanda_sin` are the load as an
+LP term, so they convert only inside a condition, where they read the load
+value. A condition is the text of an activation rule and the first argument of
+a `se(...)`, with everything written inside it; the branches of a `se` are
+inside a condition only when the `se` itself is. Anywhere else, `demanda` or
+`demanda_sin` makes the deck fail to convert, with an error that names where it
+is written and the term; write `val_demanda` or `val_demanda_sin`, which read
+the same load as data, in its place. An expression that writes `demanda` or
+`demanda_sin` outside a `se` condition of its own fails the conversion, even
+when only an activation rule reads it.
+
+Each entity code becomes the id the conversion gave that entity. The hydro
+table holds every converted plant. The thermal table holds the `CT` plants and
+the `dadgnl` GNL plants; a GNL code that is also a `CT` code fails the
+conversion. The renewable-park table holds the parks of the
+`PARQUE-EOLICO-EQUIVALENTE-*` records. The submarket table holds the `SB`
+subsystems and the transshipment bus under code 6, the code the formulas cite
+it by, unless a subsystem already has code 6. Machine set `n` of a plant is its
+`n`-th unit group by ascending group id. A contract number becomes that
+contract's id; a number that more than one contract declares is left out of the
+table, and the `decomp-libs-electrical-contract-code-ambiguous` info diagnostic
+lists it. In a text the case holds, a code with no entity in the converted
+case, a machine set the plant does not have, an entity code that is not a
+non-negative integer (`66.0` included), a block argument that is not a number,
+or a call with the wrong arguments makes the deck fail to convert, with an
+error that names where the call is written (`restriction <code>` for the
+relation of one of its constraints, `restriction <code> formula` for the
+formula `re(<code>)` reads, `expression <name>` or `activation rule <code>`)
+and the call. A name or function the table does not list, and a data term
+written with arguments, also fail the conversion, with an error that names the
+restriction, expression or rule and shows the text. A text of a restriction, an
+override, an expression or an activation rule, assigned or not, that does not
+parse fails it too, with an error that shows the text and the position where it
+stops parsing.
+
+Each restriction becomes the generic constraint `constraint_<code>`, whose id
+is the restriction code. Its relation is the restriction's formula or
+inequality, or, in a cell (a stage and a block, each patamar becoming a 0-based
+block id) that an override covers, the override's. Its slack follows the
+violation treatment of the restriction, as below, and the condition of the
+activation rule the restriction is assigned is its `active_when` condition,
+which novomodelo evaluates. A restriction whose relation or violation treatment
+is not the same in every cell where it holds a row is written as several
+constraints `constraint_<code>_<k>`, `k` from 1, one per relation and treatment
+in the order of their first cell, each holding only at its own cells,
+contiguous or not. The relations are compared as the deck writes them, so two
+spellings of one relation are two constraints. These constraints take ids above
+every id of the other generic constraints and every restriction code of the
+file, in code order and then `k` order, so the restriction code is the id of
+none of them; a restriction written as one constraint whose code another
+generic constraint of the case already has as id takes such an id too, and
+keeps its name. The `decomp-electrical-restrictions-split` info diagnostic
+lists each restriction not written as one constraint under its own code, with
+the id, the name and the cells of each of its constraints.
+
+`re(R)` reads the expression `restriction_<R>_formula`, which holds the
+translated formula of restriction `R`, or its left side when `R` is an
+inequality, and never its overrides; `R` must be a declared restriction with a
+formula or an inequality of its own, not one declared only by per-period rows,
+or the deck fails to convert. Expressions, aliases and data terms keep the
+deck's names, which `@<name>` cites. A name is read first as an expression,
+then as an alias, then as a term of the table. An alias that an expression of
+the same name hides is not converted, and the
+`decomp-electrical-alias-shadowed` info diagnostic lists it. A data term the
+formulas cite that the deck also declares as an alias or expression reads that
+declaration, and the `decomp-electrical-data-alias-shadowed` info diagnostic
+lists it. A name that is not a novomodelo identifier, or that a parameter of
+another conversion or a generated `restriction_<R>_formula` already takes, is
+changed: each character other than a letter, a digit or `_` becomes `_`, a `_`
+is put in front when the result does not start with a letter or `_`, and the
+smallest free suffix `_2`, `_3`, … is added on a collision. The names that need
+no change are kept first; the others are changed in the order expressions,
+aliases, data terms, each sorted by name. The
+`decomp-electrical-name-sanitized` info diagnostic lists each changed name with
+the name it is emitted as, and every text cites it under that name. A generated
+`restriction_<R>_formula` that another conversion already declares fails the
+conversion.
+
+Only what a constraint of the case reads is converted: the aliases,
+expressions, data terms and `re(R)` formulas that the relation of one of its
+cells, or the condition of its restriction's assigned rule, cites, directly or
+through other expressions. The declared aliases and expressions that no
+restriction, override or assigned rule cites, and the activation rules no
+restriction is assigned, are left out, and the
+`decomp-electrical-unread-omitted` info diagnostic lists them. Anything cited
+only by a restriction that holds no row, or only by an override that governs
+none of the cells where its restriction holds a row, is left out too, and no
+diagnostic lists it.
+
+Each reached alias and data term is a `per_stage_block` parameter with a value
+at every stage and block of the study; an alias's value for one block wins over
+its value for every block of the stage. The data terms take their values from
+the deck: `carga_ande` from the ANDE load of the `RI` register, which also
+stays added to the load of the Itaipu submarket's bus, and
+`peq_<series>_<submarket>` from the generation of the `PQ` series, with
+`<submarket>` the subsystem's name in the `SB` register. Two `PQ` series that
+give the same name fail the conversion. A reached expression of arithmetic
+(`+ - * /`, signs, parentheses and numbers) over aliases, data terms and other
+such expressions is an `expression` parameter. Every other reached expression,
+such as one that reads a load or a generation, is a record of the `expressions`
+of `constraints/generic_constraints.json`, followed there by the
+`restriction_<R>_formula` expressions. A cycle among the reached expressions
+fails the conversion, including one through the formula an `re(R)` reads, as
+when the formula of `R` cites `re(R)` itself; the error lists the cycle, each
+such formula by its `restriction_<R>_formula` name.
+
+An alias or a data term may have values for only part of the study. A cell, a
+stage and a block, reads a name when a restriction holds a row there whose
+governing text cites it, directly or through expressions and `re(R)`. A
+restriction holds rows only in the stages of its horizon. In each cell the
+overrides for that block govern, else the overrides for every block, else the
+restriction's own text, and a formula restriction holds a row only where its
+limit for the block, else its limit for every block, sets a side. The condition
+of the assigned rule is read wherever the restriction holds a row, and both
+branches of an `if` are read. A missing value at a cell that reads the name
+fails the conversion, with an error that names the alias or data term and those
+cells. A missing value at a cell nothing reads is written as 0.0, and the
+`decomp-electrical-unread-cells-filled` info diagnostic lists each such
+parameter with its filled cells.
+
+A constraint holds only at the cells where
+`constraints/generic_constraint_bounds.parquet` has a row for it: those where
+its relation and treatment govern and its restriction holds a row. In a stage
+where it holds at every block, it has one row for every block, with the block
+empty, when it is an inequality, or a formula whose only limit row in that
+stage is the one for every block; otherwise it has one row for each cell, with
+its block. An inequality carries its limit in its relation, so its rows have no
+side. A formula's row has the two sides of its limit for the block, else of its
+limit for every block of the stage, from
+`RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR` and
+`RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR`, as the deck gives them. A
+side of magnitude 1E+30 or more, such as the deck's `1E+31` "no limit" value,
+is empty, and a cell whose limit has neither side holds no row: a block whose
+own limit sets no side stays unbounded rather than take the stage's limit for
+every block. A restriction that holds no row, such as a formula with no limit
+at any cell, is not written, and `decomp-electrical-restrictions-split` lists
+it with no cells. A patamar outside the blocks of a stage it covers, in a
+limit, override or reached alias row, fails the conversion.
+
+The violation treatment of a stage is that of the
+`RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO` row that covers it, else that
+of the `RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO` row for the whole horizon, else
+`soft` without a cost. A `hard` treatment allows no violation: the constraint
+has no slack. A `soft` treatment is a slack charged per hour at the treatment's
+cost or, without a cost or without a treatment row, at 10 times the largest
+deficit cost of the `CD` registers, the penalty of the `RE` constraints. The
+cost a `hard` treatment row gives is not used, and the
+`decomp-electrical-hard-treatment-cost-ignored` info diagnostic lists those
+rows.
+
+A restriction also makes the deck fail to convert, with an error that names it,
+when two or more overrides of the same precedence (for the cell's block, or for
+every block) cover one cell of its horizon, when more than one treatment row is
+for its whole horizon, or when two
+`RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO` rows cover one stage. Once it
+is written, it also fails the conversion when one of its constraints is `soft`
+with a cost that is not above 0, or needs the default cost in a deck whose `CD`
+registers give no deficit cost above 0, and when it is assigned an activation
+rule the file does not declare.
+
+The `decomp-libs-electrical-translated` info diagnostic counts the constraints,
+expressions, parameters and bound rows written from the file, and the
+constraints with an `active_when` condition. The
+[DECOMP data map](decomp-data-map.md) gives the origin of each field.
+
 ## What is converted, and what is deferred
 
 The converter emits buses with their deficit curves plus the transshipment
@@ -116,23 +351,19 @@ order or numbers, so Novomodelo then makes the same choice. `check decomp` and
 
 A term that is zero in DECOMP too is left out of the sum with a note, and the
 rest of the restriction is kept. A plant whose `UH` record gives no initial
-volume is kept by DECOMP only for the coupling with NEWAVE and is not
-operated, so it generates nothing: its `FU` term in an `RE` constraint, or its
-`ger_usih` or `ger_conjh` term in an electrical restriction of the LIBS file,
-is left out, and an `RE` left with one term becomes a plant bound. An `FI`
-term of an `RE`, or an `ener_interc` term of the LIBS file between two `SB`
-submarkets, on a pair no `IA` record joins is left out too, since no flow
-runs between them. Any other term on an entity the case lacks, such as an
-`HQ` or `HV` term on a plant DECOMP does not operate, an `FU` term on a plant
-with no `UH` record, or an `FI` term on a submarket no `SB` record declares,
-leaves the whole restriction out with a warning, and so does a restriction
-with no term left. An `ener_interc` operand that is not an `SB` code is read
-as the `IV` node, so a missing line on it also leaves the whole restriction
-out: the conversion cannot tell the `IV` node from an undeclared code.
+volume is kept by DECOMP only for the coupling with NEWAVE and is not operated,
+so it generates nothing: its `FU` term in an `RE` constraint is left out, and
+an `RE` left with one term becomes a plant bound. An `FI` term of an `RE` on a
+pair no `IA` record joins is left out too, since no flow runs between them. Any
+other term on an entity the case lacks, such as an `HQ` or `HV` term on a plant
+DECOMP does not operate, an `FU` term on a plant with no `UH` record, or an
+`FI` term on a submarket no `SB` record declares, leaves the whole restriction
+out with a warning, and so does a restriction with no term left. The terms of
+the electrical-constraint file are translated as
+[Electrical constraints](#electrical-constraints) describes.
 
 An `FT` term in an `RE` constraint on a fuel-constrained thermal of
-`dadgnl.rvN` is handled as DECOMP handles it, and as the conversion handles
-`ger_usit` on such a plant in the LIBS file: the generation its `GL` records
+`dadgnl.rvN` is handled as DECOMP handles it: the generation its `GL` records
 command at each stage and patamar, held within the plant's `TG` minimum and
 capacity there as DECOMP holds it, times the term's coefficient, is taken off
 the limits, and the term leaves the sum. The case holds the plant to its

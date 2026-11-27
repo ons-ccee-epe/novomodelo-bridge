@@ -399,7 +399,6 @@ def _tailrace_records(
 
 def _special_constraint_coverage(
     dadger: _SpecialConstraintRegisters,
-    libs_file: Path | None,
     id_map: DecompIdMap,
     pumping_ids: Mapping[int, int],
     *,
@@ -408,14 +407,12 @@ def _special_constraint_coverage(
     ct_submarkets: Mapping[int, Collection[int]],
     dadger_path: str,
     dadgnl_path: str | None,
-    libs_long_form: bool | None = False,
     plant_names: Mapping[int, str] | None = None,
     diversion_codes: Collection[int] | None = None,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Classify the deck's special constraints into converted (RE/HQ/HV/HE,
     split into bounds-lowered vs generic-emitted), left out (a term on an
-    entity the case lacks) and deferred (RHA/LIBs-electrical), without
-    running a conversion.
+    entity the case lacks) and deferred (RHA), without running a conversion.
 
     Counts the census ``convert decomp`` consumes:
     :func:`~novomodelo_bridge.decomp.constraint_registers.read_constraints`
@@ -431,13 +428,9 @@ def _special_constraint_coverage(
     converts, and, verbatim as ``convert decomp`` raises them, the fold's and
     the screen's diagnostics (conflicting restrictions under *plant_names*),
     the one of
-    :func:`~novomodelo_bridge.decomp.converters.constraints.re_gnl_patamar_diagnostic`,
-    the one of
-    :func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`
-    and, when *libs_long_form* is ``False`` (the LIBS file has no long-form
-    card ``convert decomp`` reads; ``None`` when the read failed, which its own
-    failed check reports), the one of
-    :func:`~novomodelo_bridge.decomp.constraint_registers.detect_libs_electrical`.
+    :func:`~novomodelo_bridge.decomp.converters.constraints.re_gnl_patamar_diagnostic`
+    and the one of
+    :func:`~novomodelo_bridge.decomp.constraint_registers.detect_unconverted_rha`.
     :func:`_libs_electrical_read` raises the LIBS file's own WARNINGs.
     """
     from novomodelo_bridge.decomp.converters.constraints import (
@@ -533,21 +526,17 @@ def _special_constraint_coverage(
     rha_diagnostic = constraint_registers.detect_unconverted_rha(dadger)
     if rha_diagnostic is not None:
         diagnostics.append(rha_diagnostic)
-    libs_diagnostic = constraint_registers.detect_libs_electrical(libs_file)
-    if libs_diagnostic is not None and libs_long_form is False:
-        diagnostics.append(libs_diagnostic)
 
     return checks, diagnostics
 
 
 def _libs_electrical_read(
     case: DecompCase, calendar: list[OperativeStage]
-) -> tuple[bool | None, list[CheckItem], list[Diagnostic]]:
+) -> tuple[list[CheckItem], list[Diagnostic]]:
     """Read the LIBS ``RESTRICAO-ELETRICA-ESPECIAL`` file as ``convert decomp`` does.
 
-    Returns whether it has a long-form card ``convert decomp`` reads, with the
-    WARNINGs the read raises, the lines it does not read among them. A file it
-    cannot read gives ``None`` and a failed check, since ``convert decomp``
+    Returns the WARNINGs the read raises, the lines it does not read among
+    them. A file it cannot read gives a failed check, since ``convert decomp``
     stops on it.
     """
     from novomodelo_bridge.decomp.converters import libs_electrical
@@ -557,26 +546,19 @@ def _libs_electrical_read(
     try:
         with collect() as found:
             restricoes = case.libs_restricao_eletrica
-            model = None
             if path is not None and restricoes is not None:
                 unread = unread_lines_diagnostic(path, restricoes.data)
                 if unread is not None:
                     emit(unread, logger=_LOG)
-                model = libs_electrical.read_libs_electrical(
-                    restricoes, calendar, source=path
-                )
+                libs_electrical.read_libs_electrical(restricoes, calendar)
     except Exception as exc:
         failed = CheckItem(
             label="LIBS electrical restrictions readable",
             passed=False,
             detail=str(exc),
         )
-        return (
-            None,
-            [failed],
-            [*found, diagnostic_from_exception(exc, context=_CONTEXT)],
-        )
-    return model is not None, [], found
+        return [failed], [*found, diagnostic_from_exception(exc, context=_CONTEXT)]
+    return [], found
 
 
 def _gnl_generation_read(
@@ -767,9 +749,7 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
                 checks.append(tailrace_check)
                 diagnostics.extend(tailrace_diags)
 
-        libs_long_form, electrical_checks, electrical_diags = _libs_electrical_read(
-            case, calendar
-        )
+        electrical_checks, electrical_diags = _libs_electrical_read(case, calendar)
         checks.extend(electrical_checks)
         diagnostics.extend(electrical_diags)
 
@@ -781,7 +761,6 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
 
         sc_checks, sc_diags = _special_constraint_coverage(
             dadger,
-            files.libs_restricao_eletrica,
             id_map,
             pumping_station_id_map(dadger),
             gnl_generation=gnl_generation,
@@ -789,7 +768,6 @@ def run_decomp_preflight(src: Path) -> PreflightResult:
             ct_submarkets=ct_submarkets(dadger),
             dadger_path=str(files.dadger),
             dadgnl_path=str(files.dadgnl) if files.dadgnl is not None else None,
-            libs_long_form=libs_long_form,
             plant_names=plant_names,
             diversion_codes=diversion_codes,
         )

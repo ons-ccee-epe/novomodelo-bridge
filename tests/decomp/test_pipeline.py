@@ -1376,7 +1376,6 @@ def _run_cadastro_pipeline(
     to_generic: tuple[ConstraintRecord, ...] = (),
     to_bounds: tuple[ConstraintRecord, ...] = (),
     rha_detection: object | None = None,
-    libs_electrical: object | None = None,
     diagnostics_out: list[Diagnostic] | None = None,
     dry_run: bool = False,
     report_out: list[ConversionReport] | None = None,
@@ -1394,11 +1393,10 @@ def _run_cadastro_pipeline(
     ``ConstraintCensus.to_generic`` — every RE/RHQ/RHV/RHE record the
     generic-constraint emitters consume, none of which the mock deck's
     ``Dadger`` can produce for real (it exposes no
-    ``RE``/``HQ``/``HV``/``HE``/``CM`` accessors); *to_bounds* feeds its
-    ``to_bounds``, the single-term records lowered to entity bounds.
-    *rha_detection*/*libs_electrical* feed the
-    detection helpers the same way — both otherwise patched to their
-    empty/absent default so this shared fixture keeps regressing the
+    ``RE``/``HQ``/``HV``/``HE``/``CM`` accessors).
+    *rha_detection* feeds the
+    detection helper the same way — otherwise patched to its
+    absent default so this shared fixture keeps regressing the
     bound-combine logic it was built for, undisturbed.
 
     *diagnostics_out*: ``convert_decomp_case`` now owns its own
@@ -1565,13 +1563,10 @@ def _run_cadastro_pipeline(
         "novomodelo_bridge.decomp.pipeline.thermal_conv.ct_submarkets": {},
         # The mock deck has no RHA accessors and no real files
         # (DecompCase.from_directory is patched wholesale above), so the
-        # detection helpers are patched too, the same way the
+        # detection helper is patched too, the same way the
         # special-constraint reader above is.
         "novomodelo_bridge.decomp.pipeline"
         ".constraint_registers.detect_unconverted_rha": rha_detection,
-        "novomodelo_bridge.decomp.pipeline.constraint_registers.detect_libs_electrical": (
-            libs_electrical
-        ),
     }
     if gnl_emission is not None:
         # Route the GNL wiring block through
@@ -1639,6 +1634,7 @@ _POPULATED_GNL_EMISSION = GnlEmission(
         "thermal_stages": [{"id": 12, "start_date": "2027-07-06"}],
         "thermal_bounds": [{"thermal_id": 1, "stage_id": 12, "max_mw": 50.0}],
     },
+    thermal_id_by_code={86: 1, 224: 2},
 )
 
 _EMPTY_THERMAL_BOUNDS_GNL_EMISSION = GnlEmission(
@@ -1650,6 +1646,7 @@ _EMPTY_THERMAL_BOUNDS_GNL_EMISSION = GnlEmission(
         "thermal_stages": [{"id": 12, "start_date": "2027-07-06"}],
         "thermal_bounds": [],
     },
+    thermal_id_by_code={86: 1},
 )
 
 
@@ -2287,7 +2284,7 @@ class TestGenericConstraintWiring:
     def test_detection_diagnostics_flow_through_the_dx_sink(
         self, tmp_path: Path
     ) -> None:
-        """The RHA/LIBs-electrical detection diagnostics are
+        """The RHA detection diagnostic is
         captured on the returned ``ConversionReport``, not only logged.
 
         ``convert_decomp_case`` now owns its own top-level
@@ -2303,28 +2300,16 @@ class TestGenericConstraintWiring:
             title="RHA family not converted",
             summary="synthetic RHA finding",
         )
-        libs_diagnostic = dx.Diagnostic(
-            code="decomp-libs-electrical-present",
-            severity=dx.Severity.WARNING,
-            category="Special constraints",
-            title="LIBs electrical constraints present",
-            summary="synthetic LIBs finding",
-        )
 
         collected: list[dx.Diagnostic] = []
         _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
             rha_detection=rha_diagnostic,
-            libs_electrical=libs_diagnostic,
             diagnostics_out=collected,
         )
 
-        codes = {d.code for d in collected}
-        assert {
-            "decomp-rha-family-unconverted",
-            "decomp-libs-electrical-present",
-        } <= codes
+        assert "decomp-rha-family-unconverted" in {d.code for d in collected}
 
     def test_generic_bounds_are_zstd_and_envelope_matches_the_shared_writer(
         self, tmp_path: Path
@@ -2603,8 +2588,8 @@ class TestSpecialConstraintSurfaces:
             r for r in caplog.records if "deferred at this milestone" in r.message
         ]
 
-    def test_rha_libs_are_reported_through_the_dx_sink(self, tmp_path: Path) -> None:
-        """A deck with RHA/LIBs surfaces reports each exactly once through
+    def test_rha_is_reported_through_the_dx_sink(self, tmp_path: Path) -> None:
+        """A deck with an RHA surface reports it exactly once through
         the structured ``Diagnostic``s.
 
         ``convert_decomp_case`` owns its own top-level ``dx.collect()``, so the
@@ -2620,28 +2605,16 @@ class TestSpecialConstraintSurfaces:
             title="RHA family not converted",
             summary="synthetic RHA finding",
         )
-        libs_diagnostic = dx.Diagnostic(
-            code="decomp-libs-electrical-present",
-            severity=dx.Severity.WARNING,
-            category="Special constraints",
-            title="LIBs electrical constraints present",
-            summary="synthetic LIBs finding",
-        )
 
         collected: list[dx.Diagnostic] = []
         _run_cadastro_pipeline(
             tmp_path,
             ac_volmax_frame=None,
             rha_detection=rha_diagnostic,
-            libs_electrical=libs_diagnostic,
             diagnostics_out=collected,
         )
 
-        codes = {d.code for d in collected}
-        assert {
-            "decomp-rha-family-unconverted",
-            "decomp-libs-electrical-present",
-        } <= codes
+        assert [d.code for d in collected].count("decomp-rha-family-unconverted") == 1
 
 
 class TestDiversionChannels:

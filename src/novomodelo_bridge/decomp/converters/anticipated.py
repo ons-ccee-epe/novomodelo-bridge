@@ -1016,12 +1016,14 @@ class GnlEmission:
     ``post_study_stages`` is the standalone ``post_study_stages.json`` payload,
     ``None`` when the model declares no GS calendar (``weeks_per_month`` empty)
     and non-``None`` (its ``thermal_bounds`` possibly empty) whenever a GS
-    calendar exists.
+    calendar exists. ``thermal_id_by_code`` maps each plant's ``dadgnl`` code to
+    the id of its created entry.
     """
 
     thermals: list[dict]
     past_anticipated_commitments: list[dict]
     post_study_stages: dict | None
+    thermal_id_by_code: dict[int, int]
 
 
 def _report_nonuniform_lag(model: GnlCommitmentModel) -> None:
@@ -1748,6 +1750,7 @@ def _convert_monthly_gnl(
             if post_calendar
             else None
         ),
+        thermal_id_by_code=dict(gnl_id),
     )
 
 
@@ -1943,4 +1946,5 @@ def _convert_gnl(
         thermals=thermals,
         past_anticipated_commitments=past,
         post_study_stages=post_study,
+        thermal_id_by_code=dict(gnl_id),
     )

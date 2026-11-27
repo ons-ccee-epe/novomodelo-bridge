@@ -1,6 +1,6 @@
 """The source models' electrical linear-expression language: parse one
 formula into flat terms, sort each term into the A/B/C bucket trichotomy, and
-fold the input-data terms into a numeric bound.
+sum the input-data terms.
 
 NEWAVE's ``restricao-eletrica.csv`` and DECOMP's
 ``lib_restricao-eletrica-especial.csv`` write their electrical constraints in
@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Protocol
 from novomodelo_bridge.core.diagnostics import Diagnostic, DiagnosticTable, Severity
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
 #: Built-in bare (argument-less) input-data tokens. A bare name the scope does
 #: not declare, and not in this set, is an unrecognized identifier.
@@ -117,29 +117,6 @@ class ParsedTerm:
     condition: str | None = None
     branch_true: str | None = None
     branch_false: str | None = None
-
-
-@dataclass(frozen=True)
-class AssembledBound:
-    """The result of folding one restriction's bucket-B/-C terms into a
-    per-(stage,block) numeric bound, sign-canonical for novomodelo.
-
-    ``terms`` is the surviving bucket-A (decision) expression, already in
-    novomodelo's single-LHS form: ``lower <= Σ terms <= upper``. A formula
-    restriction keeps its LHS bucket-A terms verbatim; a fold that moves a
-    term across the relation (an inequality's RHS decision terms, a reserve's
-    generation terms under the operator flip) has already sign-flipped it, so
-    a caller reading ``terms`` never has to know which shape produced it.
-    """
-
-    terms: tuple[ParsedTerm, ...]
-    lower: float | None
-    upper: float | None
-
-
-def negate(term: ParsedTerm) -> ParsedTerm:
-    """*term* with its coefficient sign flipped, every other field verbatim."""
-    return replace(term, coefficient=-term.coefficient)
 
 
 class ExpressionScope(Protocol):
@@ -679,24 +656,6 @@ def evaluate_terms(terms: Sequence[ParsedTerm], context: DataContext) -> float:
         if term.token == CONST_TOKEN
         else term.coefficient * context(term)
         for term in terms
-    )
-
-
-def fold_formula_bound(
-    partition: Mapping[Bucket, Sequence[ParsedTerm]],
-    lower: float | None,
-    upper: float | None,
-    context: DataContext,
-) -> AssembledBound:
-    """Fold a formula's bucket-B sum into its two-sided limit, keeping its
-    bucket-A terms verbatim: ``lower <= lhs_A + lhs_B <= upper`` becomes
-    ``lower - lhs_B <= lhs_A <= upper - lhs_B``. A ``None`` side stays
-    unbounded."""
-    data_sum = evaluate_terms(partition[Bucket.B], context)
-    return AssembledBound(
-        terms=tuple(partition[Bucket.A]),
-        lower=None if lower is None else lower - data_sum,
-        upper=None if upper is None else upper - data_sum,
     )
 
 

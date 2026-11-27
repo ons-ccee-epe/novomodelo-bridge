@@ -6,8 +6,8 @@ when the cause leaves out only the term, and is left out whole otherwise,
 and the one diagnostic naming the term carries the cause's severity.
 
 A term on a GNL thermal of the DECOMP ``dadgnl`` file is not outside the
-case: both DECOMP paths fold its commanded generation into the same bound,
-and both stop where no ``GL`` week commands the thermal, as DECOMP does.
+case: the ``RE`` path folds its commanded generation into the bound, and
+stops where no ``GL`` week commands the thermal, as DECOMP does.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ import pytest
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.diagnostics import Severity
-from novomodelo_bridge.core.electrical_expression import GNL_TOKEN, ParsedTerm
 from novomodelo_bridge.core.errors import FieldParseError
 from novomodelo_bridge.core.outside_terms import OutsideTerm
 from novomodelo_bridge.decomp.constraint_registers import (
@@ -30,20 +29,10 @@ from novomodelo_bridge.decomp.constraint_registers import (
     StageBounds,
     drop_unknown_entities,
 )
-from novomodelo_bridge.decomp.converters.anticipated import commanded_gnl_generation
 from novomodelo_bridge.decomp.converters.constraints import (
     DecompGenericResult,
     emit_re_generics,
     fold_commanded_gnl_terms,
-)
-from novomodelo_bridge.decomp.converters.libs_electrical import (
-    AvailablePower,
-    ElectricalRestriction,
-    LibsElectricalModel,
-)
-from novomodelo_bridge.decomp.converters.libs_electrical_emit import (
-    LibsElectricalResult,
-    emit_libs_electrical_generics,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.decomp.temporal import OperativeStage
@@ -198,81 +187,10 @@ def _decomp_re(cause: OutsideTerm) -> _Outcome:
     return _Outcome(result is not None, [d.severity for d in found])
 
 
-_DC_LIBS_TERM = {
-    OutsideTerm.NO_LINE: "ener_interc(1,2)",
-    OutsideTerm.NOT_GENERATING: "ger_usih(46)",
-    OutsideTerm.ABSENT: "ger_usih(99)",
-}
-
-
-def _cell_context(stage_index: int, block_index: int) -> Callable[[ParsedTerm], float]:
-    """The data context of a cell: a constant reads 1, a GNL ``ger_usit`` its
-    thermal's commanded MW, as ``convert decomp`` resolves it."""
-
-    def resolve(term: ParsedTerm) -> float:
-        if term.token == GNL_TOKEN:
-            code = term.args[0]
-            return commanded_gnl_generation(
-                _DC_GNL_GENERATION,
-                code,
-                stage_index,
-                reference=f"ger_usit({code})",
-                dadgnl_path="dadgnl.rv0",
-            )[block_index]
-        assert term.token == "__const__"
-        return 1.0
-
-    return resolve
-
-
-def _libs_generics(third: str) -> tuple[LibsElectricalResult, list[dx.Diagnostic]]:
-    """``ger_usih(5) + ger_usih(6) + third <= 50`` through the LIBS emitter."""
-    restriction = ElectricalRestriction(
-        code=1,
-        lhs=f"ger_usih(5) + ger_usih(6) + {third}",
-        operator="<=",
-        rhs="50",
-        is_formula=False,
-        limits={},
-        overrides=(),
-        stage_start=None,
-        stage_end=None,
-        habilita=None,
-        violation=None,
-    )
-    model = LibsElectricalModel(
-        expressions={},
-        aliases={},
-        restrictions={1: restriction},
-        rules={},
-        gnl_thermal_codes=frozenset(_DC_GNL_GENERATION),
-    )
-    with dx.collect() as collected:
-        result = emit_libs_electrical_generics(
-            model,
-            _DC_ID_MAP,
-            _cell_context,
-            AvailablePower(overlay={}),
-            _DC_CALENDAR,
-            {},
-            {},
-            {},
-            big_m=1000.0,
-            source=Path("lib_restricao-eletrica-especial.csv"),
-        )
-    return result, collected
-
-
-def _decomp_libs(cause: OutsideTerm) -> _Outcome:
-    result, found = _libs_generics(_DC_LIBS_TERM[cause])
-    return _Outcome(result.converted_codes == (1,), [d.severity for d in found])
-
-
 _PATHS: dict[str, tuple[Callable[[OutsideTerm], _Outcome], tuple[OutsideTerm, ...]]] = {
     "newave-formula": (_newave_formula, tuple(_NW_FORMULA_TERM)),
     "newave-re-dat": (_newave_re_dat, tuple(_NW_RE_DAT_PLANT)),
     "decomp-re": (_decomp_re, tuple(_DC_RE_TERM)),
-    "decomp-libs": (_decomp_libs, tuple(_DC_LIBS_TERM)),
 }
 
 
@@ -308,32 +226,17 @@ def _gnl_ft(code: int) -> ConstraintTerm:
     )
 
 
-def test_a_commanded_gnl_term_folds_into_the_same_bound_on_re_and_libs() -> None:
+def test_a_commanded_gnl_term_folds_into_the_bound() -> None:
     re_result, re_found = _re_generics(_gnl_ft(86))
-    libs_result, libs_found = _libs_generics("0.5*ger_usit(86)")
 
     assert re_result is not None
-    assert libs_result.generic is not None
-    re_bounds, libs_bounds = (
-        bounds.select(
-            ["stage_id", "block_id", "bound_lower", "bound_upper"]
-        ).to_pylist()
-        for bounds in (re_result.bounds, libs_result.generic.bounds)
-    )
-    assert re_bounds == libs_bounds
+    re_bounds = re_result.bounds.select(
+        ["stage_id", "block_id", "bound_lower", "bound_upper"]
+    ).to_pylist()
     assert [row["bound_upper"] for row in re_bounds] == [-50.0]
-    assert (re_found, libs_found) == ([], [])
+    assert re_found == []
 
 
-@pytest.mark.parametrize(
-    "convert",
-    [
-        pytest.param(lambda: _re_generics(_gnl_ft(87)), id="decomp-re"),
-        pytest.param(lambda: _libs_generics("0.5*ger_usit(87)"), id="decomp-libs"),
-    ],
-)
-def test_an_uncommanded_gnl_term_stops_both_paths(
-    convert: Callable[[], object],
-) -> None:
+def test_an_uncommanded_gnl_term_stops_the_conversion() -> None:
     with pytest.raises(FieldParseError, match="DECOMP stops on such a term too$"):
-        convert()
+        _re_generics(_gnl_ft(87))

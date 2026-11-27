@@ -609,6 +609,7 @@ reads = [
   { file = "dadgnl", register = "GL" },
   { file = "dadgnl", register = "GS" },
   { file = "dadgnl", register = "NL" },
+  { file = "cortesh" },
 ]
 summary = "Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1 ponderados pelas horas de patamar; as térmicas GNL de `dadgnl` (ausentes de `CT`) são acrescentadas ao final com ids seguintes, marcadas como despacho antecipado."
 
@@ -676,6 +677,7 @@ summary = "Uma térmica por `codigo_usina` de `CT`, com os valores do estágio 1
   status = "null"
   when = "somente nas térmicas GNL, quando `dadgnl` declara usinas GNL (registros `TG`)"
   how = "Sempre nulo: térmicas GNL não saem dentro do horizonte. Térmicas de `CT` omitem o campo."
+
 
 # ---------------------------------------------------------------------------
 # system/pumping_stations.json
@@ -801,7 +803,7 @@ summary = "Uma fonte não controlável por série `PQ` (par submercado + nome), 
 [[output]]
 path = "constraints/generic_parameters.json"
 kind = "json"
-when = "somente quando alguma expressão de restrição genérica referencia um parâmetro: uma restrição de energia armazenada `HE`/`CM` (RHE) que sobrevive e referencia ao menos um reservatório, ou um termo de `RE`/`RHQ`/`RHV` cujo coeficiente muda entre os estágios da restrição"
+when = "somente quando alguma expressão de restrição genérica referencia um parâmetro (uma restrição de energia armazenada `HE`/`CM` (RHE) que sobrevive e referencia ao menos um reservatório, ou um termo de `RE`/`RHQ`/`RHV` cujo coeficiente muda entre os estágios da restrição) ou quando as restrições elétricas do arquivo LIBs leem ao menos um apelido, termo de dado ou expressão só de dados"
 module = "src/novomodelo_bridge/decomp/converters/scalar_parameters.py"
 reads = [
   { file = "dadger", register = "HE" },
@@ -815,27 +817,41 @@ reads = [
   { file = "dadger", register = "FE" },
   { file = "dadger", register = "CQ" },
   { file = "dadger", register = "CV" },
+  { file = "dadger", register = "DP" },
+  { file = "dadger", register = "SB" },
+  { file = "dadger", register = "RI" },
+  { file = "dadger", register = "PQ" },
   { file = "hidr" },
+  { file = "libs_restricao_eletrica" },
 ]
-summary = "Declara, para cada usina convertida, os parâmetros calculados pelo Novomodelo `@rho_eq_h{id}`, `@rho_acum_h{id}`, `@rho_eq_mwh_h{id}`, `@rho_acum_mwh_h{id}`, `@earm_max_mwh_h{id}`, `@min_storage_h{id}` e `@max_storage_h{id}` usados em expressões de restrições genéricas; a RHE usa o `rho_acum_mwh` (produtibilidade acumulada integrada no volume, em MWh/hm³) e o `earm_max_mwh` (energia útil máxima, em MWh) quando a cadeia energética do reservatório é a sua rota hídrica. Declara também, por restrição RHE com `tipo_limite` = 2, a fração `pct_rhe{código}` por estágio; para cada reservatório cuja cadeia energética difere da rota hídrica do `hydros.json` (`AC JUSENA`) ou é cortada por um registro `EZ`, os parâmetros de expressão da sua parcela de energia armazenada; para cada usina fora da configuração nessa cadeia, a sua produtibilidade por estágio `rho_eq_mwh_plant{código}`; e, para cada termo de `RE`/`RHQ`/`RHV` cujo coeficiente muda entre os estágios da restrição (ou que entra nela depois do primeiro estágio), o coeficiente por estágio `coef_<família><código>_t<termo>`."
+summary = "Declara, para cada usina convertida, os parâmetros calculados pelo Novomodelo `@rho_eq_h{id}`, `@rho_acum_h{id}`, `@rho_eq_mwh_h{id}`, `@rho_acum_mwh_h{id}`, `@earm_max_mwh_h{id}`, `@min_storage_h{id}` e `@max_storage_h{id}` usados em expressões de restrições genéricas; a RHE usa o `rho_acum_mwh` (produtibilidade acumulada integrada no volume, em MWh/hm³) e o `earm_max_mwh` (energia útil máxima, em MWh) quando a cadeia energética do reservatório é a sua rota hídrica. Declara também, por restrição RHE com `tipo_limite` = 2, a fração `pct_rhe{código}` por estágio; para cada reservatório cuja cadeia energética difere da rota hídrica do `hydros.json` (`AC JUSENA`) ou é cortada por um registro `EZ`, os parâmetros de expressão da sua parcela de energia armazenada; para cada usina fora da configuração nessa cadeia, a sua produtibilidade por estágio `rho_eq_mwh_plant{código}`; e, para cada termo de `RE`/`RHQ`/`RHV` cujo coeficiente muda entre os estágios da restrição (ou que entra nela depois do primeiro estágio), o coeficiente por estágio `coef_<família><código>_t<termo>`. Por fim, depois de todas essas entradas e sem mudar os ids delas, acrescenta as das restrições elétricas do arquivo LIBs (ver `constraints/generic_constraints.json`): um `per_stage_block` por apelido (`ALIAS-ELETRICO`) e por termo de dado (`carga_ande`, do `RI`, e `peq_<nome do PQ>_<nome do SB>`, de uma série `PQ`) que a expressão ou a condição de alguma restrição elétrica emitida alcança, e um `expression` por expressão elétrica alcançada que é aritmética só sobre dados."
 
   [[output.field]]
   path = "scalar_parameters[].id"
   from = []
   status = "derived"
-  how = "Sequencial 0-based: sete por usina, em ordem crescente de id hidráulico, seguidos dos coeficientes por estágio (ordem `RE` → `HQ`/`HV`), das frações `pct_rhe{código}` e das produtibilidades `rho_eq_mwh_plant{código}` (ordem dos registros `HE`) e dos parâmetros de expressão das parcelas de energia armazenada."
+  how = "Sequencial 0-based: sete por usina, em ordem crescente de id hidráulico, seguidos dos coeficientes por estágio (ordem `RE` → `HQ`/`HV`), das frações `pct_rhe{código}` e das produtibilidades `rho_eq_mwh_plant{código}` (ordem dos registros `HE`) e dos parâmetros de expressão das parcelas de energia armazenada; por fim, as entradas das restrições elétricas: apelidos por código e nome, termos de dado por nome e expressões só de dados por código e nome."
 
   [[output.field]]
   path = "scalar_parameters[].name"
-  from = [ { file = "dadger", register = "UH", item = "codigo_usina" } ]
+  from = [
+    { file = "dadger", register = "UH", item = "codigo_usina" },
+    { file = "libs_restricao_eletrica", item = "ALIAS-ELETRICO · identificador_alias" },
+    { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · identificador_expressao" },
+    { file = "dadger", register = "PQ", item = "nome" },
+    { file = "dadger", register = "SB", item = "nome_submercado" },
+  ]
   status = "derived"
-  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}`, `earm_max_mwh_h{id}`, `min_storage_h{id}` ou `max_storage_h{id}`, com o id 0-based da usina convertida; `pct_rhe{código}` com o código do `HE`; `coef_re{código}_t{k}`, `coef_hq{código}_t{k}` ou `coef_hv{código}_t{k}` com o código da restrição e o índice 0-based `k` do termo; `rho_eq_mwh_plant{código}` com o código `hidr` de uma usina fora da configuração; nas parcelas de energia armazenada, `rho_chain_mwh_h{id}` com o id da primeira usina da cadeia e `earm_max_chain_mwh_h{id}` e `earm_max_ez_mwh_h{id}` com o id do reservatório."
+  how = "`rho_eq_h{id}`, `rho_acum_h{id}`, `rho_eq_mwh_h{id}`, `rho_acum_mwh_h{id}`, `earm_max_mwh_h{id}`, `min_storage_h{id}` ou `max_storage_h{id}`, com o id 0-based da usina convertida; `pct_rhe{código}` com o código do `HE`; `coef_re{código}_t{k}`, `coef_hq{código}_t{k}` ou `coef_hv{código}_t{k}` com o código da restrição e o índice 0-based `k` do termo; `rho_eq_mwh_plant{código}` com o código `hidr` de uma usina fora da configuração; nas parcelas de energia armazenada, `rho_chain_mwh_h{id}` com o id da primeira usina da cadeia e `earm_max_chain_mwh_h{id}` e `earm_max_ez_mwh_h{id}` com o id do reservatório; nas entradas elétricas, o nome que os textos do deck citam (o identificador do apelido ou da expressão, `carga_ande` ou `peq_<nome do PQ>_<nome do SB>`), saneado como em `generic_constraints.json`."
 
   [[output.field]]
   path = "scalar_parameters[].kind"
-  from = [ { file = "dadger", register = "HE", item = "tipo_limite" } ]
+  from = [
+    { file = "dadger", register = "HE", item = "tipo_limite" },
+    { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · formula" },
+  ]
   status = "derived"
-  how = "`computed` para os sete parâmetros de usina; `per_stage` para as frações `pct_rhe{código}`, os coeficientes `coef_…` e as produtibilidades `rho_eq_mwh_plant{código}`; `expression` para as parcelas de energia armazenada."
+  how = "`computed` para os sete parâmetros de usina; `per_stage` para as frações `pct_rhe{código}`, os coeficientes `coef_…` e as produtibilidades `rho_eq_mwh_plant{código}`; `expression` para as parcelas de energia armazenada e para as expressões elétricas só de dados; `per_stage_block` para os apelidos e os termos de dado elétricos."
 
   [[output.field]]
   path = "scalar_parameters[].computed_spec.tag"
@@ -884,10 +900,27 @@ summary = "Declara, para cada usina convertida, os parâmetros calculados pelo N
     { file = "dadger", register = "EZ", item = "volume" },
     { file = "hidr", item = "codigo_usina_jusante" },
     { file = "dadger", register = "AC", item = "NUMJUS" },
+    { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · formula" },
   ]
-  when = "somente nas entradas `expression`, de reservatórios cuja cadeia energética difere da rota hídrica ou é cortada por um registro `EZ`"
+  when = "somente nas entradas `expression`, de reservatórios cuja cadeia energética difere da rota hídrica ou é cortada por um registro `EZ` e de expressões elétricas só de dados"
   status = "derived"
-  how = "Aritmética sobre os parâmetros calculados. A cadeia energética de uma usina segue o `AC JUSENA` onde declarado e, nas demais, a jusante operada (`codigo_usina_jusante` com `AC NUMJUS`). Um reservatório com registro `EZ` tem a cadeia cortada onde ela sai do seu REE; sem registro `EZ` próprio, a cadeia vai até o fim, qualquer que seja o registro das demais usinas. `rho_chain_mwh_h{id}`: soma dos `@rho_eq_mwh_h<c>` das usinas da cadeia (e de `@rho_eq_mwh_plant<código>` para usina fora da configuração), com o trecho final que coincide com a rota hídrica do `hydros.json` lido como `@rho_acum_mwh_h<c>`; uma cadeia de uma só usina usa o `@rho_eq_mwh_h<id>` direto. `earm_max_chain_mwh_h{id}`: `(@max_storage_h{id} - @min_storage_h{id}) * <produtibilidade>`. `earm_max_ez_mwh_h{id}`: `<EZ / 100> * (@max_storage_h{id} - @min_storage_h{id}) * <produtibilidade da cadeia da primeira usina abaixo do corte>`, com o fator omitido quando o `EZ` é 100."
+  how = "Aritmética sobre os parâmetros calculados. A cadeia energética de uma usina segue o `AC JUSENA` onde declarado e, nas demais, a jusante operada (`codigo_usina_jusante` com `AC NUMJUS`). Um reservatório com registro `EZ` tem a cadeia cortada onde ela sai do seu REE; sem registro `EZ` próprio, a cadeia vai até o fim, qualquer que seja o registro das demais usinas. `rho_chain_mwh_h{id}`: soma dos `@rho_eq_mwh_h<c>` das usinas da cadeia (e de `@rho_eq_mwh_plant<código>` para usina fora da configuração), com o trecho final que coincide com a rota hídrica do `hydros.json` lido como `@rho_acum_mwh_h<c>`; uma cadeia de uma só usina usa o `@rho_eq_mwh_h<id>` direto. `earm_max_chain_mwh_h{id}`: `(@max_storage_h{id} - @min_storage_h{id}) * <produtibilidade>`. `earm_max_ez_mwh_h{id}`: `<EZ / 100> * (@max_storage_h{id} - @min_storage_h{id}) * <produtibilidade da cadeia da primeira usina abaixo do corte>`, com o fator omitido quando o `EZ` é 100. Expressão elétrica: a fórmula traduzida como em `generic_constraints.json`, só com números, sinais, parênteses, `+ - * /` e `@nome` de apelidos, termos de dado e outras expressões só de dados; um ciclo entre expressões interrompe a conversão."
+
+  [[output.field]]
+  path = "scalar_parameters[].block_values[][]"
+  from = [
+    { file = "libs_restricao_eletrica", item = "ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR · estagio_inicio" },
+    { file = "libs_restricao_eletrica", item = "ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR · estagio_fim" },
+    { file = "libs_restricao_eletrica", item = "ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR · patamar" },
+    { file = "libs_restricao_eletrica", item = "ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR · valor" },
+    { file = "dadger", register = "RI", item = "carga_ande" },
+    { file = "dadger", register = "PQ", item = "geracao_k" },
+    { file = "dadger", register = "DP", item = "numero_patamares" },
+  ]
+  when = "somente nas entradas `per_stage_block`, dos apelidos e termos de dado elétricos"
+  status = "derived"
+  how = "Triplas [estágio, patamar, valor], 0-based, para todo estágio e patamar do estudo. Apelido: o valor do patamar ou, sem ele, o valor de todos os patamares do estágio (`patamar` em branco); uma linha que cobre vários períodos vale em cada estágio do intervalo. `carga_ande`: os MW do `RI` (`carga_ande_k`); `peq_*`: os MW do `PQ` (`geracao_k`, em branco lido como 0); ambos herdam adiante o último estágio declarado. Uma célula sem valor que alguma restrição lê interrompe a conversão, com o nome e as células na mensagem; uma célula sem valor que nenhuma restrição lê é escrita como 0.0, com o aviso `decomp-electrical-unread-cells-filled`. A carga da ANDE continua somada ao barramento do submercado de Itaipu em `scenarios/load_*`; o parâmetro só fornece o valor às fórmulas."
+
 
 # ---------------------------------------------------------------------------
 # constraints/line_bounds.parquet
@@ -2890,12 +2923,18 @@ summary = "Carga determinística replicada nas colunas de cenário da biblioteca
 [[output]]
 path = "constraints/generic_constraints.json"
 kind = "json"
-when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica, ou quando Itaipu é operada e o `RI` declara `carga_ande` positiva"
+when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ/RHV ou RHE) não se reduz a um limite de entidade e sobrevive como restrição genérica, quando Itaipu é operada e o `RI` declara `carga_ande` positiva, ou quando alguma restrição do arquivo LIBs de restrições elétricas vale em algum estágio e patamar"
 module = "src/novomodelo_bridge/decomp/converters/constraints.py"
 reads = [
+  { file = "libs_restricao_eletrica" },
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "CT" },
   { file = "dadger", register = "UH" },
+  { file = "dadger", register = "MP" },
+  { file = "dadger", register = "FD" },
+  { file = "dadger", register = "PQ" },
+  { file = "dadgnl", register = "TG" },
+  { file = "renovaveis" },
   { file = "dadger", register = "DP" },
   { file = "dadger", register = "DT" },
   { file = "dadger", register = "RE" },
@@ -2919,15 +2958,10 @@ reads = [
   { file = "dadger", register = "IA" },
   { file = "dadger", register = "UE" },
   { file = "dadger", register = "RI" },
-  { file = "dadger", register = "MP" },
-  { file = "dadger", register = "FD" },
-  { file = "dadger", register = "PQ" },
   { file = "dadger", register = "AC" },
   { file = "hidr" },
-  { file = "libs_restricao_eletrica" },
-  { file = "renovaveis" },
 ]
-summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`/`FE`) ou com termo de contrato (`FE`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHE` (energia armazenada por REE) e as restrições elétricas de forma longa do arquivo LIBs, emitidas nessa ordem sobre um único espaço de ids. Por último vem `RI_ANDE`, quando Itaipu é operada e o `RI` declara `carga_ande` positiva: a geração de Itaipu na barra do seu submercado, onde fica o grupo de 50 Hz, maior ou igual à carga da ANDE em cada estágio e patamar, pois o DECOMP desconta essa carga da geração de 50 Hz entregue ao submercado, e só esse grupo a atende. Um termo nulo também no DECOMP sai da soma e o resto da restrição é mantido, com nota: `FU` de uma `RE`, ou `ger_usih`/`ger_conjh` de uma restrição LIBs, sobre usina cujo `UH` não traz volume inicial, que o DECOMP não opera (uma `RE` que fica com um só termo vira limite de entidade), e `FI` de uma `RE`, ou `ener_interc` de uma restrição LIBs entre dois submercados `SB`, sobre par que nenhum `IA` liga; uma restrição sem termo restante é pulada inteira, com aviso. Um termo `FT` de uma `RE` sobre térmica GNL do `dadgnl` sai da soma, e o seu coeficiente vezes a geração comandada no `GL` em cada estágio e patamar é descontado dos limites, como faz o DECOMP e como a conversão faz com o `ger_usit` da mesma térmica numa restrição LIBs; uma `RE` que fica sem termo é pulada, com nota, e um estágio em que o termo vale sem semana `GL` interrompe a conversão, como interrompe o DECOMP. Uma restrição com termo não resolvível (`FU` de usina sem `UH`, `FU` por frequência, `FT` de térmica sem `CT` nem `TG`, `FI` com submercado sem `SB`, `ener_interc` com operando fora do `SB` sem linha, `FE` sem um único contrato `CI`/`CE` com o seu número no seu submercado, `QBOM`/`VBOM` sem estação `UE`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem. Em `HQ` e `HV`, um termo com coeficiente zero em todos os estágios da restrição sai dela, com nota, antes de a conversão decidir entre limite de entidade e restrição genérica; uma restrição que fica sem termo é deixada de fora e, se os seus limites excluem zero em algum estágio, a conversão para com `source-field-parse`. Um registro `CQ`/`CV` sem `tipo` e um termo `QDES`/`VDES` sobre usina sem desvio (sem `desvio` no `hidr.dat` e sem `AC DESVIO`) também param a conversão com `source-field-parse`, nomeando as restrições."
+summary = "Uma entrada por restrição especial que não se reduz a limite de entidade: `RE` com vários termos (`FU`/`FT`/`FI`/`FE`) ou com termo de contrato (`FE`), `RHQ`/`RHV` com vários termos ou coeficiente não unitário, `RHQ` de termo único cujos limites não têm valor comum com os de outra `RHQ` sobre a mesma variável da mesma usina (cada uma com a sua folga, ao mesmo custo, como no modelo de origem, que viola a mais barata), `RHE` (energia armazenada por REE), emitidas nessa ordem sobre um único espaço de ids. Por último vem `RI_ANDE`, quando Itaipu é operada e o `RI` declara `carga_ande` positiva: a geração de Itaipu na barra do seu submercado, onde fica o grupo de 50 Hz, maior ou igual à carga da ANDE em cada estágio e patamar, pois o DECOMP desconta essa carga da geração de 50 Hz entregue ao submercado, e só esse grupo a atende. Um termo nulo também no DECOMP sai da soma e o resto da restrição é mantido, com nota: `FU` de uma `RE` sobre usina cujo `UH` não traz volume inicial, que o DECOMP não opera (uma `RE` que fica com um só termo vira limite de entidade), e `FI` de uma `RE` sobre par que nenhum `IA` liga; uma restrição sem termo restante é pulada inteira, com aviso. Um termo `FT` de uma `RE` sobre térmica GNL do `dadgnl` sai da soma, e o seu coeficiente vezes a geração comandada no `GL` em cada estágio e patamar é descontado dos limites, como faz o DECOMP; uma `RE` que fica sem termo é pulada, com nota, e um estágio em que o termo vale sem semana `GL` interrompe a conversão, como interrompe o DECOMP. Uma restrição com termo não resolvível (`FU` de usina sem `UH`, `FU` por frequência, `FT` de térmica sem `CT` nem `TG`, `FI` com submercado sem `SB`, `FE` sem um único contrato `CI`/`CE` com o seu número no seu submercado, `QBOM`/`VBOM` sem estação `UE`, REE sem reservatório de regularização mensal) é pulada inteira, com diagnóstico. Uma restrição `RE`/`HQ`/`HV` sem nenhum coeficiente no seu primeiro estágio interrompe a conversão, como no modelo de origem. Em `HQ` e `HV`, um termo com coeficiente zero em todos os estágios da restrição sai dela, com nota, antes de a conversão decidir entre limite de entidade e restrição genérica; uma restrição que fica sem termo é deixada de fora e, se os seus limites excluem zero em algum estágio, a conversão para com `source-field-parse`. Um registro `CQ`/`CV` sem `tipo` e um termo `QDES`/`VDES` sobre usina sem desvio (sem `desvio` no `hidr.dat` e sem `AC DESVIO`) também param a conversão com `source-field-parse`, nomeando as restrições. Depois de todas essas vêm as restrições do arquivo LIBs de restrições elétricas, em ordem de id, e as expressões nomeadas que elas leem, em `expressions`. Cada restrição do arquivo é dividida em trechos de uma só relação e um só tratamento de violação, e cada trecho é uma restrição genérica que vale só nas suas células (estágio e patamar), contíguas ou não; uma restrição que não vale em nenhuma célula fica de fora, e as que não saem como uma só restrição com o seu código são listadas no diagnóstico informativo `decomp-electrical-restrictions-split`. Cada texto (fórmula, lado de inequação, condição de regra) é analisado e reescrito com espaçamento canônico, sem avaliar, dobrar ou selecionar nada: `ger_usih` → `hydro_generation`, `ger_usit` → `thermal_generation`, `ger_pee` → `non_controllable_generation`, `disp_usih` → `hydro_availability`, `val_demanda` → `bus_load_value`, `ener_comerc` → `contract_import` ou `contract_export` (pelo tipo declarado do contrato), `ener_interc(de, para)` → `line_flow(source_bus=…, target_bus=…)`, `ger_conjh(usina, conjunto)` → `hydro_generation(…, unit_group=…)` e `se` → `if`. Cada código de entidade vira o id que a conversão deu à entidade: usina operada → id de `system/hydros.json`; térmica de `CT` ou GNL de `dadgnl` → id de `system/thermals.json`; `codigo_pee` → id de `system/non_controllable_sources.json` (a numeração dos parques continua a das séries `PQ`); `codigo_submercado` → id de `system/buses.json`, mais o código 6 → barra de transbordo (IV), salvo quando um submercado declarado já usa o 6; `numero_contrato` → id de `system/energy_contracts.json`; o conjunto de máquinas `n` → o `n`-ésimo grupo, em ordem crescente de id, de `hydros[].unit_groups` (Itaipu, código 66: conjunto 1 → grupo de 50 Hz, 2 → grupo de 60 Hz). O argumento de patamar de um termo é copiado como escrito. A carga do sistema, `val_demanda_sin` com ou sem parênteses, não tem termo no Novomodelo e é escrita no lugar como a soma de uma chamada `bus_load_value` por barra a que leva um `codigo_submercado`, uma vez cada, em ordem crescente de id e com o patamar copiado em cada chamada, entre parênteses; com uma só barra, a chamada sozinha. `demanda` e `demanda_sin` são a carga como termo do LP no DECOMP, e o Novomodelo só lê a carga como dado: dentro de uma condição (o texto de uma regra de ativação e o primeiro argumento de `se`, com tudo o que está dentro dele) `demanda` vira `bus_load_value` e `demanda_sin` a mesma soma; fora de condição, inclusive numa expressão nomeada que só uma regra lê, os dois interrompem a conversão com erro que nomeia o termo e onde ele está escrito; `val_demanda` ou `val_demanda_sin` lê a mesma carga como dado. Uma expressão, um apelido ou um termo de dado (`carga_ande`, `peq_*`) citado vira `@nome`, e `re(R)` vira `@restriction_<R>_formula`; os apelidos, os termos de dado e as expressões só de dados vão para `constraints/generic_parameters.json`. Um nome do deck que não é identificador do novomodelo, ou que colide com um parâmetro de outra conversão ou com um nome gerado, tem os caracteres inválidos trocados por `_` e recebe o menor sufixo `_<n>` livre a partir de 2, com o aviso `decomp-electrical-name-sanitized`. Código sem entidade no caso convertido, número de contrato declarado por mais de um contrato (aviso `decomp-libs-electrical-contract-code-ambiguous`), nome ou função desconhecidos, `re(R)` de restrição sem fórmula própria, ciclo entre expressões e dois overrides de mesma precedência na mesma célula interrompem a conversão, com a restrição, a expressão ou a regra na mensagem. Só saem as expressões e os parâmetros que alguma restrição emitida alcança; os que nenhuma restrição do arquivo alcança são listados no diagnóstico informativo `decomp-electrical-unread-omitted`."
 
   [[output.field]]
   path = "constraints[].id"
@@ -2936,13 +2970,15 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "HQ", item = "codigo_restricao" },
     { file = "dadger", register = "HV", item = "codigo_restricao" },
     { file = "dadger", register = "HE", item = "codigo_restricao" },
+    { file = "dadger", register = "RI", item = "carga_ande" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA · codigo_restricao" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · codigo_restricao" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · codigo_restricao" },
-    { file = "dadger", register = "RI", item = "carga_ande" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR · codigo_restricao" },
   ]
   status = "derived"
-  how = "Id 0-based sequencial, atribuído na ordem de emissão `RE` → `HQ`/`HV` → `HE` → LIBs → `RI_ANDE` (na ordem das linhas de declaração; restrições LIBs em ordem crescente de `codigo_restricao`), apenas às restrições que sobrevivem. O código original fica em `name`."
+  how = "Id 0-based sequencial, atribuído na ordem de emissão `RE` → `HQ`/`HV` → `HE` → `RI_ANDE` (na ordem das linhas de declaração), apenas às restrições que sobrevivem. O código original fica em `name`. Restrição do arquivo LIBs que sai num só trecho: o `codigo_restricao`, sem renumeração, salvo quando ele já é id de uma restrição acima. Cada trecho de uma restrição dividida, e o trecho único cujo código colide, recebe um id novo, acima de todos os ids do caso (os das restrições acima e todos os códigos do arquivo), em ordem de código e de trecho; o código de uma restrição dividida não é id de nenhum trecho."
 
   [[output.field]]
   path = "constraints[].name"
@@ -2951,13 +2987,15 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "HQ", item = "codigo_restricao" },
     { file = "dadger", register = "HV", item = "codigo_restricao" },
     { file = "dadger", register = "HE", item = "codigo_restricao" },
+    { file = "dadger", register = "RI", item = "carga_ande" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA · codigo_restricao" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · codigo_restricao" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · codigo_restricao" },
-    { file = "dadger", register = "RI", item = "carga_ande" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR · codigo_restricao" },
   ]
   status = "derived"
-  how = "`RE_<codigo>`, `HQ_<codigo>`, `HV_<codigo>`, `RHE_<codigo>` ou `LIBS_ELEC_<codigo>`, conforme a família de origem, e `RI_ANDE` para a carga da ANDE."
+  how = "`RE_<codigo>`, `HQ_<codigo>`, `HV_<codigo>` ou `RHE_<codigo>`, conforme a família de origem, e `RI_ANDE` para a carga da ANDE. Restrição do arquivo LIBs: `constraint_<codigo_restricao>` quando sai num só trecho, e `constraint_<codigo_restricao>_<k>` no `k`-ésimo trecho de uma restrição dividida, a partir de 1, na ordem da primeira célula de cada trecho."
 
   [[output.field]]
   path = "constraints[].description"
@@ -2966,11 +3004,10 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "HQ", item = "codigo_restricao" },
     { file = "dadger", register = "HV", item = "codigo_restricao" },
     { file = "dadger", register = "HE", item = "codigo_restricao" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA · codigo_restricao" },
     { file = "dadger", register = "RI", item = "carga_ande" },
   ]
   status = "derived"
-  how = "Texto fixo por família com o código de origem: `RE generic constraint N`, `RHQ generic constraint N`, `RHV generic constraint N`, `RHE stored-energy constraint N, stage S`, `LIBs electrical special constraint N`; em `RI_ANDE`, `Itaipu 50 Hz generation serving the RI ANDE load`."
+  how = "Texto fixo por família com o código de origem: `RE generic constraint N`, `RHQ generic constraint N`, `RHV generic constraint N`, `RHE stored-energy constraint N, stage S`; em `RI_ANDE`, `Itaipu 50 Hz generation serving the RI ANDE load`. As restrições do arquivo LIBs não têm `description`: o arquivo não as descreve."
 
   [[output.field]]
   path = "constraints[].expression"
@@ -3012,19 +3049,38 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "UE", item = "codigo_usina" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA · formula" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · formula" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · operador" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · formula_limite" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · formula" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · operador" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · formula_limite" },
-    { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · formula" },
-    { file = "renovaveis", item = "PEE-CAD · codigo_pee" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR · formula" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR · formula" },
   ]
-  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)` (um `FU` com `frequencia` numa restrição de vários termos descarta a restrição com `decomp-re-frequency-split-deferred`), `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `FE` → `contract_import(id)`/`contract_export(id)` do contrato `CI`/`CE` com o `numero_contrato` do termo no seu submercado (o id de `system/energy_contracts.json`), `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`, `VDEF`/`VDES` → `hydro_outflow_volume`/`hydro_diversion_volume(id)` e `VBOM` → `pumping_volume(id)` da estação `UE` (volumes do estágio em hm³: a vazão de cada patamar vezes a sua duração, somada). Cada linha `FU`/`FT`/`FI`/`FE`/`CQ`/`CV` vale do seu `estagio` em diante: um coeficiente que muda entre os estágios da restrição, ou um termo declarado depois do primeiro estágio (ausente antes dele), vira `@coef_<família><código>_t<k> * token`, com os valores por estágio em `constraints/generic_parameters.json`; `HE` expande cada REE (`CM`), com o sinal do `CM`, na energia armazenada útil em MWh (a base do `%EAMAX`) dos reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, cada um valorado pela produtibilidade da sua cadeia energética, como o modelo de origem calcula: a cadeia segue o `AC JUSENA` onde declarado e, nas demais usinas, a jusante operada; uma usina fora da configuração nomeada pelo `AC JUSENA` (como COMP PAF-MOX) entra com a sua própria produtibilidade. Quando a cadeia é a rota hídrica do `hydros.json`, o termo é `@rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>)`; senão, `@rho_chain_mwh_h<id> * hydro_useful_volume_final(<id>)`. Acoplamento entre REEs: um reservatório com registro `EZ` próprio tem a cadeia cortada onde a jusante operada está em outro REE (como TRES MARIAS → SOBRADINHO); o REE da usina conta só o trecho até o corte, e o REE da primeira usina abaixo do corte recebe o volume do reservatório valorado pela cadeia dessa usina, com energia máxima de `EZ`% do volume útil (`@earm_max_ez_mwh_h<id>`). Sem `EZ` próprio, a cadeia inteira conta no REE do reservatório. O limite `min(V, EZ · Vu)` da parcela de jusante não é representável: o termo conta o volume inteiro, e o aviso `decomp-rhe-ez-cap-unmodeled` nomeia os estágios em que isso pode afrouxar o piso (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`). Com `tipo_limite` = 2 acrescenta `>= @pct_rhe<código> * (Σ ±@energia_máxima)`, com a fração por estágio do `HE` e a energia útil máxima de cada parcela. `RI_ANDE` → `hydro_generation(id, bus=…)` de Itaipu na barra do seu submercado, onde fica o grupo de 50 Hz. Nas restrições LIBs a fórmula (com `EXPRESSAO-ELETRICA` expandida) mantém apenas os termos de decisão `ger_usih`/`ger_usit`/`ger_pee`/`ger_conjh`/`ener_interc`, mapeados para os mesmos tokens (`ger_pee` → `non_controllable_generation`, `ger_conjh` → `hydro_generation(id, bus=…)`); os termos de dados (`demanda`, `carga_ande`, aliases, `peq_`, `disp_usih` e o `ger_usit` de uma térmica GNL, cuja geração é comandada pelo `GL`) são dobrados no limite. Uma fórmula ou regra de ativação LIBs malformada (parênteses desbalanceados, função desconhecida ou com número errado de argumentos, `re(X)` sem restrição X ou com X declarada só por linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`, um ramo de `se(...)` com termo de decisão), um `RESTRICAO-ELETRICA-HABILITA` que nomeia uma regra não declarada, uma restrição `RESTRICAO-ELETRICA-FORMULA` sem linha de limites num período e patamar em que está ativa, ou uma linha `RESTRICAO-ELETRICA-INEQUACAO` ou `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR` sem `operador` ou com `operador` diferente de `>=` e `<=`, interrompe a conversão com erro que nomeia o arquivo, a restrição e o registro ou o campo."
+  how = "Soma linear de termos `coeficiente * token`, com coeficiente unitário omitido: `FU` → `hydro_generation(id)` (um `FU` com `frequencia` numa restrição de vários termos descarta a restrição com `decomp-re-frequency-split-deferred`), `FT` → `thermal_generation(id)`, `FI` → `line_direct(id)`/`line_reverse(id)` pela orientação do par nas linhas `IA`, `FE` → `contract_import(id)`/`contract_export(id)` do contrato `CI`/`CE` com o `numero_contrato` do termo no seu submercado (o id de `system/energy_contracts.json`), `CQ.tipo` `QDEF`/`QTUR`/`QVER`/`QDES` → `hydro_outflow`/`hydro_turbined`/`hydro_spillage`/`hydro_diversion(id)`, `QBOM` → `pumping_flow(id)` da estação `UE`, `CV.tipo` `VARM` → `hydro_storage(id)`, `VDEF`/`VDES` → `hydro_outflow_volume`/`hydro_diversion_volume(id)` e `VBOM` → `pumping_volume(id)` da estação `UE` (volumes do estágio em hm³: a vazão de cada patamar vezes a sua duração, somada). Cada linha `FU`/`FT`/`FI`/`FE`/`CQ`/`CV` vale do seu `estagio` em diante: um coeficiente que muda entre os estágios da restrição, ou um termo declarado depois do primeiro estágio (ausente antes dele), vira `@coef_<família><código>_t<k> * token`, com os valores por estágio em `constraints/generic_parameters.json`; `HE` expande cada REE (`CM`), com o sinal do `CM`, na energia armazenada útil em MWh (a base do `%EAMAX`) dos reservatórios (`M` ou `S`) com volume útil positivo ligados ao REE por `UH.codigo_ree`, cada um valorado pela produtibilidade da sua cadeia energética, como o modelo de origem calcula: a cadeia segue o `AC JUSENA` onde declarado e, nas demais usinas, a jusante operada; uma usina fora da configuração nomeada pelo `AC JUSENA` (como COMP PAF-MOX) entra com a sua própria produtibilidade. Quando a cadeia é a rota hídrica do `hydros.json`, o termo é `@rho_acum_mwh_h<id> * hydro_useful_volume_final(<id>)`; senão, `@rho_chain_mwh_h<id> * hydro_useful_volume_final(<id>)`. Acoplamento entre REEs: um reservatório com registro `EZ` próprio tem a cadeia cortada onde a jusante operada está em outro REE (como TRES MARIAS → SOBRADINHO); o REE da usina conta só o trecho até o corte, e o REE da primeira usina abaixo do corte recebe o volume do reservatório valorado pela cadeia dessa usina, com energia máxima de `EZ`% do volume útil (`@earm_max_ez_mwh_h<id>`). Sem `EZ` próprio, a cadeia inteira conta no REE do reservatório. O limite `min(V, EZ · Vu)` da parcela de jusante não é representável: o termo conta o volume inteiro, e o aviso `decomp-rhe-ez-cap-unmodeled` nomeia os estágios em que isso pode afrouxar o piso (ver `scalar_parameters[].expression` em `constraints/generic_parameters.json`). Com `tipo_limite` = 2 acrescenta `>= @pct_rhe<código> * (Σ ±@energia_máxima)`, com a fração por estágio do `HE` e a energia útil máxima de cada parcela. `RI_ANDE` → `hydro_generation(id, bus=…)` de Itaipu na barra do seu submercado, onde fica o grupo de 50 Hz. Restrição do arquivo LIBs: a relação que governa as células do trecho, traduzida como descrito acima. Na inequação, `formula operador formula_limite`, com operador `<=`, `>=` ou `==` (outro interrompe a conversão); na forma `FORMULA`, a fórmula, sem operador, com os limites em `generic_constraint_bounds.parquet`. Numa célula coberta por uma linha `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`, `RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR` ou `RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR`, vale a relação da linha, a do patamar antes da de todos os patamares; o texto é comparado como o deck o escreve, então duas grafias da mesma relação são dois trechos."
+
+  [[output.field]]
+  path = "constraints[].active_when"
+  from = [
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-HABILITA · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-HABILITA · codigo_regra_ativacao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-REGRA-ATIVACAO · codigo_regra_ativacao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-REGRA-ATIVACAO · regra_ativacao" },
+  ]
+  status = "derived"
+  when = "somente nas restrições do arquivo LIBs que uma regra de ativação habilita (`RESTRICAO-ELETRICA-HABILITA`)"
+  how = "A condição `regra_ativacao` da regra que habilita a restrição, traduzida como as fórmulas, em todos os trechos da restrição; quem a avalia é o novomodelo. Uma regra que o arquivo não declara interrompe a conversão."
 
   [[output.field]]
   path = "constraints[].slack.enabled"
-  from = []
-  status = "constant"
-  how = "Sempre `true`: toda restrição genérica é flexível, penalizada em vez de infactível."
+  from = [
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO · tipo_violacao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO · tipo_violacao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO · estagio_inicio" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO · estagio_fim" },
+  ]
+  status = "derived"
+  how = "`true` nas restrições dos registros e na `RI_ANDE`: são flexíveis, penalizadas em vez de infactíveis. Restrição do arquivo LIBs: `false` no trecho de tratamento `hard`, que não admite violação, e `true` no de tratamento `soft`. O tratamento de um estágio é o da linha `RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO` que o cobre, senão o da linha `RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO`, senão `soft` sem custo; mais de uma linha de horizonte inteiro, ou um estágio coberto por mais de uma linha por período, interrompe a conversão."
 
   [[output.field]]
   path = "constraints[].slack.penalty"
@@ -3033,14 +3089,39 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
     { file = "dadger", register = "HE", item = "valor_penalidade" },
     { file = "dadger", register = "HE", item = "tipo_penalidade" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO · custo_violacao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO · custo_violacao" },
   ]
-  how = "`RE`/`HQ`/`HV`/`RI_ANDE`: 10 × o maior custo de déficit do `CD` entre os submercados. `RHE`, cobrada por MWh de violação: com `tipo_penalidade` (campo 9) 0 ou em branco, em que o DECOMP trata a violação como inviabilidade, o mesmo 10 × déficit; com 1, `valor_penalidade` do `HE` (R$/MWh; 1000.0, com aviso, quando ausente ou não positivo). Um `tipo_penalidade` diferente de 0, 1 ou branco, ou que muda entre os estágios de uma restrição, interrompe a conversão. LIBs: `custo_violacao` do `TRATAMENTO-VIOLACAO` quando positivo, senão o mesmo 10 × déficit."
+  when = "somente quando a folga está ligada (`slack.enabled` = `true`)"
+  how = "`RE`/`HQ`/`HV`/`RI_ANDE`: 10 × o maior custo de déficit do `CD` entre os submercados. `RHE`, cobrada por MWh de violação: com `tipo_penalidade` (campo 9) 0 ou em branco, em que o DECOMP trata a violação como inviabilidade, o mesmo 10 × déficit; com 1, `valor_penalidade` do `HE` (R$/MWh; 1000.0, com aviso, quando ausente ou não positivo). Um `tipo_penalidade` diferente de 0, 1 ou branco, ou que muda entre os estágios de uma restrição, interrompe a conversão. Restrição do arquivo LIBs com tratamento `soft`: o `custo_violacao` do tratamento, que precisa ser finito e maior que 0; sem custo, o mesmo 10 × déficit, e um deck sem custo de déficit para derivá-lo interrompe a conversão. O custo de um tratamento `hard` não é usado e as linhas que o dão são listadas no diagnóstico informativo `decomp-electrical-hard-treatment-cost-ignored`."
 
   [[output.field]]
   path = "constraints[].slack.penalty_basis"
   from = []
   status = "derived"
-  how = "Como o Novomodelo cobra a folga: `per_unit` na `RHE` (penalidade por MWh de violação, igual em estágio semanal e mensal); `per_hour` em `RE`, `HQ`, `HV`, LIBs e `RI_ANDE` (penalidade × horas da restrição)."
+  when = "somente quando a folga está ligada (`slack.enabled` = `true`)"
+  how = "Como o Novomodelo cobra a folga: `per_unit` na `RHE` (penalidade por MWh de violação, igual em estágio semanal e mensal); `per_hour` em `RE`, `HQ`, `HV`, `RI_ANDE` e nas restrições do arquivo LIBs (penalidade × horas da restrição)."
+
+  [[output.field]]
+  path = "expressions[].name"
+  from = [
+    { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · identificador_expressao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · codigo_restricao" },
+  ]
+  status = "derived"
+  when = "somente quando a expressão ou a condição de alguma restrição emitida do arquivo LIBs alcança uma expressão elétrica que não é aritmética só sobre dados, ou um `re(R)`"
+  how = "Primeiro, por código e nome, cada expressão alcançada que não é aritmética só sobre dados (essas vão para `generic_parameters.json`): o identificador sem espaços laterais, saneado como descrito acima. Depois, por código, um `restriction_<R>_formula` por restrição `R` que algum `re(R)` alcançado lê."
+
+  [[output.field]]
+  path = "expressions[].expression"
+  from = [
+    { file = "libs_restricao_eletrica", item = "EXPRESSAO-ELETRICA · formula" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA · formula" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · formula" },
+  ]
+  status = "derived"
+  when = "somente quando a expressão ou a condição de alguma restrição emitida do arquivo LIBs alcança uma expressão elétrica que não é aritmética só sobre dados, ou um `re(R)`"
+  how = "A fórmula da expressão traduzida; num `restriction_<R>_formula`, a fórmula (o lado esquerdo, na inequação) da restrição `R` traduzida."
 
 # ---------------------------------------------------------------------------
 # constraints/generic_constraint_bounds.parquet
@@ -3048,9 +3129,10 @@ summary = "Uma entrada por restrição especial que não se reduz a limite de en
 [[output]]
 path = "constraints/generic_constraint_bounds.parquet"
 kind = "parquet"
-when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ/RHV, RHE ou restrição elétrica do arquivo LIBs) não se reduz a um limite de entidade e sobrevive como restrição genérica, ou quando Itaipu é operada e o `RI` declara `carga_ande` positiva"
+when = "somente quando ao menos uma restrição especial (RE com vários termos ou com termo `FE`, RHQ/RHV ou RHE) não se reduz a um limite de entidade e sobrevive como restrição genérica, quando Itaipu é operada e o `RI` declara `carga_ande` positiva, ou quando alguma restrição do arquivo LIBs de restrições elétricas vale em algum estágio e patamar"
 module = "src/novomodelo_bridge/decomp/converters/constraints.py"
 reads = [
+  { file = "libs_restricao_eletrica" },
   { file = "dadger", register = "SB" },
   { file = "dadger", register = "CT" },
   { file = "dadger", register = "UH" },
@@ -3076,17 +3158,12 @@ reads = [
   { file = "dadger", register = "IA" },
   { file = "dadger", register = "UE" },
   { file = "dadger", register = "RI" },
-  { file = "dadger", register = "MP" },
-  { file = "dadger", register = "FD" },
-  { file = "dadger", register = "PQ" },
   { file = "dadgnl", register = "GL" },
   { file = "dadgnl", register = "TG" },
   { file = "dadger", register = "AC" },
   { file = "hidr" },
-  { file = "libs_restricao_eletrica" },
-  { file = "renovaveis" },
 ]
-summary = "Uma linha por (restrição genérica, estágio, patamar) com limite em pelo menos um lado; a direção é codificada por qual extremo está preenchido (`>=` só inferior, `<=` só superior, `==` ambos iguais)."
+summary = "Uma linha por (restrição genérica, estágio, patamar) com limite em pelo menos um lado; a direção é codificada por qual extremo está preenchido (`>=` só inferior, `<=` só superior, `==` ambos iguais). As linhas das restrições do arquivo LIBs de restrições elétricas vêm depois, em ordem de id, estágio e patamar, com a linha sem patamar primeiro. Elas são o horizonte de cada trecho: há linha só nas células em que o trecho vale, as de uma inequação sem nenhum lado, o que só ativa a restrição, e as de uma fórmula com o seu limite. Na fórmula, uma célula sem limite em nenhum lado fica sem linha, e a linha de limite de um patamar sem nenhum lado deixa esse patamar sem linha em vez de herdar a de todos os patamares do estágio."
 
   [[output.field]]
   path = "constraint_id"
@@ -3095,11 +3172,17 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "HQ", item = "codigo_restricao" },
     { file = "dadger", register = "HV", item = "codigo_restricao" },
     { file = "dadger", register = "HE", item = "codigo_restricao" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA · codigo_restricao" },
     { file = "dadger", register = "RI", item = "carga_ande" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR · codigo_restricao" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR · codigo_restricao" },
   ]
   status = "derived"
-  how = "O `constraints[].id` de `generic_constraints.json`; linhas na ordem de emissão das restrições."
+  how = "O `constraints[].id` de `generic_constraints.json`; linhas na ordem de emissão das restrições, e as das restrições do arquivo LIBs depois, em ordem de id."
 
   [[output.field]]
   path = "stage_id"
@@ -3114,14 +3197,26 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "HV", item = "estagio_final" },
     { file = "dadger", register = "LV", item = "estagio" },
     { file = "dadger", register = "HE", item = "estagio" },
+    { file = "dadger", register = "RI", item = "carga_ande" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-HORIZONTE-PERIODO · estagio_inicio" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-HORIZONTE-PERIODO · estagio_fim" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-HABILITA · codigo_regra_ativacao" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-REGRA-ATIVACAO · regra_ativacao" },
-    { file = "dadger", register = "RI", item = "carga_ande" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-HORIZONTE-DATA · data_inicio" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-HORIZONTE-DATA · data_fim" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR · estagio_inicio" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR · estagio_fim" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR · data_inicio" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR · data_fim" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · estagio_inicio" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · estagio_fim" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR · estagio_inicio" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR · estagio_fim" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR · data_inicio" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR · data_fim" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO · estagio_inicio" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-TRATAMENTO-VIOLACAO-PERIODO · estagio_fim" },
   ]
   status = "derived"
-  how = "Índice 0-based (`estagio` − 1). `RE`/`HQ`/`HV`: cada estágio de `estagio_inicial` a `estagio_final`, com o limite `LU`/`LQ`/`LV` esparso herdado adiante (estágios antes da primeira declaração herdam a primeira). `HE`: os estágios com linha `HE`. LIBs: as células ativas dentro do horizonte, após avaliar a regra de ativação (`HABILITA`/`REGRA-ATIVACAO`) sobre a carga `DP` e `carga_ande`. `RI_ANDE`: os estágios com `carga_ande` positiva em algum patamar."
+  how = "Índice 0-based (`estagio` − 1). `RE`/`HQ`/`HV`: cada estágio de `estagio_inicial` a `estagio_final`, com o limite `LU`/`LQ`/`LV` esparso herdado adiante (estágios antes da primeira declaração herdam a primeira). `HE`: os estágios com linha `HE`. `RI_ANDE`: os estágios com `carga_ande` positiva em algum patamar. Restrição do arquivo LIBs: os estágios em que o trecho tem célula, dentro do horizonte da restrição (todo o estudo quando ela não declara horizonte) e com o tratamento de violação do trecho (período − 1; no card por data, do estágio que contém a data de início ao que contém a data de fim, inclusive)."
 
   [[output.field]]
   path = "block_id"
@@ -3130,10 +3225,13 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "LQ", item = "limite_inferior" },
     { file = "dadger", register = "DP", item = "numero_patamares" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR · patamar" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR · patamar" },
     { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · patamar" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR · patamar" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR · patamar" },
   ]
   status = "derived"
-  how = "Famílias por patamar (`RE`, `HQ`, LIBs, `RI_ANDE`): índice 0-based do patamar, limitado ao número de patamares do estágio no calendário (um slot além disso é descartado). Famílias por estágio (`HV`, `HE`): nulo."
+  how = "Famílias por patamar (`RE`, `HQ`, `RI_ANDE`): índice 0-based do patamar, limitado ao número de patamares do estágio no calendário (um slot além disso é descartado). Famílias por estágio (`HV`, `HE`): nulo. Restrição do arquivo LIBs: nulo, numa só linha do estágio, quando o trecho vale em todos os patamares do estágio e é uma inequação, ou uma fórmula cujos limites não têm linha de patamar nesse estágio; senão, uma linha por célula, com o índice 0-based do patamar (patamar − 1). Um patamar fora dos patamares do estágio, numa linha de limite ou de override, interrompe a conversão."
 
   [[output.field]]
   path = "bound_lower"
@@ -3149,22 +3247,14 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "AC", item = "VOLMAX · volume" },
     { file = "dadger", register = "HE", item = "limite" },
     { file = "dadger", register = "HE", item = "tipo_limite" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR · limite_inferior" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · operador" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · formula_limite" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · formula_limite" },
-    { file = "libs_restricao_eletrica", item = "ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR · valor" },
-    { file = "dadger", register = "DP", item = "carga" },
     { file = "dadger", register = "RI", item = "carga_ande" },
-    { file = "dadger", register = "PQ", item = "geracao" },
-    { file = "dadger", register = "SB", item = "nome_submercado" },
     { file = "dadgnl", register = "GL", item = "geracao" },
     { file = "dadgnl", register = "GL", item = "duracao" },
     { file = "dadgnl", register = "TG", item = "inflexibilidade, disponibilidade" },
-    { file = "dadger", register = "MP", item = "manutencao" },
-    { file = "dadger", register = "FD", item = "fator" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR · limite_inferior" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR · limite_inferior" },
   ]
-  how = "`RE`/`HQ`: `limite_inferior` do patamar (nulo quando em branco); numa `RE`, menos o coeficiente vezes a geração comandada de cada termo `FT` sobre térmica GNL do `dadgnl` (média das semanas `GL` do estágio ponderada pela `duracao` do patamar, cada semana limitada à `inflexibilidade` e à `disponibilidade` do `TG` no patamar), termo que sai da soma; um estágio em que o termo vale sem semana `GL` interrompe a conversão. `HV`: `limite_inferior` do `LV` mais `Σ cᵢ·volume_minimo` efetivo das usinas com termo `VARM` no estágio, pois o `LV` é relativo ao volume útil e `hydro_storage` é absoluto; os termos `VDEF`/`VDES`/`VBOM` não deslocam o limite. `HE`: `limite` (MWmês, potência média do estágio) vezes as horas do estágio, em MWh, quando `tipo_limite` = 1 (outro valor trata como absoluto, com aviso); 0.0 com `tipo_limite` = 2, cujo limite está na expressão, nos estágios do registro. LIBs: `limite_inferior` da fórmula (sentinela ±1E+31 vira nulo) ou o lado constante da inequação com os termos de dados avaliados na célula (`demanda`, `carga_ande`, aliases, `disp_usih` = potência disponível `MP`×`FD`, e `peq_<nome>_<submercado>` = geração da série `PQ` desse nome no submercado, com o sufixo dado pela sigla do `SB` ou por `SECO` = `SE` e `SUL` = `S`; um `peq_` sem série correspondente descarta a restrição com aviso; `ger_usit` de uma térmica GNL do `dadgnl` = geração comandada no `GL` em cada patamar, média das semanas `GL` do estágio ponderada pela `duracao` do patamar, cada semana limitada à faixa do `TG`; um estágio ativo sem semana `GL` interrompe a conversão). O modelo de origem soma o multiplicador de uma restrição LIBs com `demanda` ou `demanda_sin` ao CMO dos submercados cuja carga o termo lê, e o caso não representa essa parcela: o aviso `decomp-electrical-demand-in-cmo` lista essas restrições (as formas `val_` não entram no CMO). O caso prende a térmica GNL só ao compromisso do estágio, não ao `GL` de cada patamar, e seu despacho num patamar pode diferir da geração tirada do limite: as notas `decomp-re-gnl-patamar-values` e `decomp-electrical-gnl-patamar-values` listam os estágios em que essa geração difere entre patamares. `RI_ANDE`: a `carga_ande` do patamar, herdada adiante entre estágios como na carga do submercado; um patamar sem carga fica sem linha."
+  how = "`RE`/`HQ`: `limite_inferior` do patamar (nulo quando em branco); numa `RE`, menos o coeficiente vezes a geração comandada de cada termo `FT` sobre térmica GNL do `dadgnl` (média das semanas `GL` do estágio ponderada pela `duracao` do patamar, cada semana limitada à `inflexibilidade` e à `disponibilidade` do `TG` no patamar), termo que sai da soma; um estágio em que o termo vale sem semana `GL` interrompe a conversão. `HV`: `limite_inferior` do `LV` mais `Σ cᵢ·volume_minimo` efetivo das usinas com termo `VARM` no estágio, pois o `LV` é relativo ao volume útil e `hydro_storage` é absoluto; os termos `VDEF`/`VDES`/`VBOM` não deslocam o limite. `HE`: `limite` (MWmês, potência média do estágio) vezes as horas do estágio, em MWh, quando `tipo_limite` = 1 (outro valor trata como absoluto, com aviso); 0.0 com `tipo_limite` = 2, cujo limite está na expressão, nos estágios do registro. O caso prende a térmica GNL só ao compromisso do estágio, não ao `GL` de cada patamar, e seu despacho num patamar pode diferir da geração tirada do limite: a nota `decomp-re-gnl-patamar-values` lista os estágios em que essa geração difere entre patamares. `RI_ANDE`: a `carga_ande` do patamar, herdada adiante entre estágios como na carga do submercado; um patamar sem carga fica sem linha. Restrição do arquivo LIBs: na forma `FORMULA`, o `limite_inferior` da linha de limite do patamar, senão o da linha de todos os patamares do estágio, sem arredondar, com a sentinela ±1E+31 de lado sem limite como nulo; na inequação, nulo, porque a linha só ativa a restrição."
 
   [[output.field]]
   path = "bound_upper"
@@ -3176,22 +3266,14 @@ summary = "Uma linha por (restrição genérica, estágio, patamar) com limite e
     { file = "dadger", register = "CV", item = "coeficiente" },
     { file = "hidr", item = "volume_minimo" },
     { file = "dadger", register = "AC", item = "VOLMIN · volume" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR · limite_superior" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · operador" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO · formula_limite" },
-    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR · formula_limite" },
-    { file = "libs_restricao_eletrica", item = "ALIAS-ELETRICO-VALOR-PERIODO-PATAMAR · valor" },
-    { file = "dadger", register = "DP", item = "carga" },
     { file = "dadger", register = "RI", item = "carga_ande" },
-    { file = "dadger", register = "PQ", item = "geracao" },
-    { file = "dadger", register = "SB", item = "nome_submercado" },
     { file = "dadgnl", register = "GL", item = "geracao" },
     { file = "dadgnl", register = "GL", item = "duracao" },
     { file = "dadgnl", register = "TG", item = "inflexibilidade, disponibilidade" },
-    { file = "dadger", register = "MP", item = "manutencao" },
-    { file = "dadger", register = "FD", item = "fator" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-PERIODO-PATAMAR · limite_superior" },
+    { file = "libs_restricao_eletrica", item = "RESTRICAO-ELETRICA-LIMITES-FORMULA-DATA-PATAMAR · limite_superior" },
   ]
-  how = "`RE`/`HQ`: `limite_superior` do patamar (nulo quando em branco), com o mesmo desconto da geração GNL comandada que `bound_lower` numa `RE`. `HV`: `limite_superior` do `LV` mais o mesmo deslocamento `Σ cᵢ·volume_minimo` efetivo. `HE`: sempre nulo, o `limite` é só inferior. LIBs: `limite_superior` da fórmula ou o lado constante da inequação, como em `bound_lower`; um lado com magnitude ≥ 1e21 também lê nulo. `RI_ANDE`: nulo."
+  how = "`RE`/`HQ`: `limite_superior` do patamar (nulo quando em branco), com o mesmo desconto da geração GNL comandada que `bound_lower` numa `RE`. `HV`: `limite_superior` do `LV` mais o mesmo deslocamento `Σ cᵢ·volume_minimo` efetivo. `HE`: sempre nulo, o `limite` é só inferior. `RI_ANDE`: nulo. Restrição do arquivo LIBs: como `bound_lower`, com o `limite_superior`."
 
 # ---------------------------------------------------------------------------
 # boundary/ (checkpoint da função de custo futuro de fronteira)
@@ -3563,41 +3645,11 @@ note = "Parques eólicos equivalentes (PEE) das LIBs. O conversor lê o cadastro
   note = "Potência instalada do parque por período. Não lida: a fonte não controlável do Novomodelo não carrega capacidade instalada."
 
 # ---------------------------------------------------------------------------
-# lib_restricao-eletrica-especial.csv — variants not converted
+# lib_restricao-eletrica-especial.csv
 # ---------------------------------------------------------------------------
 [[source]]
 file = "libs_restricao_eletrica"
-note = "Restrições elétricas especiais das LIBs. O conversor lê apenas os cards de forma longa indexados por período; as variantes abaixo ficam de fora. Uma inequação pode vir do card `RESTRICAO-ELETRICA-INEQUACAO` (com ou sem variações por período) ou só das linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`; nesse caso a restrição vale apenas nos estágios e patamares que as linhas cobrem. Linhas por período que não se aplicam ao formato da restrição geram aviso. Números com expoente (`1E+31`) são aceitos nas fórmulas; um limite resultante com magnitude ≥ 1e21 vira nulo. Os nomes dos cards só são reconhecidos em maiúsculas, como o manual os escreve, e cada linha que não é um card conhecido é ignorada e listada no aviso `libs-unread-lines`."
-
-  [[source.item]]
-  item = "cards de forma curta (RE, RE-*, ALIAS-ELET*)"
-  status = "deferred"
-  note = "Apelidos curtos dos mesmos cards. Não lidos: um arquivo só com forma curta cai no aviso `decomp-libs-electrical-present`. Converter exige ler os apelidos pelo acessor idecomp correspondente."
-
-  [[source.item]]
-  item = "cards indexados por data (RESTRICAO-ELETRICA-HORIZONTE-DATA, -FORMULA-DATA-PATAMAR, -LIMITES-FORMULA-DATA-PATAMAR)"
-  status = "deferred"
-  note = "Variantes em que o horizonte e os limites são dados por intervalo de datas em vez de estágios. Fora do escopo do leitor; ficam no aviso `decomp-libs-electrical-present`. Converter exige mapear as datas para índices de estágio do calendário operativo."
-
-  [[source.item]]
-  item = "regra de ativação com `|` (OU)"
-  status = "deferred"
-  note = "O modelo de origem junta comparações com `&` (E) ou `|` (OU). O conversor só lê `&`: uma regra de ativação ou condição de `se(...)` com `|` interrompe a conversão com erro `source-unsupported`. Converter exige avaliar a disjunção em cada estágio e patamar, como a conjunção já é avaliada."
-
-  [[source.item]]
-  item = "fator constante escrito depois do termo (ger_usih(1) * 2, ger_usih(1) / 2)"
-  status = "deferred"
-  note = "O modelo de origem aceita uma expressão algébrica com números reais e fórmulas condicionais, como `se (demanda_sin > 0, 50.0, 0) * 2 + 50.0 * 2.0`. O conversor só lê um fator constante escrito antes do termo, como coeficiente: uma fórmula ou regra de ativação com `*` ou `/` por uma constante depois de um termo interrompe a conversão com erro `source-unsupported`, salvo num ramo de `se(...)` que o período e patamar não selecionam. Converter exige aplicar o fator ao termo que o precede."
-
-  [[source.item]]
-  item = "restricao_eletrica_formula_periodo_patamar"
-  status = "unread"
-  note = "Fórmula da restrição variando por intervalo de estágios e patamar. Não lida: só a fórmula fixa e os limites por período e patamar são lidos."
-
-  [[source.item]]
-  item = "restricao_eletrica_tratamento_violacao_periodo"
-  status = "unread"
-  note = "Tratamento de violação por intervalo de estágios. Não lido: só o tratamento fixo da restrição é usado."
+note = "Restrições elétricas especiais das LIBs. O conversor lê os cards indexados por período e os de horizonte e de limites indexados por data; cada apelido de forma curta (`RE`, `RE-*`, `ALIAS-ELET*`) é lido como o card longo correspondente. A fórmula de uma restrição que varia por intervalo de estágios ou de datas e por patamar (`RESTRICAO-ELETRICA-FORMULA-PERIODO-PATAMAR`, `RESTRICAO-ELETRICA-FORMULA-DATA-PATAMAR`) é lida como override de fórmula da restrição `FORMULA`, sem resolver a precedência entre overrides. Datas viram estágios do estágio que contém a data de início ao estágio que contém a data de fim, inclusive; data fora do calendário é erro, com o código da restrição ou do apelido e a data na mensagem, e um intervalo de estágios ou de datas que termina antes de começar também, com o card e o código na mensagem. Uma inequação pode vir do card `RESTRICAO-ELETRICA-INEQUACAO` (com ou sem variações por período) ou só das linhas `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR`; nesse caso a restrição vale apenas nos estágios e patamares que as linhas cobrem. Linhas por período ou por data que não se aplicam ao formato da restrição, como as de fórmula numa inequação, geram aviso. Números com expoente (`1E+31`) são aceitos nas fórmulas; um limite resultante com magnitude ≥ 1e21 vira nulo. Os nomes dos cards só são reconhecidos em maiúsculas, como o manual os escreve, e cada linha que não é um card conhecido é ignorada e listada no aviso `libs-unread-lines`."
 
 # ---------------------------------------------------------------------------
 # LIBS index — named by the FA register

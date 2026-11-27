@@ -33,7 +33,6 @@ from novomodelo_bridge.core.preflight import (
 )
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.constraint_registers import (
-    detect_libs_electrical,
     detect_unconverted_rha,
     drop_unknown_entities,
     read_constraints,
@@ -64,6 +63,11 @@ from novomodelo_bridge.decomp.preflight import (
     run_decomp_preflight,
 )
 from tests.conftest import branching_vazoes, make_decomp_case
+from tests.decomp.conftest import (
+    StubRestricoes,
+    re_formula,
+    re_inequacao_per_pat,
+)
 from tests.decomp.test_cadastro import _FakeDadger
 from tests.decomp.test_constraint_registers import (
     _cm,
@@ -76,12 +80,6 @@ from tests.decomp.test_constraint_registers import (
     _qdef_ceiling_and_floor,
 )
 from tests.decomp.test_constraint_registers import _FakeDadger as _ConstraintFakeDadger
-from tests.decomp.test_libs_electrical import (
-    _re_formula,
-    _re_inequacao,
-    _re_inequacao_per_pat,
-    _StubRestricoes,
-)
 from tests.decomp.test_network_load import (
     _ID_MAP,
     _calendar_rv3,
@@ -616,13 +614,11 @@ _SC_ID_MAP = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(21, 31,
 
 def _coverage(
     dadger: _SpecialConstraintRegisters,
-    libs_file: Path | None,
     id_map: DecompIdMap,
     pumping_ids: dict[int, int],
     *,
     gnl_generation: dict[int, list[tuple[float, ...] | None]] | None = None,
     ct_submarkets: dict[int, frozenset[int]] | None = None,
-    libs_long_form: bool | None = False,
     plant_names: dict[int, str] | None = None,
     diversion_codes: frozenset[int] | None = None,
 ) -> tuple[list[CheckItem], list[Diagnostic]]:
@@ -630,7 +626,6 @@ def _coverage(
     and every GNL plant in subsystem 1."""
     return _special_constraint_coverage(
         dadger,
-        libs_file,
         id_map,
         pumping_ids,
         gnl_generation=gnl_generation,
@@ -638,7 +633,6 @@ def _coverage(
         ct_submarkets={} if ct_submarkets is None else ct_submarkets,
         dadger_path="dadger.rv0",
         dadgnl_path="dadgnl.rv0",
-        libs_long_form=libs_long_form,
         plant_names=plant_names,
         diversion_codes=diversion_codes,
     )
@@ -646,7 +640,7 @@ def _coverage(
 
 class TestSpecialConstraintCoverage:
     """``_special_constraint_coverage``'s converted (RE/HQ/HV/HE,
-    bounds-lowered vs generic-emitted) vs deferred (RHA/LIBs-electrical)
+    bounds-lowered vs generic-emitted) vs deferred (RHA)
     classification, and its summary ``CheckItem``.
     """
 
@@ -686,7 +680,7 @@ class TestSpecialConstraintCoverage:
         dadger = self._rha_dadger()
         census = read_constraints(dadger)
 
-        checks, diagnostics = _coverage(dadger, None, _SC_ID_MAP, {})
+        checks, diagnostics = _coverage(dadger, _SC_ID_MAP, {})
 
         assert len(checks) == 1
         assert checks[0].label == "Special-constraint coverage"
@@ -713,7 +707,6 @@ class TestSpecialConstraintCoverage:
     ) -> None:
         checks, diagnostics = _coverage(
             self._synthetic_dadger(),
-            None,
             _SC_ID_MAP,
             {},
             diversion_codes=frozenset(),
@@ -728,7 +721,7 @@ class TestSpecialConstraintCoverage:
         dadger = self._synthetic_dadger()
         census = read_constraints(dadger)
 
-        _checks, diagnostics = _coverage(dadger, None, _SC_ID_MAP, {})
+        _checks, diagnostics = _coverage(dadger, _SC_ID_MAP, {})
 
         converted = next(
             d for d in diagnostics if d.code == "decomp-special-constraints-converted"
@@ -760,7 +753,7 @@ class TestSpecialConstraintCoverage:
         )
         no_plants = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
 
-        checks, diagnostics = _coverage(dadger, None, no_plants, {})
+        checks, diagnostics = _coverage(dadger, no_plants, {})
 
         converted, *unknown = diagnostics
         assert unknown == expected
@@ -802,7 +795,7 @@ class TestSpecialConstraintCoverage:
             pumping_codes=(),
         )
 
-        checks, diagnostics = _coverage(dadger, None, id_map, {})
+        checks, diagnostics = _coverage(dadger, id_map, {})
 
         converted, *left_out = diagnostics
         assert left_out == expected
@@ -836,7 +829,7 @@ class TestSpecialConstraintCoverage:
             )
 
         _checks, diagnostics = _coverage(
-            dadger, None, id_map, {}, plant_names={118: "BILLINGS"}
+            dadger, id_map, {}, plant_names={118: "BILLINGS"}
         )
 
         [expected] = converted
@@ -847,7 +840,7 @@ class TestSpecialConstraintCoverage:
         id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",), hydro_codes=(118,))
 
         _checks, diagnostics = _coverage(
-            _qdef_ceiling_and_floor(variable="QBOM"), None, id_map, {}
+            _qdef_ceiling_and_floor(variable="QBOM"), id_map, {}
         )
 
         assert [d.code for d in diagnostics] == ["decomp-rhq-qbom-no-station"]
@@ -859,37 +852,12 @@ class TestSpecialConstraintCoverage:
         expected = detect_unconverted_rha(dadger)
         assert expected is not None
 
-        _checks, diagnostics = _coverage(dadger, None, _SC_ID_MAP, {})
+        _checks, diagnostics = _coverage(dadger, _SC_ID_MAP, {})
 
         rha_diagnostic = next(
             d for d in diagnostics if d.code == "decomp-rha-family-unconverted"
         )
         assert rha_diagnostic == expected
-
-    def test_deferred_libs_electrical_diagnostic_is_sourced_from_its_detector(
-        self, tmp_path: Path
-    ) -> None:
-        dadger = _ConstraintFakeDadger()
-        libs_file = tmp_path / "lib_restricao-eletrica-especial.csv"
-        expected = detect_libs_electrical(libs_file)
-        assert expected is not None  # sanity: the fixture trips the LIBs token
-
-        _checks, diagnostics = _coverage(dadger, libs_file, _SC_ID_MAP, {})
-
-        assert diagnostics == [expected]
-
-    def test_a_libs_file_with_a_long_form_card_raises_no_libs_warning(
-        self, tmp_path: Path
-    ) -> None:
-        _checks, diagnostics = _coverage(
-            _ConstraintFakeDadger(),
-            tmp_path / "lib_restricao-eletrica-especial.csv",
-            _SC_ID_MAP,
-            {},
-            libs_long_form=True,
-        )
-
-        assert "decomp-libs-electrical-present" not in {d.code for d in diagnostics}
 
     def _gnl_dadger(self) -> _ConstraintFakeDadger:
         """The synthetic deck with an FT term on GNL plant 86, which has no CT
@@ -903,7 +871,6 @@ class TestSpecialConstraintCoverage:
         """The fold also lists the stage its generation differs by patamar in."""
         checks, diagnostics = _coverage(
             self._gnl_dadger(),
-            None,
             _SC_ID_MAP,
             {},
             gnl_generation={86: [(100.0, 200.0, 300.0), (100.0, 200.0, 300.0)]},
@@ -923,7 +890,6 @@ class TestSpecialConstraintCoverage:
     def test_an_uncommanded_gnl_term_fails_the_check_as_convert_stops(self) -> None:
         checks, diagnostics = _coverage(
             self._gnl_dadger(),
-            None,
             _SC_ID_MAP,
             {},
             gnl_generation={86: [(100.0, 200.0, 300.0), None]},
@@ -952,7 +918,6 @@ class TestSpecialConstraintCoverage:
         term."""
         checks, diagnostics = _coverage(
             self._gnl_dadger(),
-            None,
             _SC_ID_MAP,
             {},
             gnl_generation={86: [(100.0, 200.0, 300.0), (100.0, 200.0, 300.0)]},
@@ -972,7 +937,7 @@ class TestSpecialConstraintCoverage:
     ) -> None:
         dadger = _ConstraintFakeDadger()
 
-        checks, diagnostics = _coverage(dadger, None, _SC_ID_MAP, {})
+        checks, diagnostics = _coverage(dadger, _SC_ID_MAP, {})
 
         assert len(checks) == 1
         assert checks[0].passed is True
@@ -1020,9 +985,9 @@ class TestGnlGenerationRead:
 
 
 class TestLibsElectricalWarning:
-    """``check decomp`` warns that the LIBS electrical constraints are not
-    converted only when ``convert decomp`` reads no long-form card from the
-    file, as ``convert decomp`` does."""
+    """``check decomp`` reads the LIBS electrical-constraint file as
+    ``convert decomp`` does: it warns about what the read warns about and
+    fails where the read stops."""
 
     _LIBS_FILE = "lib_restricao-eletrica-especial.csv"
 
@@ -1058,35 +1023,12 @@ class TestLibsElectricalWarning:
                 )
             return run_decomp_preflight(deck)
 
-    def test_a_file_with_a_long_form_card_raises_no_libs_warning(
-        self, decomp_mini_deck: Path, tmp_path: Path
-    ) -> None:
-        result = self._run(
-            decomp_mini_deck,
-            tmp_path,
-            _StubRestricoes(),
-            MagicMock(return_value=object()),
-        )
-
-        codes = {d.code for d in result.diagnostics}
-        assert "decomp-libs-electrical-present" not in codes
-
-    def test_a_file_without_a_long_form_card_warns(
-        self, decomp_mini_deck: Path, tmp_path: Path
-    ) -> None:
-        result = self._run(
-            decomp_mini_deck, tmp_path, _StubRestricoes(), MagicMock(return_value=None)
-        )
-
-        codes = {d.code for d in result.diagnostics}
-        assert "decomp-libs-electrical-present" in codes
-
     def test_a_period_row_that_does_not_fit_its_restriction_warns_once(
         self, decomp_mini_deck: Path, tmp_path: Path
     ) -> None:
-        cards = _StubRestricoes(
-            restricao_eletrica_formula=_re_formula((401, "ger_usih(1)")),
-            restricao_eletrica_inequacao_periodo_patamar=_re_inequacao_per_pat(
+        cards = StubRestricoes(
+            restricao_eletrica_formula=re_formula((401, "ger_usih(1)")),
+            restricao_eletrica_inequacao_periodo_patamar=re_inequacao_per_pat(
                 (401, 1, 1, None, "ger_usih(1)", "<=", "10"),
             ),
         )
@@ -1103,9 +1045,6 @@ class TestLibsElectricalWarning:
         assert unused.table.rows == [
             ["RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR", 401]
         ]
-        assert "decomp-libs-electrical-present" not in {
-            d.code for d in result.diagnostics
-        }
         assert result.verdict is PreflightVerdict.WARNINGS
 
     def test_lines_the_reader_keeps_as_text_are_warned_as_convert_does(
@@ -1137,7 +1076,7 @@ class TestLibsElectricalWarning:
         result = self._run(
             decomp_mini_deck,
             tmp_path,
-            _StubRestricoes(),
+            StubRestricoes(),
             MagicMock(side_effect=ValueError("restriction 7 is malformed")),
         )
 
@@ -1148,32 +1087,6 @@ class TestLibsElectricalWarning:
         ]
         assert readable.passed is False
         assert readable.detail == "restriction 7 is malformed"
-        assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
-        assert "decomp-libs-electrical-present" not in {
-            d.code for d in result.diagnostics
-        }
-
-    def test_an_inequality_operator_convert_cannot_read_fails_the_check(
-        self, decomp_mini_deck: Path, tmp_path: Path
-    ) -> None:
-        cards = _StubRestricoes(
-            restricao_eletrica_inequacao=_re_inequacao((7, "ger_usih(1)", "==", "0")),
-        )
-
-        result = self._run(decomp_mini_deck, tmp_path, cards)
-
-        [readable] = [
-            c
-            for c in result.checks
-            if c.label == "LIBS electrical restrictions readable"
-        ]
-        assert readable.passed is False
-        [failure] = [d for d in result.diagnostics if d.code == "source-field-parse"]
-        assert failure.notes == [
-            f"file: {tmp_path / 'deck' / self._LIBS_FILE}",
-            "field: operador",
-        ]
-        assert "RESTRICAO-ELETRICA-INEQUACAO row" in failure.summary
         assert result.verdict is PreflightVerdict.WILL_NOT_CONVERT
 
 

@@ -23,7 +23,6 @@ from novomodelo_bridge.core.electrical_expression import (
     classify_term,
     classify_terms,
     evaluate_terms,
-    fold_formula_bound,
     parse_linear_expression,
     term_text,
 )
@@ -230,28 +229,6 @@ def test_term_text_writes_the_term_as_a_formula_does(
     term: ParsedTerm, text: str
 ) -> None:
     assert term_text(term) == text
-
-
-def test_fold_moves_the_data_terms_onto_both_limits() -> None:
-    partition = classify_terms(
-        parse_linear_expression("ger_usih(1) - demanda(2) + 100", _Scope())
-    )
-
-    def loads(term: ParsedTerm) -> float:
-        return 1.0 if term.token == CONST_TOKEN else 40.0
-
-    folded = fold_formula_bound(partition, 0.0, 500.0, loads)
-
-    assert [(t.coefficient, t.token) for t in folded.terms] == [(1.0, "ger_usih")]
-    assert (folded.lower, folded.upper) == (-60.0, 440.0)
-
-
-def test_fold_keeps_an_unbounded_side_unbounded() -> None:
-    partition = classify_terms(parse_linear_expression("ger_usih(1) + 100", _Scope()))
-
-    folded = fold_formula_bound(partition, None, 500.0, lambda _term: 1.0)
-
-    assert (folded.lower, folded.upper) == (None, 400.0)
 
 
 def test_evaluate_terms_reads_a_constant_from_its_coefficient() -> None:

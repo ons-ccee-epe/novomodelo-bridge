@@ -16,13 +16,14 @@ from novomodelo_bridge.core.diagnostics import (
 from novomodelo_bridge.core.errors import UnsupportedSourceError
 from novomodelo_bridge.decomp.case import DecompCase
 from novomodelo_bridge.decomp.converters.ncs import (
+    _pee_series,
     build_pee_ncs_id_map,
     convert_ncs_factors,
     convert_ncs_stats,
     convert_non_controllable_sources,
 )
 from novomodelo_bridge.decomp.id_map import DecompIdMap
-from novomodelo_bridge.decomp.temporal import build_operative_calendar
+from novomodelo_bridge.decomp.temporal import OperativeStage, build_operative_calendar
 from tests.conftest import make_decomp_case
 
 _ID_MAP = DecompIdMap(
@@ -258,7 +259,6 @@ def _config_frame(states: dict[int, str]) -> pd.DataFrame:
 def test_pee_series_deterministic_typo_uses_modal_value() -> None:
     """A lone per-scenario outlier is collapsed to the majority (modal)
     value and reported, not crashed on, and never resolved to the outlier."""
-    from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad = pd.DataFrame([{"codigo_pee": 9, "nome_pee": "PARK9"}])
     subm = pd.DataFrame([{"codigo_pee": 9, "codigo_submercado": 1}])
@@ -311,7 +311,6 @@ def _deterministic_rows(
 
 
 def test_pee_series_deterministic_card_only_reads_generation() -> None:
-    from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad, subm = _pee_registry(4)
     det = pd.DataFrame(
@@ -333,7 +332,6 @@ def test_pee_series_deterministic_card_only_reads_generation() -> None:
 
 
 def test_pee_series_deterministic_repeated_key_uses_last_row_and_warns() -> None:
-    from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad, subm = _pee_registry(4)
     det = pd.DataFrame(
@@ -349,7 +347,6 @@ def test_pee_series_deterministic_repeated_key_uses_last_row_and_warns() -> None
 
 
 def test_pee_series_cards_with_distinct_parks_are_combined() -> None:
-    from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad, subm = _pee_registry(2, 5)
     per_scenario = pd.DataFrame(
@@ -377,7 +374,6 @@ def test_pee_series_cards_with_distinct_parks_are_combined() -> None:
 
 
 def test_pee_series_park_on_both_cards_raises() -> None:
-    from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad, subm = _pee_registry(4)
     per_scenario = pd.DataFrame(
@@ -400,7 +396,6 @@ def test_pee_series_park_on_both_cards_raises() -> None:
 
 
 def test_pee_series_park_with_two_operating_states_raises() -> None:
-    from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad, subm = _pee_registry(4)
     config = pd.concat(
@@ -422,7 +417,6 @@ def test_pee_series_park_with_two_operating_states_raises() -> None:
 
 
 def test_pee_series_park_without_operating_state_is_must_run_and_warns() -> None:
-    from novomodelo_bridge.decomp.converters.ncs import _pee_series
 
     cad, subm = _pee_registry(4, 6)
     det = pd.DataFrame(
@@ -541,3 +535,125 @@ class TestPeeFindings:
             "decomp-pee-generation-spread",
             "decomp-pee-operating-state-missing",
         ]
+
+
+def _uniform_calendar(n_stages: int, *, n_blocks: int) -> list[OperativeStage]:
+    return [
+        OperativeStage(
+            index=i,
+            start_date=date(2026, 7, 4),
+            end_date=date(2026, 7, 11),
+            season_id=6,
+            block_hours=tuple(24.0 for _ in range(n_blocks)),
+        )
+        for i in range(n_stages)
+    ]
+
+
+def _uniform_pq_frame(n_series: int, *, n_blocks: int) -> pd.DataFrame:
+    rows = []
+    for i in range(n_series):
+        row: dict[str, object] = {
+            "codigo_submercado": 1,
+            "estagio": 1,
+            "nome": f"S{i}",
+        }
+        for k in range(1, n_blocks + 1):
+            row[f"geracao_{k}"] = 10.0
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def test_build_pee_ncs_id_map_sorted_offset_matches_pee_series() -> None:
+    # parks {7, 3} declared after N PQ series -> {3: N, 7: N+1},
+    # sorted-by-code, offset past the PQ series, matching _pee_series' ids.
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    calendar = _uniform_calendar(1, n_blocks=1)
+    dadger = _StubDadger(_uniform_pq_frame(n_series=2, n_blocks=1))
+    cad = pd.DataFrame(
+        [
+            {"codigo_pee": 7, "nome_pee": "PARK7"},
+            {"codigo_pee": 3, "nome_pee": "PARK3"},
+        ]
+    )
+    subm = pd.DataFrame(
+        [
+            {"codigo_pee": 7, "codigo_submercado": 1},
+            {"codigo_pee": 3, "codigo_submercado": 1},
+        ]
+    )
+    ger = pd.DataFrame(
+        [
+            {
+                "codigo_pee": code,
+                "estagio": 1,
+                "patamar": 1,
+                "cenario": 1,
+                "geracao": 5.0,
+            }
+            for code in (7, 3)
+        ]
+    )
+    renovaveis = _StubRenovaveis(cad, subm, ger)
+
+    case = make_decomp_case(
+        Path("unused"), dadger=dadger, calendar=calendar, renovaveis=renovaveis
+    )
+    ncs_map = build_pee_ncs_id_map(case, id_map)
+    assert ncs_map == {3: 2, 7: 3}
+
+    series, _ = _pee_series(renovaveis, id_map, calendar, first_ncs_id=2)
+    assert [s.ncs_id for s in series] == [ncs_map[3], ncs_map[7]]
+    assert series[0].name.startswith("PARK3")
+    assert series[1].name.startswith("PARK7")
+
+
+def test_build_pee_ncs_id_map_deterministic_card_matches_pee_series() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    calendar = _uniform_calendar(1, n_blocks=1)
+    dadger = _StubDadger(_uniform_pq_frame(n_series=1, n_blocks=1))
+    cad = pd.DataFrame([{"codigo_pee": c, "nome_pee": f"PARK{c}"} for c in (9, 6)])
+    subm = pd.DataFrame([{"codigo_pee": c, "codigo_submercado": 1} for c in (9, 6)])
+    det = pd.DataFrame(
+        [
+            {
+                "codigo_pee": code,
+                "estagio": 1,
+                "estagio_final": 1,
+                "patamar": 1,
+                "geracao": 5.0,
+            }
+            for code in (9, 6)
+        ]
+    )
+    renovaveis = _StubRenovaveis(cad, subm, pd.DataFrame(), det)
+
+    case = make_decomp_case(
+        Path("unused"), dadger=dadger, calendar=calendar, renovaveis=renovaveis
+    )
+    ncs_map = build_pee_ncs_id_map(case, id_map)
+    assert ncs_map == {6: 1, 9: 2}
+
+    series, _ = _pee_series(renovaveis, id_map, calendar, first_ncs_id=1)
+    assert [s.ncs_id for s in series] == [ncs_map[6], ncs_map[9]]
+
+
+def test_build_pee_ncs_id_map_none_renovaveis_returns_empty() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    calendar = _uniform_calendar(1, n_blocks=1)
+    dadger = _StubDadger(None)
+    case = make_decomp_case(
+        Path("unused"), dadger=dadger, calendar=calendar, renovaveis=None
+    )
+    assert build_pee_ncs_id_map(case, id_map) == {}
+
+
+def test_build_pee_ncs_id_map_no_declared_parks_returns_empty() -> None:
+    id_map = DecompIdMap(bus_codes=(1,), bus_names=("SE",))
+    calendar = _uniform_calendar(1, n_blocks=1)
+    dadger = _StubDadger(None)
+    renovaveis = _StubRenovaveis(pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
+    case = make_decomp_case(
+        Path("unused"), dadger=dadger, calendar=calendar, renovaveis=renovaveis
+    )
+    assert build_pee_ncs_id_map(case, id_map) == {}

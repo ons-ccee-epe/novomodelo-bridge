@@ -77,9 +77,9 @@ properties".
 
 ### A DECOMP deck with electrical-constraint files (`decomp-abr-26-lpp`), plus a novomodelo binary
 
-| Test (in git history) | Verified |
+| Check | Needs |
 | --- | --- |
-| One test each in `test_libs_electrical_emit.py` and `test_libs_electrical_pipeline.py` | Conversion emits at least one `LIBS_ELEC_*` generic constraint with matching bound rows, the unresolved-operand census stays below 20, and `novomodelo validate` exits 0 on the converted case. |
+| Translation of the LIBs electrical-constraint file | Convert the deck: every term of every formula, inequality, override, expression and activation-rule condition translates without a conversion error. The constraints and expressions the file adds to `constraints/generic_constraints.json`, its rows of `constraints/generic_constraint_bounds.parquet` and its entries of `constraints/generic_parameters.json` hold none of the deck's term names (`ger_usih`, `ener_interc`, `se`, `re` and the rest of the table in [the DECOMP track](decomp.md#electrical-constraints)) and no DECOMP code where an entity id belongs; the names the deck gives its expressions, aliases and data terms stay. Then `novomodelo validate` on the converted case exits 0. The conversion needs only the deck, the validation the novomodelo binary. |
 
 ### A DECOMP deck carrying `VI` water travel time, plus a novomodelo binary
 
@@ -94,6 +94,24 @@ Four tests in `tests/decomp/test_contracts.py` read novomodelo's
 copies vendored under `tests/fixtures/novomodelo_schemas/` and
 `tests/fixtures/novomodelo_d41/`, so the tests run everywhere. Refresh both
 copies from the novomodelo repository whenever `MIN_NOVOMODELO_VERSION` moves.
+
+`tests/fixtures/novomodelo_contracts/` holds the contract fixtures that
+novomodelo owns and its own loader accepts, `generic_constraints_contract.json`
+and `generic_constraint_bounds_contract.parquet`, and
+`tests/fixtures/novomodelo_schemas/` holds novomodelo's
+`generic_constraints.schema.json` and `generic_parameters.schema.json`.
+`tests/decomp/test_generic_constraints_contract.py` converts synthetic cards,
+in their long and their short forms, and checks that the generic-constraints
+document equals the JSON fixture byte for byte, that the bounds table equals
+the Parquet fixture column by column (names, types, nullability and values,
+since the Parquet bytes carry the writer's version), that the fixture, the
+document and the parameter entries validate against the two schemas, and that
+every `@name` the texts cite is a declared expression or parameter. These four
+files are `cp` copies from the novomodelo repository: when novomodelo changes
+one, copy it again; never edit it here or generate it from the emitter. A
+failing contract test means the two repositories now disagree on the format,
+not that a fixture is out of date and needs regenerating: settle the change in
+whichever repository is wrong.
 
 ## Checks run by hand
 
@@ -160,18 +178,6 @@ These checks are run by hand and recorded so they can be repeated.
 | Check | Verified |
 | --- | --- |
 | `PEE-CONFIG-PER` operating state against curtailment | The deck's `PEE-CONFIG-PER` declares each park `centralizado` or `fixo`. Matching each park to its converted source by name, every `centralizado` park and no other carries `allow_curtailment: true`; the `fixo` parks and every `PQ` series stay must-run, and `penalties.json` prices curtailment at `PCORTEOL`. Captured in October 2026. |
-
-### Two LIBs DECOMP decks, with `peq_` terms, period-only inequalities and load-driven activation rules
-
-| Check | Verified |
-| --- | --- |
-| LIBs electrical restrictions | Every restriction of the shadow-process deck's `lib_restricao-eletrica-especial.csv` converts, among them the ones reading `peq_<name>_<subsystem>` series and the ones declared only by `RESTRICAO-ELETRICA-INEQUACAO-PERIODO-PATAMAR` rows. On a copy of `DEC_ONS_062026_RV0_VE_LPPs_COMPLETAS`, whose `RESTRICAO-ELETRICA-HABILITA` rules compare the `DP` load and aliases, the restrictions the conversion leaves inactive are the ones an independent evaluation of every rule, stage and block finds inactive, and the restrictions whose limit is `1E+31` convert with that side unbounded. Captured in October 2026. |
-
-### The same copy of the complete deck, with the GNL plant's `GL` generation varied
-
-| Check | Verified |
-| --- | --- |
-| GNL `ger_usit` abated with its `GL` commanded generation | On the copy of `DEC_ONS_062026_RV0_VE_LPPs_COMPLETAS`, the restrictions whose `GPC`/`GPC2` expressions include the `ger_usit` of the `dadgnl` GNL plant convert, and their bound is the deck's limit less the formula coefficient times the plant's commanded generation. A further copy with that plant's `GL` generation made different per block, and in one week of the monthly stage, moves each such bound in every active cell by its formula coefficient times the change in the block's commanded value, the monthly stage taking the `duracao`-weighted mean of its `GL` weeks; no other restriction moves. Captured in October 2026. |
 
 ### A DECOMP deck with GNL plants, exported back to DECOMP's cut files
 

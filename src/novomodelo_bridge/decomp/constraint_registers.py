@@ -58,7 +58,6 @@ from novomodelo_bridge.core.tolerances import relative_tolerance
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection, Mapping, Sequence
     from collections.abc import Set as AbstractSet
-    from pathlib import Path
 
 _LOG = logging.getLogger(__name__)
 
@@ -1524,34 +1523,5 @@ def detect_unconverted_rha(dadger: RhaRegisters) -> Diagnostic | None:
         ),
         table=DiagnosticTable(
             columns=["Constraint"], rows=[[code] for code in sorted(ids)]
-        ),
-    )
-
-
-def detect_libs_electrical(libs_file: Path | None) -> Diagnostic | None:
-    """Warn when a LIBs-era deck moves its electrical constraints out of
-    ``dadger``.
-
-    *libs_file* is the deck's ``RESTRICAO-ELETRICA-ESPECIAL`` file
-    (``DecompFiles.libs_restricao_eletrica``). Only that format's long-form
-    period-keyed cards are converted (:mod:`novomodelo_bridge.decomp.converters.
-    libs_electrical`), so the caller suppresses this warning once that subset
-    converts and the ``decomp-libs-electrical-converted`` census is
-    authoritative.
-
-    Returns:
-        A ``WARNING`` when the deck declares the file, else ``None``.
-    """
-    if libs_file is None:
-        return None
-    return Diagnostic(
-        code="decomp-libs-electrical-present",
-        severity=Severity.WARNING,
-        category=_CATEGORY,
-        title="LIBS electrical constraints not converted",
-        summary=(
-            "The deck's LIBS index lists a RESTRICAO-ELETRICA-ESPECIAL file "
-            "with no electrical constraint in the long form the conversion "
-            "reads, so the case runs without that file's constraints."
         ),
     )

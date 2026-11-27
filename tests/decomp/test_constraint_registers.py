@@ -22,7 +22,6 @@ from novomodelo_bridge.decomp.constraint_registers import (
     ConstraintTerm,
     StageBounds,
     bound_conflicts_diagnostic,
-    detect_libs_electrical,
     detect_unconverted_rha,
     drop_unknown_entities,
     lowers_to_bound,
@@ -649,18 +648,6 @@ def test_rha_registers_warn_naming_their_constraint_ids() -> None:
 
 def test_deck_without_rha_registers_has_no_rha_finding() -> None:
     assert detect_unconverted_rha(_FakeDadger(re=_decl((10, 1, 2)))) is None
-
-
-def test_libs_electrical_warns_only_when_the_deck_declares_the_file(
-    tmp_path: Path,
-) -> None:
-    diagnostic = detect_libs_electrical(
-        tmp_path / "lib_restricao-eletrica-especial.csv"
-    )
-    assert diagnostic is not None
-    assert diagnostic.severity is Severity.WARNING
-
-    assert detect_libs_electrical(None) is None
 
 
 def test_stage_varying_coefficient_reads_a_schedule() -> None:

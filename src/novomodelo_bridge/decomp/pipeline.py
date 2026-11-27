@@ -37,6 +37,7 @@ from novomodelo_bridge.core.diversion import (
     is_unlimited_flow,
     unlimited_channels_diagnostic,
 )
+from novomodelo_bridge.core.electrical_expression import MalformedElectricalExpression
 from novomodelo_bridge.core.errors import FieldParseError, UnsupportedSourceError
 from novomodelo_bridge.core.generic_constraint_builder import (
     ConstraintIdAllocator,
@@ -64,17 +65,20 @@ from novomodelo_bridge.decomp.converters import cadastro as cadastro_conv
 from novomodelo_bridge.decomp.converters import config as config_conv
 from novomodelo_bridge.decomp.converters import constraints as constraints_conv
 from novomodelo_bridge.decomp.converters import contracts as contracts_conv
+from novomodelo_bridge.decomp.converters import (
+    electrical_constraints as electrical_constraints_conv,
+)
+from novomodelo_bridge.decomp.converters import (
+    electrical_translate as electrical_translate_conv,
+)
 from novomodelo_bridge.decomp.converters import fpha as fpha_conv
 from novomodelo_bridge.decomp.converters import hydro as hydro_conv
 from novomodelo_bridge.decomp.converters import libs_electrical as libs_electrical_conv
-from novomodelo_bridge.decomp.converters import (
-    libs_electrical_emit,
-    single_term_bounds,
-)
 from novomodelo_bridge.decomp.converters import ncs as ncs_conv
 from novomodelo_bridge.decomp.converters import network as network_conv
 from novomodelo_bridge.decomp.converters import penalties as penalties_conv
 from novomodelo_bridge.decomp.converters import rhe_shares as rhe_shares_conv
+from novomodelo_bridge.decomp.converters import single_term_bounds
 from novomodelo_bridge.decomp.converters import tailrace_flow as tailrace_flow_conv
 from novomodelo_bridge.decomp.converters import thermal as thermal_conv
 from novomodelo_bridge.decomp.converters import travel_time as travel_time_conv
@@ -96,6 +100,7 @@ from novomodelo_bridge.decomp.files import (
 from novomodelo_bridge.decomp.id_map import DecompIdMap
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
 from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
+from novomodelo_bridge.novomodelo.scalar_parameters import append_scalar_parameters
 
 _LOG = logging.getLogger(__name__)
 
@@ -154,6 +159,7 @@ class DecompCaseArtifacts:
     hydros_dict: dict | None = None
     thermals_dict: dict | None = None
     gnl_model: anticipated_conv.GnlCommitmentModel | None = None
+    gnl_thermal_ids: dict[int, int] | None = None
     buses_doc: dict | None = None
     lines_doc: dict | None = None
     line_bounds: pa.Table | None = None
@@ -843,70 +849,6 @@ def _base_diversion_channels(
     return channels
 
 
-_LIBS_LEFT_OUT = {
-    "inactive": "Left out: never active",
-    "unrecognized-token": "Left out: undeclared name",
-    "unresolved-bucket-a": "Left out: no case variable for a term",
-    "unresolved-bucket-bc": "Left out: data term not evaluated",
-}
-
-
-def _libs_electrical_census_diagnostic(
-    result: libs_electrical_emit.LibsElectricalResult,
-) -> dx.Diagnostic:
-    """The ``decomp-libs-electrical-converted`` INFO census: the converted
-    restrictions plus one row per
-    :attr:`~novomodelo_bridge.decomp.converters.libs_electrical_emit.LibsElectricalResult.deferred`
-    reason, labelled by :data:`_LIBS_LEFT_OUT`."""
-    n_converted = len(result.converted_codes)
-    total = n_converted + sum(len(codes) for codes in result.deferred.values())
-    rows: list[list[object]] = [["Converted", n_converted]]
-    rows.extend(
-        [_LIBS_LEFT_OUT[reason], len(codes)]
-        for reason, codes in sorted(result.deferred.items())
-    )
-    return dx.Diagnostic(
-        code="decomp-libs-electrical-converted",
-        severity=dx.Severity.INFO,
-        category="Special constraints",
-        title=f"LIBS electrical restrictions converted ({n_converted} of {total})",
-        summary=(
-            f"Of the {dx.counted(total, 'electrical restriction')} in the LIBS "
-            f"file, the conversion turns {n_converted} into generic "
-            "constraints. The table counts the rest by the reason each is left "
-            "out; the other electrical-restriction panels list them."
-        ),
-        table=dx.DiagnosticTable(
-            columns=["Outcome", "Count"],
-            rows=rows,
-            justify=["left", "right"],
-        ),
-    )
-
-
-def _gnl_thermal_codes(
-    gnl_model: anticipated_conv.GnlCommitmentModel | None, id_map: DecompIdMap
-) -> frozenset[int]:
-    """The ``dadgnl`` GNL plant codes, whose LIBs ``ger_usit`` is input data.
-
-    Raises
-    ------
-    ValueError
-        If a code is declared both in ``CT`` and in ``TG``: its ``ger_usit``
-        would be read as a commanded GNL generation and leave the equation.
-    """
-    codes = frozenset(t.code for t in gnl_model.thermals) if gnl_model else frozenset()
-    shared = sorted(codes.intersection(id_map.thermal_codes))
-    if shared:
-        raise ValueError(
-            f"the thermal codes {shared} are declared both in the dadger CT "
-            "registry and in the dadgnl TG registry; an electrical restriction's "
-            "ger_usit for them cannot be told apart as a decision or a "
-            "commanded GNL generation"
-        )
-    return codes
-
-
 def _water_bucket_stages(
     horizon_end: date, travel_time_hours: Mapping[int, float]
 ) -> list[dict] | None:
@@ -1227,14 +1169,15 @@ def _convert_thermals_with_gnl(
     """The thermal registry with the dadgnl GNL fleet spliced in, and the GNL
     commitment model (``None`` when the deck has no dadgnl file).
 
-    Extends *initial_conditions_doc* with the GNL left boundary and writes
+    Extends *initial_conditions_doc* with the GNL left boundary, writes
     ``post_study_stages.json`` once: the GNL thermal calendar when the deck
     declares a GS calendar, plus the water calendar of a deck with a
-    travel-time arc.
+    travel-time arc, and stores the GNL code -> thermal id map on *artifacts*.
     """
     case = artifacts.case
     id_map = artifacts.id_map
     thermals_dict = thermal_conv.convert_thermals(case, id_map)
+    artifacts.gnl_thermal_ids = {}
     # GNL (fuel-constrained) thermals are declared in dadgnl, absent from CT, so
     # the thermal converter never sees them. Read the commitment model and emit
     # the created thermals plus their anticipated ring: the mandatory left
@@ -1265,6 +1208,7 @@ def _convert_thermals_with_gnl(
             calendar=case.calendar,
         )
         thermals_dict["thermals"].extend(gnl.thermals)
+        artifacts.gnl_thermal_ids = gnl.thermal_id_by_code
         thermals_dict["thermals"].sort(key=lambda t: t["id"])
         if gnl.past_anticipated_commitments:
             initial_conditions_doc["past_anticipated_commitments"] = (
@@ -2512,46 +2456,6 @@ def _emit_special_constraint_generics(
     ]
 
 
-def _emit_libs_electrical_generics(
-    artifacts: DecompCaseArtifacts,
-    model: libs_electrical_conv.LibsElectricalModel,
-    shared: _SharedEmitterInputs,
-    *,
-    source: Path,
-    availability_values: dict[tuple[int, int, int], group_bounds_conv.GroupBoundEntry],
-    hydros_dict: dict,
-) -> libs_electrical_emit.LibsElectricalResult:
-    """Every long-form LIBs electrical restriction of *model*, read from
-    *source*, that resolves, as a generic constraint."""
-    case = artifacts.case
-    id_map = artifacts.id_map
-    context_factory = libs_electrical_conv.build_data_context(
-        case, id_map, model=model, gnl_model=artifacts.gnl_model
-    )
-    a_h = libs_electrical_conv.build_available_power(
-        id_map, overlay=availability_values
-    )
-    ncs_id_by_pee_code = ncs_conv.build_pee_ncs_id_map(case, id_map)
-    conjh_bus_by_code_group = {
-        (id_map.hydro_codes[entry["id"]], group_index): group["bus_id"]
-        for entry in hydros_dict["hydros"]
-        for group_index, group in enumerate(entry["unit_groups"], start=1)
-    }
-    return libs_electrical_emit.emit_libs_electrical_generics(
-        model,
-        id_map,
-        context_factory,
-        a_h,
-        artifacts.calendar,
-        ncs_id_by_pee_code,
-        conjh_bus_by_code_group,
-        shared.line_map,
-        shared.big_m,
-        shared.allocator,
-        source=source,
-    )
-
-
 def _emit_itaipu_ande_generic(
     artifacts: DecompCaseArtifacts, shared: _SharedEmitterInputs
 ) -> GenericConstraintResult | None:
@@ -2569,88 +2473,186 @@ def _emit_itaipu_ande_generic(
     )
 
 
+def _special_scalar_parameters(
+    id_map: DecompIdMap, special_generics: list[constraints_conv.DecompGenericResult]
+) -> dict:
+    """The scalar parameters document the expressions of *special_generics*
+    may reference, unwritten."""
+    return build_decomp_scalar_parameters(
+        [id_map.hydro_id(code) for code in id_map.hydro_codes],
+        per_stage={
+            name: values
+            for result in special_generics
+            for name, values in result.per_stage_parameters.items()
+        },
+        expressions={
+            name: body
+            for result in special_generics
+            for name, body in result.expression_parameters.items()
+        },
+    )
+
+
+def _generic_constraints_document(
+    constraints: list[dict], expressions: list[dict]
+) -> dict:
+    """The ``constraints/generic_constraints.json`` document of *constraints*,
+    with the ``expressions`` key only when *expressions* is not empty."""
+    document: dict = {
+        "$schema": novomodelo_schemas.schema_url_for(
+            "constraints/generic_constraints.json"
+        ),
+        "constraints": constraints,
+    }
+    if expressions:
+        document["expressions"] = expressions
+    return document
+
+
 def _write_generic_constraints(
     writer: CaseWriter,
-    id_map: DecompIdMap,
-    special_generics: list[constraints_conv.DecompGenericResult],
-    libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None,
-    ande_generic: GenericConstraintResult | None,
+    emitted: Sequence[constraints_conv.DecompGenericResult | GenericConstraintResult],
+    electrical: electrical_constraints_conv.GenericOutputs | None,
 ) -> None:
-    """Write the generic constraints with their bounds, and the scalar
-    parameters their expressions reference."""
-    emitted: list[constraints_conv.DecompGenericResult | GenericConstraintResult] = [
-        *special_generics
-    ]
-    if (
-        libs_electrical_result is not None
-        and libs_electrical_result.generic is not None
-    ):
-        emitted.append(libs_electrical_result.generic)
-    if ande_generic is not None:
-        emitted.append(ande_generic)
+    """Write the generic constraints of *emitted*, in their order, followed by
+    those translated from the LIBs electrical cards, and their bounds in the
+    same order."""
     generic_constraints = [
         constraint for result in emitted for constraint in result.constraints
     ]
     generic_bound_tables = [result.bounds for result in emitted]
-    if generic_constraints:
+    generic_expressions: list[dict] = []
+    if electrical is not None:
+        generic_constraints.extend(electrical.constraints)
+        generic_bound_tables.append(electrical.bounds)
+        generic_expressions = electrical.expressions
+    if generic_constraints or generic_expressions:
         writer.write_json(
             "constraints/generic_constraints.json",
-            {
-                "$schema": novomodelo_schemas.schema_url_for(
-                    "constraints/generic_constraints.json"
-                ),
-                "constraints": generic_constraints,
-            },
+            _generic_constraints_document(generic_constraints, generic_expressions),
         )
+    if any(table.num_rows for table in generic_bound_tables):
         writer.write_parquet(
             "constraints/generic_constraint_bounds.parquet",
             pa.concat_tables(generic_bound_tables),
         )
 
-    # Every `@name` a surviving expression references must resolve, or novomodelo
-    # fails to load the case.
-    if any("@" in constraint["expression"] for constraint in generic_constraints):
-        write_scalar_parameters(
-            writer,
-            build_decomp_scalar_parameters(
-                [id_map.hydro_id(code) for code in id_map.hydro_codes],
-                per_stage={
-                    name: values
-                    for result in special_generics
-                    for name, values in result.per_stage_parameters.items()
-                },
-                expressions={
-                    name: body
-                    for result in special_generics
-                    for name, body in result.expression_parameters.items()
-                },
-            ),
+
+def _electrical_generic_outputs(
+    artifacts: DecompCaseArtifacts,
+    model: libs_electrical_conv.LibsElectricalModel,
+    *,
+    source: Path,
+    reserved: frozenset[str],
+    taken: frozenset[int],
+    default_penalty: float,
+) -> electrical_constraints_conv.GenericOutputs:
+    """*model*, read from *source*, translated to generic constraints in
+    novomodelo's vocabulary and ids, unwritten.
+
+    *reserved* are the names other conversions declare as parameters, *taken*
+    the ids of their generic constraints and *default_penalty* the violation
+    cost of a soft restriction that gives none.
+
+    Raises
+    ------
+    FieldParseError
+        A text of *source* is malformed, or a restriction needs
+        *default_penalty* and it is not above 0
+        (:class:`~novomodelo_bridge.core.electrical_expression.MalformedElectricalExpression`).
+    UnsupportedSourceError
+        A text of *source* writes the load as an LP term outside a condition,
+        or cites an entity the converted case lacks.
+    """
+    contracts = artifacts.contracts
+    hydros_dict = artifacts.hydros_dict
+    assert contracts is not None
+    assert hydros_dict is not None
+    gnl_thermal_ids = artifacts.gnl_thermal_ids
+    assert gnl_thermal_ids is not None
+    code_map = electrical_constraints_conv.build_code_map(
+        artifacts.id_map,
+        gnl_thermal_ids,
+        ncs_conv.build_pee_ncs_id_map(artifacts.case, artifacts.id_map),
+        contracts,
+    )
+    machine_sets = electrical_constraints_conv.machine_set_table(
+        hydros_dict["hydros"], artifacts.id_map
+    )
+    data_terms = electrical_constraints_conv.data_term_aliases(
+        libs_electrical_conv.ande_load(artifacts.case),
+        ncs_conv.pq_block_generation(artifacts.case.dadger, artifacts.calendar),
+        artifacts.id_map,
+    )
+    try:
+        return electrical_constraints_conv.build_generic_outputs(
+            model,
+            artifacts.calendar,
+            electrical_translate_conv.entity_tables(code_map, machine_sets, contracts),
+            data_terms,
+            reserved=reserved,
+            taken=taken,
+            default_penalty=default_penalty,
         )
+    except MalformedElectricalExpression as err:
+        raise FieldParseError(f"{source.name}: {err}", path=str(source)) from err
+    except UnsupportedSourceError as err:
+        raise UnsupportedSourceError(
+            f"{source.name}: {err}", path=str(source), field=err.field
+        ) from err
+
+
+def _electrical_census_diagnostic(
+    outputs: electrical_constraints_conv.GenericOutputs,
+) -> dx.Diagnostic:
+    """The ``decomp-libs-electrical-translated`` INFO diagnostic: how many
+    top-level records of each kind *outputs* holds.
+
+    Counts only the outputs' own lists and rows, never what a record holds
+    inside.
+    """
+    n_constraints = len(outputs.constraints)
+    return dx.Diagnostic(
+        code="decomp-libs-electrical-translated",
+        severity=dx.Severity.INFO,
+        category="Special constraints",
+        title=f"LIBS electrical constraints translated ({n_constraints})",
+        summary=(
+            "The conversion translated the LIBS electrical file to "
+            "novomodelo's vocabulary and ids, in "
+            "constraints/generic_constraints.json, "
+            "constraints/generic_constraint_bounds.parquet and "
+            "constraints/generic_parameters.json. The table counts the records "
+            "written from the file."
+        ),
+        table=dx.DiagnosticTable(
+            columns=["Record", "Count"],
+            rows=[
+                ["Constraints", n_constraints],
+                ["Expressions", len(outputs.expressions)],
+                ["Parameters", len(outputs.parameters)],
+                ["Bounds rows", outputs.bounds.num_rows],
+                [
+                    "Constraints with a condition",
+                    sum("active_when" in record for record in outputs.constraints),
+                ],
+            ],
+            justify=["left", "right"],
+        ),
+    )
 
 
 def _emit_constraint_detection_diagnostics(
     case: DecompCase,
-    libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None,
-    libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None,
+    electrical: electrical_constraints_conv.GenericOutputs | None,
 ) -> None:
-    """Report the electrical-constraint files the conversion cannot read, and
-    the LIBs electrical census."""
+    """Report the RHA registers the conversion cannot read and, when the
+    electrical cards were converted, their census."""
     rha_detection = constraint_registers.detect_unconverted_rha(case.dadger)
     if rha_detection is not None:
         dx.emit(rha_detection, logger=_LOG)
-    # The flat presence warning is narrowed to the subset
-    # `libs_electrical_model` (read once by `_emit_and_write`) did NOT
-    # convert -- a short-form-only (RE/RE-*, date-indexed) file, or no long-form card at
-    # all despite the indices.csv entry. Once the long-form subset
-    # converts, the census INFO below is authoritative and this flat warning
-    # would otherwise be a stale "not converted" claim over that subset.
-    libs_detection = constraint_registers.detect_libs_electrical(
-        case.files.libs_restricao_eletrica
-    )
-    if libs_detection is not None and libs_electrical_model is None:
-        dx.emit(libs_detection, logger=_LOG)
-    if libs_electrical_result is not None:
-        dx.emit(_libs_electrical_census_diagnostic(libs_electrical_result), logger=_LOG)
+    if electrical is not None:
+        dx.emit(_electrical_census_diagnostic(electrical), logger=_LOG)
 
 
 def _emit_and_write(
@@ -2658,10 +2660,13 @@ def _emit_and_write(
 ) -> ConversionReport:
     """The ``step("Writing outputs")`` phase: run the post-emission self-checks
     (``emission_checks.run_and_gate``) before any constraint parquet is
-    written, write the bound parquets, emit the RE -> RHQ/RHV -> RHE ->
-    LIBs-electrical -> RI ANDE generic constraints over one shared
-    :class:`ConstraintIdAllocator`, write the generic-constraint artifacts and
-    scalar parameters, emit the detection diagnostics, and return the
+    written, write the bound parquets, emit the RE -> RHQ/RHV -> RHE -> RI
+    ANDE generic constraints over one shared
+    :class:`ConstraintIdAllocator`, translate the LIBs electrical cards, when
+    the deck has them, to generic constraints under ids none of those take,
+    write the generic-constraint artifacts of both, then the scalar
+    parameters of both, emit the detection and census diagnostics, and
+    return the
     :class:`~novomodelo_bridge.core.conversion.ConversionReport` built from
     ``writer.would_write``.
     """
@@ -2687,8 +2692,6 @@ def _emit_and_write(
     assert census is not None
     pumping_ids = artifacts.pumping_ids
     assert pumping_ids is not None
-    availability_values = artifacts.availability_values
-    assert availability_values is not None
     contracts = artifacts.contracts
     assert contracts is not None
     energy_contracts_doc = artifacts.energy_contracts_doc
@@ -2713,14 +2716,8 @@ def _emit_and_write(
     # needs but none of them reads the deck to build for itself.
     shared = _shared_emitter_inputs(dadger, deficit_cost, lines_doc)
 
-    # Read the deck's LIBs-era electrical-constraint file (the LIBS index's
-    # RESTRICAO-ELETRICA-ESPECIAL entry, resolved by discover_decomp_files)
-    # once: both the narrowed detect_libs_electrical decision and the
-    # generic-constraint emitter below thread this same `libs_electrical_model`,
-    # so neither can disagree about whether the deck's long-form subset
-    # converted. `read_libs_electrical` returns `None` for a short-form-only
-    # (RE/RE-* or date-indexed) file -- that fallback stays on
-    # detect_libs_electrical's flat warning.
+    # `read_libs_electrical` returns `None` when the file declares no
+    # expression, alias, restriction or activation rule.
     libs_electrical_model: libs_electrical_conv.LibsElectricalModel | None = None
     libs_file = case.files.libs_restricao_eletrica
     restricoes = case.libs_restricao_eletrica
@@ -2729,42 +2726,51 @@ def _emit_and_write(
         if unread is not None:
             dx.emit(unread, logger=_LOG)
         libs_electrical_model = libs_electrical_conv.read_libs_electrical(
-            restricoes,
-            calendar,
-            source=libs_file,
-            gnl_thermal_codes=_gnl_thermal_codes(artifacts.gnl_model, id_map),
+            restricoes, calendar
         )
 
     special_generics = _emit_special_constraint_generics(
         artifacts, shared, census=census, pumping_ids=pumping_ids
     )
 
-    # The 4th generic-constraint emitter link -- every
-    # LIBs-era long-form electrical restriction that resolved
-    # (`libs_electrical_model`, read once above), spliced after RHE so the
-    # unconditional write block below picks it up automatically, identical in
-    # shape to the three links above. Built only when the deck actually
-    # carries a long-form model, since none of these inputs are otherwise
-    # needed.
-    libs_electrical_result: libs_electrical_emit.LibsElectricalResult | None = None
-    if libs_electrical_model is not None and libs_file is not None:
-        libs_electrical_result = _emit_libs_electrical_generics(
-            artifacts,
-            libs_electrical_model,
-            shared,
-            source=libs_file,
-            availability_values=availability_values,
-            hydros_dict=hydros_dict,
-        )
-
     # Last, so the ids of the deck's own restrictions do not move.
     ande_generic = _emit_itaipu_ande_generic(artifacts, shared)
-    _write_generic_constraints(
-        writer, id_map, special_generics, libs_electrical_result, ande_generic
+    emitted: list[constraints_conv.DecompGenericResult | GenericConstraintResult] = [
+        *special_generics,
+        *([] if ande_generic is None else [ande_generic]),
+    ]
+    parameters = _special_scalar_parameters(id_map, special_generics)
+    electrical = (
+        _electrical_generic_outputs(
+            artifacts,
+            libs_electrical_model,
+            source=libs_file,
+            reserved=frozenset(
+                entry["name"] for entry in parameters["scalar_parameters"]
+            ),
+            taken=frozenset(
+                constraint["id"]
+                for result in emitted
+                for constraint in result.constraints
+            ),
+            default_penalty=shared.big_m,
+        )
+        if libs_electrical_model is not None and libs_file is not None
+        else None
     )
-    _emit_constraint_detection_diagnostics(
-        case, libs_electrical_model, libs_electrical_result
-    )
+    _write_generic_constraints(writer, emitted, electrical)
+    electrical_parameters = [] if electrical is None else electrical.parameters
+    # Every `@name` a surviving expression references must resolve, or novomodelo
+    # fails to load the case.
+    if electrical_parameters or any(
+        "@" in constraint["expression"]
+        for result in special_generics
+        for constraint in result.constraints
+    ):
+        write_scalar_parameters(
+            writer, append_scalar_parameters(parameters, electrical_parameters)
+        )
+    _emit_constraint_detection_diagnostics(case, electrical)
 
     _LOG.info(
         "converted %d buses, %d hydros, %d thermals, %d stages, terminal fan %d",

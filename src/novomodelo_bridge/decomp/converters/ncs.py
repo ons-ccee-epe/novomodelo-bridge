@@ -432,8 +432,9 @@ def build_pee_ncs_id_map(
     case: DecompCase,
     id_map: DecompIdMap,
 ) -> dict[int, int]:
-    """Public ``codigo_pee -> ncs_id`` map for the emitter, sharing
-    :func:`_pee_series`'s ordering via :func:`_sorted_pee_codes`.
+    """Public ``codigo_pee -> ncs_id`` map (the ``ncs_pee`` input of
+    :func:`~novomodelo_bridge.decomp.converters.electrical_constraints.build_code_map`),
+    sharing :func:`_pee_series`'s ordering via :func:`_sorted_pee_codes`.
 
     ``ncs_id`` continues the ``PQ`` series' id space (:func:`_pq_series`'s
     count is the offset), then :func:`_sorted_pee_codes`'s sorted-by-code

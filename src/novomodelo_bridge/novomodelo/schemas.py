@@ -4,7 +4,7 @@ Every ``$schema`` value emitted by either conversion track reads
 :func:`schema_url_for`, keyed by the case-relative output path, so both
 tracks share one canonical source instead of duplicating per-module
 constants. ``tests/novomodelo/test_novomodelo_schemas.py`` pins the registry's shape and its
-16-entry coverage.
+coverage.
 """
 
 from __future__ import annotations
