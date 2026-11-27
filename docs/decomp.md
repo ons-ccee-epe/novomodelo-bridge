@@ -83,6 +83,14 @@ is absent or does not cover the month, the last study stage's patamar hours are
 used instead, with a warning; a week that commits different MW per patamar is
 also reported.
 
+`initial_conditions.json` carries the inflows the deck observed before the
+study, read from `vazoes.rvN`: each calendar month before the operative month
+and, in a revision that starts after the first day of the month, the weeks of
+the operative month that have already passed. They are read on each plant's
+coupling gauge, the one an `AC NPOSNW` register names, otherwise the
+`hidr.dat` gauge, and negative values are kept as the deck gives them. A deck
+whose `vazoes.rvN` carries no observations converts without them.
+
 The `VL`, `VU` and `VA` registers become `tailrace_flow` in
 `system/hydros.json` on FPHA plants, so the tailrace level rises with the
 lateral flows DECOMP adds. A `VA` gauge maps to the plant whose `AC NUMPOS`
@@ -305,8 +313,8 @@ DECOMP. The import couples them plant by plant, as DECOMP does:
   operates on. Over the stages before the last one, the difference between
   the two is known at conversion and is folded into each cut's constant
   term, as are the lag terms of cut plants that no converted plant takes.
-  The pre-study observations that seed Novomodelo's lag state are read on the
-  coupling gauges too.
+  The past inflows the conversion writes to `initial_conditions.json` are read
+  on the same coupling gauges.
 - An `NW` plant takes its own row, and its inflow series is split from the first
   operated plant downstream as NEWAVE splits it: the `NW` plant carries its
   coupling-gauge inflow and that operated plant carries the rest of its
