@@ -32,6 +32,7 @@ from novomodelo_bridge.decomp.fcf.coupling import (
     read_complexo_components,
     resolve_couplings,
     source_only_lag_inflows,
+    unseeded_lag_months,
 )
 from novomodelo_bridge.decomp.fcf.mapper import HydroCoupling
 from novomodelo_bridge.decomp.id_map import DecompIdMap
@@ -312,6 +313,97 @@ def test_source_only_lag_inflows_keep_the_observed_month_the_study_starts_in() -
     # December 2025 is observed up to the study start and keeps its value.
     assert (december, november, october) == (300.0, 200.0, 100.0)
     assert rest == [0.0] * 7
+
+
+def test_unseeded_lag_months_is_empty_when_the_observations_cover_every_month() -> None:
+    vazoes = SimpleNamespace(
+        observacoes_mensais=pd.DataFrame(
+            {"mes": list(range(1, 11)), "901": [100.0] * 10}
+        ),
+        observacoes_semanais=pd.DataFrame({"semana": [1, 2], "901": [300.0, 400.0]}),
+    )
+
+    assert unseeded_lag_months(vazoes, _CALENDAR, _MONTHS) == ()
+
+
+def test_unseeded_lag_months_list_the_months_before_the_observed_ones() -> None:
+    vazoes = SimpleNamespace(
+        observacoes_mensais=pd.DataFrame({"mes": [1, 2], "901": [100.0, 200.0]}),
+        observacoes_semanais=None,
+    )
+
+    # March and April are the study's own months, which the study fills.
+    assert unseeded_lag_months(vazoes, _CALENDAR, _MONTHS) == (
+        (2025, 12),
+        (2025, 11),
+        (2025, 10),
+        (2025, 9),
+        (2025, 8),
+        (2025, 7),
+        (2025, 6),
+        (2025, 5),
+    )
+
+
+def test_unseeded_lag_months_leave_out_a_month_observed_part_of_the_way() -> None:
+    vazoes = SimpleNamespace(
+        observacoes_mensais=pd.DataFrame(
+            {"mes": [1, 2, 3], "901": [100.0, 200.0, 300.0]}
+        ),
+        observacoes_semanais=None,
+    )
+
+    # December 2025 is observed only up to the study start on 27/12.
+    assert unseeded_lag_months(vazoes, _RV0_CALENDAR, _RV0_MONTHS) == (
+        (2025, 9),
+        (2025, 8),
+        (2025, 7),
+        (2025, 6),
+        (2025, 5),
+        (2025, 4),
+        (2025, 3),
+    )
+
+
+def test_unseeded_lag_months_are_every_earlier_month_without_observation_tables() -> (
+    None
+):
+    vazoes = SimpleNamespace(observacoes_mensais=None, observacoes_semanais=None)
+
+    assert unseeded_lag_months(vazoes, _CALENDAR, _MONTHS) == _MONTHS[2:]
+
+
+def test_unseeded_lag_months_are_the_months_read_as_zero_for_every_posto() -> None:
+    """The deck's observation tables hold a column per posto, so a month is
+    covered for every posto or for none."""
+    vazoes = SimpleNamespace(
+        observacoes_mensais=pd.DataFrame(
+            {"mes": [1, 2], "1": [110.0, 210.0], "901": [100.0, 200.0]}
+        ),
+        observacoes_semanais=pd.DataFrame(
+            {"semana": [1, 2], "1": [310.0, 410.0], "901": [300.0, 400.0]}
+        ),
+        previsoes_com_postos_artificiais=pd.DataFrame(
+            {"estagio": [1, 2, 3], "1": [11.0, 21.0, 31.0], "901": [10.0, 20.0, 30.0]}
+        ),
+        cenarios_calculados_com_postos_artificiais=pd.DataFrame(
+            {"estagio": [4], "cenario": [1], "1": [910.0], "901": [900.0]}
+        ),
+    )
+
+    inflows = source_only_lag_inflows(
+        vazoes, _effective(), (1, 901), (0, 1), _CALENDAR, _MONTHS
+    )
+    unseeded = unseeded_lag_months(vazoes, _CALENDAR, _MONTHS)
+
+    assert unseeded
+    for index in (0, 1):
+        read_as_zero = {
+            month
+            for month, value in zip(_MONTHS, inflows[index], strict=True)
+            if month < (2026, 3) and value == 0.0
+        }
+        assert read_as_zero == set(unseeded)
 
 
 def _monthly_gap_vazoes() -> SimpleNamespace:

@@ -226,6 +226,17 @@ def _month_share(start: date, end: date, year: int, month: int) -> float:
     return max(overlap, 0) / (month_end - month_start).days
 
 
+def _before_operative_month(month: tuple[int, int], operative_start: date) -> bool:
+    """Whether *month* starts before the operative month, so the pre-study
+    observations alone fill its lag value."""
+    return month_window(*month)[0] < operative_start
+
+
+def _month_observed(spans: Iterable[tuple[date, date]], year: int, month: int) -> bool:
+    """Whether any of *spans* covers a day of ``year``-``month``."""
+    return any(_month_share(start, end, year, month) > 0 for start, end in spans)
+
+
 def _monthly_means(
     windows: Iterable[tuple[date, date, float]], months: Sequence[tuple[int, int]]
 ) -> tuple[float, ...]:
@@ -246,6 +257,7 @@ def _covered_means(
     """Each month's mean over the days *windows* cover (0 when none is covered),
     as novomodelo casts the ``recent_observations`` seed onto a lag period."""
     materialized = tuple(windows)
+    spans = tuple((start, end) for start, end, _ in materialized)
     means: list[float] = []
     for year, month in months:
         shares = [
@@ -254,7 +266,9 @@ def _covered_means(
         ]
         covered = sum(share for share, _ in shares)
         means.append(
-            sum(share * value for share, value in shares) / covered if covered else 0.0
+            sum(share * value for share, value in shares) / covered
+            if _month_observed(spans, year, month)
+            else 0.0
         )
     return tuple(means)
 
@@ -371,7 +385,7 @@ def source_only_lag_inflows(
     operative_start = calendar[0].operative_month_start
     observation_rows = recent_observation_rows(vazoes, calendar[0])
     trunk = _coupling_trunk(vazoes, calendar)
-    seeded = [month_window(*month)[0] < operative_start for month in months]
+    seeded = [_before_operative_month(month, operative_start) for month in months]
     inflows: dict[int, tuple[float, ...]] = {}
     for index in plant_indices:
         code = plant_codes[index]
@@ -395,6 +409,26 @@ def source_only_lag_inflows(
             )
         )
     return inflows
+
+
+def unseeded_lag_months(
+    vazoes: ObservationTables,
+    calendar: Sequence[OperativeStage],
+    months: Sequence[tuple[int, int]],
+) -> tuple[tuple[int, int], ...]:
+    """The *months* before the operative month that no pre-study observation
+    covers, which :func:`source_only_lag_inflows` and the coupled hydros' seed
+    read as zero."""
+    operative_start = calendar[0].operative_month_start
+    spans = tuple(
+        (start, end) for start, end, _ in recent_observation_rows(vazoes, calendar[0])
+    )
+    return tuple(
+        month
+        for month in months
+        if _before_operative_month(month, operative_start)
+        and not _month_observed(spans, *month)
+    )
 
 
 def plan_coupling_auxiliaries(
