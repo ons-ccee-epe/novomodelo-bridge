@@ -407,8 +407,9 @@ reads = [
   { file = "dadgnl", register = "GS" },
   { file = "dadgnl", register = "NL" },
   { file = "cortesh" },
+  { file = "vazoes" },
 ]
-summary = "Volume inicial de cada usina convertida (`UH` operada ou marcada `NW`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara usinas GNL, as janelas `past_anticipated_commitments`. As observações recentes de vazão são acrescentadas apenas pelo importador da FCF de fronteira, fora desta conversão."
+summary = "Volume inicial de cada usina convertida (`UH` operada ou marcada `NW`), em hm³; quando a usina declara `VI`, o arquivo recebe as janelas `past_defluences` da água em trânsito, e quando `dadgnl` declara usinas GNL, as janelas `past_anticipated_commitments`. Quando `vazoes` traz observações anteriores ao estudo, o arquivo recebe as janelas `recent_observations`, lidas no posto de acoplamento de cada usina; sem observações, a chave é omitida."
 
   [[output.field]]
   path = "storage[].hydro_id"
@@ -479,6 +480,33 @@ summary = "Volume inicial de cada usina convertida (`UH` operada ou marcada `NW`
   from = [ { file = "dadgnl", register = "GL", item = "geracao" }, { file = "dadgnl", register = "GL", item = "duracao" }, { file = "dadgnl", register = "TG", item = "inflexibilidade, disponibilidade" }, { file = "cortesh", item = "duracoes_patamares" } ]
   when = "somente quando `dadgnl` declara usinas GNL (registros `TG`), mesmo com todo `GL` zerado"
   how = "MW comprometido: média de `geracao` ponderada pelas `duracao` de patamar de cada registro `GL`; uma semana após o horizonte, que vem sem `duracao`, usa as frações de patamar do mês em que o `GS` a coloca, lidas do `cortesh.dat` (com aviso, as horas de patamar do último estágio do estudo quando o arquivo falta ou não cobre o mês; com aviso também quando a `geracao` difere entre patamares). Nas janelas de classe 2, as semanas `GL` que o `GS` atribui ao estudo e que caem no estágio são refundidas por horas sobre o estágio (0 onde não há nenhuma); a semana que o `GS` coloca no mês seguinte não entra no último estágio, mesmo quando começa antes do fim do horizonte; como no DECOMP, a última semana do estudo cobre os dias até o fim do horizonte, com o seu MW por patamar e as horas de patamar que restam no estágio. O valor é limitado, com aviso, à faixa de `TG` do seu estágio (inflexibilidade e disponibilidade ponderadas pelas horas de patamar, herdando o último `TG` declarado); as janelas de classe 4 usam a do último estágio do estudo."
+
+  [[output.field]]
+  path = "recent_observations[].hydro_id"
+  from = [ { file = "dadger", register = "AC", item = "NPOSNW" }, { file = "hidr", item = "posto" } ]
+  status = "derived"
+  when = "somente quando `vazoes` traz observações mensais ou semanais anteriores ao estudo"
+  how = "Id da usina convertida (e das usinas auxiliares de acoplamento, que recebem 0 nas mesmas janelas), lida no posto de acoplamento: o `AC NPOSNW` do último estágio ou, sem ele, o `posto` do `hidr.dat`. Ordenado por id e data."
+
+  [[output.field]]
+  path = "recent_observations[].start_date"
+  from = [ { file = "vazoes", item = "observacoes_mensais · mes" }, { file = "vazoes", item = "observacoes_semanais · semana" }, { file = "dadger", register = "DT" } ]
+  status = "derived"
+  when = "somente quando `vazoes` traz observações mensais ou semanais anteriores ao estudo"
+  how = "Início de cada janela: os meses civis anteriores ao mês operativo e as semanas de 7 dias do mês operativo até o início do estudo, recortadas no início do mês operativo."
+
+  [[output.field]]
+  path = "recent_observations[].end_date"
+  from = [ { file = "vazoes", item = "observacoes_mensais · mes" }, { file = "vazoes", item = "observacoes_semanais · semana" }, { file = "dadger", register = "DT" } ]
+  status = "derived"
+  when = "somente quando `vazoes` traz observações mensais ou semanais anteriores ao estudo"
+  how = "Fim exclusivo de cada janela; cada janela encosta na seguinte, e a mais recente termina no início do estudo."
+
+  [[output.field]]
+  path = "recent_observations[].value_m3s"
+  from = [ { file = "vazoes", item = "observacoes_mensais" }, { file = "vazoes", item = "observacoes_semanais" } ]
+  when = "somente quando `vazoes` traz observações mensais ou semanais anteriores ao estudo"
+  how = "Vazão observada no posto de acoplamento, em m³/s, sem truncar valores negativos. Uma usina auxiliar de acoplamento entra com 0."
 
 # ---------------------------------------------------------------------------
 # system/buses.json

@@ -1446,11 +1446,16 @@ def _convert_core_entities(artifacts: DecompCaseArtifacts, writer: CaseWriter) -
     artifacts.gnl_model = gnl_model
     if thermals_dict["thermals"]:
         writer.write_json("system/thermals.json", thermals_dict)
-    # The PAR inflow-lag seed (initial_conditions.recent_observations) is
-    # written by `fcf/importer.py::import_boundary_fcf`, not here: it is read on
-    # the boundary cut's coupling postos and feeds only that cut's inflow-lag
-    # terms. Without a boundary FCF the inflow model is order 0, so the lags
-    # are inert.
+    windows = scenarios_conv.convert_recent_observation_windows(
+        artifacts.vazoes, effective, id_map, artifacts.calendar
+    )
+    if windows:
+        initial_conditions_doc["recent_observations"] = [
+            *windows,
+            *auxiliary_conv.auxiliary_observation_windows(
+                windows, artifacts.coupling_auxiliaries
+            ),
+        ]
     writer.write_json("initial_conditions.json", initial_conditions_doc)
     _write_hydro_production_files(artifacts, writer, stage_models, productivity_parquet)
 

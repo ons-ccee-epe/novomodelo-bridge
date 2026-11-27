@@ -790,6 +790,17 @@ def test_convert_decomp_case_writes_the_planned_auxiliary_into_every_case_file(
     assert fcf_inputs.coupling_auxiliaries == (
         (_SALTO_AUXILIARY,) if boundary_fcf else ()
     )
+    windows = json.loads((dst / "initial_conditions.json").read_text(encoding="utf-8"))[
+        "recent_observations"
+    ]
+    auxiliary_windows = [
+        w for w in windows if w["hydro_id"] == _SALTO_AUXILIARY.hydro_id
+    ]
+    assert len(auxiliary_windows) == (13 if boundary_fcf else 0)
+    assert {w["value_m3s"] for w in auxiliary_windows} == (
+        {0.0} if boundary_fcf else set()
+    )
+    assert windows == sorted(windows, key=lambda w: (w["hydro_id"], w["start_date"]))
     noted = "boundary-fcf-coupling-auxiliary-plants" in {
         diagnostic.code for diagnostic in report.diagnostics
     }

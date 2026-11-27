@@ -76,6 +76,7 @@ from novomodelo_bridge.decomp.scenarios import (
 )
 from novomodelo_bridge.decomp.temporal import build_operative_calendar
 from novomodelo_bridge.novomodelo import schemas as novomodelo_schemas
+from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 from tests.conftest import _FakeDadger, make_decomp_case
 from tests.decomp.conftest import flat_turbine_limits
 from tests.decomp.test_constraint_registers import (
@@ -2920,6 +2921,100 @@ class TestMiniDeckDiversionChannels:
         ]
         assert unlimited.table is not None
         assert unlimited.table.rows == [[314, "PIMENTAL", 288, "BELO MONTE", "9999999"]]
+
+
+class TestMiniDeckRecentObservations:
+    """The committed mini deck (rv2, study start 2026-03-14, operative month
+    March) seeds every converted plant with the observed inflows that precede
+    the study, read on the plant's coupling gauge."""
+
+    def test_every_converted_plant_carries_the_deck_months_and_elapsed_weeks(
+        self, decomp_mini_deck: Path, tmp_path: Path
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        out = tmp_path / "out"
+        convert_decomp_case(decomp_mini_deck, out)
+        hydros = json.loads(
+            (out / "system" / "hydros.json").read_text(encoding="utf-8")
+        )["hydros"]
+        windows = json.loads(
+            (out / "initial_conditions.json").read_text(encoding="utf-8")
+        )["recent_observations"]
+
+        by_plant: dict[int, list[dict]] = {}
+        for window in windows:
+            by_plant.setdefault(window["hydro_id"], []).append(window)
+        assert set(by_plant) == {hydro["id"] for hydro in hydros}
+
+        operative_month = "2026-03-01"
+        month_starts = [
+            month.date().isoformat()
+            for month in pd.date_range("2025-04-01", "2026-02-01", freq="MS")
+        ]
+        for plant in by_plant.values():
+            ordered = sorted(plant, key=lambda window: window["start_date"])
+            monthly = [w for w in ordered if w["start_date"] < operative_month]
+            weekly = [w for w in ordered if w["start_date"] >= operative_month]
+            assert [w["start_date"] for w in monthly] == month_starts
+            assert all(
+                w["start_date"].endswith("-01") and w["end_date"].endswith("-01")
+                for w in monthly
+            )
+            assert len(weekly) == 2
+            assert [w["end_date"] for w in ordered[:-1]] == [
+                w["start_date"] for w in ordered[1:]
+            ]
+            assert weekly[0]["start_date"] == operative_month
+            assert weekly[-1]["end_date"] == "2026-03-14"
+
+        (itaipu,) = [h["id"] for h in hydros if h["name"] == "ITAIPU"]
+        last_week = [w for w in by_plant[itaipu] if w["end_date"] == "2026-03-14"]
+        assert [w["value_m3s"] for w in last_week] == [1406.0]
+
+    def test_a_deck_without_observations_omits_the_key(
+        self,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        monkeypatch.setattr(
+            "novomodelo_bridge.decomp.scenarios.convert_recent_observation_windows",
+            lambda *_args: [],
+        )
+        out = tmp_path / "out"
+        convert_decomp_case(decomp_mini_deck, out)
+
+        doc = json.loads((out / "initial_conditions.json").read_text(encoding="utf-8"))
+        assert "recent_observations" not in doc
+
+    def test_dry_run_routes_the_seed_through_the_case_writer(
+        self,
+        decomp_mini_deck: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from novomodelo_bridge.decomp.pipeline import convert_decomp_case
+
+        written: list[tuple[str, dict]] = []
+        original = CaseWriter.write_json
+
+        def spy(self: CaseWriter, relpath: str, data: dict) -> None:
+            written.append((relpath, data))
+            original(self, relpath, data)
+
+        monkeypatch.setattr(CaseWriter, "write_json", spy)
+        dst = tmp_path / "out"
+        report = convert_decomp_case(decomp_mini_deck, dst, dry_run=True)
+
+        assert not dst.exists()
+        assert str(dst / "initial_conditions.json") in report.would_write_paths
+        [payload] = [
+            data for relpath, data in written if relpath == "initial_conditions.json"
+        ]
+        assert "recent_observations" in payload
 
 
 class TestMiniDeckItaipuFrequencyBounds:
