@@ -69,7 +69,6 @@ def _no_coupling() -> _DeckCoupling:
         source_only_inflows={},
         couplings=(),
         gnl_plan=None,
-        recent_observations=[],
         names={},
     )
 
@@ -238,7 +237,6 @@ def test_import_boundary_fcf_threads_node_and_graph_stage_ids(
         work_dir=tmp_path / "work",
         cost_scale_factor=1.0,
         config={},
-        initial_conditions={},
     )
 
     assert calls == [
@@ -270,7 +268,6 @@ def test_import_boundary_fcf_graph_stage_id_distinct_from_boundary_stage(
         work_dir=tmp_path / "work",
         cost_scale_factor=1.0,
         config=config,
-        initial_conditions={},
     )
 
     assert calls[0]["stage_id"] == 4

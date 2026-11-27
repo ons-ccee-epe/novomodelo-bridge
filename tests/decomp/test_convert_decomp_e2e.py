@@ -20,7 +20,7 @@ from unittest.mock import patch
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from idecomp.decomp import Dadger, Vazoes
+from idecomp.decomp import Dadger
 
 from novomodelo_bridge.core import diagnostics as dx
 from novomodelo_bridge.core.coupling_auxiliary import is_coupling_auxiliary
@@ -34,13 +34,9 @@ from novomodelo_bridge.decomp.fcf.coupling import (
     read_complexo_components,
     resolve_couplings,
 )
-from novomodelo_bridge.decomp.fcf.importer import (
-    _patch_policy_boundary,
-    _seed_recent_observations,
-)
+from novomodelo_bridge.decomp.fcf.importer import _patch_policy_boundary
 from novomodelo_bridge.decomp.files import DecompFiles
 from novomodelo_bridge.decomp.pipeline import FcfInputs, convert_decomp_case
-from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
 from novomodelo_bridge.novomodelo.case_writer import CaseWriter
 from novomodelo_bridge.novomodelo.readers import read_novomodelo_hydro_block_operation
 from tests._fcf_fixtures import (
@@ -661,15 +657,7 @@ def test_boundary_cuts_bind_the_dormant_nw_plant_and_the_case_runs(
     initial_conditions = json.loads(
         (case_dir / "initial_conditions.json").read_text(encoding="utf-8")
     )
-    writer = CaseWriter(case_dir)
-    _patch_policy_boundary(writer, config)
-    _seed_recent_observations(
-        writer,
-        convert_recent_observation_windows(
-            Vazoes.read(str(case.files.vazoes)), effective, case.id_map, case.calendar
-        ),
-        initial_conditions,
-    )
+    _patch_policy_boundary(CaseWriter(case_dir), config)
 
     result = novomodelo.io.validate(str(case_dir))
     assert result["valid"] is True

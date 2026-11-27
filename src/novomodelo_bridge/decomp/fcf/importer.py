@@ -38,7 +38,6 @@ from novomodelo_bridge.decomp.converters.anticipated import (
     read_gnl_model,
 )
 from novomodelo_bridge.decomp.converters.cadastro import build_effective_cadastro
-from novomodelo_bridge.decomp.fcf.auxiliary import auxiliary_observation_windows
 from novomodelo_bridge.decomp.fcf.bootstrap import (
     bootstrap_terminal_manifest,
     ensure_writer_binding,
@@ -71,7 +70,6 @@ from novomodelo_bridge.decomp.fcf.writer import (
     build_stage_cuts_payload,
     write_boundary_checkpoint,
 )
-from novomodelo_bridge.decomp.scenarios import convert_recent_observation_windows
 from novomodelo_bridge.novomodelo.case_writer import DEFAULT_FLOAT_DIGITS, CaseWriter
 
 if TYPE_CHECKING:
@@ -241,10 +239,8 @@ class _DeckCoupling:
     """What the deck adds to the cut: who takes which row, and the constants.
 
     ``cut`` is the cut's ``(year, month)``; ``couplings`` the converted
-    hydros' and then the auxiliary coupling plants'; ``recent_observations``
-    the ``initial_conditions`` windows read on the coupling postos, the
-    auxiliaries' included; ``names`` the ``hidr.dat`` name of every registry
-    plant, converted or not.
+    hydros' and then the auxiliary coupling plants'; ``names`` the
+    ``hidr.dat`` name of every registry plant, converted or not.
     """
 
     cut: tuple[int, int]
@@ -253,7 +249,6 @@ class _DeckCoupling:
     inflow_lag_offsets: Mapping[int, tuple[float, ...]]
     source_only_inflows: Mapping[int, tuple[float, ...]]
     gnl_plan: GnlRingPlan | None
-    recent_observations: list[dict]
     names: Mapping[int, str]
 
 
@@ -282,9 +277,6 @@ def _read_deck_coupling(
         calendar,
         months,
     )
-    recent_observations = convert_recent_observation_windows(
-        vazoes, effective, case.id_map, calendar
-    )
     return _DeckCoupling(
         cut=cut,
         resolution=resolution,
@@ -302,25 +294,8 @@ def _read_deck_coupling(
         gnl_plan=_build_gnl_ring_plan(
             case_dir, case, cortesh, cut, cuts.header.lag_maximo_gnl
         ),
-        recent_observations=[
-            *recent_observations,
-            *auxiliary_observation_windows(recent_observations, auxiliaries),
-        ],
         names=effective.plant_names(),
     )
-
-
-def _seed_recent_observations(
-    writer: CaseWriter, windows: list[dict], initial_conditions: dict
-) -> None:
-    """Add ``recent_observations`` to the case's ``initial_conditions.json``.
-
-    Mutates the pipeline's in-memory ``initial_conditions`` (the dict already
-    written) and writes it back through *writer*, rather than re-reading the
-    file.
-    """
-    initial_conditions["recent_observations"] = windows
-    writer.write_json("initial_conditions.json", initial_conditions)
 
 
 def _gnl_deviation_rows(
@@ -669,22 +644,19 @@ def import_boundary_fcf(
     work_dir: Path,
     cost_scale_factor: float,
     config: dict | None = None,
-    initial_conditions: dict | None = None,
     coupling_auxiliaries: Sequence[CouplingAuxiliary] = (),
     float_digits: int | None = DEFAULT_FLOAT_DIGITS,
 ) -> Path | None:
     """Import the source model's boundary FCF into the converted case at
     ``case_dir``.
 
-    *config*/*initial_conditions* are the exact in-memory dict objects the
-    pipeline authored and wrote to ``config.json``/``initial_conditions.json``
-    pre-bootstrap; :func:`_patch_policy_boundary`/:func:`_seed_recent_observations`
-    mutate and rewrite them through *writer* rather than re-reading either file
-    off disk. ``None`` (the default) is only valid on the no-cut-files no-op
-    path below — once cut files are present and the import actually proceeds,
-    both are required (see the ``ValueError`` below), since patching either
-    file from an absent dict would silently drop the rest of its content
-    rather than mutate it.
+    *config* is the exact in-memory dict object the pipeline authored and wrote
+    to ``config.json`` pre-bootstrap; :func:`_patch_policy_boundary` mutates and
+    rewrites it through *writer* rather than re-reading the file off disk.
+    ``None`` (the default) is only valid on the no-cut-files no-op path below —
+    once cut files are present and the import actually proceeds, it is required
+    (see the ``ValueError`` below), since patching the file from an absent dict
+    would silently drop the rest of its content rather than mutate it.
 
     *coupling_auxiliaries* must be the auxiliary coupling plants the conversion
     wrote into the case (``FcfInputs.coupling_auxiliaries``); each takes its
@@ -712,10 +684,9 @@ def import_boundary_fcf(
        boundary cut onto that layout (:func:`~novomodelo_bridge.decomp.fcf.mapper.
        map_boundary_cuts`).
     5. Surfaces the mapping's approximations as ``Diagnostic``s.
-    6. Writes ``case_dir/boundary/``, points ``config.json``'s
-       ``["policy"]["boundary"]`` at it, and seeds ``initial_conditions.json``'s
-       ``recent_observations`` from the coupling postos
-       (:func:`_seed_recent_observations`).
+    6. Writes ``case_dir/boundary/`` and points ``config.json``'s
+       ``["policy"]["boundary"]`` at it; ``config.json`` is the only other
+       file it rewrites.
 
     Returns the ``case_dir/boundary`` path, or ``None`` on the no-cut-files
     no-op.
@@ -727,10 +698,10 @@ def import_boundary_fcf(
         (writer binding missing) or ``bootstrap_terminal_manifest`` (the
         in-process ``novomodelo.run.run`` failed or its checkpoint was malformed).
     ValueError
-        Raised directly when cut files are present but *config* or
-        *initial_conditions* is ``None`` (a caller must thread the pipeline's
-        own in-memory dicts once the import actually proceeds — see
-        ``convert_decomp_case``'s ``fcf_inputs_out``). Also propagated
+        Raised directly when cut files are present but *config* is ``None``
+        (a caller must thread the pipeline's own in-memory dict once the
+        import actually proceeds — see ``convert_decomp_case``'s
+        ``fcf_inputs_out``). Also propagated
         verbatim from the cut reader (``fcf/cortes.py``, e.g. a
         non-individualized deck or a nonzero SAR coefficient), the mapper
         (``fcf/mapper.py``, e.g. no ``HydroStorage`` slots in the target
@@ -741,10 +712,10 @@ def import_boundary_fcf(
     if cut_files is None:
         dx.emit(cut_files_absent_diagnostic(), logger=_LOG)
         return None
-    if config is None or initial_conditions is None:
+    if config is None:
         raise ValueError(
-            "boundary FCF import requires the converted case's config and "
-            "initial_conditions once cut files are present"
+            "boundary FCF import requires the converted case's config once "
+            "cut files are present"
         )
 
     # A real, non-dry-run writer: the importer runs a real ``novomodelo`` pass and
@@ -821,10 +792,5 @@ def import_boundary_fcf(
     )
 
     _patch_policy_boundary(writer, config)
-    _seed_recent_observations(writer, coupling.recent_observations, initial_conditions)
-    _LOG.info(
-        "boundary FCF: recent-observation windows seeded on the coupling postos: %d",
-        len(coupling.recent_observations),
-    )
 
     return boundary_dir

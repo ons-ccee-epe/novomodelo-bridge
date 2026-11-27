@@ -2212,8 +2212,7 @@ class TestCliInProcess:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The auxiliary coupling plants the conversion plans reach the importer
-        that prices them on the cut rows, beside the case's config and
-        initial conditions."""
+        that prices them on the cut rows, beside the case's config."""
         from novomodelo_bridge.core.conversion import ConversionReport
 
         src = _make_fake_decomp_dir_with_cuts(tmp_path)
@@ -2245,7 +2244,7 @@ class TestCliInProcess:
         assert code == 0
         kwargs = mock_import.call_args.kwargs
         assert kwargs["config"] == {"config": True}
-        assert kwargs["initial_conditions"] == {"initial_conditions": True}
+        assert "initial_conditions" not in kwargs
         assert kwargs["coupling_auxiliaries"] == (sentinel.auxiliary,)
 
     def test_convert_decomp_missing_cortes_skips_fcf(

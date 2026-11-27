@@ -22,7 +22,6 @@ from novomodelo_bridge.decomp.fcf.coupling import CouplingResolution
 from novomodelo_bridge.decomp.fcf.importer import (
     _DeckCoupling,
     _patch_policy_boundary,
-    _seed_recent_observations,
     import_boundary_fcf,
 )
 from novomodelo_bridge.decomp.fcf.mapper import MappingResult
@@ -60,7 +59,7 @@ def _mock_deck_and_cut_seams(
     (``tests/decomp/test_fcf_bootstrap.py``), not a module attribute patch.
 
     The deck-side coupling read is stubbed to an empty coupling (no taker,
-    no fold, no GNL, no observation window). Returns a ``DecompCase`` with
+    no fold, no GNL). Returns a ``DecompCase`` with
     ``dadger``/``id_map``/``hidr``/``calendar`` pre-filled (opaque
     placeholders — the importer never re-parses them) and
     ``files.cortesh``/``files.cortes``/``files.vazoes`` set under ``tmp_path``.
@@ -85,7 +84,6 @@ def _mock_deck_and_cut_seams(
             source_only_inflows={},
             couplings=(),
             gnl_plan=None,
-            recent_observations=[],
             names={},
         ),
     )
@@ -179,10 +177,16 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     test: that `import_boundary_fcf` returns `case_dir / "boundary"` and
     patches `config.json`'s `policy.boundary` to the date-driven
     `{"path": "boundary"}` block (no stage/pool index — novomodelo selects the
-    source by calendar date).
+    source by calendar date), leaving `initial_conditions.json` byte-for-byte
+    as the pipeline wrote it.
     """
     case_dir = tmp_path / "case"
     case_dir.mkdir()
+    initial_conditions_path = case_dir / "initial_conditions.json"
+    initial_conditions_path.write_bytes(
+        b'{"storage": [], "recent_observations": [{"hydro_id": 1}]}\n'
+    )
+    initial_conditions_before = initial_conditions_path.read_bytes()
 
     # A real (if minimal) `BoundaryCuts`/`MappingResult` pair, not a bare
     # `SimpleNamespace` — `_emit_import_diagnostics` (called between
@@ -216,7 +220,6 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
     )
 
     config: dict = {}
-    initial_conditions: dict = {}
     with caplog.at_level(logging.WARNING):
         boundary_dir = import_boundary_fcf(
             case_dir,
@@ -224,11 +227,10 @@ def test_import_boundary_fcf_patches_config_and_emits_no_output_warning(
             work_dir=tmp_path / "work",
             cost_scale_factor=1.0,
             config=config,
-            initial_conditions=initial_conditions,
         )
 
     assert boundary_dir == case_dir / "boundary"
-    assert initial_conditions["recent_observations"] == []
+    assert initial_conditions_path.read_bytes() == initial_conditions_before
 
     patched_config = json.loads((case_dir / "config.json").read_text(encoding="utf-8"))
     assert patched_config["policy"]["boundary"] == {"path": "boundary"}
@@ -277,7 +279,6 @@ def test_import_boundary_fcf_rejects_storageless_manifest(
             work_dir=tmp_path / "work",
             cost_scale_factor=1.0,
             config={},
-            initial_conditions={},
         )
 
 
@@ -285,13 +286,10 @@ def test_import_boundary_fcf_raises_when_config_missing_with_cut_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC — once cut files are present, ``config``/``initial_conditions``
-    left at their ``None`` default (rather than the pipeline's own in-memory
-    dicts) is a caller bug, not a legitimate no-op: `import_boundary_fcf`
-    raises `ValueError` before touching the cut readers or the writer.
-
-    `config` is left at its default `None` here; the guard's `or` makes
-    either missing dict raise the same message, so this covers the pairing.
+    """Once cut files are present, ``config`` left at its ``None`` default
+    (rather than the pipeline's own in-memory dict) is a caller bug, not a
+    legitimate no-op: `import_boundary_fcf` raises `ValueError` before
+    touching the cut readers or the writer.
     """
     case_dir = tmp_path / "case"
     case_dir.mkdir()
@@ -305,14 +303,13 @@ def test_import_boundary_fcf_raises_when_config_missing_with_cut_files(
 
     with pytest.raises(
         ValueError,
-        match="requires the converted case's config and initial_conditions",
+        match="requires the converted case's config once cut files are present",
     ):
         import_boundary_fcf(
             case_dir,
             case,
             work_dir=tmp_path / "work",
             cost_scale_factor=1.0,
-            initial_conditions={},
         )
 
 
@@ -360,45 +357,7 @@ def test_import_boundary_fcf_reuses_shared_case_no_reparse(
         work_dir=tmp_path / "work",
         cost_scale_factor=1.0,
         config={},
-        initial_conditions={},
     )
 
     assert boundary_dir == case_dir / "boundary"
     read_spy.assert_not_called()
-
-
-def test_seed_recent_observations_mutates_passed_dict_no_reread(
-    tmp_path: Path,
-) -> None:
-    """`_seed_recent_observations` folds `recent_observations` into the passed
-    `initial_conditions` dict and writes it through `CaseWriter` once, never
-    re-reading `initial_conditions.json`: the written file is the
-    `_write_json` style (indent=2 / ensure_ascii=False / single trailing
-    newline), and every pre-existing key survives untouched.
-    """
-    windows = [{"hydro_id": 1, "values": [10.0, 20.0]}]
-    ic_path = tmp_path / "initial_conditions.json"
-    other_sections = {
-        "$schema": "https://example.invalid/initial_conditions.json",
-        "storage": [{"hydro_id": 1, "volume_hm3": 100.0}],
-        "filling_storage": [],
-    }
-    # The pipeline's own in-memory dict — no initial_conditions.json exists
-    # on disk yet; `_seed_recent_observations` mutates and writes *this*
-    # object, never re-reading the file.
-    initial_conditions = dict(other_sections)
-
-    _seed_recent_observations(CaseWriter(tmp_path), windows, initial_conditions)
-
-    assert initial_conditions["recent_observations"] == windows
-    for key, value in other_sections.items():
-        assert initial_conditions[key] == value
-
-    expected = {**other_sections, "recent_observations": windows}
-    expected_text = json.dumps(expected, indent=2, ensure_ascii=False) + "\n"
-    written_text = ic_path.read_text(encoding="utf-8")
-    assert written_text == expected_text, (
-        "patched initial_conditions.json's raw serialized text diverges from "
-        "the expected indent=2 / ensure_ascii=False / single-trailing-newline "
-        "style"
-    )
